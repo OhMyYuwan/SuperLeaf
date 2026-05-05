@@ -1,0 +1,21 @@
+auto_allow:
+  - create_request_plan_change_objects
+  - update_open_kernel_objects
+  - read_support_and_capability_files
+
+require_confirmation:
+  - edit_.acp/version.yaml
+  - edit_.acp/support/LOAD_RULES.yaml
+  - edit_.acp/support/CHANGE_POLICY.yaml
+  - edit_.acp/capability/capabilities.yaml
+  - touch_protected_paths
+
+forbidden:
+  - rewrite_kernel_history
+  - delete_kernel_objects
+  - treat_reference_as_project_source
+
+high_risk:
+  - change_acp_version
+  - change_profile_enablement
+  - expand_scope_beyond_src_project_root

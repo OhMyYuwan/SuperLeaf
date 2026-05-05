@@ -1,0 +1,61 @@
+# Reference projects (external, not part of our codebase)
+referenceold/
+reference/
+
+# macOS
+.DS_Store
+
+# Local tool state
+.claude/
+.agents/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Node dependencies
+node_modules/
+
+# Build output
+build/
+dist/
+coverage/
+.vite/
+.cache/
+.next/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ACP protocol package (external dependency)
+acp-protocol/
+
+# ACP kernel and docs (contain user privacy data)
+src/.acp/kernel/
+src/docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.bak
+*~

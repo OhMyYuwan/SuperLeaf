@@ -1,0 +1,35 @@
+project:
+  name: YuwanLabWriter
+  root: src
+  source_of_truth: src
+
+modules:
+  - id: acp-kernel
+    path: .acp/kernel
+    kind: governance
+    entry_files:
+      - .acp/kernel/requests/
+      - .acp/kernel/plans/
+      - .acp/kernel/changes/
+
+  - id: acp-support
+    path: .acp/support
+    kind: guidance
+    entry_files:
+      - .acp/support/AGENT.md
+      - .acp/support/PROJECT_MAP.yaml
+      - .acp/support/LOAD_RULES.yaml
+      - .acp/support/CHANGE_POLICY.yaml
+
+  - id: acp-capability
+    path: .acp/capability
+    kind: semantic
+    entry_files:
+      - .acp/capability/capabilities.yaml
+
+capability_routes:
+  project-foundation:
+    primary_module: acp-capability
+    supporting_modules:
+      - acp-support
+      - acp-kernel

@@ -1,0 +1,36 @@
+bootstrap:
+  entrypoint: .acp/version.yaml
+  sequence:
+    - .acp/support/AGENT.md
+    - .acp/support/PROJECT_MAP.yaml
+    - .acp/support/LOAD_RULES.yaml
+    - .acp/support/CHANGE_POLICY.yaml
+    - .acp/capability/capabilities.yaml
+
+loading:
+  kernel_history: on_demand
+  broad_scan: forbidden_by_default
+  preferred_routing: capability_first
+
+rules:
+  forbidden_paths:
+    - ../reference/
+    - ../referenceold/
+    - ../acp-protocol/
+  protected_paths:
+    - .acp/version.yaml
+    - .acp/support/LOAD_RULES.yaml
+    - .acp/support/CHANGE_POLICY.yaml
+    - .acp/capability/capabilities.yaml
+  initial_context:
+    - .acp/version.yaml
+    - .acp/support/AGENT.md
+  route_expansion:
+    project-foundation:
+      start_with:
+        - .acp/support/PROJECT_MAP.yaml
+        - .acp/capability/capabilities.yaml
+      expand_when:
+        - planning requires module routing
+        - execution requires policy checks
+        - continuation requires kernel lineage

@@ -1,0 +1,5 @@
+acp_version: "1.0.0"
+profiles:
+  kernel: required
+  capability: enabled
+  support: enabled

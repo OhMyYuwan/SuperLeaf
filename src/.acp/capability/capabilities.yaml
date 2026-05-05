@@ -1,0 +1,9 @@
+capabilities:
+  - id: project-foundation
+    name: Project Foundation
+    summary: Owns ACP initialization, governance structure, and future project-shape setup.
+    slices:
+      - id: _root
+        summary: Handles ACP project structure, support files, and kernel bootstrap for this src-rooted project.
+        route_here_when: Work is primarily about ACP initialization, governance files, or early project structure.
+        bridge_when: Work needs to cross from ACP governance into future application modules that do not yet exist.

@@ -1,0 +1,83 @@
+/**
+ * Editor theme extracted and adapted from Overleaf's `overleaf_dark` theme JSON.
+ *
+ * Source reference: reference/overleaf/services/web/frontend/js/features/source-editor/themes/cm6/overleaf_dark.json
+ *
+ * We hand-translate the JSON theme into a `EditorView.theme()` object plus a
+ * matching `HighlightStyle`, since we don't carry over Overleaf's runtime
+ * theme loader. Re-using this file gives the LaTeX editor a familiar look.
+ */
+
+import { EditorView } from '@codemirror/view'
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags as t } from '@lezer/highlight'
+import type { Extension } from '@codemirror/state'
+
+const overleafDarkTheme = EditorView.theme(
+  {
+    '&': {
+      backgroundColor: '#1b222c',
+      color: '#f8f8f2',
+      height: '100%',
+    },
+    '.cm-scroller': {
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: '14px',
+      lineHeight: '1.55',
+    },
+    '.cm-content': {
+      caretColor: '#f8f8f0',
+      padding: '12px 0',
+    },
+    '.cm-gutters': {
+      backgroundColor: '#1b222c',
+      color: 'rgb(144,145,148)',
+      borderRight: '1px solid rgba(148, 163, 184, 0.18)',
+    },
+    '.cm-activeLine': {
+      backgroundColor: '#44475a40',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: '#44475a40',
+    },
+    '&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket': {
+      outline: '1px solid #a29709',
+    },
+    '.cm-cursor, .cm-dropCursor': {
+      borderLeftColor: '#f8f8f0',
+    },
+    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+      {
+        background: '#44475a',
+      },
+    '.cm-tooltip': {
+      backgroundColor: '#1b222c',
+      border: '1px solid rgba(148, 163, 184, 0.22)',
+      color: '#e2e8f0',
+      borderRadius: '8px',
+    },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: '#3b82f6',
+      color: 'white',
+    },
+  },
+  { dark: true },
+)
+
+const overleafDarkHighlight = HighlightStyle.define([
+  { tag: t.keyword, color: '#ff79c6' },
+  { tag: t.literal, color: '#ff79c6' },
+  { tag: t.string, color: '#f1fa8c' },
+  { tag: t.comment, color: '#6272a4', fontStyle: 'italic' },
+  { tag: t.typeName, color: '#8be9fd', fontStyle: 'italic' },
+  { tag: t.attributeName, color: '#50fa7b' },
+  { tag: t.attributeValue, color: '#ffb86c', fontStyle: 'italic' },
+  { tag: t.tagName, color: '#ff79c6' },
+  { tag: t.function(t.variableName), color: '#50fa7b' },
+  { tag: t.invalid, color: '#F8F8F0', backgroundColor: '#ff79c6' },
+])
+
+export function overleafDark(): Extension {
+  return [overleafDarkTheme, syntaxHighlighting(overleafDarkHighlight)]
+}

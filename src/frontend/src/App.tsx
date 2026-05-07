@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
+import { LatexEditor, type EditorFormat } from './features/latex-editor'
 import './App.css'
 
 const fileTree = [
@@ -53,7 +54,7 @@ function App() {
   const [selectedTab, setSelectedTab] = useState('discussion')
   const [agents, setAgents] = useState(initialAgents)
   const [workflow, setWorkflow] = useState(initialWorkflow)
-  const [docFormat, setDocFormat] = useState<'tex' | 'md' | 'txt'>('tex')
+  const [docFormat, setDocFormat] = useState<EditorFormat>('tex')
   const [editorValue, setEditorValue] = useState(`\\documentclass{article}
 \\usepackage{ctex}
 \\begin{document}
@@ -189,11 +190,13 @@ function App() {
               <div className="editor-split">
                 <div className="editor-column">
                   <div className="column-header"><SplitSquareVertical size={16} /> 编辑器</div>
-                  <textarea
-                    className="latex-editor"
-                    value={editorValue}
-                    onChange={(e) => setEditorValue(e.target.value)}
-                  />
+                  <div className="latex-editor-host">
+                    <LatexEditor
+                      value={editorValue}
+                      format={docFormat}
+                      onChange={setEditorValue}
+                    />
+                  </div>
                 </div>
 
                 <div className="editor-column preview-column">

@@ -15,7 +15,7 @@ import { useEditorStore } from './stores/editorStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useWorkflowStore } from './stores/workflowStore'
 import { useAnnotationStore } from './stores/annotationStore'
-import { seedDocuments } from './stores/seedData'
+import { useFilesystemStore } from './stores/filesystemStore'
 import type { DecorationSpec, DocChangeInfo } from './features/latex-editor'
 import './App.css'
 
@@ -23,14 +23,24 @@ function App() {
   // Document + editor state --------------------------------------------------
   const documents = useDocumentStore((s) => s.documents)
   const activeDocumentId = useDocumentStore((s) => s.activeDocumentId)
-  const setActive = useDocumentStore((s) => s.setActive)
   const updateContent = useDocumentStore((s) => s.updateContent)
-  const seed = useDocumentStore((s) => s.seed)
+  const loadBackendDoc = useDocumentStore((s) => s.loadBackendDoc)
+  const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
   const activeSelection = useEditorStore((s) =>
     activeDocumentId ? s.states[activeDocumentId]?.selection ?? null : null,
   )
+
+  // Filesystem tree ----------------------------------------------------------
+  const tree = useFilesystemStore((s) => s.tree)
+  const treeLoading = useFilesystemStore((s) => s.loading)
+  const treeError = useFilesystemStore((s) => s.error)
+  const expandedFolderIds = useFilesystemStore((s) => s.expandedFolderIds)
+  const loadTree = useFilesystemStore((s) => s.loadTree)
+  const toggleExpanded = useFilesystemStore((s) => s.toggleExpanded)
+  const createFolder = useFilesystemStore((s) => s.createFolder)
+  const createDoc = useFilesystemStore((s) => s.createDoc)
 
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
@@ -53,7 +63,6 @@ function App() {
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
-  const fileList = useMemo(() => Object.values(documents), [documents])
 
   const decorationSpecs: DecorationSpec[] = useMemo(() => {
     if (!activeDocumentId) return []
@@ -74,14 +83,21 @@ function App() {
 
   // Bootstrap ----------------------------------------------------------------
   useEffect(() => {
-    if (Object.keys(useDocumentStore.getState().documents).length === 0) {
-      seed(seedDocuments)
-    }
+    loadTree()
     loadProviders()
     loadWorkflows()
-  }, [seed, loadProviders, loadWorkflows])
+  }, [loadTree, loadProviders, loadWorkflows])
 
   // Cross-component handlers -------------------------------------------------
+  const handleOpenDoc = async (docId: string) => {
+    await loadBackendDoc(docId)
+  }
+
+  const handleSave = async () => {
+    if (!activeDocumentId) return
+    await saveBackendDoc(activeDocumentId)
+  }
+
   const handleRunWorkflow = (workflowId: string, instruction: string) => {
     if (!activeDocumentId) {
       alert('请先选择一个文件')
@@ -104,8 +120,6 @@ function App() {
         after: activeSelection.context.after,
         instruction: userPrompt,
       },
-      // Chat-mode needs `query`; workflow-mode ignores it. Wrap the user's
-      // instruction with the selection so a plain LLM node has everything.
       query: `${userPrompt}\n\n---\n${selectionText}`,
     })
   }
@@ -137,6 +151,7 @@ function App() {
         providerName={activeProvider?.name ?? null}
         providerStatus={activeProvider?.status ?? null}
         onOpenSettings={() => setSettingsOpen(true)}
+        onSave={handleSave}
       />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -145,7 +160,17 @@ function App() {
         <PanelGroup orientation="horizontal" style={{ height: '100%' }}>
           <Panel defaultSize={20} minSize={16}>
             <div className="panel left-panel">
-              <FileTree files={fileList} activeId={activeDocumentId} onSelect={setActive} />
+              <FileTree
+                tree={tree}
+                activeDocId={activeDocumentId}
+                expandedFolderIds={expandedFolderIds}
+                loading={treeLoading}
+                error={treeError}
+                onToggleFolder={toggleExpanded}
+                onOpenDoc={handleOpenDoc}
+                onCreateFolder={createFolder}
+                onCreateDoc={createDoc}
+              />
               <OutlineList sections={activeDoc ? activeDoc.structure.sections : null} />
             </div>
           </Panel>

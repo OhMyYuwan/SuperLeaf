@@ -69,3 +69,82 @@ class WorkflowRunOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# Local filesystem schemas (A1)
+# ---------------------------------------------------------------------------
+
+
+class FolderCreateIn(BaseModel):
+    parent_folder_id: str | None = None
+    name: str = Field(min_length=1, max_length=256)
+
+
+class FolderOut(BaseModel):
+    id: str
+    project_id: str
+    parent_folder_id: str | None
+    name: str
+    sort_index: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocCreateIn(BaseModel):
+    folder_id: str | None = None
+    name: str = Field(min_length=1, max_length=256)
+    format: str = Field(pattern="^(tex|md|txt)$")
+    content: str = ""
+
+
+class DocUpdateIn(BaseModel):
+    content: str
+
+
+class DocOut(BaseModel):
+    id: str
+    project_id: str
+    folder_id: str | None
+    name: str
+    format: str
+    content: str
+    version: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TreeDocOut(BaseModel):
+    id: str
+    name: str
+    format: str
+    updated_at: datetime
+
+
+class TreeFileOut(BaseModel):
+    id: str
+    name: str
+    mime_type: str
+    size_bytes: int
+    updated_at: datetime
+
+
+class TreeFolderOut(BaseModel):
+    id: str
+    name: str
+    folders: list["TreeFolderOut"] = Field(default_factory=list)
+    docs: list[TreeDocOut] = Field(default_factory=list)
+    files: list[TreeFileOut] = Field(default_factory=list)
+
+
+class ProjectTreeOut(BaseModel):
+    project_id: str
+    project_name: str
+    root: TreeFolderOut
+
+
+TreeFolderOut.model_rebuild()

@@ -63,3 +63,92 @@
   color: rgba(148, 163, 184, 0.7);
   font-style: italic;
 }
+
+.tree-header-row {
+  justify-content: space-between;
+}
+
+.tree-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tree-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tree-actions.inline {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.tree-action-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.9);
+  cursor: pointer;
+}
+.tree-action-btn:hover {
+  background: rgba(59, 130, 246, 0.28);
+  color: #dbeafe;
+}
+
+.tree-list {
+  overflow: auto;
+}
+
+.tree-folder-row:hover .tree-actions.inline {
+  opacity: 1;
+}
+
+.tree-toggle-btn,
+.tree-toggle-placeholder {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.tree-toggle-btn {
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tree-toggle-btn:hover {
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.tree-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-doc-row,
+.tree-file-row {
+  font-size: 12px;
+}
+
+.tree-file-row {
+  color: rgba(148, 163, 184, 0.85);
+  cursor: default;
+}
+
+.tree-error {
+  font-size: 12px;
+  color: #fca5a5;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}

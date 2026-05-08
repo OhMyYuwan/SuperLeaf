@@ -11,6 +11,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Document, DocumentFormat } from '../types/document'
 import { createDocument, parseDocument } from '../services/documentParser'
+import { filesystemApi, type BackendDoc } from '../services/filesystemApi'
 
 interface DocumentSeed {
   id: string
@@ -27,6 +28,11 @@ interface DocumentState {
   getActive: () => Document | null
   updateContent: (id: string, content: string) => void
   seed: (seeds: DocumentSeed[]) => void
+
+  // A2: backend-backed file management
+  upsertFromBackendDoc: (doc: BackendDoc) => void
+  loadBackendDoc: (id: string) => Promise<void>
+  saveBackendDoc: (id: string) => Promise<void>
 }
 
 export const useDocumentStore = create<DocumentState>()(
@@ -76,9 +82,48 @@ export const useDocumentStore = create<DocumentState>()(
           activeDocumentId: seeds[0]?.id ?? null,
         })
       },
+
+      upsertFromBackendDoc: (doc) => {
+        const normalized = fromBackendDoc(doc)
+        set((state) => ({
+          documents: { ...state.documents, [normalized.id]: normalized },
+        }))
+      },
+
+      loadBackendDoc: async (id) => {
+        const doc = await filesystemApi.getDoc(id)
+        get().upsertFromBackendDoc(doc)
+        set({ activeDocumentId: id })
+      },
+
+      saveBackendDoc: async (id) => {
+        const existing = get().documents[id]
+        if (!existing) return
+        const saved = await filesystemApi.updateDoc(id, existing.content)
+        get().upsertFromBackendDoc(saved)
+      },
     }),
     {
       name: 'yuwan-documents-v1',
     },
   ),
 )
+
+function fromBackendDoc(doc: BackendDoc): Document {
+  const format = doc.format as DocumentFormat
+  const now = new Date(doc.updated_at)
+  return {
+    id: doc.id,
+    format,
+    content: doc.content,
+    structure: parseDocument(doc.content, format),
+    metadata: {
+      title: doc.name,
+      author: 'user',
+      created: now,
+      modified: now,
+      tags: [],
+    },
+    version: doc.version,
+  }
+}

@@ -41,6 +41,10 @@ function App() {
   const toggleExpanded = useFilesystemStore((s) => s.toggleExpanded)
   const createFolder = useFilesystemStore((s) => s.createFolder)
   const createDoc = useFilesystemStore((s) => s.createDoc)
+  const renameEntity = useFilesystemStore((s) => s.renameEntity)
+  const deleteEntity = useFilesystemStore((s) => s.deleteEntity)
+  const uploadFile = useFilesystemStore((s) => s.uploadFile)
+  const renameProject = useFilesystemStore((s) => s.renameProject)
 
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
@@ -170,6 +174,10 @@ function App() {
                 onOpenDoc={handleOpenDoc}
                 onCreateFolder={createFolder}
                 onCreateDoc={createDoc}
+                onRenameEntity={renameEntity}
+                onDeleteEntity={deleteEntity}
+                onUploadFile={uploadFile}
+                onRenameProject={renameProject}
               />
               <OutlineList sections={activeDoc ? activeDoc.structure.sections : null} />
             </div>

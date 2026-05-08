@@ -69,6 +69,12 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 export const filesystemApi = {
   getTree: () => http<ProjectTree>('/api/project/tree'),
 
+  renameProject: (name: string) =>
+    http<{ ok: boolean }>('/api/project/name', {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    }),
+
   createFolder: (payload: { parent_folder_id?: string | null; name: string }) =>
     http('/api/folders', {
       method: 'POST',
@@ -101,4 +107,27 @@ export const filesystemApi = {
       method: 'PUT',
       body: JSON.stringify({ content }),
     }),
+
+  renameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) =>
+    http<{ ok: boolean }>(`/api/entities/${entityType}/${encodeURIComponent(entityId)}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) =>
+    http<{ ok: boolean; deleted_count: number }>(
+      `/api/entities/${entityType}/${encodeURIComponent(entityId)}`,
+      { method: 'DELETE' },
+    ),
+
+  uploadFile: async (file: File, folderId?: string | null): Promise<{ id: string; name: string }> => {
+    const form = new FormData()
+    form.append('file', file)
+    if (folderId) form.append('folder_id', folderId)
+    const resp = await fetch(`${BASE}/api/files/upload`, { method: 'POST', body: form })
+    if (!resp.ok) throw new Error(`upload ${resp.status}`)
+    return (await resp.json()) as { id: string; name: string }
+  },
+
+  exportZipUrl: () => `${BASE}/api/project/export.zip`,
 }

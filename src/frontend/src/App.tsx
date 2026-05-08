@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
-import { LatexEditor, type EditorFormat, type DecorationSpec } from './features/latex-editor'
+import { LatexEditor, type EditorFormat, type DecorationSpec, type DocChangeInfo } from './features/latex-editor'
 import { SettingsDialog } from './features/settings'
 import { AnnotationPanel } from './features/annotation-panel'
 import { useDocumentStore } from './stores/documentStore'
@@ -80,7 +80,7 @@ function App() {
   const decorationSpecs: DecorationSpec[] = useMemo(
     () =>
       annotationItems
-        .filter((it) => it.status !== 'accepted' && it.status !== 'deleted')
+        .filter((it) => it.status === 'pending')
         .map((it) => ({
           id: it.id,
           from: it.range.from,
@@ -132,6 +132,11 @@ function App() {
   const handleEditorChange = (next: string) => {
     if (!activeDocumentId) return
     updateContent(activeDocumentId, next)
+  }
+
+  const handleDocChange = (changes: DocChangeInfo[]) => {
+    if (!activeDocumentId) return
+    useAnnotationStore.getState().applyDocumentChange(activeDocumentId, changes)
   }
 
   const handleSelectionChange = (info: { from: number; to: number; text: string }) => {
@@ -249,6 +254,7 @@ function App() {
                         format={activeDoc.format as EditorFormat}
                         onChange={handleEditorChange}
                         onSelectionChange={handleSelectionChange}
+                        onDocChange={handleDocChange}
                         decorations={decorationSpecs}
                         activeDecorationId={activeAnnotationId}
                         onDecorationClick={(id) =>

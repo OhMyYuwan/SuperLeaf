@@ -18,11 +18,12 @@
 import { create } from 'zustand'
 import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
+import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
 import { useDocumentStore } from './documentStore'
 import { uuid } from '../lib/uuid'
 
 export type CardKind = 'annotation' | 'suggestion' | 'risk'
-export type CardStatus = 'pending' | 'accepted' | 'deleted' | 'resolved' | 'superseded'
+export type CardStatus = 'pending' | 'accepted' | 'archived' | 'deleted' | 'superseded'
 
 export interface ThreadMessage {
   id: string
@@ -72,10 +73,14 @@ interface AnnotationState {
 
   accept: (id: string) => void
   remove: (id: string) => void
+  archive: (id: string) => void
+  restore: (id: string) => void
+  applyDocumentChange: (documentId: string, changes: DocChange[]) => void
   appendThread: (id: string, message: Omit<ThreadMessage, 'id' | 'createdAt'>) => void
   setConversationId: (id: string, conversationId: string) => void
 
   visibleForDocument: (documentId: string) => AnnotationItem[]
+  archivedForDocument: (documentId: string) => AnnotationItem[]
 }
 
 export const useAnnotationStore = create<AnnotationState>((set, get) => ({
@@ -119,10 +124,11 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
       }
     }
 
+    // 采纳 / 已处理 = 归档（从主面板隐藏，可在归档列表查看和重开）
     set((state) => ({
       items: {
         ...state.items,
-        [id]: { ...item, status: item.kind === 'suggestion' ? 'accepted' : 'resolved' },
+        [id]: { ...item, status: 'archived' },
       },
     }))
   },
@@ -133,6 +139,47 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
       return {
         items: { ...state.items, [id]: { ...state.items[id], status: 'deleted' } },
       }
+    })
+  },
+
+  archive: (id) => {
+    set((state) => {
+      const item = state.items[id]
+      if (!item || item.status === 'deleted' || item.status === 'archived') return state
+      return {
+        items: { ...state.items, [id]: { ...item, status: 'archived' } },
+      }
+    })
+  },
+
+  restore: (id) => {
+    set((state) => {
+      const item = state.items[id]
+      if (!item || item.status !== 'archived') return state
+      return {
+        items: { ...state.items, [id]: { ...item, status: 'pending' } },
+      }
+    })
+  },
+
+  applyDocumentChange: (documentId, changes) => {
+    if (changes.length === 0) return
+    set((state) => {
+      const items = { ...state.items }
+      let changed = false
+      for (const [id, item] of Object.entries(items)) {
+        if (item.documentId !== documentId) continue
+        if (item.status === 'deleted' || item.status === 'superseded') continue
+        const newRange = mapRangeThrough(item.range, changes)
+        if (newRange === null) {
+          items[id] = { ...item, status: 'superseded' }
+          changed = true
+        } else if (newRange.from !== item.range.from || newRange.to !== item.range.to) {
+          items[id] = { ...item, range: newRange }
+          changed = true
+        }
+      }
+      return changed ? { items } : state
     })
   },
 
@@ -167,7 +214,12 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
 
   visibleForDocument: (documentId) =>
     Object.values(get().items)
-      .filter((it) => it.documentId === documentId && it.status !== 'deleted')
+      .filter((it) => it.documentId === documentId && it.status !== 'deleted' && it.status !== 'archived' && it.status !== 'superseded')
+      .sort((a, b) => a.range.from - b.range.from),
+
+  archivedForDocument: (documentId) =>
+    Object.values(get().items)
+      .filter((it) => it.documentId === documentId && it.status === 'archived')
       .sort((a, b) => a.range.from - b.range.from),
 }))
 

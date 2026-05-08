@@ -11,7 +11,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { Check, MessageSquarePlus, Trash2, Wand2, AlertTriangle, Loader2, Send } from 'lucide-react'
+import { Archive, Check, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import './annotation-panel.css'
@@ -24,10 +24,19 @@ interface AnnotationPanelProps {
 
 export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPanelProps) {
   const itemsById = useAnnotationStore((s) => s.items)
+  const [showArchived, setShowArchived] = useState(false)
+
   const items = useMemo(() => {
     if (!documentId) return [] as AnnotationItem[]
     return Object.values(itemsById)
-      .filter((it) => it.documentId === documentId && it.status !== 'deleted')
+      .filter((it) => it.documentId === documentId && it.status !== 'deleted' && it.status !== 'archived' && it.status !== 'superseded')
+      .sort((a, b) => a.range.from - b.range.from)
+  }, [itemsById, documentId])
+
+  const archivedItems = useMemo(() => {
+    if (!documentId) return [] as AnnotationItem[]
+    return Object.values(itemsById)
+      .filter((it) => it.documentId === documentId && it.status === 'archived')
       .sort((a, b) => a.range.from - b.range.from)
   }, [itemsById, documentId])
 
@@ -35,24 +44,45 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
     return <div className="ann-empty">未打开文档</div>
   }
 
-  if (items.length === 0) {
-    return (
-      <div className="ann-empty">
-        还没有批注。在编辑器中选中文字后，到右侧"工作流"Tab 选一个 workflow 点"运行"。
-      </div>
-    )
-  }
-
   return (
-    <div className="ann-list">
-      {items.map((item) => (
-        <AnnotationCard
-          key={item.id}
-          item={item}
-          isActive={item.id === activeId}
-          onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
-        />
-      ))}
+    <div className="ann-panel-root">
+      {archivedItems.length > 0 && (
+        <button
+          className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
+          onClick={() => setShowArchived((v) => !v)}
+        >
+          <Archive size={13} />
+          已归档 ({archivedItems.length})
+        </button>
+      )}
+
+      {showArchived ? (
+        <div className="ann-list archived-list">
+          <div className="ann-archive-header">
+            <span>已归档批注</span>
+            <button className="ghost-mini" onClick={() => setShowArchived(false)}>返回</button>
+          </div>
+          {archivedItems.map((item) => (
+            <ArchivedCard key={item.id} item={item} />
+          ))}
+        </div>
+      ) : (
+        <div className="ann-list">
+          {items.length === 0 && (
+            <div className="ann-empty">
+              还没有批注。在编辑器中选中文字后，到右侧"工作流"Tab 选一个 workflow 点"运行"。
+            </div>
+          )}
+          {items.map((item) => (
+            <AnnotationCard
+              key={item.id}
+              item={item}
+              isActive={item.id === activeId}
+              onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -76,7 +106,9 @@ function AnnotationCard({
   const [draft, setDraft] = useState('')
 
   const handleAccept = () => accept(item.id)
-  const handleDelete = () => remove(item.id)
+  const handleDelete = () => {
+    if (confirm('永久删除此批注？此操作不可恢复。')) remove(item.id)
+  }
 
   const handleContinue = async () => {
     const question = draft.trim()
@@ -101,7 +133,7 @@ function AnnotationCard({
     )
   }
 
-  const isResolved = item.status === 'accepted' || item.status === 'resolved'
+  const isResolved = item.status === 'archived'
 
   return (
     <div
@@ -155,12 +187,12 @@ function AnnotationCard({
           className="ann-btn accept"
           onClick={handleAccept}
           disabled={isResolved}
-          title={item.kind === 'suggestion' ? '应用建议并修改文档' : '标记为已处理'}
+          title={item.kind === 'suggestion' ? '采纳建议并归档' : '标记已处理并归档'}
         >
           <Check size={12} />
           {item.kind === 'suggestion' ? '采纳' : '已处理'}
         </button>
-        <button className="ann-btn delete" onClick={handleDelete} title="删除批注">
+        <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
           <Trash2 size={12} />
           删除
         </button>
@@ -196,6 +228,29 @@ function iconFor(item: AnnotationItem) {
   if (item.kind === 'suggestion') return <Wand2 size={14} />
   if (item.kind === 'risk') return <AlertTriangle size={14} />
   return <MessageSquarePlus size={14} />
+}
+
+function ArchivedCard({ item }: { item: AnnotationItem }) {
+  const restore = useAnnotationStore((s) => s.restore)
+  const remove = useAnnotationStore((s) => s.remove)
+  return (
+    <div className="ann-card ann-archived">
+      <div className="ann-head">
+        <span className="ann-icon">{iconFor(item)}</span>
+        <span className="ann-agent">{item.agentName}</span>
+        <span className="ann-kind-chip">{labelFor(item.kind)}</span>
+      </div>
+      <p className="ann-body archived-body">{ellipsis(item.content, 100)}</p>
+      <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
+        <button className="ann-btn accept" onClick={() => restore(item.id)} title="重新打开">
+          <RotateCcw size={12} /> 重开
+        </button>
+        <button className="ann-btn delete" onClick={() => remove(item.id)} title="永久删除">
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function labelFor(kind: AnnotationItem['kind']) {

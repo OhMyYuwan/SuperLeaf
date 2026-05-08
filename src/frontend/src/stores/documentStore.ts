@@ -8,6 +8,7 @@
  */
 
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { Document, DocumentFormat } from '../types/document'
 import { createDocument, parseDocument } from '../services/documentParser'
 
@@ -28,49 +29,56 @@ interface DocumentState {
   seed: (seeds: DocumentSeed[]) => void
 }
 
-export const useDocumentStore = create<DocumentState>((set, get) => ({
-  documents: {},
-  activeDocumentId: null,
+export const useDocumentStore = create<DocumentState>()(
+  persist(
+    (set, get) => ({
+      documents: {},
+      activeDocumentId: null,
 
-  setActive: (id) => {
-    if (get().documents[id]) {
-      set({ activeDocumentId: id })
-    }
-  },
+      setActive: (id) => {
+        if (get().documents[id]) {
+          set({ activeDocumentId: id })
+        }
+      },
 
-  getActive: () => {
-    const { activeDocumentId, documents } = get()
-    return activeDocumentId ? documents[activeDocumentId] ?? null : null
-  },
+      getActive: () => {
+        const { activeDocumentId, documents } = get()
+        return activeDocumentId ? documents[activeDocumentId] ?? null : null
+      },
 
-  updateContent: (id, content) => {
-    set((state) => {
-      const existing = state.documents[id]
-      if (!existing) return state
-      const next: Document = {
-        ...existing,
-        content,
-        structure: parseDocument(content, existing.format),
-        version: existing.version + 1,
-        metadata: { ...existing.metadata, modified: new Date() },
-      }
-      return { documents: { ...state.documents, [id]: next } }
-    })
-  },
+      updateContent: (id, content) => {
+        set((state) => {
+          const existing = state.documents[id]
+          if (!existing) return state
+          const next: Document = {
+            ...existing,
+            content,
+            structure: parseDocument(content, existing.format),
+            version: existing.version + 1,
+            metadata: { ...existing.metadata, modified: new Date() },
+          }
+          return { documents: { ...state.documents, [id]: next } }
+        })
+      },
 
-  seed: (seeds) => {
-    const docs: Record<string, Document> = {}
-    for (const s of seeds) {
-      docs[s.id] = createDocument({
-        id: s.id,
-        name: s.name,
-        content: s.content,
-        format: s.format,
-      })
-    }
-    set({
-      documents: docs,
-      activeDocumentId: seeds[0]?.id ?? null,
-    })
-  },
-}))
+      seed: (seeds) => {
+        const docs: Record<string, Document> = {}
+        for (const s of seeds) {
+          docs[s.id] = createDocument({
+            id: s.id,
+            name: s.name,
+            content: s.content,
+            format: s.format,
+          })
+        }
+        set({
+          documents: docs,
+          activeDocumentId: seeds[0]?.id ?? null,
+        })
+      },
+    }),
+    {
+      name: 'yuwan-documents-v1',
+    },
+  ),
+)

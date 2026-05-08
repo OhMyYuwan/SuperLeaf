@@ -16,10 +16,10 @@
  */
 
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
 import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
-import { useDocumentStore } from './documentStore'
 import { uuid } from '../lib/uuid'
 
 export type CardKind = 'annotation' | 'suggestion' | 'risk'
@@ -83,11 +83,13 @@ interface AnnotationState {
   archivedForDocument: (documentId: string) => AnnotationItem[]
 }
 
-export const useAnnotationStore = create<AnnotationState>((set, get) => ({
-  items: {},
-  byRun: {},
+export const useAnnotationStore = create<AnnotationState>()(
+  persist(
+    (set, get) => ({
+      items: {},
+      byRun: {},
 
-  ingestRun: ({ runId, workflowId, documentId, agentName, conversationId, parsed }) => {
+      ingestRun: ({ runId, workflowId, documentId, agentName, conversationId, parsed }) => {
     const newItems: AnnotationItem[] = []
     const baseAgent = agentName || workflowId
 
@@ -114,17 +116,7 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
   accept: (id) => {
     const item = get().items[id]
     if (!item || item.status !== 'pending') return
-
-    if (item.kind === 'suggestion' && item.proposed !== undefined) {
-      const docs = useDocumentStore.getState()
-      const doc = docs.documents[item.documentId]
-      if (doc) {
-        const next = doc.content.slice(0, item.range.from) + item.proposed + doc.content.slice(item.range.to)
-        docs.updateContent(item.documentId, next)
-      }
-    }
-
-    // 采纳 / 已处理 = 归档（从主面板隐藏，可在归档列表查看和重开）
+    // "采纳 / 已处理" = 归档。不自动写回文档；用户手动去编辑器改（git-style）。
     set((state) => ({
       items: {
         ...state.items,
@@ -221,7 +213,17 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
     Object.values(get().items)
       .filter((it) => it.documentId === documentId && it.status === 'archived')
       .sort((a, b) => a.range.from - b.range.from),
-}))
+    }),
+    {
+      name: 'yuwan-annotations-v1',
+      // Date fields need custom serialization for localStorage
+      partialize: (state) => ({
+        items: state.items,
+        byRun: state.byRun,
+      }),
+    },
+  ),
+)
 
 // --- factories -------------------------------------------------------------
 

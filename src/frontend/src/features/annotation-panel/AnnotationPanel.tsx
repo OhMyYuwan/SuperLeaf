@@ -25,6 +25,7 @@ interface AnnotationPanelProps {
 export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPanelProps) {
   const itemsById = useAnnotationStore((s) => s.items)
   const [showArchived, setShowArchived] = useState(false)
+  const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
 
   const items = useMemo(() => {
     if (!documentId) return [] as AnnotationItem[]
@@ -32,6 +33,18 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
       .filter((it) => it.documentId === documentId && it.status !== 'deleted' && it.status !== 'archived' && it.status !== 'superseded')
       .sort((a, b) => a.range.from - b.range.from)
   }, [itemsById, documentId])
+
+  // Group by exact range match
+  const clusters = useMemo(() => {
+    const groups = new Map<string, AnnotationItem[]>()
+    for (const item of items) {
+      const key = `${item.range.from}:${item.range.to}`
+      const existing = groups.get(key) ?? []
+      existing.push(item)
+      groups.set(key, existing)
+    }
+    return Array.from(groups.values())
+  }, [items])
 
   const archivedItems = useMemo(() => {
     if (!documentId) return [] as AnnotationItem[]
@@ -187,10 +200,10 @@ function AnnotationCard({
           className="ann-btn accept"
           onClick={handleAccept}
           disabled={isResolved}
-          title={item.kind === 'suggestion' ? '采纳建议并归档' : '标记已处理并归档'}
+          title="标记已处理并归档（不会自动修改文档，请在编辑器里手动改）"
         >
           <Check size={12} />
-          {item.kind === 'suggestion' ? '采纳' : '已处理'}
+          已处理
         </button>
         <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
           <Trash2 size={12} />

@@ -64,6 +64,7 @@ function App() {
   // UI-only state -----------------------------------------------------------
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
+  const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; seq: number } | null>(null)
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
@@ -179,7 +180,11 @@ function App() {
                 onUploadFile={uploadFile}
                 onRenameProject={renameProject}
               />
-              <OutlineList sections={activeDoc ? activeDoc.structure.sections : null} />
+              <OutlineList
+                sections={activeDoc ? activeDoc.structure.sections : null}
+                docId={activeDocumentId}
+                onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
+              />
             </div>
           </Panel>
 
@@ -193,6 +198,7 @@ function App() {
                   doc={activeDoc}
                   decorations={decorationSpecs}
                   activeAnnotationId={activeAnnotationId}
+                  scrollTo={editorScrollTo}
                   onChange={handleEditorChange}
                   onSelectionChange={handleSelectionChange}
                   onDocChange={handleDocChange}

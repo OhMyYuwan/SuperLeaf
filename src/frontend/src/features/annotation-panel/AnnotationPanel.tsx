@@ -34,8 +34,10 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
       .sort((a, b) => a.range.from - b.range.from)
   }, [itemsById, documentId])
 
-  // Group by exact range match
-  const clusters = useMemo(() => {
+  // Map { "from:to" → items[] }. Each card is still rendered as its own
+  // top-level entry; the map only exists so we can show the "compare siblings"
+  // button when a range has 2+ annotations from different runs.
+  const rangeGroups = useMemo(() => {
     const groups = new Map<string, AnnotationItem[]>()
     for (const item of items) {
       const key = `${item.range.from}:${item.range.to}`
@@ -43,7 +45,7 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
       existing.push(item)
       groups.set(key, existing)
     }
-    return Array.from(groups.values())
+    return groups
   }, [items])
 
   const archivedItems = useMemo(() => {
@@ -81,29 +83,24 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
         </div>
       ) : (
         <div className="ann-list">
-          {clusters.length === 0 && (
+          {items.length === 0 && (
             <div className="ann-empty">
               还没有批注。在编辑器中选中文字后，到右侧"工作流"Tab 选一个 workflow 点"运行"。
             </div>
           )}
-          {clusters.map((cluster) =>
-            cluster.length === 1 ? (
+          {items.map((item) => {
+            const siblings = rangeGroups.get(`${item.range.from}:${item.range.to}`) ?? [item]
+            return (
               <AnnotationCard
-                key={cluster[0].id}
-                item={cluster[0]}
-                isActive={cluster[0].id === activeId}
-                onFocus={() => onFocus?.(cluster[0].id === activeId ? null : cluster[0].id)}
-              />
-            ) : (
-              <ClusterCard
-                key={`cluster-${cluster[0].range.from}-${cluster[0].range.to}`}
-                items={cluster}
-                activeId={activeId}
-                onFocus={onFocus}
-                onCompare={() => setCompareCluster(cluster)}
+                key={item.id}
+                item={item}
+                siblings={siblings}
+                isActive={item.id === activeId}
+                onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
+                onCompare={() => setCompareCluster(siblings)}
               />
             )
-          )}
+          })}
         </div>
       )}
       {compareCluster && (
@@ -118,12 +115,16 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
 
 function AnnotationCard({
   item,
+  siblings,
   isActive,
   onFocus,
+  onCompare,
 }: {
   item: AnnotationItem
+  siblings: AnnotationItem[]
   isActive: boolean
   onFocus: () => void
+  onCompare: () => void
 }) {
   const accept = useAnnotationStore((s) => s.accept)
   const remove = useAnnotationStore((s) => s.remove)
@@ -234,6 +235,16 @@ function AnnotationCard({
           <MessageSquarePlus size={12} />
           追问
         </button>
+        {siblings.length > 1 && (
+          <button
+            className="ann-btn compare"
+            onClick={onCompare}
+            title={`${siblings.length - 1} 个其他 Agent 也针对这段文字给出了建议，并排对比`}
+          >
+            <Columns3 size={12} />
+            对比 {siblings.length}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -290,58 +301,6 @@ function labelFor(kind: AnnotationItem['kind']) {
 
 function ellipsis(text: string, max: number) {
   return text.length <= max ? text : `${text.slice(0, max)}…`
-}
-
-function ClusterCard({
-  items,
-  activeId,
-  onFocus,
-  onCompare,
-}: {
-  items: AnnotationItem[]
-  activeId?: string | null
-  onFocus?: (id: string | null) => void
-  onCompare: () => void
-}) {
-  const first = items[0]
-  const others = items.length - 1
-  return (
-    <div className={`ann-card cluster-card ann-${first.kind} sev-${first.severity}`}>
-      <div className="ann-head">
-        <span className="ann-icon">{iconFor(first)}</span>
-        <span className="ann-agent">{first.agentName}</span>
-        <span className="cluster-chip">
-          +{others} 个 Agent 也看过这段
-        </span>
-      </div>
-
-      {first.targetText && <blockquote className="ann-quote">{ellipsis(first.targetText, 120)}</blockquote>}
-      {first.content && <p className="ann-body">{ellipsis(first.content, 180)}</p>}
-
-      <div className="cluster-agents-preview">
-        {items.slice(1, 5).map((it) => (
-          <span key={it.id} className="cluster-agent-chip" title={it.agentName}>
-            {it.agentName}
-          </span>
-        ))}
-        {items.length > 5 && <span className="cluster-agent-chip more">+{items.length - 5}</span>}
-      </div>
-
-      <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
-        <button className="ann-btn compare" onClick={onCompare} title="并排对比所有 Agent 的建议">
-          <Columns3 size={12} />
-          并排对比 ({items.length})
-        </button>
-        <button
-          className="ann-btn accept"
-          onClick={() => onFocus?.(first.id === activeId ? null : first.id)}
-          title="展开单张卡片操作"
-        >
-          展开
-        </button>
-      </div>
-    </div>
-  )
 }
 
 function ComparisonModal({

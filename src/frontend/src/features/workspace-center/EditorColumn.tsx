@@ -16,6 +16,7 @@ interface EditorColumnProps {
   doc: Document | null
   decorations: DecorationSpec[]
   activeAnnotationId: string | null
+  scrollTo: { pos: number; seq: number } | null
   onChange: (next: string) => void
   onSelectionChange: (info: { from: number; to: number; text: string }) => void
   onDocChange: (changes: DocChangeInfo[]) => void
@@ -26,6 +27,7 @@ export function EditorColumn({
   doc,
   decorations,
   activeAnnotationId,
+  scrollTo,
   onChange,
   onSelectionChange,
   onDocChange,
@@ -48,6 +50,7 @@ export function EditorColumn({
             decorations={decorations}
             activeDecorationId={activeAnnotationId}
             onDecorationClick={onDecorationClick}
+            scrollTo={scrollTo}
           />
         ) : (
           <div className="editor-empty">请选择一个文件</div>

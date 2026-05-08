@@ -47,6 +47,7 @@ export interface LatexEditorProps {
   decorations?: DecorationSpec[]
   activeDecorationId?: string | null
   onDecorationClick?: (id: string) => void
+  scrollTo?: { pos: number; seq: number } | null
   className?: string
 }
 
@@ -59,6 +60,7 @@ export function LatexEditor({
   decorations,
   activeDecorationId,
   onDecorationClick,
+  scrollTo,
   className,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -171,6 +173,18 @@ export function LatexEditor({
       effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
     })
   }, [activeDecorationId, decorations])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || scrollTo == null) return
+    const docLen = view.state.doc.length
+    const pos = Math.max(0, Math.min(scrollTo.pos, docLen))
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+    })
+    view.focus()
+  }, [scrollTo])
 
   return <div ref={containerRef} className={className} />
 }

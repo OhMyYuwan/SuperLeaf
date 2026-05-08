@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import {
   BookOpen,
@@ -7,7 +7,6 @@ import {
   Folder,
   FolderOpen,
   MessageSquare,
-  Plus,
   Save,
   Settings2,
   SplitSquareVertical,
@@ -15,101 +14,82 @@ import {
 } from 'lucide-react'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
-import { LatexEditor, type EditorFormat } from './features/latex-editor'
+import { LatexEditor, type EditorFormat, type DecorationSpec } from './features/latex-editor'
+import { SettingsDialog } from './features/settings'
+import { AnnotationPanel } from './features/annotation-panel'
+import { useDocumentStore } from './stores/documentStore'
+import { useEditorStore } from './stores/editorStore'
+import { useSettingsStore } from './stores/settingsStore'
+import { useWorkflowStore } from './stores/workflowStore'
+import { useAnnotationStore } from './stores/annotationStore'
+import { seedDocuments } from './stores/seedData'
 import './App.css'
 
-const fileTree = [
-  { id: 'root', name: 'project', type: 'folder', level: 0, open: true },
-  { id: 'paper', name: 'main.tex', type: 'file', level: 1 },
-  { id: 'intro', name: 'introduction.tex', type: 'file', level: 1 },
-  { id: 'method', name: 'method.tex', type: 'file', level: 1 },
-  { id: 'notes', name: 'review_notes.txt', type: 'file', level: 1 },
-]
-
-const outline = [
-  '摘要',
-  '1. 引言',
-  '2. 系统架构',
-  '3. Agent 设计',
-  '4. Workflow 设计',
-  '5. 风险与计划',
-]
-
-const initialAgents = [
-  { id: 'a1', name: 'Reviewer', role: '学术评审', color: '#2563eb' },
-  { id: 'a2', name: 'Polisher', role: '语言润色', color: '#7c3aed' },
-  { id: 'a3', name: 'Synthesizer', role: '结果汇总', color: '#059669' },
-]
-
-const initialWorkflow = [
-  { id: 'n1', type: 'input', label: '输入文档块' },
-  { id: 'n2', type: 'agent', label: '学术评审 Agent' },
-  { id: 'n3', type: 'agent', label: '语言润色 Agent' },
-  { id: 'n4', type: 'merge', label: '结果汇总' },
-  { id: 'n5', type: 'output', label: '批注输出' },
-]
-
 function App() {
-  const [selectedFile, setSelectedFile] = useState('paper')
+  const documents = useDocumentStore((s) => s.documents)
+  const activeDocumentId = useDocumentStore((s) => s.activeDocumentId)
+  const setActive = useDocumentStore((s) => s.setActive)
+  const updateContent = useDocumentStore((s) => s.updateContent)
+  const seed = useDocumentStore((s) => s.seed)
+
+  const updateSelection = useEditorStore((s) => s.updateSelection)
+  const activeSelection = useEditorStore((s) =>
+    activeDocumentId ? s.states[activeDocumentId]?.selection ?? null : null,
+  )
+
+  const loadProviders = useSettingsStore((s) => s.load)
+  const activeProvider = useSettingsStore((s) => s.providers.find((p) => p.is_active) ?? null)
+  const backendReachable = useSettingsStore((s) => s.backendReachable)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  const workflows = useWorkflowStore((s) => s.workflows)
+  const workflowsLoaded = useWorkflowStore((s) => s.loaded)
+  const workflowError = useWorkflowStore((s) => s.error)
+  const loadWorkflows = useWorkflowStore((s) => s.load)
+  const runningMap = useWorkflowStore((s) => s.running)
+  const eventsMap = useWorkflowStore((s) => s.lastRunEvents)
+  const runWorkflow = useWorkflowStore((s) => s.run)
+
+  useEffect(() => {
+    if (Object.keys(useDocumentStore.getState().documents).length === 0) {
+      seed(seedDocuments)
+    }
+    loadProviders()
+    loadWorkflows()
+  }, [seed, loadProviders, loadWorkflows])
+
+  const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
+  const fileList = useMemo(() => Object.values(documents), [documents])
+
   const [selectedTab, setSelectedTab] = useState('discussion')
-  const [agents, setAgents] = useState(initialAgents)
-  const [workflow, setWorkflow] = useState(initialWorkflow)
-  const [docFormat, setDocFormat] = useState<EditorFormat>('tex')
-  const [editorValue, setEditorValue] = useState(`\\documentclass{article}
-\\usepackage{ctex}
-\\begin{document}
-\\section{引言}
-这是一个以 LaTeX 为核心的论文写作面板。
-\\subsection{目标}
-支持写作、review 和润色。
-\\end{document}`)
   const [messages, setMessages] = useState([
     { id: 1, author: 'System', content: 'Workflow 已加载，等待用户选择文档块。' },
     { id: 2, author: 'Reviewer', content: '当前章节逻辑完整，但需要更清晰的分层。' },
   ])
   const [newMessage, setNewMessage] = useState('')
-  const annotations = [
-    {
-      id: 1,
-      agent: 'Reviewer',
-      text: '建议补充本节与上一节的衔接句。',
-      quote: '这是一个以 LaTeX 为核心的论文写作面板。',
-      time: '09:42',
-    },
-    {
-      id: 2,
-      agent: 'Polisher',
-      text: '“review 和润色”建议改为“评审与润色”。',
-      quote: '支持写作、review 和润色。',
-      time: '09:43',
-    },
-  ]
+  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
+  const [instruction, setInstruction] = useState('')
 
-  const selectedFileName = useMemo(
-    () => fileTree.find((file) => file.id === selectedFile)?.name ?? 'main.tex',
-    [selectedFile],
+  const annotationItemsById = useAnnotationStore((s) => s.items)
+  const annotationItems = useMemo(() => {
+    if (!activeDocumentId) return []
+    return Object.values(annotationItemsById)
+      .filter((it) => it.documentId === activeDocumentId && it.status !== 'deleted')
+      .sort((a, b) => a.range.from - b.range.from)
+  }, [annotationItemsById, activeDocumentId])
+  const decorationSpecs: DecorationSpec[] = useMemo(
+    () =>
+      annotationItems
+        .filter((it) => it.status !== 'accepted' && it.status !== 'deleted')
+        .map((it) => ({
+          id: it.id,
+          from: it.range.from,
+          to: it.range.to,
+          kind: it.kind,
+          severity: it.severity,
+        })),
+    [annotationItems],
   )
-
-  const addAgent = () => {
-    const next = agents.length + 1
-    setAgents([
-      ...agents,
-      {
-        id: `a${next}`,
-        name: `Agent ${next}`,
-        role: '自定义角色',
-        color: ['#2563eb', '#7c3aed', '#059669', '#ea580c'][next % 4],
-      },
-    ])
-  }
-
-  const addWorkflowNode = (type: string) => {
-    const next = workflow.length + 1
-    setWorkflow([
-      ...workflow,
-      { id: `n${next}`, type, label: `${type.toUpperCase()} Node ${next}` },
-    ])
-  }
 
   const sendMessage = () => {
     if (!newMessage.trim()) return
@@ -120,6 +100,55 @@ function App() {
     setNewMessage('')
   }
 
+  const handleRunWorkflow = (workflowId: string, instruction: string) => {
+    if (!activeDocumentId) {
+      alert('请先选择一个文件')
+      return
+    }
+    if (!activeSelection) {
+      alert('请先在编辑器中选中一段文字，再运行。')
+      return
+    }
+    const selectionText = activeSelection.text
+    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    runWorkflow(workflowId, {
+      document_id: activeDocumentId,
+      range_start: activeSelection.from,
+      range_end: activeSelection.to,
+      inputs: {
+        target_text: selectionText,
+        section_title: activeSelection.context.sectionTitle ?? '',
+        before: activeSelection.context.before,
+        after: activeSelection.context.after,
+        instruction: userPrompt,
+      },
+      // chat-mode needs `query`; workflow-mode ignores it. We put the user's
+      // instruction here with the selected text appended so a plain Dify LLM
+      // node has everything it needs in a single prompt.
+      query: `${userPrompt}\n\n---\n${selectionText}`,
+    })
+  }
+
+  const handleEditorChange = (next: string) => {
+    if (!activeDocumentId) return
+    updateContent(activeDocumentId, next)
+  }
+
+  const handleSelectionChange = (info: { from: number; to: number; text: string }) => {
+    if (!activeDocumentId) return
+    const sel = updateSelection(activeDocumentId, { from: info.from, to: info.to })
+    if (sel) {
+      // W1 demo acceptance: selection context is derived and logged.
+      console.log('[selection]', {
+        text: sel.text,
+        section: sel.context.sectionTitle,
+        before: sel.context.before.slice(-60),
+        after: sel.context.after.slice(0, 60),
+        paragraphIds: sel.paragraphIds,
+      })
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -128,10 +157,20 @@ function App() {
           <div className="subtitle">LaTeX-first 本地科研写作工作台</div>
         </div>
         <div className="topbar-actions">
+          <ProviderBadge
+            reachable={backendReachable}
+            providerName={activeProvider?.name ?? null}
+            providerStatus={activeProvider?.status ?? null}
+            onOpen={() => setSettingsOpen(true)}
+          />
           <button className="ghost-btn"><Save size={16} /> 保存</button>
-          <button className="ghost-btn"><Settings2 size={16} /> 设置</button>
+          <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>
+            <Settings2 size={16} /> 设置
+          </button>
         </div>
       </header>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <main className="workspace">
         <PanelGroup orientation="horizontal" style={{ height: '100%' }}>
@@ -140,18 +179,18 @@ function App() {
               <div className="panel-section">
                 <div className="section-title"><Folder size={16} /> 文件管理</div>
                 <div className="file-list">
-                  {fileTree.map((file) => (
+                  <button className="file-item">
+                    <FolderOpen size={16} />
+                    <span>project</span>
+                  </button>
+                  {fileList.map((file) => (
                     <button
                       key={file.id}
-                      className={`file-item ${selectedFile === file.id ? 'active' : ''}`}
-                      onClick={() => setSelectedFile(file.id)}
+                      className={`file-item ${activeDocumentId === file.id ? 'active' : ''}`}
+                      onClick={() => setActive(file.id)}
                     >
-                      {file.type === 'folder' ? (
-                        file.open ? <FolderOpen size={16} /> : <Folder size={16} />
-                      ) : (
-                        <FileText size={16} />
-                      )}
-                      <span style={{ marginLeft: file.level * 12 }}>{file.name}</span>
+                      <FileText size={16} />
+                      <span style={{ marginLeft: 12 }}>{file.metadata.title}</span>
                     </button>
                   ))}
                 </div>
@@ -160,10 +199,18 @@ function App() {
               <div className="panel-section">
                 <div className="section-title"><BookOpen size={16} /> 文档大纲</div>
                 <div className="outline-list">
-                  {outline.map((item, index) => (
-                    <button key={item} className="outline-item">
+                  {activeDoc && activeDoc.structure.sections.length === 0 && (
+                    <div className="outline-empty">此文档无章节标题</div>
+                  )}
+                  {activeDoc?.structure.sections.map((sec) => (
+                    <button
+                      key={sec.id}
+                      className="outline-item"
+                      style={{ paddingLeft: 8 + sec.level * 14 }}
+                      title={sec.title}
+                    >
                       <ChevronRight size={14} />
-                      <span>{index + 1}. {item}</span>
+                      <span>{sec.title}</span>
                     </button>
                   ))}
                 </div>
@@ -177,13 +224,17 @@ function App() {
             <div className="panel editor-panel">
               <div className="editor-toolbar">
                 <div className="toolbar-left">
-                  <div className="doc-name">{selectedFileName}</div>
-                  <span className="badge">{docFormat.toUpperCase()}</span>
+                  <div className="doc-name">{activeDoc?.metadata.title ?? '未打开文件'}</div>
+                  <span className="badge">{(activeDoc?.format ?? '').toUpperCase()}</span>
                 </div>
                 <div className="toolbar-right">
-                  <button className={`format-btn ${docFormat === 'tex' ? 'active' : ''}`} onClick={() => setDocFormat('tex')}>LaTeX</button>
-                  <button className={`format-btn ${docFormat === 'md' ? 'active' : ''}`} onClick={() => setDocFormat('md')}>Markdown</button>
-                  <button className={`format-btn ${docFormat === 'txt' ? 'active' : ''}`} onClick={() => setDocFormat('txt')}>TXT</button>
+                  {activeSelection && (
+                    <span className="selection-info">
+                      选中 {activeSelection.context.selectionLength} 字
+                      {activeSelection.context.sectionTitle &&
+                        ` · ${activeSelection.context.sectionTitle}`}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -191,11 +242,22 @@ function App() {
                 <div className="editor-column">
                   <div className="column-header"><SplitSquareVertical size={16} /> 编辑器</div>
                   <div className="latex-editor-host">
-                    <LatexEditor
-                      value={editorValue}
-                      format={docFormat}
-                      onChange={setEditorValue}
-                    />
+                    {activeDoc ? (
+                      <LatexEditor
+                        key={activeDoc.id}
+                        value={activeDoc.content}
+                        format={activeDoc.format as EditorFormat}
+                        onChange={handleEditorChange}
+                        onSelectionChange={handleSelectionChange}
+                        decorations={decorationSpecs}
+                        activeDecorationId={activeAnnotationId}
+                        onDecorationClick={(id) =>
+                          setActiveAnnotationId((prev) => (prev === id ? null : id))
+                        }
+                      />
+                    ) : (
+                      <div className="editor-empty">请选择一个文件</div>
+                    )}
                   </div>
                 </div>
 
@@ -205,9 +267,9 @@ function App() {
                     <ScrollArea.Root className="scroll-root">
                       <ScrollArea.Viewport className="scroll-viewport">
                         <div className="preview-paper">
-                          <h1>论文预览</h1>
-                          <p>当前格式：{docFormat.toUpperCase()}</p>
-                          <pre>{editorValue}</pre>
+                          <h1>文档预览</h1>
+                          <p>格式：{(activeDoc?.format ?? '').toUpperCase()}（W10 起接入真实渲染器）</p>
+                          <pre>{activeDoc?.content ?? ''}</pre>
                         </div>
                       </ScrollArea.Viewport>
                       <ScrollArea.Scrollbar className="scrollbar" orientation="vertical">
@@ -219,18 +281,11 @@ function App() {
 
                 <div className="editor-column note-column">
                   <div className="column-header"><MessageSquare size={16} /> 批注</div>
-                  <div className="annotation-list">
-                    {annotations.map((note) => (
-                      <div key={note.id} className="annotation-card">
-                        <div className="annotation-head">
-                          <strong>{note.agent}</strong>
-                          <span>{note.time}</span>
-                        </div>
-                        <p>{note.text}</p>
-                        <blockquote>{note.quote}</blockquote>
-                      </div>
-                    ))}
-                  </div>
+                  <AnnotationPanel
+                    documentId={activeDocumentId}
+                    activeId={activeAnnotationId}
+                    onFocus={setActiveAnnotationId}
+                  />
                 </div>
               </div>
             </div>
@@ -268,16 +323,29 @@ function App() {
 
                 <Tabs.Content value="agents" className="tab-content">
                   <div className="tab-header-row">
-                    <span>当前团队：{agents.length} 个 Agent</span>
-                    <button onClick={addAgent}><Plus size={14} /> 添加</button>
+                    <span>Dify Agent / Workflow：{workflows.length} 个已同步</span>
+                    <button className="small-btn" onClick={() => loadWorkflows()}>刷新</button>
                   </div>
+                  {!activeProvider && (
+                    <div className="tab-empty">
+                      还未配置或激活 provider。先去"设置"里添加 Dify provider，并点击"测连"完成首次同步。
+                    </div>
+                  )}
+                  {activeProvider && workflowsLoaded && workflows.length === 0 && (
+                    <div className="tab-empty">
+                      没有同步到任何 app。确保已在 Dify 里创建应用并生成 API key，然后回到"设置"点击"测连"。
+                    </div>
+                  )}
+                  {workflowError && <div className="tab-error">{workflowError}</div>}
                   <div className="agent-grid">
-                    {agents.map((agent) => (
-                      <div key={agent.id} className="agent-card">
-                        <div className="agent-avatar" style={{ background: agent.color }}>{agent.name.slice(0, 1)}</div>
+                    {workflows.map((wf) => (
+                      <div key={wf.id} className="agent-card" title={wf.description || wf.kind}>
+                        <div className="agent-avatar" style={{ background: agentColor(wf.kind) }}>
+                          {wf.name.slice(0, 1).toUpperCase()}
+                        </div>
                         <div className="agent-info">
-                          <strong>{agent.name}</strong>
-                          <span>{agent.role}</span>
+                          <strong>{wf.name}</strong>
+                          <span>{wf.kind}{wf.description ? ` · ${wf.description}` : ''}</span>
                         </div>
                       </div>
                     ))}
@@ -286,24 +354,68 @@ function App() {
 
                 <Tabs.Content value="workflow" className="tab-content">
                   <div className="tab-header-row">
-                    <span>Workflow：论文评审模板</span>
-                    <button className="small-btn">保存</button>
+                    <span>选中文字、写下指令，再选择 workflow 运行</span>
                   </div>
-                  <div className="workflow-palette">
-                    <button onClick={() => addWorkflowNode('input')}>输入节点</button>
-                    <button onClick={() => addWorkflowNode('agent')}>Agent 节点</button>
-                    <button onClick={() => addWorkflowNode('condition')}>条件节点</button>
-                    <button onClick={() => addWorkflowNode('merge')}>合并节点</button>
-                    <button onClick={() => addWorkflowNode('output')}>输出节点</button>
-                  </div>
-                  <div className="workflow-canvas">
-                    {workflow.map((node, index) => (
-                      <div key={node.id} className="workflow-node">
-                        <div className="workflow-node-type">{node.type}</div>
-                        <div className="workflow-node-label">{node.label}</div>
-                        {index < workflow.length - 1 && <div className="workflow-arrow">↓</div>}
+                  {!activeSelection && (
+                    <div className="tab-empty">先在编辑器里选中一段文字。</div>
+                  )}
+                  {activeSelection && (
+                    <div className="run-instruction-block">
+                      <label className="run-instruction-label">
+                        给 Agent 的指令（可选）
+                      </label>
+                      <textarea
+                        className="run-instruction-input"
+                        value={instruction}
+                        onChange={(e) => setInstruction(e.target.value)}
+                        placeholder="例如：请润色 / 压缩到 50 字 / 检查逻辑 / 调整段落结构…"
+                        rows={2}
+                      />
+                      <div className="run-instruction-presets">
+                        {presetInstructions.map((p) => (
+                          <button
+                            key={p}
+                            className="preset-chip"
+                            type="button"
+                            onClick={() => setInstruction(p)}
+                          >
+                            {p}
+                          </button>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+                  )}
+                  <div className="workflow-runs">
+                    {workflows.map((wf) => {
+                      const running = !!runningMap[wf.id]
+                      const events = eventsMap[wf.id] ?? []
+                      return (
+                        <div key={wf.id} className="workflow-run-card">
+                          <div className="workflow-run-head">
+                            <div>
+                              <strong>{wf.name}</strong>
+                              <span className="workflow-run-kind"> · {wf.kind}</span>
+                            </div>
+                            <button
+                              className="primary-btn run-btn"
+                              onClick={() => handleRunWorkflow(wf.id, instruction)}
+                              disabled={running}
+                            >
+                              {running ? '运行中…' : '▶ 运行'}
+                            </button>
+                          </div>
+                          {events.length > 0 && (
+                            <ul className="run-events">
+                              {events.slice(-6).map((evt, i) => (
+                                <li key={i} className={`run-event ${evt.kind.replaceAll('.', '-')}`}>
+                                  <span className="event-kind">{eventLabel(evt)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </Tabs.Content>
               </Tabs.Root>
@@ -316,3 +428,71 @@ function App() {
 }
 
 export default App
+
+function ProviderBadge({
+  reachable,
+  providerName,
+  providerStatus,
+  onOpen,
+}: {
+  reachable: boolean | null
+  providerName: string | null
+  providerStatus: string | null
+  onOpen: () => void
+}) {
+  let label: string
+  let tone: 'idle' | 'ok' | 'warn' | 'err'
+  if (reachable === false) {
+    label = '后端离线'
+    tone = 'err'
+  } else if (!providerName) {
+    label = '未配置 Provider'
+    tone = 'warn'
+  } else if (providerStatus === 'error') {
+    label = `${providerName} · 连接失败`
+    tone = 'err'
+  } else if (providerStatus === 'ok') {
+    label = providerName
+    tone = 'ok'
+  } else {
+    label = `${providerName} · 未验证`
+    tone = 'idle'
+  }
+  return (
+    <button className={`provider-badge ${tone}`} onClick={onOpen} title="打开设置">
+      <span className="dot" />
+      {label}
+    </button>
+  )
+}
+
+function agentColor(kind: string): string {
+  if (kind.includes('chat')) return '#7c3aed'
+  if (kind.includes('agent')) return '#059669'
+  return '#2563eb'
+}
+
+interface EventLike {
+  kind: string
+  payload: unknown
+}
+
+function eventLabel(evt: EventLike): string {
+  if (evt.kind === 'ylw.run.started') return '已提交到 Dify'
+  if (evt.kind === 'ylw.run.finished') return '完成 ✓'
+  if (evt.kind === 'ylw.run.failed') {
+    const p = evt.payload as { error?: string } | undefined
+    return `失败: ${p?.error ?? ''}`
+  }
+  const p = evt.payload as { event?: string } | undefined
+  return p?.event ?? 'dify 事件'
+}
+
+const presetInstructions = [
+  '润色这段文字',
+  '压缩到 50 字以内',
+  '检查论证逻辑',
+  '调整段落结构',
+  '改写得更学术',
+  '检查引用与事实',
+]

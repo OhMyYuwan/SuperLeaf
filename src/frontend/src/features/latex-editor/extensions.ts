@@ -44,7 +44,7 @@ export function languageFor(format: EditorFormat): Extension {
   }
 }
 
-export function baseExtensions(format: EditorFormat): Extension[] {
+export function baseExtensions(): Extension[] {
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -71,6 +71,5 @@ export function baseExtensions(format: EditorFormat): Extension[] {
       ...lintKeymap,
     ]),
     overleafDark(),
-    languageFor(format),
   ]
 }

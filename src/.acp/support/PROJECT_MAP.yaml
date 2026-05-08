@@ -1,12 +1,32 @@
+# PROJECT MAP for YuwanLabWriter
+#
+# Structural map of the project rooted at src/. Update whenever a module is
+# added or removed; this file is the agent's structural index, not a wishlist.
+# Refreshed 2026-05-08 for REQ-0013 (Dify pivot + backend skeleton).
+
 project:
   name: YuwanLabWriter
   root: src
   source_of_truth: src
+  branch_strategy:
+    personal: YuwanZ
+    team: develop
+    public: main
+  privacy_rule: src/.acp/kernel/ and src/docs/ MUST stay out of git.
 
 modules:
+  # ── Governance layer ─────────────────────────────────────────────
+  - id: acp-version
+    path: .acp
+    kind: governance
+    description: ACP profile and version declaration.
+    entry_files:
+      - .acp/version.yaml
+
   - id: acp-kernel
     path: .acp/kernel
     kind: governance
+    description: Append-only Request / Plan / Change lineage.
     entry_files:
       - .acp/kernel/requests/
       - .acp/kernel/plans/
@@ -15,6 +35,7 @@ modules:
   - id: acp-support
     path: .acp/support
     kind: guidance
+    description: Routing, loading, and policy documents read at bootstrap.
     entry_files:
       - .acp/support/AGENT.md
       - .acp/support/PROJECT_MAP.yaml
@@ -24,12 +45,262 @@ modules:
   - id: acp-capability
     path: .acp/capability
     kind: semantic
+    description: Capability + slice definitions (semantic surface).
     entry_files:
       - .acp/capability/capabilities.yaml
 
+  # ── Planning docs ────────────────────────────────────────────────
+  - id: docs-planning
+    path: docs
+    kind: documentation
+    description: Product / architecture / milestone planning documents. Git-ignored.
+    entry_files:
+      - docs/v1_executive_plan.tex
+      - docs/v2_executive_plan.md
+      - docs/v2_executive_plan.tex
+      - docs/v2_1_amendment_dify.md
+      - docs/architecture_data_flow.md
+      - docs/doubao_v1_optimized.tex
+      - docs/doubao.tex
+      - docs/figma.md
+
+  # ── Backend (FastAPI proxy + SQLite persistence) ─────────────────
+  - id: backend
+    path: backend
+    kind: service
+    description: FastAPI proxy to Dify + local SQLite persistence. uv-managed, Python 3.11+.
+    entry_files:
+      - backend/pyproject.toml
+      - backend/app/main.py
+
+  - id: backend-app-core
+    path: backend/app
+    kind: service-core
+    description: App entrypoint, settings, database, encrypted secrets vault.
+    entry_files:
+      - backend/app/__init__.py
+      - backend/app/main.py
+      - backend/app/settings.py
+      - backend/app/database.py
+      - backend/app/secrets_vault.py
+      - backend/app/models.py
+      - backend/app/schemas.py
+
+  - id: backend-api
+    path: backend/app/api
+    kind: api-routes
+    description: HTTP routes — health, providers CRUD + probe + activate.
+    entry_files:
+      - backend/app/api/__init__.py
+      - backend/app/api/health.py
+      - backend/app/api/providers.py
+
+  - id: backend-services
+    path: backend/app/services
+    kind: domain-services
+    description: Dify API client (probe / run blocking / run streaming) and provider registry invariants.
+    entry_files:
+      - backend/app/services/__init__.py
+      - backend/app/services/dify_client.py
+      - backend/app/services/provider_service.py
+
+  # ── Frontend application ─────────────────────────────────────────
+  - id: frontend
+    path: frontend
+    kind: application
+    description: Vite + React 19 + TypeScript writing IDE. Deployed locally via start.sh.
+    entry_files:
+      - frontend/package.json
+      - frontend/index.html
+      - frontend/vite.config.ts
+      - frontend/tsconfig.json
+
+  - id: frontend-app-shell
+    path: frontend/src
+    kind: application-shell
+    description: React entry, App.tsx workspace shell with ProviderBadge + SettingsDialog wiring.
+    entry_files:
+      - frontend/src/main.tsx
+      - frontend/src/App.tsx
+      - frontend/src/App.css
+      - frontend/src/index.css
+
+  - id: frontend-types
+    path: frontend/src/types
+    kind: domain-model
+    description: TypeScript domain contracts for all 8 layers (Document → Editor → Agent → Workflow → Collaboration → History → UI → Actions).
+    entry_files:
+      - frontend/src/types/document.ts
+      - frontend/src/types/editor.ts
+      - frontend/src/types/agent.ts
+      - frontend/src/types/workflow.ts
+      - frontend/src/types/collaboration.ts
+      - frontend/src/types/history.ts
+      - frontend/src/types/ui.ts
+      - frontend/src/types/actions.ts
+
+  - id: frontend-stores
+    path: frontend/src/stores
+    kind: state
+    description: Zustand stores — document / editor / settings / workflow / annotation + demo seed data.
+    entry_files:
+      - frontend/src/stores/documentStore.ts
+      - frontend/src/stores/editorStore.ts
+      - frontend/src/stores/settingsStore.ts
+      - frontend/src/stores/workflowStore.ts
+      - frontend/src/stores/annotationStore.ts
+      - frontend/src/stores/seedData.ts
+
+  - id: frontend-services
+    path: frontend/src/services
+    kind: service-layer
+    description: Frontend business logic — document parser, selection context, Dify output parser, typed backend API client.
+    entry_files:
+      - frontend/src/services/backendApi.ts
+      - frontend/src/services/documentParser.ts
+      - frontend/src/services/selectionContext.ts
+      - frontend/src/services/outputParser.ts
+
+  - id: frontend-tests
+    path: frontend/src/__tests__
+    kind: tests
+    description: Vitest unit tests for parser, selection context, and output parser.
+    entry_files:
+      - frontend/src/__tests__/documentParser.test.ts
+      - frontend/src/__tests__/selectionContext.test.ts
+      - frontend/src/__tests__/outputParser.test.ts
+
+  - id: frontend-feature-latex-editor
+    path: frontend/src/features/latex-editor
+    kind: feature-module
+    description: Self-contained CodeMirror 6 LaTeX editor module + annotation decoration plugin.
+    entry_files:
+      - frontend/src/features/latex-editor/index.ts
+      - frontend/src/features/latex-editor/LatexEditor.tsx
+      - frontend/src/features/latex-editor/extensions.ts
+      - frontend/src/features/latex-editor/latex-language.ts
+      - frontend/src/features/latex-editor/theme.ts
+      - frontend/src/features/latex-editor/annotation-decorations.ts
+
+  - id: frontend-feature-settings
+    path: frontend/src/features/settings
+    kind: feature-module
+    description: Provider registry UI — Radix Dialog for add/probe/activate/delete.
+    entry_files:
+      - frontend/src/features/settings/index.ts
+      - frontend/src/features/settings/SettingsDialog.tsx
+      - frontend/src/features/settings/settings.css
+
+  - id: frontend-feature-annotation-panel
+    path: frontend/src/features/annotation-panel
+    kind: feature-module
+    description: Annotation card panel — renders Dify-produced annotations / suggestions / risks with Accept / Delete / Continue-query actions.
+    entry_files:
+      - frontend/src/features/annotation-panel/index.ts
+      - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+      - frontend/src/features/annotation-panel/annotation-panel.css
+
+  - id: frontend-build-tooling
+    path: frontend
+    kind: build-tooling
+    description: Vite, TypeScript, ESLint, Tailwind, PostCSS configuration for the frontend.
+    entry_files:
+      - frontend/vite.config.ts
+      - frontend/tsconfig.json
+      - frontend/tsconfig.app.json
+      - frontend/tsconfig.node.json
+      - frontend/eslint.config.js
+      - frontend/tailwind.config.js
+
+  - id: frontend-public
+    path: frontend/public
+    kind: static-assets
+    description: Static assets served as-is by Vite (favicon, icon sprite).
+    entry_files:
+      - frontend/public/favicon.svg
+      - frontend/public/icons.svg
+
+  # ── Repo-root tooling (outside src/) ─────────────────────────────
+  - id: repo-root
+    path: ../
+    kind: tooling
+    description: Repo-root tooling, metadata, and the Dify launcher wrapper.
+    entry_files:
+      - ../.gitignore
+      - ../start.sh
+      - ../scripts/dify.sh
+      - ../README.md
+      - ../README_EN.md
+      - ../AGENTS.md
+      - ../HANDBOOK.md
+
 capability_routes:
   project-foundation:
-    primary_module: acp-capability
+    primary_module: acp-support
     supporting_modules:
-      - acp-support
       - acp-kernel
+      - acp-capability
+      - acp-version
+      - docs-planning
+      - repo-root
+
+  frontend-workspace:
+    primary_module: frontend-app-shell
+    supporting_modules:
+      - frontend
+      - frontend-public
+
+  frontend-settings:
+    primary_module: frontend-feature-settings
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-stores
+      - frontend-services
+
+  frontend-annotations:
+    primary_module: frontend-feature-annotation-panel
+    supporting_modules:
+      - frontend-feature-latex-editor
+      - frontend-stores
+      - frontend-services
+      - frontend-types
+
+  frontend-stores:
+    primary_module: frontend-stores
+    supporting_modules:
+      - frontend-services
+      - frontend-types
+
+  latex-editor:
+    primary_module: frontend-feature-latex-editor
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-types
+
+  domain-model:
+    primary_module: frontend-types
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-feature-latex-editor
+      - frontend-stores
+
+  backend-service:
+    primary_module: backend-app-core
+    supporting_modules:
+      - backend
+      - backend-api
+      - backend-services
+
+  workflow-integration:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-settings
+      - frontend-stores
+      - repo-root
+
+  build-tooling:
+    primary_module: frontend-build-tooling
+    supporting_modules:
+      - frontend
+      - backend

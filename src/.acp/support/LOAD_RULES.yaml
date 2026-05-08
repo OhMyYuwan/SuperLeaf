@@ -1,3 +1,11 @@
+# LOAD RULES for YuwanLabWriter
+#
+# Staged context loading. Bootstrap reads minimal_context first, then expands
+# only when the active task requires deeper context. forbidden_paths are
+# absolute boundaries; protected_paths require explicit confirmation before
+# modification.
+# Refreshed 2026-05-08 for REQ-0013 (backend + stores + settings + Dify wrapper).
+
 bootstrap:
   entrypoint: .acp/version.yaml
   sequence:
@@ -12,25 +20,297 @@ loading:
   broad_scan: forbidden_by_default
   preferred_routing: capability_first
 
+minimal_context:
+  - .acp/version.yaml
+  - .acp/support/AGENT.md
+
 rules:
   forbidden_paths:
     - ../reference/
     - ../referenceold/
     - ../acp-protocol/
+    - ../.git/
+    - frontend/node_modules/
+    - frontend/dist/
+    - backend/.venv/
+    - backend/**/__pycache__/
+
   protected_paths:
     - .acp/version.yaml
     - .acp/support/LOAD_RULES.yaml
     - .acp/support/CHANGE_POLICY.yaml
     - .acp/capability/capabilities.yaml
-  initial_context:
-    - .acp/version.yaml
-    - .acp/support/AGENT.md
+    - .acp/support/PROJECT_MAP.yaml
+    - frontend/package.json
+    - frontend/package-lock.json
+    - frontend/vite.config.ts
+    - frontend/tsconfig.json
+    - frontend/tsconfig.app.json
+    - frontend/tsconfig.node.json
+    - frontend/index.html
+    - backend/pyproject.toml
+    - backend/app/database.py
+    - backend/app/settings.py
+    - backend/app/secrets_vault.py
+    - ../.gitignore
+    - ../start.sh
+    - ../scripts/dify.sh
+
+  private_paths:
+    - .acp/kernel/
+    - docs/
+
   route_expansion:
     project-foundation:
-      start_with:
-        - .acp/support/PROJECT_MAP.yaml
-        - .acp/capability/capabilities.yaml
-      expand_when:
-        - planning requires module routing
-        - execution requires policy checks
-        - continuation requires kernel lineage
+      _root:
+        start_with:
+          - .acp/version.yaml
+          - .acp/support/AGENT.md
+          - .acp/support/PROJECT_MAP.yaml
+        expand_when:
+          - touching capabilities.yaml or change-policy
+          - resolving a kernel-binding question
+      planning-docs:
+        start_with:
+          - docs/v2_executive_plan.md
+          - docs/v2_1_amendment_dify.md
+          - docs/architecture_data_flow.md
+        expand_when:
+          - revising plan implies architecture change
+          - consolidating older plan documents
+      dify-launcher:
+        start_with:
+          - ../scripts/dify.sh
+        expand_when:
+          - Dify-stack behavior or port mapping must change
+          - adding new Dify service profiles
+
+    frontend-workspace:
+      shell:
+        start_with:
+          - frontend/src/App.tsx
+          - frontend/src/App.css
+          - frontend/index.html
+        expand_when:
+          - layout change touches editor mounting or settings dialog
+          - shell needs new types from frontend-types
+      agent-panel:
+        start_with:
+          - frontend/src/App.tsx
+        expand_when:
+          - extracting agent panel to its own module (also create a new slice)
+          - wiring agent panel to workflow-integration
+
+    frontend-settings:
+      dialog:
+        start_with:
+          - frontend/src/features/settings/SettingsDialog.tsx
+          - frontend/src/features/settings/settings.css
+        expand_when:
+          - adding new provider kinds or fields
+          - surfacing probe details or new status states
+      badge:
+        start_with:
+          - frontend/src/App.tsx
+          - frontend/src/App.css
+        expand_when:
+          - badge must reflect additional signals (e.g. Dify quota)
+
+    frontend-stores:
+      document:
+        start_with:
+          - frontend/src/stores/documentStore.ts
+        expand_when:
+          - persistence / backend sync integration lands
+          - Document schema changes require migration logic
+      editor:
+        start_with:
+          - frontend/src/stores/editorStore.ts
+          - frontend/src/services/selectionContext.ts
+        expand_when:
+          - selection shape changes
+          - multi-document focus changes
+      settings:
+        start_with:
+          - frontend/src/stores/settingsStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - provider lifecycle changes
+          - additional backend endpoints consumed by this store
+      workflow:
+        start_with:
+          - frontend/src/stores/workflowStore.ts
+          - frontend/src/services/outputParser.ts
+        expand_when:
+          - new SSE event surface from Dify
+          - annotation ingestion logic changes
+      annotation:
+        start_with:
+          - frontend/src/stores/annotationStore.ts
+        expand_when:
+          - card status machine changes
+          - thread / conversation semantics change
+
+    frontend-annotations:
+      panel:
+        start_with:
+          - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+          - frontend/src/stores/annotationStore.ts
+        expand_when:
+          - card actions change
+          - continue-query flow changes
+      decorations:
+        start_with:
+          - frontend/src/features/latex-editor/annotation-decorations.ts
+          - frontend/src/features/latex-editor/LatexEditor.tsx
+        expand_when:
+          - decoration styles or click handling change
+          - new decoration kinds introduced
+
+    latex-editor:
+      shell:
+        start_with:
+          - frontend/src/features/latex-editor/LatexEditor.tsx
+          - frontend/src/features/latex-editor/index.ts
+        expand_when:
+          - public API change requires shell update
+      extensions:
+        start_with:
+          - frontend/src/features/latex-editor/extensions.ts
+        expand_when:
+          - adding a new keymap or command
+      language:
+        start_with:
+          - frontend/src/features/latex-editor/latex-language.ts
+        expand_when:
+          - migrating to a real Lezer LaTeX grammar
+      theme:
+        start_with:
+          - frontend/src/features/latex-editor/theme.ts
+        expand_when:
+          - workspace shell theme change requires editor re-tune
+
+    domain-model:
+      document:
+        start_with:
+          - frontend/src/types/document.ts
+        expand_when:
+          - editor or agent slices need new fields on Document / Paragraph / Section
+      editor:
+        start_with:
+          - frontend/src/types/editor.ts
+        expand_when:
+          - selection / context contract changes
+      agent:
+        start_with:
+          - frontend/src/types/agent.ts
+        expand_when:
+          - agent input / output schema changes
+          - new annotation or risk type appears
+      workflow:
+        start_with:
+          - frontend/src/types/workflow.ts
+        expand_when:
+          - new workflow node type
+          - execution-trace shape changes
+      collaboration:
+        start_with:
+          - frontend/src/types/collaboration.ts
+        expand_when:
+          - new collaboration mode
+          - discussion schema changes
+      history:
+        start_with:
+          - frontend/src/types/history.ts
+        expand_when:
+          - versioning or audit fields change
+      ui:
+        start_with:
+          - frontend/src/types/ui.ts
+        expand_when:
+          - new panel view-model contract
+      actions:
+        start_with:
+          - frontend/src/types/actions.ts
+        expand_when:
+          - new user-action variant
+
+    backend-service:
+      app-entry:
+        start_with:
+          - backend/app/main.py
+          - backend/app/settings.py
+        expand_when:
+          - adding middleware or lifespan hooks
+      api-routes:
+        start_with:
+          - backend/app/api/__init__.py
+          - backend/app/api/providers.py
+        expand_when:
+          - introducing /api/workflows, /api/runs, or other routes
+      services:
+        start_with:
+          - backend/app/services/provider_service.py
+          - backend/app/services/dify_client.py
+        expand_when:
+          - changing Dify interaction or provider invariants
+      models:
+        start_with:
+          - backend/app/models.py
+          - backend/app/schemas.py
+        expand_when:
+          - new tables or I/O schemas
+      secrets:
+        start_with:
+          - backend/app/secrets_vault.py
+        expand_when:
+          - key rotation policy changes
+
+    workflow-integration:
+      dify-client:
+        start_with:
+          - backend/app/services/dify_client.py
+        expand_when:
+          - Dify API version change
+          - new endpoint or event type
+      provider-registry:
+        start_with:
+          - backend/app/services/provider_service.py
+          - frontend/src/stores/settingsStore.ts
+        expand_when:
+          - provider lifecycle changes
+          - new provider kinds
+      workflow-run:
+        start_with:
+          - backend/app/services/dify_client.py
+          - frontend/src/stores/settingsStore.ts
+        expand_when:
+          - W2b implementation lands
+          - annotation streaming contract changes
+
+    build-tooling:
+      vite:
+        start_with:
+          - frontend/vite.config.ts
+        expand_when:
+          - adding a Vite plugin
+      typescript:
+        start_with:
+          - frontend/tsconfig.app.json
+        expand_when:
+          - shared paths or strictness change
+      lint-style:
+        start_with:
+          - frontend/eslint.config.js
+        expand_when:
+          - adding a lint plugin or Tailwind plugin
+      backend-pyproject:
+        start_with:
+          - backend/pyproject.toml
+        expand_when:
+          - adding Python deps or ruff rules
+
+  expansion_discipline:
+    must_justify: true
+    must_not_cross: forbidden_paths
+    prefer: read_protected_then_confirm_before_edit

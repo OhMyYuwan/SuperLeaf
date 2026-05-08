@@ -10,6 +10,9 @@
  * The `format` prop determines which language extension is loaded; switching
  * formats rebuilds the editor state through a Compartment so the active
  * document text is preserved.
+ *
+ * `decorations` lets the host render annotation underlines that the user can
+ * click to focus a panel card; `activeDecorationId` highlights the focused one.
  */
 
 import { useEffect, useMemo, useRef } from 'react'
@@ -17,6 +20,12 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import {
+  annotationDecorationsExtension,
+  focusAnnotationEffect,
+  setAnnotationsEffect,
+  type DecorationSpec,
+} from './annotation-decorations'
 
 export interface LatexEditorProps {
   value: string
@@ -27,6 +36,9 @@ export interface LatexEditorProps {
     to: number
     text: string
   }) => void
+  decorations?: DecorationSpec[]
+  activeDecorationId?: string | null
+  onDecorationClick?: (id: string) => void
   className?: string
 }
 
@@ -35,12 +47,16 @@ export function LatexEditor({
   format,
   onChange,
   onSelectionChange,
+  decorations,
+  activeDecorationId,
+  onDecorationClick,
   className,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelectionChange)
+  const onDecorationClickRef = useRef(onDecorationClick)
   const languageCompartment = useMemo(() => new Compartment(), [])
 
   useEffect(() => {
@@ -51,17 +67,21 @@ export function LatexEditor({
     onSelectionRef.current = onSelectionChange
   }, [onSelectionChange])
 
-  // Mount the editor exactly once and tear it down on unmount.
+  useEffect(() => {
+    onDecorationClickRef.current = onDecorationClick
+  }, [onDecorationClick])
+
   useEffect(() => {
     if (!containerRef.current) return
 
     const startState = EditorState.create({
       doc: value,
       extensions: [
-        ...baseExtensions(format).filter(
-          (ext) => ext !== languageFor(format),
-        ),
+        ...baseExtensions(),
         languageCompartment.of(languageFor(format)),
+        annotationDecorationsExtension({
+          onPick: (id) => onDecorationClickRef.current?.(id),
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             onChangeRef.current(update.state.doc.toString())
@@ -111,6 +131,28 @@ export function LatexEditor({
       effects: languageCompartment.reconfigure(languageFor(format)),
     })
   }, [format, languageCompartment])
+
+  // Push decoration specs into the editor.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setAnnotationsEffect.of(decorations ?? []) })
+  }, [decorations])
+
+  // Highlight the active card and (optionally) scroll it into view.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: focusAnnotationEffect.of(activeDecorationId ?? null) })
+    if (!activeDecorationId || !decorations) return
+    const target = decorations.find((d) => d.id === activeDecorationId)
+    if (!target) return
+    const docLen = view.state.doc.length
+    if (target.from < 0 || target.to > docLen) return
+    view.dispatch({
+      effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
+    })
+  }, [activeDecorationId, decorations])
 
   return <div ref={containerRef} className={className} />
 }

@@ -17,6 +17,7 @@ import * as ScrollArea from '@radix-ui/react-scroll-area'
 import { LatexEditor, type EditorFormat, type DecorationSpec, type DocChangeInfo } from './features/latex-editor'
 import { SettingsDialog } from './features/settings'
 import { AnnotationPanel } from './features/annotation-panel'
+import { MarkdownPreview } from './features/preview'
 import { useDocumentStore } from './stores/documentStore'
 import { useEditorStore } from './stores/editorStore'
 import { useSettingsStore } from './stores/settingsStore'
@@ -272,11 +273,7 @@ function App() {
                   <div className="preview-box">
                     <ScrollArea.Root className="scroll-root">
                       <ScrollArea.Viewport className="scroll-viewport">
-                        <div className="preview-paper">
-                          <h1>文档预览</h1>
-                          <p>格式：{(activeDoc?.format ?? '').toUpperCase()}（W10 起接入真实渲染器）</p>
-                          <pre>{activeDoc?.content ?? ''}</pre>
-                        </div>
+                        {renderPreview(activeDoc)}
                       </ScrollArea.Viewport>
                       <ScrollArea.Scrollbar className="scrollbar" orientation="vertical">
                         <ScrollArea.Thumb className="thumb" />
@@ -502,3 +499,22 @@ const presetInstructions = [
   '改写得更学术',
   '检查引用与事实',
 ]
+
+function renderPreview(doc: ReturnType<typeof useDocumentStore.getState>['documents'][string] | null) {
+  if (!doc) {
+    return <div className="preview-paper empty-preview">请选择一个文件</div>
+  }
+  if (doc.format === 'md') {
+    return <MarkdownPreview source={doc.content} />
+  }
+  // tex / txt: raw pre for now (LaTeX PDF preview is W10)
+  return (
+    <div className="preview-paper">
+      <div className="preview-paper-meta">
+        格式：{doc.format.toUpperCase()}
+        {doc.format === 'tex' && <span className="soon-chip">PDF 预览稍后接入</span>}
+      </div>
+      <pre>{doc.content}</pre>
+    </div>
+  )
+}

@@ -307,8 +307,8 @@ button {
   flex: 1;
   min-height: 0;
   border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #f8fafc;
   overflow: hidden;
 }
 
@@ -323,6 +323,35 @@ button {
   color: #0f172a;
   background: #f8fafc;
   min-height: 100%;
+}
+
+.preview-paper-meta {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.soon-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(234, 179, 8, 0.14);
+  color: #a16207;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.empty-preview {
+  color: #94a3b8 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-style: italic;
 }
 
 .preview-paper h1 {

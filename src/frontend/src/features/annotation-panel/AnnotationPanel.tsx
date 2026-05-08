@@ -11,7 +11,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { Archive, Check, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send } from 'lucide-react'
+import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send, X } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import './annotation-panel.css'
@@ -81,20 +81,36 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
         </div>
       ) : (
         <div className="ann-list">
-          {items.length === 0 && (
+          {clusters.length === 0 && (
             <div className="ann-empty">
               还没有批注。在编辑器中选中文字后，到右侧"工作流"Tab 选一个 workflow 点"运行"。
             </div>
           )}
-          {items.map((item) => (
-            <AnnotationCard
-              key={item.id}
-              item={item}
-              isActive={item.id === activeId}
-              onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
-            />
-          ))}
+          {clusters.map((cluster) =>
+            cluster.length === 1 ? (
+              <AnnotationCard
+                key={cluster[0].id}
+                item={cluster[0]}
+                isActive={cluster[0].id === activeId}
+                onFocus={() => onFocus?.(cluster[0].id === activeId ? null : cluster[0].id)}
+              />
+            ) : (
+              <ClusterCard
+                key={`cluster-${cluster[0].range.from}-${cluster[0].range.to}`}
+                items={cluster}
+                activeId={activeId}
+                onFocus={onFocus}
+                onCompare={() => setCompareCluster(cluster)}
+              />
+            )
+          )}
         </div>
+      )}
+      {compareCluster && (
+        <ComparisonModal
+          items={compareCluster}
+          onClose={() => setCompareCluster(null)}
+        />
       )}
     </div>
   )
@@ -274,4 +290,115 @@ function labelFor(kind: AnnotationItem['kind']) {
 
 function ellipsis(text: string, max: number) {
   return text.length <= max ? text : `${text.slice(0, max)}…`
+}
+
+function ClusterCard({
+  items,
+  activeId,
+  onFocus,
+  onCompare,
+}: {
+  items: AnnotationItem[]
+  activeId?: string | null
+  onFocus?: (id: string | null) => void
+  onCompare: () => void
+}) {
+  const first = items[0]
+  const others = items.length - 1
+  return (
+    <div className={`ann-card cluster-card ann-${first.kind} sev-${first.severity}`}>
+      <div className="ann-head">
+        <span className="ann-icon">{iconFor(first)}</span>
+        <span className="ann-agent">{first.agentName}</span>
+        <span className="cluster-chip">
+          +{others} 个 Agent 也看过这段
+        </span>
+      </div>
+
+      {first.targetText && <blockquote className="ann-quote">{ellipsis(first.targetText, 120)}</blockquote>}
+      {first.content && <p className="ann-body">{ellipsis(first.content, 180)}</p>}
+
+      <div className="cluster-agents-preview">
+        {items.slice(1, 5).map((it) => (
+          <span key={it.id} className="cluster-agent-chip" title={it.agentName}>
+            {it.agentName}
+          </span>
+        ))}
+        {items.length > 5 && <span className="cluster-agent-chip more">+{items.length - 5}</span>}
+      </div>
+
+      <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
+        <button className="ann-btn compare" onClick={onCompare} title="并排对比所有 Agent 的建议">
+          <Columns3 size={12} />
+          并排对比 ({items.length})
+        </button>
+        <button
+          className="ann-btn accept"
+          onClick={() => onFocus?.(first.id === activeId ? null : first.id)}
+          title="展开单张卡片操作"
+        >
+          展开
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ComparisonModal({
+  items,
+  onClose,
+}: {
+  items: AnnotationItem[]
+  onClose: () => void
+}) {
+  return (
+    <div className="comparison-modal-overlay" onClick={onClose}>
+      <div className="comparison-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="comparison-modal-header">
+          <div>
+            <strong>多 Agent 对比</strong>
+            <span className="comparison-subtitle"> · {items.length} 条建议针对同一段文字</span>
+          </div>
+          <button className="icon-btn" onClick={onClose} title="关闭">
+            <X size={16} />
+          </button>
+        </div>
+        <blockquote className="comparison-target">
+          {ellipsis(items[0].targetText || '', 240)}
+        </blockquote>
+        <div className="comparison-grid">
+          {items.map((it) => (
+            <div key={it.id} className={`comparison-col ann-${it.kind}`}>
+              <div className="ann-head">
+                <span className="ann-icon">{iconFor(it)}</span>
+                <span className="ann-agent">{it.agentName}</span>
+                <span className="ann-kind-chip">{labelFor(it.kind)}</span>
+              </div>
+              <div className="comparison-body">{it.content}</div>
+              {it.kind === 'suggestion' && it.proposed && (
+                <div className="ann-diff">
+                  <div className="ann-diff-row remove">- {it.original}</div>
+                  <div className="ann-diff-row add">+ {it.proposed}</div>
+                  {it.reason && <div className="ann-diff-reason">{it.reason}</div>}
+                </div>
+              )}
+              {it.thread.length > 1 && (
+                <ul className="ann-thread">
+                  {it.thread.slice(1).map((m) => (
+                    <li key={m.id} className={`ann-thread-msg ${m.role}`}>
+                      <span className="ann-thread-role">{m.role === 'user' ? '我' : 'Agent'}</span>
+                      <span className="ann-thread-content">{m.content}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="comparison-footer">
+          只读对比。关闭后在编辑器中手动修改文档。
+        </div>
+      </div>
+    </div>
+  )
 }

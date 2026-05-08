@@ -1,0 +1,258 @@
+.ann-empty {
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.7);
+  padding: 14px;
+  font-style: italic;
+}
+
+.ann-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.ann-card {
+  position: relative;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.ann-card:hover {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+.ann-card.active {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4) inset;
+}
+.ann-card.resolved {
+  opacity: 0.55;
+}
+
+.ann-card.ann-annotation {
+  border-left: 3px solid rgba(234, 179, 8, 0.7);
+}
+.ann-card.ann-suggestion {
+  border-left: 3px solid rgba(59, 130, 246, 0.7);
+}
+.ann-card.ann-risk {
+  border-left: 3px solid rgba(239, 68, 68, 0.7);
+}
+.ann-card.sev-high {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18) inset;
+}
+
+.ann-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  color: rgba(226, 232, 240, 0.95);
+}
+.ann-icon {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(148, 163, 184, 0.85);
+}
+.ann-agent {
+  font-weight: 600;
+}
+.ann-kind-chip,
+.ann-resolved-chip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(148, 163, 184, 0.95);
+}
+.ann-resolved-chip {
+  background: rgba(34, 197, 94, 0.16);
+  color: #86efac;
+}
+
+.ann-quote {
+  margin: 4px 0 8px;
+  padding: 6px 10px;
+  border-left: 2px solid rgba(148, 163, 184, 0.3);
+  background: rgba(148, 163, 184, 0.08);
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.8);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+.ann-diff {
+  margin: 6px 0 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  font-size: 12px;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ann-diff-row.remove {
+  color: #fca5a5;
+}
+.ann-diff-row.add {
+  color: #86efac;
+}
+.ann-diff-reason {
+  margin-top: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  font-style: italic;
+}
+
+.ann-body {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(226, 232, 240, 0.95);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ann-card > p,
+.ann-card > div:not(.ann-head):not(.ann-diff):not(.ann-actions):not(.ann-composer):not(.ann-quote) {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.95);
+  margin: 4px 0;
+}
+
+.ann-thread {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.ann-thread-msg {
+  display: flex;
+  gap: 8px;
+}
+.ann-thread-role {
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.85);
+  flex-shrink: 0;
+  min-width: 38px;
+}
+.ann-thread-msg.user .ann-thread-role {
+  color: #93c5fd;
+}
+.ann-thread-content {
+  color: rgba(226, 232, 240, 0.92);
+  white-space: pre-wrap;
+}
+
+.ann-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ann-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.95);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ann-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.26);
+}
+.ann-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ann-btn.accept {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+.ann-btn.accept:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.32);
+}
+.ann-btn.delete {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+.ann-btn.delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.32);
+}
+.ann-btn.continue {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+.ann-btn.continue:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.32);
+}
+
+.ann-composer {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ann-composer textarea {
+  resize: vertical;
+  min-height: 56px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(2, 6, 23, 0.7);
+  color: #e5e7eb;
+  font-family: inherit;
+  outline: none;
+}
+.ann-composer textarea:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+.ann-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ghost-mini,
+.primary-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ghost-mini {
+  background: rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.92);
+}
+.primary-mini {
+  background: rgba(59, 130, 246, 0.32);
+  color: #dbeafe;
+}
+.primary-mini:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

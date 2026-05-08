@@ -15,9 +15,6 @@ from sqlalchemy.orm import Session
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
 
-DEFAULT_PROJECT_NAME = "My Project"
-
-
 class ProjectFsService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -29,7 +26,7 @@ class ProjectFsService:
         existing = self.db.query(Project).order_by(Project.created_at.asc()).first()
         if existing:
             return existing
-        p = Project(name=DEFAULT_PROJECT_NAME)
+        p = Project()
         self.db.add(p)
         self.db.commit()
         self.db.refresh(p)
@@ -43,7 +40,7 @@ class ProjectFsService:
         folders = (
             self.db.query(Folder)
             .filter(Folder.project_id == project.id)
-            .order_by(Folder.sort_index.asc(), Folder.name.asc())
+            .order_by(Folder.name.asc())
             .all()
         )
         docs = (
@@ -117,6 +114,14 @@ class ProjectFsService:
         root = build_folder_node(None, project.name, is_virtual_root=True)
         return ProjectTreeOut(project_id=project.id, project_name=project.name, root=root)
 
+    def rename_project(self, name: str) -> Project:
+        project = self.ensure_default_project()
+        project.name = name
+        project.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(project)
+        return project
+
     # --------------------------------------------------------------- folder/doc
 
     def create_folder(self, *, parent_folder_id: str | None, name: str) -> Folder:
@@ -181,3 +186,115 @@ class ProjectFsService:
         self.db.commit()
         self.db.refresh(doc)
         return doc
+
+    # --------------------------------------------------------- rename / delete
+
+    def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
+        model = {"folder": Folder, "doc": Doc, "file": FileBlob}.get(entity_type)
+        if model is None:
+            return False
+        entity = self.db.get(model, entity_id)
+        if entity is None:
+            return False
+        entity.name = new_name  # type: ignore[union-attr]
+        entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
+        self.db.commit()
+        return True
+
+    def delete_entity(self, entity_type: str, entity_id: str) -> int:
+        """Delete an entity and return the count of deleted rows (recursive for folders)."""
+        if entity_type == "folder":
+            return self._delete_folder_recursive(entity_id)
+        model = {"doc": Doc, "file": FileBlob}.get(entity_type)
+        if model is None:
+            return 0
+        entity = self.db.get(model, entity_id)
+        if entity is None:
+            return 0
+        self.db.delete(entity)
+        self.db.commit()
+        return 1
+
+    def _delete_folder_recursive(self, folder_id: str) -> int:
+        folder = self.db.get(Folder, folder_id)
+        if folder is None:
+            return 0
+        count = 0
+        for child in self.db.query(Folder).filter(Folder.parent_folder_id == folder_id).all():
+            count += self._delete_folder_recursive(child.id)
+        count += self.db.query(Doc).filter(Doc.folder_id == folder_id).delete()
+        count += self.db.query(FileBlob).filter(FileBlob.folder_id == folder_id).delete()
+        self.db.delete(folder)
+        count += 1
+        self.db.commit()
+        return count
+
+    # --------------------------------------------------------- binary upload
+
+    def upload_file(
+        self,
+        *,
+        folder_id: str | None,
+        name: str,
+        mime_type: str,
+        blob: bytes,
+    ) -> FileBlob:
+        project = self.ensure_default_project()
+        if folder_id:
+            folder = self.db.get(Folder, folder_id)
+            if folder is None or folder.project_id != project.id:
+                raise ValueError("folder not found")
+        f = FileBlob(
+            project_id=project.id,
+            folder_id=folder_id,
+            name=name,
+            mime_type=mime_type,
+            size_bytes=len(blob),
+            blob=blob,
+        )
+        self.db.add(f)
+        self.db.commit()
+        self.db.refresh(f)
+        return f
+
+    # --------------------------------------------------------- export zip
+
+    def export_zip(self) -> bytes:
+        """Build an in-memory zip of the entire project tree."""
+        import io
+        import zipfile
+
+        project = self.ensure_default_project()
+        buf = io.BytesIO()
+
+        folders = self.db.query(Folder).filter(Folder.project_id == project.id).all()
+        docs = self.db.query(Doc).filter(Doc.project_id == project.id).all()
+        files = self.db.query(FileBlob).filter(FileBlob.project_id == project.id).all()
+
+        folder_paths: dict[str, str] = {}
+        for f in folders:
+            folder_paths[f.id] = f.name
+
+        def resolve_path(folder_id: str | None) -> str:
+            parts: list[str] = []
+            fid = folder_id
+            visited: set[str] = set()
+            while fid and fid in folder_paths and fid not in visited:
+                visited.add(fid)
+                parts.append(folder_paths[fid])
+                parent = next((f for f in folders if f.id == fid), None)
+                fid = parent.parent_folder_id if parent else None
+            parts.reverse()
+            return "/".join(parts)
+
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for d in docs:
+                prefix = resolve_path(d.folder_id)
+                path = f"{prefix}/{d.name}" if prefix else d.name
+                zf.writestr(path, d.content or "")
+            for f in files:
+                prefix = resolve_path(f.folder_id)
+                path = f"{prefix}/{f.name}" if prefix else f.name
+                zf.writestr(path, f.blob or b"")
+
+        return buf.getvalue()

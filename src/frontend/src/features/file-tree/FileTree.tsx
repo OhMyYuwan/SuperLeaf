@@ -1,15 +1,3 @@
-/**
- * FileTree — nested Overleaf-style tree for folders/docs/files.
- *
- * This tree is backed by `filesystemStore.tree` (from backend `/api/project/tree`).
- * It supports:
- *  - folder expand/collapse
- *  - open doc on click
- *  - quick-create folder/doc via prompt (phase A2, minimal UX)
- *
- * Binary files are listed but not opened yet (A3 will add preview/download).
- */
-
 import {
   ChevronDown,
   ChevronRight,
@@ -19,8 +7,12 @@ import {
   File,
   Plus,
   FolderPlus,
+  Pencil,
+  Trash2,
+  Upload,
+  Download,
 } from 'lucide-react'
-import type { ProjectTree, TreeFolder } from '../../services/filesystemApi'
+import { filesystemApi, type ProjectTree, type TreeFolder, type TreeDoc, type TreeFile } from '../../services/filesystemApi'
 
 interface FileTreeProps {
   tree: ProjectTree | null
@@ -37,6 +29,10 @@ interface FileTreeProps {
     format: 'tex' | 'md' | 'txt',
     content?: string,
   ) => Promise<string | null>
+  onRenameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
+  onDeleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
+  onUploadFile: (file: File, folderId?: string | null) => Promise<void>
+  onRenameProject: (name: string) => Promise<void>
 }
 
 export function FileTree({
@@ -49,6 +45,10 @@ export function FileTree({
   onOpenDoc,
   onCreateFolder,
   onCreateDoc,
+  onRenameEntity,
+  onDeleteEntity,
+  onUploadFile,
+  onRenameProject,
 }: FileTreeProps) {
   const handleCreateRootFolder = async () => {
     const name = prompt('新建文件夹名称')?.trim()
@@ -64,13 +64,39 @@ export function FileTree({
     if (id) onOpenDoc(id)
   }
 
+  const handleUploadRoot = () => {
+    triggerUpload((file) => onUploadFile(file, null))
+  }
+
+  const handleRenameProject = () => {
+    const name = prompt('重命名项目', tree?.project_name ?? '')?.trim()
+    if (!name || name === tree?.project_name) return
+    onRenameProject(name)
+  }
+
+  const handleExport = () => {
+    const a = document.createElement('a')
+    a.href = filesystemApi.exportZipUrl()
+    a.download = 'project.zip'
+    a.click()
+  }
+
   return (
     <div className="panel-section">
       <div className="section-title tree-header-row">
         <span className="tree-title">
-          <Folder size={16} /> 文件管理
+          <Folder size={16} /> {tree?.project_name ?? '文件管理'}
+          <button className="tree-action-btn" title="重命名项目" onClick={handleRenameProject}>
+            <Pencil size={11} />
+          </button>
         </span>
         <span className="tree-actions">
+          <button className="tree-action-btn" title="上传文件" onClick={handleUploadRoot}>
+            <Upload size={13} />
+          </button>
+          <button className="tree-action-btn" title="导出 ZIP" onClick={handleExport}>
+            <Download size={13} />
+          </button>
           <button className="tree-action-btn" title="新建文件夹" onClick={handleCreateRootFolder}>
             <FolderPlus size={13} />
           </button>
@@ -95,6 +121,9 @@ export function FileTree({
             onOpenDoc={onOpenDoc}
             onCreateFolder={onCreateFolder}
             onCreateDoc={onCreateDoc}
+            onRenameEntity={onRenameEntity}
+            onDeleteEntity={onDeleteEntity}
+            onUploadFile={onUploadFile}
           />
         )}
       </div>
@@ -116,6 +145,9 @@ interface FolderNodeProps {
     format: 'tex' | 'md' | 'txt',
     content?: string,
   ) => Promise<string | null>
+  onRenameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
+  onDeleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
+  onUploadFile: (file: File, folderId?: string | null) => Promise<void>
 }
 
 function FolderNode({
@@ -127,90 +159,177 @@ function FolderNode({
   onOpenDoc,
   onCreateFolder,
   onCreateDoc,
+  onRenameEntity,
+  onDeleteEntity,
+  onUploadFile,
 }: FolderNodeProps) {
   const expanded = depth === 0 ? true : !!expandedFolderIds[folder.id]
-  const leftPad = 10 + depth * 14
+  const leftPad = depth === 0 ? 0 : 10 + (depth - 1) * 14
+  const isRoot = depth === 0
+  const folderId = isRoot ? null : folder.id
 
   const handleCreateSubFolder = async () => {
     const name = prompt(`在 ${folder.name} 下新建文件夹`)?.trim()
     if (!name) return
-    await onCreateFolder(depth === 0 ? null : folder.id, name)
+    await onCreateFolder(folderId, name)
   }
 
   const handleCreateDoc = async () => {
     const name = prompt(`在 ${folder.name} 下新建文档（例如 section.md）`)?.trim()
     if (!name) return
     const format = inferFormat(name)
-    const id = await onCreateDoc(depth === 0 ? null : folder.id, name, format, defaultContent(format))
+    const id = await onCreateDoc(folderId, name, format, defaultContent(format))
     if (id) onOpenDoc(id)
   }
+
+  const handleRenameFolder = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const name = prompt('重命名文件夹', folder.name)?.trim()
+    if (!name || name === folder.name) return
+    onRenameEntity('folder', folder.id, name)
+  }
+
+  const handleDeleteFolder = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm(`确定删除文件夹「${folder.name}」？\n将同时删除所有子文件夹和文档。`)) return
+    onDeleteEntity('folder', folder.id)
+  }
+
+  const handleUpload = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    triggerUpload((file) => onUploadFile(file, folderId))
+  }
+
+  const handleRenameDoc = (e: React.MouseEvent, doc: TreeDoc) => {
+    e.stopPropagation()
+    const name = prompt('重命名文档', doc.name)?.trim()
+    if (!name || name === doc.name) return
+    onRenameEntity('doc', doc.id, name)
+  }
+
+  const handleDeleteDoc = (e: React.MouseEvent, doc: TreeDoc) => {
+    e.stopPropagation()
+    if (!confirm(`确定删除文档「${doc.name}」？`)) return
+    onDeleteEntity('doc', doc.id)
+  }
+
+  const handleRenameFile = (e: React.MouseEvent, file: TreeFile) => {
+    e.stopPropagation()
+    const name = prompt('重命名文件', file.name)?.trim()
+    if (!name || name === file.name) return
+    onRenameEntity('file', file.id, name)
+  }
+
+  const handleDeleteFile = (e: React.MouseEvent, file: TreeFile) => {
+    e.stopPropagation()
+    if (!confirm(`确定删除文件「${file.name}」？`)) return
+    onDeleteEntity('file', file.id)
+  }
+
+  const children = (
+    <>
+      {folder.folders.map((child) => (
+        <FolderNode
+          key={child.id}
+          folder={child}
+          depth={depth + 1}
+          activeDocId={activeDocId}
+          expandedFolderIds={expandedFolderIds}
+          onToggleFolder={onToggleFolder}
+          onOpenDoc={onOpenDoc}
+          onCreateFolder={onCreateFolder}
+          onCreateDoc={onCreateDoc}
+          onRenameEntity={onRenameEntity}
+          onDeleteEntity={onDeleteEntity}
+          onUploadFile={onUploadFile}
+        />
+      ))}
+
+      {folder.docs.map((doc) => (
+        <div
+          key={doc.id}
+          className={`file-item tree-doc-row ${activeDocId === doc.id ? 'active' : ''}`}
+          style={{ paddingLeft: leftPad + 28 }}
+          onClick={() => onOpenDoc(doc.id)}
+          title={`${doc.name} (${doc.format.toUpperCase()})`}
+        >
+          <FileText size={14} />
+          <span className="tree-node-name">{doc.name}</span>
+          <span className="tree-actions inline">
+            <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
+              <Pencil size={11} />
+            </button>
+            <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteDoc(e, doc)}>
+              <Trash2 size={11} />
+            </button>
+          </span>
+        </div>
+      ))}
+
+      {folder.files.map((file) => (
+        <div
+          key={file.id}
+          className="file-item tree-file-row"
+          style={{ paddingLeft: leftPad + 28 }}
+          title={`${file.name} (${prettySize(file.size_bytes)})`}
+        >
+          <File size={14} />
+          <span className="tree-node-name">{file.name}</span>
+          <span className="tree-actions inline">
+            <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
+              <Pencil size={11} />
+            </button>
+            <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteFile(e, file)}>
+              <Trash2 size={11} />
+            </button>
+          </span>
+        </div>
+      ))}
+    </>
+  )
+
+  if (isRoot) return <div className="tree-folder-block">{children}</div>
 
   return (
     <div className="tree-folder-block">
       <div className="file-item tree-folder-row" style={{ paddingLeft: leftPad }}>
-        {depth > 0 ? (
-          <button className="tree-toggle-btn" onClick={() => onToggleFolder(folder.id)}>
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-        ) : (
-          <span className="tree-toggle-placeholder" />
-        )}
+        <button className="tree-toggle-btn" onClick={() => onToggleFolder(folder.id)}>
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
         {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
         <span className="tree-node-name">{folder.name}</span>
         <span className="tree-actions inline">
+          <button className="tree-action-btn" title="上传文件" onClick={handleUpload}>
+            <Upload size={11} />
+          </button>
           <button className="tree-action-btn" title="新建子文件夹" onClick={handleCreateSubFolder}>
             <FolderPlus size={12} />
           </button>
           <button className="tree-action-btn" title="新建文档" onClick={handleCreateDoc}>
             <Plus size={12} />
           </button>
+          <button className="tree-action-btn" title="重命名" onClick={handleRenameFolder}>
+            <Pencil size={11} />
+          </button>
+          <button className="tree-action-btn" title="删除" onClick={handleDeleteFolder}>
+            <Trash2 size={11} />
+          </button>
         </span>
       </div>
 
-      {expanded && (
-        <>
-          {folder.docs.map((doc) => (
-            <button
-              key={doc.id}
-              className={`file-item tree-doc-row ${activeDocId === doc.id ? 'active' : ''}`}
-              style={{ paddingLeft: leftPad + 28 }}
-              onClick={() => onOpenDoc(doc.id)}
-              title={`${doc.name} (${doc.format.toUpperCase()})`}
-            >
-              <FileText size={14} />
-              <span className="tree-node-name">{doc.name}</span>
-            </button>
-          ))}
-
-          {folder.files.map((file) => (
-            <div
-              key={file.id}
-              className="file-item tree-file-row"
-              style={{ paddingLeft: leftPad + 28 }}
-              title={`${file.name} (${prettySize(file.size_bytes)})`}
-            >
-              <File size={14} />
-              <span className="tree-node-name">{file.name}</span>
-            </div>
-          ))}
-
-          {folder.folders.map((child) => (
-            <FolderNode
-              key={child.id}
-              folder={child}
-              depth={depth + 1}
-              activeDocId={activeDocId}
-              expandedFolderIds={expandedFolderIds}
-              onToggleFolder={onToggleFolder}
-              onOpenDoc={onOpenDoc}
-              onCreateFolder={onCreateFolder}
-              onCreateDoc={onCreateDoc}
-            />
-          ))}
-        </>
-      )}
+      {expanded && children}
     </div>
   )
+}
+
+function triggerUpload(onFile: (file: File) => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) onFile(file)
+  }
+  input.click()
 }
 
 function inferFormat(name: string): 'tex' | 'md' | 'txt' {

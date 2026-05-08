@@ -26,6 +26,12 @@ interface FilesystemState {
     format: 'tex' | 'md' | 'txt',
     content?: string,
   ) => Promise<string | null>
+
+  renameProject: (name: string) => Promise<void>
+
+  renameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
+  deleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
+  uploadFile: (file: File, folderId?: string | null) => Promise<void>
 }
 
 export const useFilesystemStore = create<FilesystemState>((set, get) => ({
@@ -87,5 +93,25 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
     })
     await get().loadTree()
     return doc.id
+  },
+
+  renameProject: async (name) => {
+    await filesystemApi.renameProject(name)
+    await get().loadTree()
+  },
+
+  renameEntity: async (entityType, entityId, name) => {
+    await filesystemApi.renameEntity(entityType, entityId, name)
+    await get().loadTree()
+  },
+
+  deleteEntity: async (entityType, entityId) => {
+    await filesystemApi.deleteEntity(entityType, entityId)
+    await get().loadTree()
+  },
+
+  uploadFile: async (file, folderId) => {
+    await filesystemApi.uploadFile(file, folderId)
+    await get().loadTree()
   },
 }))

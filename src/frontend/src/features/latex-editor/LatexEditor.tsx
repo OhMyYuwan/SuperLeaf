@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useRef } from 'react'
 import { EditorState, Compartment } from '@codemirror/state'
+import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor } from './extensions'
 import type { EditorFormat } from './extensions'
@@ -27,6 +28,12 @@ import {
   type DecorationSpec,
 } from './annotation-decorations'
 
+export interface DocChangeInfo {
+  from: number
+  to: number
+  insertLen: number
+}
+
 export interface LatexEditorProps {
   value: string
   format: EditorFormat
@@ -36,6 +43,7 @@ export interface LatexEditorProps {
     to: number
     text: string
   }) => void
+  onDocChange?: (changes: DocChangeInfo[]) => void
   decorations?: DecorationSpec[]
   activeDecorationId?: string | null
   onDecorationClick?: (id: string) => void
@@ -47,6 +55,7 @@ export function LatexEditor({
   format,
   onChange,
   onSelectionChange,
+  onDocChange,
   decorations,
   activeDecorationId,
   onDecorationClick,
@@ -56,6 +65,7 @@ export function LatexEditor({
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelectionChange)
+  const onDocChangeRef = useRef(onDocChange)
   const onDecorationClickRef = useRef(onDecorationClick)
   const languageCompartment = useMemo(() => new Compartment(), [])
 
@@ -66,6 +76,10 @@ export function LatexEditor({
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
   }, [onSelectionChange])
+
+  useEffect(() => {
+    onDocChangeRef.current = onDocChange
+  }, [onDocChange])
 
   useEffect(() => {
     onDecorationClickRef.current = onDecorationClick
@@ -85,6 +99,10 @@ export function LatexEditor({
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             onChangeRef.current(update.state.doc.toString())
+            if (onDocChangeRef.current) {
+              const changes = extractChanges(update.changes)
+              if (changes.length > 0) onDocChangeRef.current(changes)
+            }
           }
           if (update.selectionSet && onSelectionRef.current) {
             const sel = update.state.selection.main
@@ -155,4 +173,12 @@ export function LatexEditor({
   }, [activeDecorationId, decorations])
 
   return <div ref={containerRef} className={className} />
+}
+
+function extractChanges(changeSet: ChangeSet): DocChangeInfo[] {
+  const out: DocChangeInfo[] = []
+  changeSet.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    out.push({ from: fromA, to: toA, insertLen: inserted.length })
+  })
+  return out
 }

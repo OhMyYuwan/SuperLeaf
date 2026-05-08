@@ -5,6 +5,59 @@
   font-style: italic;
 }
 
+.ann-panel-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ann-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  background: rgba(148, 163, 184, 0.08);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ann-archive-toggle:hover,
+.ann-archive-toggle.active {
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+
+.ann-archive-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.9);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.ann-card.ann-archived {
+  opacity: 0.7;
+  border-left: 3px solid rgba(148, 163, 184, 0.4);
+}
+.archived-body {
+  font-size: 12px !important;
+  color: rgba(148, 163, 184, 0.85) !important;
+}
+
+.ann-btn.archive {
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(226, 232, 240, 0.9);
+}
+.ann-btn.archive:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.3);
+}
+
 .ann-list {
   display: flex;
   flex-direction: column;

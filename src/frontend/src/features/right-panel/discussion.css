@@ -1,4 +1,4 @@
-/* Discussion tab (chat-style) */
+/* Discussion tab (chat-style, Claude VSCode layout) */
 
 .discussion-tab {
   display: flex;
@@ -23,6 +23,7 @@
   font-size: 12px;
   color: rgba(148, 163, 184, 0.85);
   flex: 1;
+  min-width: 0;
 }
 .agent-picker-label select {
   padding: 4px 8px;
@@ -35,6 +36,21 @@
   min-width: 0;
 }
 
+.discussion-header-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.conversation-count {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  margin-left: 2px;
+}
+
 .discussion-error {
   margin: 8px 12px;
   padding: 6px 10px;
@@ -44,97 +60,31 @@
   font-size: 11px;
 }
 
-.discussion-body {
+.active-conversation-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(59, 130, 246, 0.08);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.18);
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.discussion-body-compact {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 8px;
-  padding: 8px;
   overflow: hidden;
 }
 
-.conversation-list {
-  width: 200px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  border-right: 1px solid rgba(148, 163, 184, 0.18);
-  padding-right: 8px;
-}
-
-.conversation-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(148, 163, 184, 0.85);
-  padding: 4px 0;
-}
-
-.conversation-empty {
-  font-size: 11px;
-  color: rgba(148, 163, 184, 0.65);
-  font-style: italic;
-  padding: 8px 0;
-}
-
-.conversation-card {
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(15, 23, 42, 0.5);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.conversation-card:hover {
-  border-color: rgba(148, 163, 184, 0.32);
-  background: rgba(15, 23, 42, 0.7);
-}
-.conversation-card.active {
-  border-color: rgba(59, 130, 246, 0.45);
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.conversation-card-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #e5e7eb;
-}
-.conversation-title {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-preview {
-  font-size: 11px;
-  color: rgba(148, 163, 184, 0.75);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-meta {
-  font-size: 10px;
-  color: rgba(148, 163, 184, 0.65);
-}
-
-.message-area {
+.message-area-full {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 8px;
 }
 
 .message-empty {
@@ -251,4 +201,146 @@
 .message-input-row .primary-btn {
   padding: 8px 12px;
   flex-shrink: 0;
+}
+
+/* Conversation dropdown (Radix UI DropdownMenu) */
+
+.conversation-dropdown {
+  min-width: 280px;
+  max-width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 10px 38px -10px rgba(0, 0, 0, 0.35), 0 10px 20px -15px rgba(0, 0, 0, 0.2);
+  animation-duration: 0.15s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  z-index: 100;
+}
+.conversation-dropdown[data-state='open'] {
+  animation-name: slideDownAndFade;
+}
+.conversation-dropdown[data-state='closed'] {
+  animation-name: slideUpAndFade;
+}
+
+@keyframes slideDownAndFade {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUpAndFade {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.conversation-dropdown-header {
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  margin-bottom: 4px;
+}
+
+.conversation-dropdown-empty {
+  padding: 12px 8px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.65);
+  font-style: italic;
+  text-align: center;
+}
+
+.conversation-dropdown-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+.conversation-dropdown-item:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+.conversation-dropdown-item:focus {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.conversation-dropdown-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conversation-dropdown-item-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #e5e7eb;
+}
+
+.conversation-dropdown-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-check {
+  color: #60a5fa;
+  flex-shrink: 0;
+}
+
+.conversation-dropdown-preview {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.75);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-dropdown-meta {
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.conversation-dropdown-delete {
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-dropdown-delete:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
 }

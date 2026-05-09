@@ -212,6 +212,14 @@ function handleMessageEvent(
       },
       streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
     }))
+    // Reload conversation to get updated title (auto-generated from first message).
+    conversationApi.get(conversationId).then((conv) => {
+      set((s) => ({
+        conversations: { ...s.conversations, [conversationId]: conv },
+      }))
+    }).catch(() => {
+      // Ignore errors, title update is not critical.
+    })
   } else if (evt.event === 'ylw.msg.failed') {
     const { error } = evt.data as { error: string }
     set((s) => ({

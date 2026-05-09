@@ -189,6 +189,11 @@ async def send_message(
         range_end=body.range_end,
     )
     db.add(user_msg)
+
+    # Auto-generate title from first user message if title is empty.
+    if not conv.title or conv.title == "新对话":
+        conv.title = body.content[:50] + ("..." if len(body.content) > 50 else "")
+
     conv.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user_msg)

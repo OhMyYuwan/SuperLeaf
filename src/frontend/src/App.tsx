@@ -16,6 +16,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { useWorkflowStore } from './stores/workflowStore'
 import { useAnnotationStore } from './stores/annotationStore'
 import { useFilesystemStore } from './stores/filesystemStore'
+import { useViewStore } from './stores/viewStore'
 import type { DecorationSpec, DocChangeInfo } from './features/latex-editor'
 import './App.css'
 
@@ -60,6 +61,13 @@ function App() {
   const runWorkflow = useWorkflowStore((s) => s.run)
 
   const annotationItemsById = useAnnotationStore((s) => s.items)
+
+  // View control state -------------------------------------------------------
+  const leftPanelVisible = useViewStore((s) => s.leftPanel)
+  const editorColumnVisible = useViewStore((s) => s.editorColumn)
+  const previewColumnVisible = useViewStore((s) => s.previewColumn)
+  const annotationColumnVisible = useViewStore((s) => s.annotationColumn)
+  const rightPanelVisible = useViewStore((s) => s.rightPanel)
 
   // UI-only state -----------------------------------------------------------
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -182,72 +190,100 @@ function App() {
 
       <main className="workspace">
         <PanelGroup orientation="horizontal" style={{ height: '100%' }}>
-          <Panel defaultSize={20} minSize={16}>
-            <div className="panel left-panel">
-              <FileTree
-                tree={tree}
-                activeDocId={activeDocumentId}
-                expandedFolderIds={expandedFolderIds}
-                loading={treeLoading}
-                error={treeError}
-                onToggleFolder={toggleExpanded}
-                onOpenDoc={handleOpenDoc}
-                onCreateFolder={createFolder}
-                onCreateDoc={createDoc}
-                onRenameEntity={renameEntity}
-                onDeleteEntity={deleteEntity}
-                onUploadFile={uploadFile}
-                onRenameProject={renameProject}
-              />
-              <OutlineList
-                sections={activeDoc ? activeDoc.structure.sections : null}
-                docId={activeDocumentId}
-                onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
-              />
-            </div>
-          </Panel>
-
-          <PanelResizeHandle className="resize-handle" />
+          {leftPanelVisible && (
+            <>
+              <Panel defaultSize={20} minSize={16}>
+                <div className="panel left-panel">
+                  <FileTree
+                    tree={tree}
+                    activeDocId={activeDocumentId}
+                    expandedFolderIds={expandedFolderIds}
+                    loading={treeLoading}
+                    error={treeError}
+                    onToggleFolder={toggleExpanded}
+                    onOpenDoc={handleOpenDoc}
+                    onCreateFolder={createFolder}
+                    onCreateDoc={createDoc}
+                    onRenameEntity={renameEntity}
+                    onDeleteEntity={deleteEntity}
+                    onUploadFile={uploadFile}
+                    onRenameProject={renameProject}
+                  />
+                  <OutlineList
+                    sections={activeDoc ? activeDoc.structure.sections : null}
+                    docId={activeDocumentId}
+                    onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
+                  />
+                </div>
+              </Panel>
+              <PanelResizeHandle className="resize-handle" />
+            </>
+          )}
 
           <Panel defaultSize={50} minSize={36}>
             <div className="panel editor-panel">
               <EditorToolbar doc={activeDoc} selection={activeSelection} />
-              <div className="editor-split">
-                <EditorColumn
-                  doc={activeDoc}
-                  decorations={decorationSpecs}
-                  activeAnnotationId={activeAnnotationId}
-                  scrollTo={editorScrollTo}
-                  onChange={handleEditorChange}
-                  onSelectionChange={handleSelectionChange}
-                  onDocChange={handleDocChange}
-                  onDecorationClick={handleDecorationClick}
-                />
-                <PreviewColumn doc={activeDoc} />
-                <AnnotationColumn
-                  documentId={activeDocumentId}
-                  activeId={activeAnnotationId}
-                  onFocus={setActiveAnnotationId}
-                />
-              </div>
+              <PanelGroup orientation="horizontal" style={{ height: 'calc(100% - 48px)' }}>
+                {editorColumnVisible && (
+                  <>
+                    <Panel defaultSize={40} minSize={20}>
+                      <EditorColumn
+                        doc={activeDoc}
+                        decorations={decorationSpecs}
+                        activeAnnotationId={activeAnnotationId}
+                        scrollTo={editorScrollTo}
+                        onChange={handleEditorChange}
+                        onSelectionChange={handleSelectionChange}
+                        onDocChange={handleDocChange}
+                        onDecorationClick={handleDecorationClick}
+                      />
+                    </Panel>
+                    {(previewColumnVisible || annotationColumnVisible) && (
+                      <PanelResizeHandle className="resize-handle" />
+                    )}
+                  </>
+                )}
+                {previewColumnVisible && (
+                  <>
+                    <Panel defaultSize={40} minSize={20}>
+                      <PreviewColumn doc={activeDoc} />
+                    </Panel>
+                    {annotationColumnVisible && (
+                      <PanelResizeHandle className="resize-handle" />
+                    )}
+                  </>
+                )}
+                {annotationColumnVisible && (
+                  <Panel defaultSize={20} minSize={16}>
+                    <AnnotationColumn
+                      documentId={activeDocumentId}
+                      activeId={activeAnnotationId}
+                      onFocus={setActiveAnnotationId}
+                    />
+                  </Panel>
+                )}
+              </PanelGroup>
             </div>
           </Panel>
 
-          <PanelResizeHandle className="resize-handle" />
-
-          <Panel defaultSize={30} minSize={24}>
-            <RightPanel
-              workflows={workflows}
-              workflowsLoaded={workflowsLoaded}
-              workflowError={workflowError}
-              activeProvider={activeProvider}
-              activeSelection={activeSelection}
-              runningMap={runningMap}
-              eventsMap={eventsMap}
-              onRunWorkflow={handleRunWorkflow}
-              onReloadWorkflows={loadWorkflows}
-            />
-          </Panel>
+          {rightPanelVisible && (
+            <>
+              <PanelResizeHandle className="resize-handle" />
+              <Panel defaultSize={30} minSize={24}>
+                <RightPanel
+                  workflows={workflows}
+                  workflowsLoaded={workflowsLoaded}
+                  workflowError={workflowError}
+                  activeProvider={activeProvider}
+                  activeSelection={activeSelection}
+                  runningMap={runningMap}
+                  eventsMap={eventsMap}
+                  onRunWorkflow={handleRunWorkflow}
+                  onReloadWorkflows={loadWorkflows}
+                />
+              </Panel>
+            </>
+          )}
         </PanelGroup>
       </main>
     </div>

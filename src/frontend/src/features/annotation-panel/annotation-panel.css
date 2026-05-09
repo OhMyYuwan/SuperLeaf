@@ -461,3 +461,199 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* User comment composer (inline, appears in annotation column when user
+   clicks "add comment" in selection toolbar) */
+
+.comment-composer {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comment-composer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.comment-composer-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #dbeafe;
+}
+
+.comment-composer-quote {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  background: rgba(2, 6, 23, 0.4);
+  border-left: 2px solid rgba(59, 130, 246, 0.5);
+  padding: 6px 10px;
+  margin: 0;
+  border-radius: 4px;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.comment-composer-field {
+  position: relative;
+}
+
+.comment-composer-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 6, 23, 0.6);
+  color: #e5e7eb;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+}
+.comment-composer-textarea:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.comment-composer-hint {
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.7);
+}
+.comment-composer-hint kbd {
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  background: rgba(148, 163, 184, 0.18);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.comment-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.comment-composer-actions .ghost-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.9);
+  cursor: pointer;
+}
+.comment-composer-actions .primary-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.28);
+  color: #dbeafe;
+  border: 1px solid rgba(59, 130, 246, 0.38);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.comment-composer-actions .primary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Mention dropdown (inside composer) */
+
+.mention-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  z-index: 100;
+  padding: 4px;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mention-item:hover,
+.mention-item.active {
+  background: rgba(59, 130, 246, 0.22);
+  color: #dbeafe;
+}
+.mention-at {
+  color: rgba(148, 163, 184, 0.75);
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+}
+.mention-name {
+  font-weight: 500;
+}
+
+/* Highlighted @mention tags inside rendered comment body */
+
+.mention-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 1px;
+  font-size: 0.95em;
+  font-weight: 500;
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  border-radius: 4px;
+  border: 1px solid rgba(59, 130, 246, 0.32);
+  white-space: nowrap;
+}
+
+/* User-comment card differentiation */
+.ann-card.ann-user-comment {
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.08);
+}
+.ann-card.ann-user-comment .ann-kind-chip {
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
+}
+
+/* Selection toolbar (floating above selection in editor) */
+
+.selection-toolbar {
+  position: absolute;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  padding: 3px;
+  display: inline-flex;
+  gap: 2px;
+  pointer-events: auto;
+}
+.selection-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: #e5e7eb;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.selection-toolbar-btn:hover {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}

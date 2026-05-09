@@ -22,7 +22,7 @@ import type { ParsedAgentOutput } from '../services/outputParser'
 import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
 import { uuid } from '../lib/uuid'
 
-export type CardKind = 'annotation' | 'suggestion' | 'risk'
+export type CardKind = 'annotation' | 'suggestion' | 'risk' | 'user-comment'
 export type CardStatus = 'pending' | 'accepted' | 'archived' | 'deleted' | 'superseded'
 
 export interface ThreadMessage {
@@ -30,6 +30,10 @@ export interface ThreadMessage {
   role: 'agent' | 'user'
   content: string
   createdAt: Date
+  // For agent messages: which agent produced this reply (used when a single
+  // comment has @-mentioned multiple agents so we can label each turn).
+  agentId?: string
+  agentName?: string
 }
 
 export interface AnnotationItem {
@@ -71,6 +75,16 @@ interface AnnotationState {
     parsed: ParsedAgentOutput
   }) => void
 
+  // Create a user-authored comment card (optionally mentioning agents).
+  createUserComment: (params: {
+    documentId: string
+    range: { from: number; to: number }
+    targetText: string
+    content: string
+    mentionedAgentId?: string
+    mentionedAgentName?: string
+  }) => string
+
   accept: (id: string) => void
   remove: (id: string) => void
   archive: (id: string) => void
@@ -111,6 +125,28 @@ export const useAnnotationStore = create<AnnotationState>()(
         byRun: { ...state.byRun, [runId]: newItems.map((it) => it.id) },
       }
     })
+  },
+
+  createUserComment: ({ documentId, range, targetText, content, mentionedAgentId, mentionedAgentName }) => {
+    const id = uuid()
+    const item: AnnotationItem = {
+      id,
+      documentId,
+      workflowId: mentionedAgentId ?? '',
+      agentName: mentionedAgentName ?? '',
+      kind: 'user-comment',
+      status: 'pending',
+      range,
+      targetText,
+      content,
+      severity: 'medium',
+      thread: [
+        { id: uuid(), role: 'user', content, createdAt: new Date() },
+      ],
+      createdAt: new Date(),
+    }
+    set((state) => ({ items: { ...state.items, [id]: item } }))
+    return id
   },
 
   accept: (id) => {

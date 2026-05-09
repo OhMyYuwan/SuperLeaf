@@ -43,9 +43,18 @@
 .tab-content {
   flex: 1;
   min-height: 0;
-  display: flex;
+  display: flex !important;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Override Radix UI's default display behavior */
+.tab-content[data-state='inactive'] {
+  display: none !important;
+}
+
+.tab-content[data-state='active'] {
+  display: flex !important;
 }
 
 /* Common tab content wrapper for tabs that need padding and scrolling */

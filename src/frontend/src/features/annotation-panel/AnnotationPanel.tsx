@@ -1,6 +1,6 @@
 /**
  * AnnotationPanel — right-column list of cards, one per Annotation /
- * Suggestion / Risk produced by Dify. Each card supports three actions:
+ * Suggestion / Risk / user comment. Each card supports three actions:
  *
  *   accept   — applies the suggestion (or marks the card resolved) and writes
  *              back to documentStore.content.
@@ -8,22 +8,46 @@
  *   continue — opens an inline composer that posts a follow-up question to the
  *              same Dify workflow. The answer streams back into the card's
  *              thread and the conversation_id is reused for multi-turn.
+ *
+ * User-authored comments are a special kind ('user-comment') and behave
+ * slightly differently: no initial agent reply, and follow-ups are only
+ * enabled once an agent is @-mentioned.
  */
 
 import { useMemo, useState } from 'react'
-import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send, X } from 'lucide-react'
+import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send, X, MessageCircle } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import type { CachedWorkflow } from '../../services/backendApi'
+import { CommentComposer } from './CommentComposer'
+import { parseMentions, segmentText, buildAgentPrompt } from '../../services/mentions'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
   documentId: string | null
   activeId?: string | null
   onFocus?: (id: string | null) => void
+  // The selection the user clicked "add comment" on, if any. When non-null,
+  // a composer is rendered at the top of the panel.
+  pendingComment?: {
+    range: { from: number; to: number }
+    targetText: string
+  } | null
+  onDismissPendingComment?: () => void
+  agents?: CachedWorkflow[]
 }
 
-export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPanelProps) {
+export function AnnotationPanel({
+  documentId,
+  activeId,
+  onFocus,
+  pendingComment,
+  onDismissPendingComment,
+  agents = [],
+}: AnnotationPanelProps) {
   const itemsById = useAnnotationStore((s) => s.items)
+  const createUserComment = useAnnotationStore((s) => s.createUserComment)
+  const runWorkflow = useWorkflowStore((s) => s.run)
   const [showArchived, setShowArchived] = useState(false)
   const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
 
@@ -34,9 +58,6 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
       .sort((a, b) => a.range.from - b.range.from)
   }, [itemsById, documentId])
 
-  // Map { "from:to" → items[] }. Each card is still rendered as its own
-  // top-level entry; the map only exists so we can show the "compare siblings"
-  // button when a range has 2+ annotations from different runs.
   const rangeGroups = useMemo(() => {
     const groups = new Map<string, AnnotationItem[]>()
     for (const item of items) {
@@ -55,12 +76,78 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
       .sort((a, b) => a.range.from - b.range.from)
   }, [itemsById, documentId])
 
+  const handleSubmitComment = async ({
+    content,
+    mentionedAgents,
+  }: {
+    content: string
+    mentionedAgents: { id: string; name: string }[]
+  }) => {
+    if (!documentId || !pendingComment) return
+    const { range, targetText } = pendingComment
+
+    if (mentionedAgents.length === 0) {
+      // Plain user comment, no agent trigger.
+      createUserComment({
+        documentId,
+        range,
+        targetText,
+        content,
+      })
+      onDismissPendingComment?.()
+      return
+    }
+
+    // For each mentioned agent, create a separate card so replies stay isolated.
+    for (const agent of mentionedAgents) {
+      const cardId = createUserComment({
+        documentId,
+        range,
+        targetText,
+        content,
+        mentionedAgentId: agent.id,
+        mentionedAgentName: agent.name,
+      })
+      // Build the agent prompt including the selected text + user comment.
+      const prompt = buildAgentPrompt({
+        targetText,
+        userMessage: content,
+        threadHistory: [],
+      })
+      // Fire the workflow; the run store will append to this card's thread.
+      void runWorkflow(
+        agent.id,
+        {
+          document_id: documentId,
+          range_start: range.from,
+          range_end: range.to,
+          inputs: {
+            target_text: targetText,
+            user_message: content,
+          },
+          query: prompt,
+        },
+        { threadCardId: cardId },
+      )
+    }
+    onDismissPendingComment?.()
+  }
+
   if (!documentId) {
     return <div className="ann-empty">未打开文档</div>
   }
 
   return (
     <div className="ann-panel-root">
+      {pendingComment && (
+        <CommentComposer
+          selectedText={pendingComment.targetText}
+          agents={agents}
+          onSubmit={handleSubmitComment}
+          onCancel={() => onDismissPendingComment?.()}
+        />
+      )}
+
       {archivedItems.length > 0 && (
         <button
           className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
@@ -83,9 +170,9 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
         </div>
       ) : (
         <div className="ann-list">
-          {items.length === 0 && (
+          {items.length === 0 && !pendingComment && (
             <div className="ann-empty">
-              还没有批注。在编辑器中选中文字后，到右侧"工作流"Tab 选一个 workflow 点"运行"。
+              还没有批注。在编辑器中选中文字后，使用浮动工具栏新建批注，或到右侧"工作流"Tab 选一个 workflow 运行。
             </div>
           )}
           {items.map((item) => {
@@ -96,6 +183,7 @@ export function AnnotationPanel({ documentId, activeId, onFocus }: AnnotationPan
                 item={item}
                 siblings={siblings}
                 isActive={item.id === activeId}
+                agents={agents}
                 onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
                 onCompare={() => setCompareCluster(siblings)}
               />
@@ -117,12 +205,14 @@ function AnnotationCard({
   item,
   siblings,
   isActive,
+  agents,
   onFocus,
   onCompare,
 }: {
   item: AnnotationItem
   siblings: AnnotationItem[]
   isActive: boolean
+  agents: CachedWorkflow[]
   onFocus: () => void
   onCompare: () => void
 }) {
@@ -146,6 +236,18 @@ function AnnotationCard({
     appendThread(item.id, { role: 'user', content: question })
     setDraft('')
     setComposerOpen(false)
+
+    // Build prompt with full thread history so the agent has context.
+    const prompt = buildAgentPrompt({
+      targetText: item.targetText,
+      userMessage: question,
+      threadHistory: item.thread.map((m) => ({
+        role: m.role,
+        content: m.content,
+        agentName: m.agentName ?? item.agentName,
+      })),
+    })
+
     await runWorkflow(
       item.workflowId,
       {
@@ -156,7 +258,7 @@ function AnnotationCard({
           target_text: item.targetText,
           previous_answer: item.thread.findLast?.((m) => m.role === 'agent')?.content ?? '',
         },
-        query: question,
+        query: prompt,
         conversation_id: item.conversationId,
       },
       { threadCardId: item.id },
@@ -164,6 +266,8 @@ function AnnotationCard({
   }
 
   const isResolved = item.status === 'archived'
+  const isUserComment = item.kind === 'user-comment'
+  const canFollowUp = !!item.workflowId // Plain user comments have no agent
 
   return (
     <div
@@ -172,14 +276,24 @@ function AnnotationCard({
     >
       <div className="ann-head">
         <span className="ann-icon">{iconFor(item)}</span>
-        <span className="ann-agent">{item.agentName}</span>
+        <span className="ann-agent">
+          {isUserComment
+            ? item.agentName
+              ? `@${item.agentName}`
+              : '我的批注'
+            : item.agentName}
+        </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
         {isResolved && <span className="ann-resolved-chip">已处理</span>}
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
 
-      {item.content && <p className="ann-body">{item.content}</p>}
+      {item.content && (
+        <p className="ann-body">
+          {isUserComment ? renderWithMentions(item.content, agents) : item.content}
+        </p>
+      )}
 
       {item.kind === 'suggestion' && item.proposed && (
         <div className="ann-diff">
@@ -189,7 +303,7 @@ function AnnotationCard({
         </div>
       )}
 
-      <Thread messages={item.thread} />
+      <Thread messages={item.thread} isUserCommentCard={isUserComment} agents={agents} />
 
       {composerOpen && (
         <div className="ann-composer" onClick={(e) => e.stopPropagation()}>
@@ -226,15 +340,17 @@ function AnnotationCard({
           <Trash2 size={12} />
           删除
         </button>
-        <button
-          className="ann-btn continue"
-          onClick={() => setComposerOpen((v) => !v)}
-          disabled={isRunning}
-          title="向 Agent 追问"
-        >
-          <MessageSquarePlus size={12} />
-          追问
-        </button>
+        {canFollowUp && (
+          <button
+            className="ann-btn continue"
+            onClick={() => setComposerOpen((v) => !v)}
+            disabled={isRunning}
+            title="向 Agent 追问"
+          >
+            <MessageSquarePlus size={12} />
+            追问
+          </button>
+        )}
         {siblings.length > 1 && (
           <button
             className="ann-btn compare"
@@ -250,23 +366,56 @@ function AnnotationCard({
   )
 }
 
-function Thread({ messages }: { messages: AnnotationItem['thread'] }) {
-  if (messages.length <= 1) return null
+function Thread({
+  messages,
+  isUserCommentCard,
+  agents,
+}: {
+  messages: AnnotationItem['thread']
+  isUserCommentCard: boolean
+  agents: CachedWorkflow[]
+}) {
+  // User-comment cards: thread starts with the user message, so show all.
+  // Agent cards: thread[0] is the agent's initial output already rendered in
+  // the card body, so skip it.
+  const visible = isUserCommentCard ? messages : messages.slice(1)
+  if (visible.length === 0) return null
   return (
     <ul className="ann-thread">
-      {messages.slice(1).map((m) => (
+      {visible.map((m) => (
         <li key={m.id} className={`ann-thread-msg ${m.role}`}>
-          <span className="ann-thread-role">{m.role === 'user' ? '我' : 'Agent'}</span>
-          <span className="ann-thread-content">{m.content}</span>
+          <span className="ann-thread-role">
+            {m.role === 'user' ? '我' : m.agentName ?? 'Agent'}
+          </span>
+          <span className="ann-thread-content">
+            {m.role === 'user' ? renderWithMentions(m.content, agents) : m.content}
+          </span>
         </li>
       ))}
     </ul>
   )
 }
 
+function renderWithMentions(text: string, agents: CachedWorkflow[]): React.ReactNode[] {
+  const candidates = agents.map((a) => ({ id: a.id, name: a.name }))
+  const mentions = parseMentions(text, candidates)
+  const segments = segmentText(text, mentions)
+  return segments.map((seg, i) => {
+    if (seg.type === 'mention') {
+      return (
+        <span key={i} className="mention-tag" title={`@${seg.agent.name}`}>
+          {seg.raw}
+        </span>
+      )
+    }
+    return <span key={i}>{seg.content}</span>
+  })
+}
+
 function iconFor(item: AnnotationItem) {
   if (item.kind === 'suggestion') return <Wand2 size={14} />
   if (item.kind === 'risk') return <AlertTriangle size={14} />
+  if (item.kind === 'user-comment') return <MessageCircle size={14} />
   return <MessageSquarePlus size={14} />
 }
 
@@ -277,7 +426,7 @@ function ArchivedCard({ item }: { item: AnnotationItem }) {
     <div className="ann-card ann-archived">
       <div className="ann-head">
         <span className="ann-icon">{iconFor(item)}</span>
-        <span className="ann-agent">{item.agentName}</span>
+        <span className="ann-agent">{item.agentName || '我的批注'}</span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
       </div>
       <p className="ann-body archived-body">{ellipsis(item.content, 100)}</p>
@@ -296,6 +445,7 @@ function ArchivedCard({ item }: { item: AnnotationItem }) {
 function labelFor(kind: AnnotationItem['kind']) {
   if (kind === 'suggestion') return '建议'
   if (kind === 'risk') return '风险'
+  if (kind === 'user-comment') return '评论'
   return '批注'
 }
 
@@ -345,7 +495,7 @@ function ComparisonModal({
                 <ul className="ann-thread">
                   {it.thread.slice(1).map((m) => (
                     <li key={m.id} className={`ann-thread-msg ${m.role}`}>
-                      <span className="ann-thread-role">{m.role === 'user' ? '我' : 'Agent'}</span>
+                      <span className="ann-thread-role">{m.role === 'user' ? '我' : m.agentName ?? 'Agent'}</span>
                       <span className="ann-thread-content">{m.content}</span>
                     </li>
                   ))}

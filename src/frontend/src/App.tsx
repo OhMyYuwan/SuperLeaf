@@ -74,6 +74,10 @@ function App() {
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; seq: number } | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
+  const [pendingComment, setPendingComment] = useState<{
+    range: { from: number; to: number }
+    targetText: string
+  } | null>(null)
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
@@ -242,6 +246,23 @@ function App() {
             <div className="panel editor-panel">
               <EditorToolbar doc={activeDoc} selection={activeSelection} />
               <PanelGroup orientation="horizontal" style={{ height: 'calc(100% - 48px)' }}>
+                {annotationColumnVisible && (
+                  <>
+                    <Panel defaultSize={22} minSize={16}>
+                      <AnnotationColumn
+                        documentId={activeDocumentId}
+                        activeId={activeAnnotationId}
+                        onFocus={setActiveAnnotationId}
+                        pendingComment={pendingComment}
+                        onDismissPendingComment={() => setPendingComment(null)}
+                        agents={workflows}
+                      />
+                    </Panel>
+                    {(editorColumnVisible || previewColumnVisible) && (
+                      <PanelResizeHandle className="resize-handle" />
+                    )}
+                  </>
+                )}
                 {editorColumnVisible && (
                   <>
                     <Panel defaultSize={40} minSize={20}>
@@ -254,30 +275,24 @@ function App() {
                         onSelectionChange={handleSelectionChange}
                         onDocChange={handleDocChange}
                         onDecorationClick={handleDecorationClick}
+                        onAddComment={(p) => {
+                          setPendingComment(p)
+                          // If the annotation column is hidden, show it so the
+                          // composer is visible.
+                          if (!annotationColumnVisible) {
+                            useViewStore.getState().setVisibility({ annotationColumn: true })
+                          }
+                        }}
                       />
                     </Panel>
-                    {(previewColumnVisible || annotationColumnVisible) && (
+                    {previewColumnVisible && (
                       <PanelResizeHandle className="resize-handle" />
                     )}
                   </>
                 )}
                 {previewColumnVisible && (
-                  <>
-                    <Panel defaultSize={40} minSize={20}>
-                      <PreviewColumn doc={activeDoc} />
-                    </Panel>
-                    {annotationColumnVisible && (
-                      <PanelResizeHandle className="resize-handle" />
-                    )}
-                  </>
-                )}
-                {annotationColumnVisible && (
-                  <Panel defaultSize={20} minSize={16}>
-                    <AnnotationColumn
-                      documentId={activeDocumentId}
-                      activeId={activeAnnotationId}
-                      onFocus={setActiveAnnotationId}
-                    />
+                  <Panel defaultSize={38} minSize={20}>
+                    <PreviewColumn doc={activeDoc} />
                   </Panel>
                 )}
               </PanelGroup>

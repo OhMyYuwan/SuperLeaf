@@ -34,21 +34,30 @@ export interface DocChangeInfo {
   insertLen: number
 }
 
+export interface SelectionInfo {
+  from: number
+  to: number
+  text: string
+  // Coordinates of the selection's end (anchor on right side of last char)
+  // relative to the editor's content container. Useful for positioning
+  // floating toolbars.
+  coords: { x: number; y: number } | null
+}
+
 export interface LatexEditorProps {
   value: string
   format: EditorFormat
   onChange: (value: string) => void
-  onSelectionChange?: (info: {
-    from: number
-    to: number
-    text: string
-  }) => void
+  onSelectionChange?: (info: SelectionInfo) => void
   onDocChange?: (changes: DocChangeInfo[]) => void
   decorations?: DecorationSpec[]
   activeDecorationId?: string | null
   onDecorationClick?: (id: string) => void
   scrollTo?: { pos: number; seq: number } | null
   className?: string
+  // Rendered inside the editor's positioned container, on top of the editor.
+  // Used for floating UI like a selection toolbar.
+  overlay?: React.ReactNode
 }
 
 export function LatexEditor({
@@ -62,6 +71,7 @@ export function LatexEditor({
   onDecorationClick,
   scrollTo,
   className,
+  overlay,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -108,10 +118,26 @@ export function LatexEditor({
           }
           if (update.selectionSet && onSelectionRef.current) {
             const sel = update.state.selection.main
+            const text = update.state.sliceDoc(sel.from, sel.to)
+            // Compute screen coordinates for the right edge of the selection,
+            // then translate to coordinates relative to the editor container.
+            let coords: { x: number; y: number } | null = null
+            if (sel.from !== sel.to) {
+              const view = update.view
+              const screenCoords = view.coordsAtPos(sel.to)
+              const rect = view.scrollDOM.getBoundingClientRect()
+              if (screenCoords) {
+                coords = {
+                  x: screenCoords.right - rect.left + view.scrollDOM.scrollLeft,
+                  y: screenCoords.top - rect.top + view.scrollDOM.scrollTop,
+                }
+              }
+            }
             onSelectionRef.current({
               from: sel.from,
               to: sel.to,
-              text: update.state.sliceDoc(sel.from, sel.to),
+              text,
+              coords,
             })
           }
         }),
@@ -186,7 +212,12 @@ export function LatexEditor({
     view.focus()
   }, [scrollTo])
 
-  return <div ref={containerRef} className={className} />
+  return (
+    <div className={`latex-editor-root ${className ?? ''}`} style={{ position: 'relative' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {overlay}
+    </div>
+  )
 }
 
 function extractChanges(changeSet: ChangeSet): DocChangeInfo[] {

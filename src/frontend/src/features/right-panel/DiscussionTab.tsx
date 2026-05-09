@@ -297,7 +297,6 @@ function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
-      <div className="message-role">{message.role === 'user' ? '你' : 'Agent'}</div>
       <div className="message-content">{message.content}</div>
       {message.error && <div className="message-error">错误：{message.error}</div>}
       {hasRange && onJumpToRange && (
@@ -310,7 +309,6 @@ function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
           ↗ 跳转到原文
         </button>
       )}
-      <div className="message-time">{formatTime(message.created_at)}</div>
     </div>
   )
 }

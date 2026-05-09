@@ -148,3 +148,58 @@ class ProjectTreeOut(BaseModel):
 
 
 TreeFolderOut.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Discussions / chat (W7)
+# ---------------------------------------------------------------------------
+
+
+class ConversationOut(BaseModel):
+    id: str
+    document_id: str
+    workflow_id: str
+    title: str
+    external_conversation_id: str
+    created_at: datetime
+    updated_at: datetime
+    # Convenience: number of messages, last message preview.
+    message_count: int = 0
+    last_message_preview: str = ""
+
+    class Config:
+        from_attributes = True
+
+
+class ConversationCreateIn(BaseModel):
+    document_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    title: str = ""
+
+
+class ConversationUpdateIn(BaseModel):
+    title: str | None = None
+
+
+class MessageOut(BaseModel):
+    id: str
+    conversation_id: str
+    role: str
+    content: str
+    range_start: int | None
+    range_end: int | None
+    external_message_id: str
+    error: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MessageSendIn(BaseModel):
+    content: str = Field(min_length=1)
+    range_start: int | None = None
+    range_end: int | None = None
+    # When provided, anchored selection text + neighbouring context to send to
+    # Dify's `inputs` map. Otherwise we send only the message text.
+    inputs: dict = Field(default_factory=dict)

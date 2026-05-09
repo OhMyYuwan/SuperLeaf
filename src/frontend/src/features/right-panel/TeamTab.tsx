@@ -1,47 +1,186 @@
 /**
- * TeamTab — lists Dify apps synced from the active provider.
+ * TeamTab — Agent 团队管理。
  *
- * Read-only view: show cards for each cached workflow, plus empty / error
- * states when nothing is synced or provider isn't configured.
+ * UI 上每个"Agent"对应后端的一行 Provider（一个 endpoint + API key 组合就是
+ * 一个 Agent）。同时显示从该 provider 同步出来的 cached workflows，让用户可
+ * 以看到 Dify 那边到底有哪些 app。
+ *
+ * 后续 W7 会让这里直接挂"私聊"入口，所以预留 onChatWithAgent 钩子。
  */
 
-import type { CachedWorkflow, Provider } from '../../services/backendApi'
+import { useEffect, useState } from 'react'
+import {
+  CheckCircle2,
+  CircleAlert,
+  Loader2,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
+import type { CachedWorkflow, Provider, ProviderDraft } from '../../services/backendApi'
+import { useSettingsStore } from '../../stores/settingsStore'
 
 interface TeamTabProps {
   workflows: CachedWorkflow[]
   workflowsLoaded: boolean
   workflowError: string | null
-  activeProvider: Provider | null
   onReload: () => void
+  onChatWithAgent?: (workflow: CachedWorkflow) => void
 }
 
 export function TeamTab({
   workflows,
   workflowsLoaded,
   workflowError,
-  activeProvider,
   onReload,
+  onChatWithAgent,
 }: TeamTabProps) {
+  const load = useSettingsStore((s) => s.load)
+  const loaded = useSettingsStore((s) => s.loaded)
+  const providers = useSettingsStore((s) => s.providers)
+  const error = useSettingsStore((s) => s.error)
+  const backendReachable = useSettingsStore((s) => s.backendReachable)
+
+  const [showForm, setShowForm] = useState(false)
+
+  useEffect(() => {
+    if (!loaded) load()
+  }, [loaded, load])
+
+  // Group workflows by provider so each provider becomes one Agent block.
+  const workflowsByProvider = workflows.reduce<Record<string, CachedWorkflow[]>>(
+    (acc, w) => {
+      ;(acc[w.provider_id] ??= []).push(w)
+      return acc
+    },
+    {},
+  )
+
   return (
     <>
       <div className="tab-header-row">
-        <span>Dify Agent / Workflow：{workflows.length} 个已同步</span>
-        <button className="small-btn" onClick={onReload}>
-          刷新
+        <span>Agent 团队：{providers.length} 个供应商 · {workflows.length} 个 Agent</span>
+        <button className="small-btn" onClick={onReload} title="从供应商重新拉取 Agent 列表">
+          <RefreshCw size={12} /> 同步
         </button>
       </div>
-      {!activeProvider && (
-        <div className="tab-empty">
-          还未配置或激活 provider。先去"设置"里添加 Dify provider，并点击"测连"完成首次同步。
-        </div>
-      )}
-      {activeProvider && workflowsLoaded && workflows.length === 0 && (
-        <div className="tab-empty">
-          没有同步到任何 app。确保已在 Dify 里创建应用并生成 API key，然后回到"设置"点击"测连"。
-        </div>
-      )}
+
+      <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
+
       {workflowError && <div className="tab-error">{workflowError}</div>}
-      <div className="agent-grid">
+
+      {loaded && providers.length === 0 && !showForm && (
+        <div className="tab-empty">
+          还没有配置任何供应商。点击下方按钮添加 Dify / Claude 等供应商，
+          然后系统会自动同步出可用的 Agent。
+        </div>
+      )}
+
+      <div className="agent-team-list">
+        {providers.map((provider) => (
+          <ProviderBlock
+            key={provider.id}
+            provider={provider}
+            workflows={workflowsByProvider[provider.id] ?? []}
+            workflowsLoaded={workflowsLoaded}
+            onChatWithAgent={onChatWithAgent}
+            onAfterMutate={onReload}
+          />
+        ))}
+      </div>
+
+      {showForm ? (
+        <ProviderForm onClose={() => setShowForm(false)} onCreated={onReload} />
+      ) : (
+        <button className="primary-btn add-provider-btn" onClick={() => setShowForm(true)}>
+          <Plus size={14} /> 添加供应商
+        </button>
+      )}
+    </>
+  )
+}
+
+interface ProviderBlockProps {
+  provider: Provider
+  workflows: CachedWorkflow[]
+  workflowsLoaded: boolean
+  onChatWithAgent?: (workflow: CachedWorkflow) => void
+  onAfterMutate: () => void
+}
+
+function ProviderBlock({
+  provider,
+  workflows,
+  workflowsLoaded,
+  onChatWithAgent,
+  onAfterMutate,
+}: ProviderBlockProps) {
+  const probe = useSettingsStore((s) => s.probe)
+  const remove = useSettingsStore((s) => s.remove)
+  const activate = useSettingsStore((s) => s.activate)
+  const [busy, setBusy] = useState<'probe' | 'remove' | 'activate' | null>(null)
+
+  const handleProbe = async () => {
+    setBusy('probe')
+    await probe(provider.id)
+    setBusy(null)
+    onAfterMutate()
+  }
+  const handleRemove = async () => {
+    if (!confirm(`删除供应商「${provider.name}」？该供应商下的所有 Agent 会同时移除。`)) return
+    setBusy('remove')
+    await remove(provider.id)
+    setBusy(null)
+    onAfterMutate()
+  }
+  const handleActivate = async () => {
+    setBusy('activate')
+    await activate(provider.id)
+    setBusy(null)
+  }
+
+  return (
+    <div className={`agent-team-block ${provider.is_active ? 'active' : ''}`}>
+      <div className="agent-team-block-header">
+        <div className="agent-team-block-title">
+          <span className="provider-name">{provider.name}</span>
+          <span className={`status-chip ${provider.status}`}>
+            {provider.status === 'ok' && <CheckCircle2 size={11} />}
+            {provider.status === 'error' && <CircleAlert size={11} />}
+            {provider.status}
+          </span>
+          {provider.is_active && <span className="active-chip">默认</span>}
+        </div>
+        <div className="agent-team-block-actions">
+          <button className="ghost-btn small" onClick={handleProbe} disabled={!!busy} title="测试连接并同步">
+            {busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+          </button>
+          {!provider.is_active && (
+            <button className="ghost-btn small" onClick={handleActivate} disabled={!!busy} title="设为默认">
+              ★
+            </button>
+          )}
+          <button className="ghost-btn small danger" onClick={handleRemove} disabled={!!busy} title="删除供应商">
+            <Trash2 size={12} />
+          </button>
+        </div>
+      </div>
+      <div className="agent-team-block-meta">
+        <span className="kind">{provider.kind}</span>
+        <span className="endpoint" title={provider.endpoint}>{provider.endpoint}</span>
+      </div>
+      {provider.status_detail && provider.status === 'error' && (
+        <div className="detail error">{provider.status_detail}</div>
+      )}
+
+      <div className="agent-list">
+        {!workflowsLoaded && <div className="agent-empty-inline">加载中…</div>}
+        {workflowsLoaded && workflows.length === 0 && (
+          <div className="agent-empty-inline">
+            该供应商下还没有 Agent。在 {provider.kind === 'claude-direct' ? 'Claude 控制台' : 'Dify 控制台'} 创建后点上方刷新。
+          </div>
+        )}
         {workflows.map((wf) => (
           <div key={wf.id} className="agent-card" title={wf.description || wf.kind}>
             <div className="agent-avatar" style={{ background: agentColor(wf.kind) }}>
@@ -54,10 +193,141 @@ export function TeamTab({
                 {wf.description ? ` · ${wf.description}` : ''}
               </span>
             </div>
+            {onChatWithAgent && (
+              <button
+                className="tree-action-btn"
+                title="开始对话"
+                onClick={() => onChatWithAgent(wf)}
+              >
+                <MessageSquare size={12} />
+              </button>
+            )}
           </div>
         ))}
       </div>
-    </>
+    </div>
+  )
+}
+
+function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const create = useSettingsStore((s) => s.create)
+  const [draft, setDraft] = useState<ProviderDraft>({
+    name: '',
+    kind: 'dify-local',
+    endpoint: 'http://localhost:8080/v1',
+    api_key: '',
+    activate: true,
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const handleKindChange = (kind: ProviderDraft['kind']) => {
+    setDraft((d) => ({
+      ...d,
+      kind,
+      endpoint:
+        kind === 'dify-cloud'
+          ? 'https://api.dify.ai/v1'
+          : kind === 'claude-direct'
+            ? 'https://api.anthropic.com'
+            : 'http://localhost:8080/v1',
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setFormError(null)
+    if (!draft.name.trim() || !draft.endpoint.trim() || !draft.api_key.trim()) {
+      setFormError('名称 / endpoint / API key 都不能为空')
+      return
+    }
+    setSubmitting(true)
+    const result = await create(draft)
+    setSubmitting(false)
+    if (result) {
+      onClose()
+      onCreated()
+    } else {
+      setFormError('创建失败，查看控制台')
+    }
+  }
+
+  return (
+    <form className="provider-form embedded" onSubmit={handleSubmit}>
+      <div className="form-row">
+        <label>
+          <span>名称</span>
+          <input
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            placeholder="My Dify"
+            autoFocus
+          />
+        </label>
+        <label>
+          <span>类型</span>
+          <select value={draft.kind} onChange={(e) => handleKindChange(e.target.value as ProviderDraft['kind'])}>
+            <option value="dify-local">Dify (本地)</option>
+            <option value="dify-cloud">Dify Cloud</option>
+            <option value="claude-direct">Claude API 直连</option>
+          </select>
+        </label>
+      </div>
+      <label className="full">
+        <span>Endpoint</span>
+        <input
+          value={draft.endpoint}
+          onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
+        />
+      </label>
+      <label className="full">
+        <span>API Key</span>
+        <input
+          type="password"
+          value={draft.api_key}
+          onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
+          placeholder="app-xxxxx / sk-xxxxx"
+        />
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={draft.activate}
+          onChange={(e) => setDraft({ ...draft, activate: e.target.checked })}
+        />
+        <span>设为默认供应商</span>
+      </label>
+      {formError && <div className="form-error">{formError}</div>}
+      <div className="form-actions">
+        <button type="button" className="ghost-btn" onClick={onClose} disabled={submitting}>
+          取消
+        </button>
+        <button type="submit" className="primary-btn" disabled={submitting}>
+          {submitting ? <Loader2 size={14} className="spin" /> : '保存'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function BackendStatusBar({
+  reachable,
+  error,
+  onRetry,
+}: {
+  reachable: boolean | null
+  error: string | null
+  onRetry: () => void
+}) {
+  if (reachable === null || reachable) return null
+  return (
+    <div className="status-bar error">
+      <CircleAlert size={14} />
+      <span>无法连接到后端（默认 http://localhost:8000）。{error ? ` · ${error.slice(0, 120)}` : ''}</span>
+      <button className="inline-btn" onClick={onRetry}>
+        <RefreshCw size={12} /> 重试
+      </button>
+    </div>
   )
 }
 

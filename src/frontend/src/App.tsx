@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
-import { SettingsDialog } from './features/settings'
 import { Topbar } from './features/topbar'
 import { FileTree, OutlineList } from './features/file-tree'
 import {
@@ -72,9 +71,9 @@ function App() {
   const rightPanelVisible = useViewStore((s) => s.rightPanel)
 
   // UI-only state -----------------------------------------------------------
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; seq: number } | null>(null)
+  const [rightTab, setRightTab] = useState<string>('discussion')
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
@@ -192,17 +191,20 @@ function App() {
   }
 
   // Render -------------------------------------------------------------------
+  const openTeamManagement = () => {
+    useViewStore.getState().setVisibility({ rightPanel: true })
+    setRightTab('agents')
+  }
+
   return (
     <div className="app-shell">
       <Topbar
         backendReachable={backendReachable}
         providerName={activeProvider?.name ?? null}
         providerStatus={activeProvider?.status ?? null}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openTeamManagement}
         onSave={handleSave}
       />
-
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <main className="workspace">
         <PanelGroup orientation="horizontal" style={{ height: '100%' }}>
@@ -295,6 +297,8 @@ function App() {
                   activeDocumentId={activeDocumentId}
                   runningMap={runningMap}
                   eventsMap={eventsMap}
+                  selectedTab={rightTab}
+                  onTabChange={setRightTab}
                   onRunWorkflow={handleRunWorkflow}
                   onReloadWorkflows={loadWorkflows}
                   onJumpToRange={(range) =>

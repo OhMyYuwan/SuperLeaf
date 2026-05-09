@@ -150,3 +150,48 @@ class FileBlob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+# ---------------------------------------------------------------------------
+# Discussions / chat (W7)
+# ---------------------------------------------------------------------------
+
+
+class Conversation(Base):
+    """A chat thread between the user and one Agent (cached_workflow), scoped
+    to a document. Mirrors Dify's `conversation_id` so follow-up messages stay
+    in the same context window on the Dify side.
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(String(64), index=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"), index=True)
+    title: Mapped[str] = mapped_column(String(256), default="")
+    # Dify's conversation id once we know it (after first message).
+    external_conversation_id: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class Message(Base):
+    """One turn in a conversation. `role` is 'user' or 'agent'."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text, default="")
+    # Optional anchor: if the user attached a selection range when sending.
+    range_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    range_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Dify message id (for user → agent traceability).
+    external_message_id: Mapped[str] = mapped_column(String(128), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -98,10 +98,43 @@ export interface RunRequest {
   parent_run_id?: string
 }
 
+export interface WorkflowRun {
+  id: string
+  provider_id: string
+  workflow_id: string
+  document_id: string
+  range_start: number
+  range_end: number
+  status: 'running' | 'completed' | 'failed' | string
+  external_run_id: string
+  outputs: Record<string, unknown>
+  error: string
+  started_at: string
+  finished_at: string | null
+}
+
+export interface RunListQuery {
+  document_id?: string
+  workflow_id?: string
+  limit?: number
+}
+
 export const workflowApi = {
   list: () => http<CachedWorkflow[]>('/api/workflows'),
   // Stream URL; callers use EventSource, not fetch.
   runStreamUrl: (id: string) => `${BASE}/api/workflows/${encodeURIComponent(id)}/run`,
+  listRuns: (query?: RunListQuery) => {
+    const params = new URLSearchParams()
+    if (query?.document_id) params.set('document_id', query.document_id)
+    if (query?.workflow_id) params.set('workflow_id', query.workflow_id)
+    if (query?.limit) params.set('limit', String(query.limit))
+    const qs = params.toString()
+    return http<WorkflowRun[]>(`/api/workflows/runs${qs ? `?${qs}` : ''}`)
+  },
+  getRun: (runId: string) =>
+    http<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`),
+  deleteRun: (runId: string) =>
+    http<void>(`/api/workflows/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' }),
 }
 
 export const BACKEND_BASE = BASE

@@ -27,6 +27,8 @@ function App() {
   const updateContent = useDocumentStore((s) => s.updateContent)
   const loadBackendDoc = useDocumentStore((s) => s.loadBackendDoc)
   const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
+  const flushPendingSave = useDocumentStore((s) => s.flushPendingSave)
+  const saveStatusMap = useDocumentStore((s) => s.saveStatus)
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
   const activeSelection = useEditorStore((s) =>
@@ -116,11 +118,25 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeDocumentId, saveBackendDoc])
 
+  // Warn before unload if there are unsaved changes ---------------------------
+  useEffect(() => {
+    const hasUnsaved = Object.values(saveStatusMap).some(
+      (s) => s === 'dirty' || s === 'saving' || s === 'error',
+    )
+    if (!hasUnsaved) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [saveStatusMap])
+
   // Cross-component handlers -------------------------------------------------
   const handleOpenDoc = async (docId: string) => {
-    // Auto-save current doc before switching
+    // Auto-save current doc before switching (flush any pending debounce too)
     if (activeDocumentId && activeDocumentId !== docId) {
-      await saveBackendDoc(activeDocumentId)
+      await flushPendingSave(activeDocumentId)
     }
     await loadBackendDoc(docId)
   }
@@ -276,10 +292,14 @@ function App() {
                   workflowError={workflowError}
                   activeProvider={activeProvider}
                   activeSelection={activeSelection}
+                  activeDocumentId={activeDocumentId}
                   runningMap={runningMap}
                   eventsMap={eventsMap}
                   onRunWorkflow={handleRunWorkflow}
                   onReloadWorkflows={loadWorkflows}
+                  onJumpToRange={(range) =>
+                    setEditorScrollTo({ pos: range.from, seq: Date.now() })
+                  }
                 />
               </Panel>
             </>

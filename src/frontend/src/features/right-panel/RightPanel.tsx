@@ -13,6 +13,7 @@ import type { RunEvent } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
 import { WorkflowTab } from './WorkflowTab'
+import { RunHistoryTab } from './RunHistoryTab'
 import './right-panel.css'
 
 interface RightPanelProps {
@@ -21,10 +22,12 @@ interface RightPanelProps {
   workflowError: string | null
   activeProvider: Provider | null
   activeSelection: Selection | null
+  activeDocumentId: string | null
   runningMap: Record<string, boolean>
   eventsMap: Record<string, RunEvent[]>
   onRunWorkflow: (workflowId: string, instruction: string) => void
   onReloadWorkflows: () => void
+  onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
 export function RightPanel(props: RightPanelProps) {
@@ -41,6 +44,9 @@ export function RightPanel(props: RightPanelProps) {
           </Tabs.Trigger>
           <Tabs.Trigger className="tab-trigger" value="workflow">
             工作流
+          </Tabs.Trigger>
+          <Tabs.Trigger className="tab-trigger" value="history">
+            历史
           </Tabs.Trigger>
         </Tabs.List>
 
@@ -65,6 +71,14 @@ export function RightPanel(props: RightPanelProps) {
             runningMap={props.runningMap}
             eventsMap={props.eventsMap}
             onRun={props.onRunWorkflow}
+          />
+        </Tabs.Content>
+
+        <Tabs.Content value="history" className="tab-content">
+          <RunHistoryTab
+            workflows={props.workflows}
+            documentId={props.activeDocumentId}
+            onJumpToRange={props.onJumpToRange}
           />
         </Tabs.Content>
       </Tabs.Root>

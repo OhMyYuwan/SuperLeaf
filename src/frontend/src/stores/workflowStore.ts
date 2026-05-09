@@ -15,6 +15,7 @@ import {
   workflowApi,
   type CachedWorkflow,
   type RunRequest,
+  type WorkflowRun,
 } from '../services/backendApi'
 import { useAnnotationStore } from './annotationStore'
 import { useDocumentStore } from './documentStore'
@@ -50,8 +51,15 @@ interface WorkflowState {
   running: Record<string, boolean>
   lastRunEvents: Record<string, RunEvent[]>
 
+  // Persisted run history (loaded on demand from /api/workflows/runs)
+  runHistory: WorkflowRun[]
+  historyLoading: boolean
+  historyError: string | null
+
   load: () => Promise<void>
   run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string }) => Promise<void>
+  loadHistory: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
+  deleteRun: (runId: string) => Promise<void>
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -61,6 +69,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   error: null,
   running: {},
   lastRunEvents: {},
+  runHistory: [],
+  historyLoading: false,
+  historyError: null,
 
   load: async () => {
     set({ loading: true, error: null })
@@ -69,6 +80,32 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set({ workflows, loading: false, loaded: true })
     } catch (e) {
       set({ loading: false, loaded: true, error: e instanceof Error ? e.message : String(e) })
+    }
+  },
+
+  loadHistory: async (filter) => {
+    set({ historyLoading: true, historyError: null })
+    try {
+      const runHistory = await workflowApi.listRuns({
+        document_id: filter?.documentId,
+        workflow_id: filter?.workflowId,
+        limit: 100,
+      })
+      set({ runHistory, historyLoading: false })
+    } catch (e) {
+      set({
+        historyLoading: false,
+        historyError: e instanceof Error ? e.message : String(e),
+      })
+    }
+  },
+
+  deleteRun: async (runId) => {
+    try {
+      await workflowApi.deleteRun(runId)
+      set((s) => ({ runHistory: s.runHistory.filter((r) => r.id !== runId) }))
+    } catch (e) {
+      set({ historyError: e instanceof Error ? e.message : String(e) })
     }
   },
 

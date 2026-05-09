@@ -57,7 +57,11 @@ export function RightPanel(props: RightPanelProps) {
         </Tabs.List>
 
         <Tabs.Content value="discussion" className="tab-content">
-          <DiscussionTab />
+          <DiscussionTab
+            workflows={props.workflows}
+            documentId={props.activeDocumentId}
+            onJumpToRange={props.onJumpToRange}
+          />
         </Tabs.Content>
 
         <Tabs.Content value="agents" className="tab-content">

@@ -33,6 +33,37 @@
   letter-spacing: 0.08em;
 }
 
+.save-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.save-indicator.saved {
+  color: rgba(74, 222, 128, 0.85);
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.22);
+}
+.save-indicator.saving {
+  color: rgba(148, 163, 184, 0.95);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+.save-indicator.dirty {
+  color: rgba(250, 204, 21, 0.95);
+  background: rgba(234, 179, 8, 0.1);
+  border-color: rgba(234, 179, 8, 0.28);
+}
+.save-indicator.error {
+  color: rgba(252, 165, 165, 0.95);
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.28);
+}
+
 .toolbar-right {
   display: flex;
   align-items: center;

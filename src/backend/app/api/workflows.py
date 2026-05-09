@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
 from ..models import CachedWorkflow, WorkflowRun
-from ..schemas import CachedWorkflowOut
+from ..schemas import CachedWorkflowOut, WorkflowRunOut
 from ..services.dify_client import DifyError
 from ..services.provider_service import ProviderService
 
@@ -23,6 +23,45 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 def list_workflows(db: Session = Depends(get_session)) -> list[CachedWorkflowOut]:
     rows = db.query(CachedWorkflow).order_by(CachedWorkflow.last_synced_at.desc()).all()
     return [CachedWorkflowOut.model_validate(r) for r in rows]
+
+
+@router.get("/runs", response_model=list[WorkflowRunOut])
+def list_runs(
+    document_id: str | None = None,
+    workflow_id: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_session),
+) -> list[WorkflowRunOut]:
+    """List recent workflow runs, newest first.
+
+    Optional filters narrow to one document or one workflow. `limit` is
+    capped at 200 to avoid pulling the entire history into memory.
+    """
+    limit = max(1, min(limit, 200))
+    q = db.query(WorkflowRun)
+    if document_id:
+        q = q.filter(WorkflowRun.document_id == document_id)
+    if workflow_id:
+        q = q.filter(WorkflowRun.workflow_id == workflow_id)
+    rows = q.order_by(WorkflowRun.started_at.desc()).limit(limit).all()
+    return [WorkflowRunOut.model_validate(r) for r in rows]
+
+
+@router.get("/runs/{run_id}", response_model=WorkflowRunOut)
+def get_run(run_id: str, db: Session = Depends(get_session)) -> WorkflowRunOut:
+    run = db.get(WorkflowRun, run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    return WorkflowRunOut.model_validate(run)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+def delete_run(run_id: str, db: Session = Depends(get_session)) -> None:
+    run = db.get(WorkflowRun, run_id)
+    if run is None:
+        return None
+    db.delete(run)
+    db.commit()
 
 
 class RunBody(BaseModel):

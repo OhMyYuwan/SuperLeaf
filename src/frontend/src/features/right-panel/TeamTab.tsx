@@ -58,7 +58,7 @@ export function TeamTab({
   )
 
   return (
-    <>
+    <div className="tab-content-wrapper">
       <div className="tab-header-row">
         <span>Agent 团队：{providers.length} 个供应商 · {workflows.length} 个 Agent</span>
         <button className="small-btn" onClick={onReload} title="从供应商重新拉取 Agent 列表">
@@ -97,7 +97,7 @@ export function TeamTab({
           <Plus size={14} /> 添加供应商
         </button>
       )}
-    </>
+    </div>
   )
 }
 

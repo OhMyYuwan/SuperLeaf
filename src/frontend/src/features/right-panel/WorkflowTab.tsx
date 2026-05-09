@@ -28,7 +28,7 @@ export function WorkflowTab({
   const [instruction, setInstruction] = useState('')
 
   return (
-    <>
+    <div className="tab-content-wrapper">
       <div className="tab-header-row">
         <span>选中文字、写下指令，再选择 workflow 运行</span>
       </div>
@@ -89,7 +89,7 @@ export function WorkflowTab({
           )
         })}
       </div>
-    </>
+    </div>
   )
 }
 

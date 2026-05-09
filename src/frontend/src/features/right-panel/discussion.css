@@ -14,6 +14,7 @@
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  flex-shrink: 0;
 }
 
 .agent-picker-label {
@@ -58,6 +59,7 @@
   background: rgba(239, 68, 68, 0.12);
   color: #fca5a5;
   font-size: 11px;
+  flex-shrink: 0;
 }
 
 .active-conversation-indicator {
@@ -69,6 +71,7 @@
   border-bottom: 1px solid rgba(59, 130, 246, 0.18);
   font-size: 11px;
   color: rgba(148, 163, 184, 0.85);
+  flex-shrink: 0;
 }
 
 .discussion-body-compact {
@@ -80,10 +83,10 @@
 
 .message-area-full {
   flex: 1;
+  min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   padding: 8px;
 }
 
@@ -107,6 +110,7 @@
   padding: 8px;
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.4);
+  margin-bottom: 8px;
 }
 
 .message-bubble {
@@ -184,6 +188,7 @@
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.5);
   border: 1px solid rgba(148, 163, 184, 0.18);
+  flex-shrink: 0;
 }
 .message-input-row input {
   flex: 1;

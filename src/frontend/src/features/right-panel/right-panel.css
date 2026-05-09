@@ -43,6 +43,15 @@
 .tab-content {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Common tab content wrapper for tabs that need padding and scrolling */
+.tab-content-wrapper {
+  flex: 1;
+  min-height: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -56,6 +65,7 @@
   align-items: center;
   font-size: 12px;
   color: rgba(148, 163, 184, 0.85);
+  flex-shrink: 0;
 }
 
 .tab-empty {

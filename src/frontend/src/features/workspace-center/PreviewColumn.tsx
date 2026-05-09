@@ -1,23 +1,36 @@
 /**
  * PreviewColumn — middle column. Routes on `doc.format`:
  *   md  → MarkdownPreview
- *   tex → <pre> block with a "PDF 预览稍后接入" chip (LaTeX compile later)
+ *   tex → LatexPreview (compiles + renders PDF via PDF.js)
  *   txt → raw <pre>
  *
- * The ScrollArea wrapper is kept here (not in the renderers) so each format's
- * content lives inside a single scrollable viewport.
+ * For md/txt we wrap in a ScrollArea. LatexPreview has its own scroll + toolbar.
  */
 
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import { Wand2 } from 'lucide-react'
 import type { Document } from '../../types/document'
-import { MarkdownPreview } from '../preview'
+import { MarkdownPreview, LatexPreview } from '../preview'
 
 interface PreviewColumnProps {
   doc: Document | null
 }
 
 export function PreviewColumn({ doc }: PreviewColumnProps) {
+  // LaTeX preview has its own toolbar/scroll; render directly.
+  if (doc && doc.format === 'tex') {
+    return (
+      <div className="editor-column preview-column">
+        <div className="column-header">
+          <Wand2 size={16} /> 预览
+        </div>
+        <div className="preview-box">
+          <LatexPreview documentContent={doc.content} documentVersion={doc.version} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="editor-column preview-column">
       <div className="column-header">
@@ -44,10 +57,7 @@ function renderBody(doc: Document | null) {
   }
   return (
     <div className="preview-paper">
-      <div className="preview-paper-meta">
-        格式：{doc.format.toUpperCase()}
-        {doc.format === 'tex' && <span className="soon-chip">PDF 预览稍后接入</span>}
-      </div>
+      <div className="preview-paper-meta">格式：{doc.format.toUpperCase()}</div>
       <pre>{doc.content}</pre>
     </div>
   )

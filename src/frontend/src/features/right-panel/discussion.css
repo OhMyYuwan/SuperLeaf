@@ -3,7 +3,7 @@
 .discussion-tab {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -118,30 +118,29 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: 10px;
   max-width: 85%;
   word-wrap: break-word;
+  position: relative;
 }
+
 .message-bubble.user {
   align-self: flex-end;
   background: rgba(59, 130, 246, 0.18);
   border: 1px solid rgba(59, 130, 246, 0.28);
+  /* 圆角矩形，但右下角保持尖角 */
+  border-radius: 12px 12px 0 12px;
 }
+
 .message-bubble.agent {
   align-self: flex-start;
   background: rgba(148, 163, 184, 0.12);
   border: 1px solid rgba(148, 163, 184, 0.22);
-}
-.message-bubble.streaming {
-  opacity: 0.85;
+  /* 圆角矩形，但左上角保持尖角 */
+  border-radius: 0 12px 12px 12px;
 }
 
-.message-role {
-  font-size: 10px;
-  font-weight: 600;
-  color: rgba(148, 163, 184, 0.85);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.message-bubble.streaming {
+  opacity: 0.85;
 }
 
 .message-content {
@@ -173,12 +172,6 @@
 }
 .message-jump-btn:hover {
   background: rgba(59, 130, 246, 0.24);
-}
-
-.message-time {
-  font-size: 10px;
-  color: rgba(148, 163, 184, 0.65);
-  align-self: flex-end;
 }
 
 .message-input-row {

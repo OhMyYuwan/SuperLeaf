@@ -143,6 +143,54 @@ export const healthApi = {
   check: () => http<{ status: string; service: string }>('/api/health'),
 }
 
+// LaTeX compilation
+export interface CompilerInfo {
+  available: string[]
+  default: string
+}
+
+export interface CompileRequest {
+  compiler?: string
+  main_doc_id?: string
+}
+
+export interface CompileResult {
+  ok: boolean
+  compiler: string
+  duration_ms: number
+  error: string
+  log_tail: string
+  pdf_bytes: number
+}
+
+export interface CompileSettings {
+  main_doc_id: string
+  compiler: string
+}
+
+export const compileApi = {
+  listCompilers: () => http<CompilerInfo>('/api/compile/compilers'),
+  rescanCompilers: () =>
+    http<CompilerInfo>('/api/compile/rescan', { method: 'POST' }),
+  compile: (body?: CompileRequest) =>
+    http<CompileResult>('/api/compile', {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+    }),
+  pdfUrl: () => `${BASE}/api/compile/pdf`,
+  getLog: async () => {
+    const resp = await fetch(`${BASE}/api/compile/log`)
+    if (!resp.ok) throw new BackendError(resp.status, resp.statusText)
+    return resp.text()
+  },
+  getSettings: () => http<CompileSettings>('/api/compile/settings'),
+  updateSettings: (body: Partial<CompileSettings>) =>
+    http<CompileSettings>('/api/compile/settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+}
+
 // Conversations / chat
 export interface Conversation {
   id: string

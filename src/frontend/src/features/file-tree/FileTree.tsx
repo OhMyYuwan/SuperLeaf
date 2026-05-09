@@ -11,8 +11,27 @@ import {
   Trash2,
   Upload,
   Download,
+  FileCode,
+  FileType,
 } from 'lucide-react'
 import { filesystemApi, type ProjectTree, type TreeFolder, type TreeDoc, type TreeFile } from '../../services/filesystemApi'
+
+// Helper function to get file icon based on format/extension
+function getFileIcon(name: string, format?: string) {
+  const ext = format || name.split('.').pop()?.toLowerCase()
+
+  switch (ext) {
+    case 'tex':
+      return { icon: FileCode, color: '#4ade80' } // Green for LaTeX
+    case 'md':
+    case 'markdown':
+      return { icon: FileText, color: '#60a5fa' } // Blue for Markdown
+    case 'txt':
+      return { icon: FileType, color: '#94a3b8' } // Gray for plain text
+    default:
+      return { icon: File, color: '#94a3b8' } // Default gray
+  }
+}
 
 interface FileTreeProps {
   tree: ProjectTree | null
@@ -245,46 +264,52 @@ function FolderNode({
         />
       ))}
 
-      {folder.docs.map((doc) => (
-        <div
-          key={doc.id}
-          className={`file-item tree-doc-row ${activeDocId === doc.id ? 'active' : ''}`}
-          style={{ paddingLeft: leftPad + 28 }}
-          onClick={() => onOpenDoc(doc.id)}
-          title={`${doc.name} (${doc.format.toUpperCase()})`}
-        >
-          <FileText size={14} />
-          <span className="tree-node-name">{doc.name}</span>
-          <span className="tree-actions inline">
-            <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
-              <Pencil size={11} />
-            </button>
-            <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteDoc(e, doc)}>
-              <Trash2 size={11} />
-            </button>
-          </span>
-        </div>
-      ))}
+      {folder.docs.map((doc) => {
+        const { icon: Icon, color } = getFileIcon(doc.name, doc.format)
+        return (
+          <div
+            key={doc.id}
+            className={`file-item tree-doc-row ${activeDocId === doc.id ? 'active' : ''}`}
+            style={{ paddingLeft: leftPad + 28 }}
+            onClick={() => onOpenDoc(doc.id)}
+            title={`${doc.name} (${doc.format.toUpperCase()})`}
+          >
+            <Icon size={14} style={{ color }} />
+            <span className="tree-node-name">{doc.name}</span>
+            <span className="tree-actions inline">
+              <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
+                <Pencil size={11} />
+              </button>
+              <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteDoc(e, doc)}>
+                <Trash2 size={11} />
+              </button>
+            </span>
+          </div>
+        )
+      })}
 
-      {folder.files.map((file) => (
-        <div
-          key={file.id}
-          className="file-item tree-file-row"
-          style={{ paddingLeft: leftPad + 28 }}
-          title={`${file.name} (${prettySize(file.size_bytes)})`}
-        >
-          <File size={14} />
-          <span className="tree-node-name">{file.name}</span>
-          <span className="tree-actions inline">
-            <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
-              <Pencil size={11} />
-            </button>
-            <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteFile(e, file)}>
-              <Trash2 size={11} />
-            </button>
-          </span>
-        </div>
-      ))}
+      {folder.files.map((file) => {
+        const { icon: Icon, color } = getFileIcon(file.name)
+        return (
+          <div
+            key={file.id}
+            className="file-item tree-file-row"
+            style={{ paddingLeft: leftPad + 28 }}
+            title={`${file.name} (${prettySize(file.size_bytes)})`}
+          >
+            <Icon size={14} style={{ color }} />
+            <span className="tree-node-name">{file.name}</span>
+            <span className="tree-actions inline">
+              <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
+                <Pencil size={11} />
+              </button>
+              <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteFile(e, file)}>
+                <Trash2 size={11} />
+              </button>
+            </span>
+          </div>
+        )
+      })}
     </>
   )
 

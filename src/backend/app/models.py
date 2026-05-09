@@ -98,6 +98,9 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(128), default="Untitled Project")
+    # LaTeX compile settings
+    main_doc_id: Mapped[str] = mapped_column(String(32), default="")
+    compiler: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

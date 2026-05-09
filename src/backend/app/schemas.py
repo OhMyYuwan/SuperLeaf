@@ -151,6 +151,42 @@ TreeFolderOut.model_rebuild()
 
 
 # ---------------------------------------------------------------------------
+# LaTeX compile
+# ---------------------------------------------------------------------------
+
+
+class CompilerInfoOut(BaseModel):
+    available: list[str]
+    default: str
+
+
+class CompileIn(BaseModel):
+    compiler: str | None = None
+    main_doc_id: str | None = None
+
+
+class CompileOut(BaseModel):
+    ok: bool
+    compiler: str
+    duration_ms: int
+    error: str
+    # Truncated log preview. Full log is fetched via /api/compile/log.
+    log_tail: str
+    # Length of the PDF blob in bytes (0 if no PDF).
+    pdf_bytes: int
+
+
+class ProjectCompileSettingsIn(BaseModel):
+    main_doc_id: str | None = None
+    compiler: str | None = None
+
+
+class ProjectCompileSettingsOut(BaseModel):
+    main_doc_id: str
+    compiler: str
+
+
+# ---------------------------------------------------------------------------
 # Discussions / chat (W7)
 # ---------------------------------------------------------------------------
 

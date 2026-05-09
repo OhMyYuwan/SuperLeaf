@@ -7,6 +7,7 @@
 
 import { Save, Settings2 } from 'lucide-react'
 import { ProviderBadge } from './ProviderBadge'
+import { ViewControl } from './ViewControl'
 import './topbar.css'
 
 interface TopbarProps {
@@ -37,6 +38,7 @@ export function Topbar({
           providerStatus={providerStatus}
           onOpen={onOpenSettings}
         />
+        <ViewControl />
         <button className="ghost-btn" onClick={onSave}>
           <Save size={16} /> 保存
         </button>

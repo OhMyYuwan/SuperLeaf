@@ -93,8 +93,27 @@ function App() {
     loadWorkflows()
   }, [loadTree, loadProviders, loadWorkflows])
 
+  // Keyboard shortcuts -------------------------------------------------------
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+S (Mac) or Ctrl+S (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault()
+        if (activeDocumentId) {
+          saveBackendDoc(activeDocumentId)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeDocumentId, saveBackendDoc])
+
   // Cross-component handlers -------------------------------------------------
   const handleOpenDoc = async (docId: string) => {
+    // Auto-save current doc before switching
+    if (activeDocumentId && activeDocumentId !== docId) {
+      await saveBackendDoc(activeDocumentId)
+    }
     await loadBackendDoc(docId)
   }
 

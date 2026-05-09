@@ -1,30 +1,28 @@
 /**
  * DiscussionTab — chat-style discussions with agents, scoped to current document.
  *
- * UI structure:
- *   - Top: Agent picker (dropdown) + conversation list toggle
- *   - Left/collapsible: Conversation list for (current doc + selected agent)
- *   - Main: Message stream (user/agent turns)
+ * UI structure (Claude VSCode style):
+ *   - Top: Agent picker (dropdown) + conversation history button + new conversation button
+ *   - Main: Message stream (full width, no sidebar)
  *   - Bottom: Input box + send button
  *
- * Each conversation is tied to one (document, agent) pair. Switching agents
- * shows that agent's conversations for the current document.
+ * Conversation list is shown in a dropdown menu when clicking the history button.
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import './discussion.css'
 import {
   MessageSquare,
   Plus,
   Send,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
+  History,
+  Check,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
-import type { CachedWorkflow } from '../../services/backendApi'
-import type { Conversation, Message } from '../../services/backendApi'
+import type { CachedWorkflow, Message } from '../../services/backendApi'
 
 interface DiscussionTabProps {
   workflows: CachedWorkflow[]
@@ -46,7 +44,6 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  const [showConversationList, setShowConversationList] = useState(true)
   const [inputText, setInputText] = useState('')
 
   // Auto-select first agent if none selected.
@@ -86,18 +83,18 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
 
   const handleNewConversation = async () => {
     if (!documentId || !selectedAgentId) return
-    const agent = workflows.find((w) => w.id === selectedAgentId)
     const conv = await createConversation({
       document_id: documentId,
       workflow_id: selectedAgentId,
-      title: `与 ${agent?.name ?? 'Agent'} 的对话`,
+      title: '新对话',
     })
     if (conv) {
       setActiveConversationId(conv.id)
     }
   }
 
-  const handleDeleteConversation = async (id: string) => {
+  const handleDeleteConversation = async (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
     if (!confirm('删除这个对话？')) return
     await deleteConversation(id)
     if (activeConversationId === id) {
@@ -115,6 +112,9 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
   const activeMessages = activeConversationId ? messages[activeConversationId] ?? [] : []
   const isStreaming = activeConversationId ? streaming[activeConversationId] ?? false : false
   const delta = activeConversationId ? streamingDelta[activeConversationId] ?? '' : ''
+  const activeConversation = activeConversationId
+    ? conversations[activeConversationId]
+    : null
 
   if (!documentId) {
     return (
@@ -136,7 +136,7 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
     <div className="discussion-tab">
       <div className="discussion-header">
         <label className="agent-picker-label">
-          <span>对话 Agent：</span>
+          <span>Agent：</span>
           <select
             value={selectedAgentId ?? ''}
             onChange={(e) => setSelectedAgentId(e.target.value)}
@@ -148,49 +148,90 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
             ))}
           </select>
         </label>
-        <button
-          className="ghost-btn small"
-          onClick={() => setShowConversationList(!showConversationList)}
-          title={showConversationList ? '隐藏对话列表' : '显示对话列表'}
-        >
-          {showConversationList ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-        </button>
+        <div className="discussion-header-actions">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                className="ghost-btn small"
+                title={`对话历史 (${filteredConversations.length})`}
+              >
+                <History size={14} />
+                <span className="conversation-count">{filteredConversations.length}</span>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="conversation-dropdown" sideOffset={5}>
+                <div className="conversation-dropdown-header">
+                  <span>对话历史</span>
+                </div>
+                {filteredConversations.length === 0 && (
+                  <div className="conversation-dropdown-empty">
+                    还没有对话
+                  </div>
+                )}
+                {filteredConversations.map((conv) => (
+                  <DropdownMenu.Item
+                    key={conv.id}
+                    className="conversation-dropdown-item"
+                    onSelect={() => setActiveConversationId(conv.id)}
+                  >
+                    <div className="conversation-dropdown-item-content">
+                      <div className="conversation-dropdown-item-header">
+                        <MessageSquare size={12} />
+                        <span className="conversation-dropdown-title">
+                          {conv.title || '未命名对话'}
+                        </span>
+                        {conv.id === activeConversationId && (
+                          <Check size={12} className="active-check" />
+                        )}
+                      </div>
+                      {conv.last_message_preview && (
+                        <div className="conversation-dropdown-preview">
+                          {conv.last_message_preview}
+                        </div>
+                      )}
+                      <div className="conversation-dropdown-meta">
+                        {conv.message_count} 条 · {formatTime(conv.updated_at)}
+                      </div>
+                    </div>
+                    <button
+                      className="conversation-dropdown-delete"
+                      onClick={(e) => handleDeleteConversation(conv.id, e)}
+                      title="删除对话"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <button
+            className="ghost-btn small"
+            onClick={handleNewConversation}
+            title="新建对话"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
 
       {error && <div className="discussion-error">{error}</div>}
 
-      <div className="discussion-body">
-        {showConversationList && (
-          <div className="conversation-list">
-            <div className="conversation-list-header">
-              <span>对话列表 ({filteredConversations.length})</span>
-              <button className="ghost-btn small" onClick={handleNewConversation}>
-                <Plus size={12} />
-              </button>
-            </div>
-            {filteredConversations.length === 0 && (
-              <div className="conversation-empty">
-                还没有对话。点击上方 + 创建第一个。
-              </div>
-            )}
-            {filteredConversations.map((conv) => (
-              <ConversationCard
-                key={conv.id}
-                conversation={conv}
-                active={conv.id === activeConversationId}
-                onClick={() => setActiveConversationId(conv.id)}
-                onDelete={() => handleDeleteConversation(conv.id)}
-              />
-            ))}
-          </div>
-        )}
+      {activeConversation && (
+        <div className="active-conversation-indicator">
+          <MessageSquare size={12} />
+          <span>{activeConversation.title || '未命名对话'}</span>
+        </div>
+      )}
 
-        <div className="message-area">
+      <div className="discussion-body-compact">
+        <div className="message-area-full">
           {!activeConversationId && (
             <div className="message-empty">
               {filteredConversations.length === 0
-                ? '点击上方 + 创建新对话'
-                : '从左侧选择一个对话'}
+                ? '点击右上角 + 创建新对话'
+                : '从右上角历史按钮选择一个对话'}
             </div>
           )}
           {activeConversationId && (
@@ -242,40 +283,6 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
             </>
           )}
         </div>
-      </div>
-    </div>
-  )
-}
-
-interface ConversationCardProps {
-  conversation: Conversation
-  active: boolean
-  onClick: () => void
-  onDelete: () => void
-}
-
-function ConversationCard({ conversation, active, onClick, onDelete }: ConversationCardProps) {
-  return (
-    <div className={`conversation-card ${active ? 'active' : ''}`} onClick={onClick}>
-      <div className="conversation-card-header">
-        <MessageSquare size={12} />
-        <span className="conversation-title">{conversation.title || '未命名对话'}</span>
-        <button
-          className="tree-action-btn"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-          title="删除对话"
-        >
-          <Trash2 size={10} />
-        </button>
-      </div>
-      {conversation.last_message_preview && (
-        <div className="conversation-preview">{conversation.last_message_preview}</div>
-      )}
-      <div className="conversation-meta">
-        {conversation.message_count} 条消息 · {formatTime(conversation.updated_at)}
       </div>
     </div>
   )

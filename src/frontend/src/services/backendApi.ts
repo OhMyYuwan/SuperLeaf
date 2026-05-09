@@ -142,3 +142,75 @@ export const BACKEND_BASE = BASE
 export const healthApi = {
   check: () => http<{ status: string; service: string }>('/api/health'),
 }
+
+// Conversations / chat
+export interface Conversation {
+  id: string
+  document_id: string
+  workflow_id: string
+  title: string
+  external_conversation_id: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  last_message_preview: string
+}
+
+export interface ConversationCreate {
+  document_id: string
+  workflow_id: string
+  title?: string
+}
+
+export interface ConversationUpdate {
+  title?: string
+}
+
+export interface Message {
+  id: string
+  conversation_id: string
+  role: 'user' | 'agent'
+  content: string
+  range_start: number | null
+  range_end: number | null
+  external_message_id: string
+  error: string
+  created_at: string
+}
+
+export interface MessageSend {
+  content: string
+  range_start?: number
+  range_end?: number
+  inputs?: Record<string, unknown>
+}
+
+export interface ConversationListQuery {
+  document_id?: string
+  workflow_id?: string
+}
+
+export const conversationApi = {
+  list: (query?: ConversationListQuery) => {
+    const params = new URLSearchParams()
+    if (query?.document_id) params.set('document_id', query.document_id)
+    if (query?.workflow_id) params.set('workflow_id', query.workflow_id)
+    const qs = params.toString()
+    return http<Conversation[]>(`/api/conversations${qs ? `?${qs}` : ''}`)
+  },
+  create: (body: ConversationCreate) =>
+    http<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify(body) }),
+  get: (id: string) => http<Conversation>(`/api/conversations/${encodeURIComponent(id)}`),
+  update: (id: string, body: ConversationUpdate) =>
+    http<Conversation>(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    http<void>(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  listMessages: (conversationId: string) =>
+    http<Message[]>(`/api/conversations/${encodeURIComponent(conversationId)}/messages`),
+  // sendMessage returns SSE stream URL; caller uses EventSource or fetch.
+  sendMessageUrl: (conversationId: string) =>
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+}

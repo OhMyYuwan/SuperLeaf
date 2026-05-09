@@ -477,3 +477,229 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Agent team management (was Provider settings) */
+
+.agent-team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.agent-team-block {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.5);
+  transition: border-color 0.15s ease;
+}
+.agent-team-block.active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.08);
+}
+.agent-team-block:hover {
+  border-color: rgba(148, 163, 184, 0.32);
+}
+
+.agent-team-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-team-block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.agent-team-block-title .provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.agent-team-block-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.agent-team-block-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+}
+.agent-team-block-meta .kind {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(148, 163, 184, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.agent-team-block-meta .endpoint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-team-block .detail.error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(226, 232, 240, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.status-chip.ok {
+  background: rgba(34, 197, 94, 0.16);
+  color: #86efac;
+}
+.status-chip.error {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+
+.active-chip {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #dbeafe;
+  letter-spacing: 0.04em;
+}
+
+.agent-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-empty-inline {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.65);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.add-provider-btn {
+  margin-top: 12px;
+  width: 100%;
+  justify-content: center;
+}
+
+.provider-form.embedded {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.provider-form.embedded .form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.provider-form.embedded label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+}
+.provider-form.embedded label.full {
+  width: 100%;
+}
+.provider-form.embedded label.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.provider-form.embedded input,
+.provider-form.embedded select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 6, 23, 0.6);
+  color: #e5e7eb;
+  font-size: 12px;
+}
+.provider-form.embedded .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+.provider-form.embedded .form-error {
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+.status-bar {
+  margin: 8px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.status-bar.error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+}
+.inline-btn {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #e5e7eb;
+}
+
+.ghost-btn.small {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.9);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ghost-btn.small:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.22);
+}
+.ghost-btn.small.danger {
+  color: #fca5a5;
+}
+.ghost-btn.small.danger:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+.ghost-btn.small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -25,16 +25,22 @@ interface RightPanelProps {
   activeDocumentId: string | null
   runningMap: Record<string, boolean>
   eventsMap: Record<string, RunEvent[]>
+  // Optional controlled-tab props. If omitted, the panel manages its own state.
+  selectedTab?: string
+  onTabChange?: (tab: string) => void
   onRunWorkflow: (workflowId: string, instruction: string) => void
   onReloadWorkflows: () => void
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
 export function RightPanel(props: RightPanelProps) {
-  const [selectedTab, setSelectedTab] = useState('discussion')
+  const [internalTab, setInternalTab] = useState('discussion')
+  const selectedTab = props.selectedTab ?? internalTab
+  const onTabChange = props.onTabChange ?? setInternalTab
+
   return (
     <div className="panel right-panel">
-      <Tabs.Root value={selectedTab} onValueChange={setSelectedTab} className="tabs-root">
+      <Tabs.Root value={selectedTab} onValueChange={onTabChange} className="tabs-root">
         <Tabs.List className="tabs-list">
           <Tabs.Trigger className="tab-trigger" value="discussion">
             讨论区
@@ -59,7 +65,6 @@ export function RightPanel(props: RightPanelProps) {
             workflows={props.workflows}
             workflowsLoaded={props.workflowsLoaded}
             workflowError={props.workflowError}
-            activeProvider={props.activeProvider}
             onReload={props.onReloadWorkflows}
           />
         </Tabs.Content>

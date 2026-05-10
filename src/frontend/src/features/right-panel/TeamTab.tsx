@@ -182,7 +182,11 @@ function ProviderBlock({
           </div>
         )}
         {workflows.map((wf) => (
-          <div key={wf.id} className="agent-card" title={wf.description || wf.kind}>
+          <div
+            key={wf.id}
+            className="agent-card"
+            title={wf.description || `${wf.kind} · ${wf.external_id}`}
+          >
             <div className="agent-avatar" style={{ background: agentColor(wf.kind) }}>
               {wf.name.slice(0, 1).toUpperCase()}
             </div>
@@ -190,7 +194,7 @@ function ProviderBlock({
               <strong>{wf.name}</strong>
               <span>
                 {wf.kind}
-                {wf.description ? ` · ${wf.description}` : ''}
+                {wf.description ? ` · ${wf.description}` : wf.external_id ? ` · ${wf.external_id}` : ''}
               </span>
             </div>
             {onChatWithAgent && (
@@ -267,7 +271,11 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder="My Dify"
+            placeholder={
+              draft.kind === 'nanobot'
+                ? 'Agent 名字，比如 PhD Mentor'
+                : 'My Dify'
+            }
             autoFocus
           />
         </label>

@@ -61,6 +61,16 @@ function App() {
   const eventsMap = useWorkflowStore((s) => s.lastRunEvents)
   const runWorkflow = useWorkflowStore((s) => s.run)
 
+  const definitions = useWorkflowStore((s) => s.definitions)
+  const loadDefinitions = useWorkflowStore((s) => s.loadDefinitions)
+  const createDefinition = useWorkflowStore((s) => s.createDefinition)
+  const updateDefinition = useWorkflowStore((s) => s.updateDefinition)
+  const deleteDefinition = useWorkflowStore((s) => s.deleteDefinition)
+  const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
+  const nodeStatusesMap = useWorkflowStore((s) => s.nodeStatuses)
+  const currentRoundMap = useWorkflowStore((s) => s.currentRound)
+  const maxRoundsMap = useWorkflowStore((s) => s.maxRounds)
+
   const annotationItemsById = useAnnotationStore((s) => s.items)
 
   // View control state -------------------------------------------------------
@@ -104,7 +114,8 @@ function App() {
     loadTree()
     loadProviders()
     loadWorkflows()
-  }, [loadTree, loadProviders, loadWorkflows])
+    loadDefinitions()
+  }, [loadTree, loadProviders, loadWorkflows, loadDefinitions])
 
   // Keyboard shortcuts -------------------------------------------------------
   useEffect(() => {
@@ -172,6 +183,28 @@ function App() {
         instruction: userPrompt,
       },
       query: `${userPrompt}\n\n---\n${selectionText}`,
+    })
+  }
+
+  const handleRunDefinition = (definitionId: string, instruction: string) => {
+    if (!activeDocumentId) {
+      alert('请先选择一个文件')
+      return
+    }
+    if (!activeSelection) {
+      alert('请先在编辑器中选中一段文字，再运行。')
+      return
+    }
+    const selectionText = activeSelection.text
+    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    executeDefinition(definitionId, {
+      document_id: activeDocumentId,
+      range_start: activeSelection.from,
+      range_end: activeSelection.to,
+      inputs: {
+        text: selectionText,
+      },
+      query: userPrompt,
     })
   }
 
@@ -307,14 +340,22 @@ function App() {
                   workflows={workflows}
                   workflowsLoaded={workflowsLoaded}
                   workflowError={workflowError}
+                  definitions={definitions}
                   activeProvider={activeProvider}
                   activeSelection={activeSelection}
                   activeDocumentId={activeDocumentId}
                   runningMap={runningMap}
                   eventsMap={eventsMap}
+                  nodeStatusesMap={nodeStatusesMap}
+                  currentRoundMap={currentRoundMap}
+                  maxRoundsMap={maxRoundsMap}
                   selectedTab={rightTab}
                   onTabChange={setRightTab}
                   onRunWorkflow={handleRunWorkflow}
+                  onRunDefinition={handleRunDefinition}
+                  onCreateDefinition={createDefinition}
+                  onUpdateDefinition={updateDefinition}
+                  onDeleteDefinition={deleteDefinition}
                   onReloadWorkflows={loadWorkflows}
                   onJumpToRange={(range) =>
                     setEditorScrollTo({ pos: range.from, seq: Date.now() })

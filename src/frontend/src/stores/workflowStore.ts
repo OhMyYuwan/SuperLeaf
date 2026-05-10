@@ -61,6 +61,8 @@ interface WorkflowState {
   run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string }) => Promise<void>
   loadHistory: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   deleteRun: (runId: string) => Promise<void>
+  disableWorkflow: (workflowId: string) => Promise<void>
+  enableWorkflow: (workflowId: string) => Promise<void>
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -107,6 +109,28 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set((s) => ({ runHistory: s.runHistory.filter((r) => r.id !== runId) }))
     } catch (e) {
       set({ historyError: e instanceof Error ? e.message : String(e) })
+    }
+  },
+
+  disableWorkflow: async (workflowId) => {
+    try {
+      const updated = await workflowApi.disable(workflowId)
+      set((s) => ({
+        workflows: s.workflows.map((w) => (w.id === workflowId ? updated : w)),
+      }))
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+    }
+  },
+
+  enableWorkflow: async (workflowId) => {
+    try {
+      const updated = await workflowApi.enable(workflowId)
+      set((s) => ({
+        workflows: s.workflows.map((w) => (w.id === workflowId ? updated : w)),
+      }))
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
     }
   },
 

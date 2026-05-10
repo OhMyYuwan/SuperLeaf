@@ -65,6 +65,30 @@ def delete_run(run_id: str, db: Session = Depends(get_session)) -> None:
     db.commit()
 
 
+@router.post("/{workflow_id}/disable", response_model=CachedWorkflowOut)
+def disable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> CachedWorkflowOut:
+    """Disable an agent (hide from @mention, prevent follow-up)."""
+    cw = db.get(CachedWorkflow, workflow_id)
+    if cw is None:
+        raise HTTPException(404, "Workflow not found")
+    cw.is_disabled = True
+    db.commit()
+    db.refresh(cw)
+    return CachedWorkflowOut.model_validate(cw)
+
+
+@router.post("/{workflow_id}/enable", response_model=CachedWorkflowOut)
+def enable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> CachedWorkflowOut:
+    """Enable (reactivate) a disabled agent."""
+    cw = db.get(CachedWorkflow, workflow_id)
+    if cw is None:
+        raise HTTPException(404, "Workflow not found")
+    cw.is_disabled = False
+    db.commit()
+    db.refresh(cw)
+    return CachedWorkflowOut.model_validate(cw)
+
+
 class RunBody(BaseModel):
     document_id: str
     range_start: int = Field(ge=0)

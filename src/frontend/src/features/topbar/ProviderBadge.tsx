@@ -1,11 +1,11 @@
 /**
- * ProviderBadge — tiny status chip for the active LLM/Dify provider.
+ * ProviderBadge — tiny status chip for the active Agent team.
  *
  * Tones:
- *   err  — backend offline or provider returns errors
- *   warn — no provider configured yet
- *   ok   — provider probed successfully
- *   idle — provider saved but not yet verified
+ *   err  — backend offline or connection errors
+ *   warn — no agent configured yet
+ *   ok   — agent team ready
+ *   idle — agent saved but not yet verified
  */
 
 interface ProviderBadgeProps {
@@ -27,7 +27,7 @@ export function ProviderBadge({
     label = '后端离线'
     tone = 'err'
   } else if (!providerName) {
-    label = '未配置 Provider'
+    label = '未配置 Agent'
     tone = 'warn'
   } else if (providerStatus === 'error') {
     label = `${providerName} · 连接失败`

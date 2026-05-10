@@ -15,7 +15,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Loader2, Send, X, MessageCircle } from 'lucide-react'
+import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import type { CachedWorkflow } from '../../services/backendApi'
@@ -236,14 +236,27 @@ function AnnotationCard({
   const remove = useAnnotationStore((s) => s.remove)
   const appendThread = useAnnotationStore((s) => s.appendThread)
   const runWorkflow = useWorkflowStore((s) => s.run)
+  const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
+  const loadWorkflows = useWorkflowStore((s) => s.load)
   const isRunning = useWorkflowStore((s) => s.running[item.workflowId])
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
+  const [enablingAgent, setEnablingAgent] = useState(false)
 
   const handleAccept = () => accept(item.id)
   const handleDelete = () => {
     if (confirm('永久删除此批注？此操作不可恢复。')) remove(item.id)
+  }
+
+  const handleEnableAgent = async () => {
+    if (!item.workflowId) return
+    const agentName = item.agentName || 'Agent'
+    if (!confirm(`重新激活 Agent「${agentName}」？激活后将重新出现在 @mention 列表中。`)) return
+    setEnablingAgent(true)
+    await enableWorkflow(item.workflowId)
+    await loadWorkflows()
+    setEnablingAgent(false)
   }
 
   const handleContinue = async () => {
@@ -294,9 +307,14 @@ function AnnotationCard({
 
   const isResolved = item.status === 'archived'
   const isUserComment = item.kind === 'user-comment'
+  // Check if the agent is still active (not disabled and exists)
+  const agent = agents.find((a) => a.id === item.workflowId)
+  const agentActive = agent && !agent.is_disabled
+  const agentDisabled = agent && agent.is_disabled
+  const agentDeleted = !agent && !!item.workflowId
   // User comments can always add follow-up comments (self-discussion)
-  // Agent cards can follow up if they have a workflowId
-  const canFollowUp = isUserComment || !!item.workflowId
+  // Agent cards can follow up only if the agent is still active
+  const canFollowUp = isUserComment || (!!item.workflowId && agentActive)
 
   return (
     <div
@@ -334,6 +352,20 @@ function AnnotationCard({
 
       <Thread messages={item.thread} isUserCommentCard={isUserComment} agents={agents} />
 
+      {agentDisabled && (
+        <div className="ann-warning">
+          <AlertTriangle size={14} />
+          <span>该 Agent 已被禁用，无法继续对话</span>
+        </div>
+      )}
+
+      {agentDeleted && (
+        <div className="ann-warning">
+          <AlertTriangle size={14} />
+          <span>该 Agent 已被删除，无法继续对话</span>
+        </div>
+      )}
+
       {composerOpen && (
         <div className="ann-composer" onClick={(e) => e.stopPropagation()}>
           <textarea
@@ -352,7 +384,7 @@ function AnnotationCard({
               <X size={12} />
             </button>
             <button className="primary-mini" onClick={handleContinue} disabled={isRunning || !draft.trim()}>
-              {isRunning ? <Loader2 size={12} className="spin" /> : <Send size={12} />}
+              <Send size={12} />
             </button>
           </div>
         </div>
@@ -370,6 +402,16 @@ function AnnotationCard({
         <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
           <Trash2 size={14} />
         </button>
+        {agentDisabled && (
+          <button
+            className="ann-btn enable"
+            onClick={handleEnableAgent}
+            disabled={enablingAgent}
+            title="重新激活 Agent"
+          >
+            <Power size={14} />
+          </button>
+        )}
         {canFollowUp && (
           <button
             className="ann-btn continue"

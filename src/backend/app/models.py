@@ -62,6 +62,8 @@ class CachedWorkflow(Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     last_synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Agent can be disabled (hidden from @mention, cannot be used for follow-up)
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class WorkflowRun(Base):

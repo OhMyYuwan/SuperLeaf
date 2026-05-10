@@ -48,6 +48,7 @@ class CachedWorkflowOut(BaseModel):
     kind: str
     tags: list[str]
     last_synced_at: datetime
+    is_disabled: bool = False
 
     class Config:
         from_attributes = True

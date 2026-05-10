@@ -112,7 +112,7 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </span>
                 <span className="run-history-name">
-                  {wf?.name ?? run.workflow_id.slice(0, 8)}
+                  {wf ? `${wf.name}·${wf.id.slice(0, 8)}` : run.workflow_id.slice(0, 8)}
                 </span>
                 <span className={`run-history-status ${run.status}`}>{statusLabel(run.status)}</span>
                 <span className="run-history-time">{formatTime(run.started_at)}</span>

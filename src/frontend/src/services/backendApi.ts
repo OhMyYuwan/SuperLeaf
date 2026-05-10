@@ -85,6 +85,7 @@ export interface CachedWorkflow {
   kind: string
   tags: string[]
   last_synced_at: string
+  is_disabled: boolean
 }
 
 export interface RunRequest {
@@ -135,6 +136,10 @@ export const workflowApi = {
     http<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`),
   deleteRun: (runId: string) =>
     http<void>(`/api/workflows/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' }),
+  disable: (id: string) =>
+    http<CachedWorkflow>(`/api/workflows/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
+  enable: (id: string) =>
+    http<CachedWorkflow>(`/api/workflows/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
 }
 
 export const BACKEND_BASE = BASE

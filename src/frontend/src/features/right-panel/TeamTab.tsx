@@ -178,7 +178,7 @@ function ProviderBlock({
         {!workflowsLoaded && <div className="agent-empty-inline">加载中…</div>}
         {workflowsLoaded && workflows.length === 0 && (
           <div className="agent-empty-inline">
-            该供应商下还没有 Agent。在 {provider.kind === 'claude-direct' ? 'Claude 控制台' : 'Dify 控制台'} 创建后点上方刷新。
+            该供应商下还没有 Agent。在 {providerConsoleLabel(provider.kind)} 创建后点上方刷新。
           </div>
         )}
         {workflows.map((wf) => (
@@ -230,19 +230,26 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           ? 'https://api.dify.ai/v1'
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
-            : 'http://localhost:8080/v1',
+            : kind === 'nanobot'
+              ? 'http://127.0.0.1:8900'
+              : 'http://localhost:8080/v1',
+      api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
-    if (!draft.name.trim() || !draft.endpoint.trim() || !draft.api_key.trim()) {
+    const filledDraft: ProviderDraft = {
+      ...draft,
+      api_key: draft.kind === 'nanobot' && !draft.api_key.trim() ? 'dummy' : draft.api_key,
+    }
+    if (!filledDraft.name.trim() || !filledDraft.endpoint.trim() || !filledDraft.api_key.trim()) {
       setFormError('名称 / endpoint / API key 都不能为空')
       return
     }
     setSubmitting(true)
-    const result = await create(draft)
+    const result = await create(filledDraft)
     setSubmitting(false)
     if (result) {
       onClose()
@@ -270,6 +277,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             <option value="dify-local">Dify (本地)</option>
             <option value="dify-cloud">Dify Cloud</option>
             <option value="claude-direct">Claude API 直连</option>
+            <option value="nanobot">Nanobot</option>
           </select>
         </label>
       </div>
@@ -332,7 +340,14 @@ function BackendStatusBar({
 }
 
 function agentColor(kind: string): string {
+  if (kind === 'nanobot') return '#0ea5e9'
   if (kind.includes('chat')) return '#7c3aed'
   if (kind.includes('agent')) return '#059669'
   return '#2563eb'
+}
+
+function providerConsoleLabel(kind: Provider['kind']): string {
+  if (kind === 'claude-direct') return 'Claude 控制台'
+  if (kind === 'nanobot') return 'Nanobot 服务'
+  return 'Dify 控制台'
 }

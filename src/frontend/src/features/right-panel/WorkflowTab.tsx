@@ -1,8 +1,8 @@
 /**
- * WorkflowTab — instruction composer + one card per Dify workflow.
+ * WorkflowTab — instruction composer + one card per cached workflow.
  *
  * Self-manages only the instruction textarea state. Runs/events are owned by
- * the workflowStore; the parent passes down the relevant slice.
+ * workflowStore; the parent passes down the relevant slice.
  */
 
 import { useState } from 'react'
@@ -66,7 +66,7 @@ export function WorkflowTab({
               <div className="workflow-run-head">
                 <div>
                   <strong>{wf.name}</strong>
-                  <span className="workflow-run-kind"> · {wf.kind}</span>
+                  <span className="workflow-run-kind"> · {workflowKindLabel(wf.kind)}</span>
                 </div>
                 <button
                   className="primary-btn run-btn"
@@ -108,12 +108,21 @@ interface EventLike {
 }
 
 function eventLabel(evt: EventLike): string {
-  if (evt.kind === 'ylw.run.started') return '已提交到 Dify'
+  if (evt.kind === 'ylw.run.started') return '已提交到 Dify / Nanobot'
   if (evt.kind === 'ylw.run.finished') return '完成 ✓'
   if (evt.kind === 'ylw.run.failed') {
     const p = evt.payload as { error?: string } | undefined
     return `失败: ${p?.error ?? ''}`
   }
+  if (evt.kind === 'nanobot') return 'Nanobot 流式事件'
   const p = evt.payload as { event?: string } | undefined
   return p?.event ?? 'dify 事件'
+}
+
+function workflowKindLabel(kind: string): string {
+  if (kind === 'nanobot') return 'Nanobot'
+  if (kind === 'workflow') return 'Dify workflow'
+  if (kind === 'chatflow') return 'Dify chatflow'
+  if (kind === 'agent-chat') return 'Dify agent-chat'
+  return kind
 }

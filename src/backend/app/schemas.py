@@ -54,16 +54,44 @@ class CachedWorkflowOut(BaseModel):
         from_attributes = True
 
 
+class WorkflowDefinitionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=256)
+    description: str = ""
+    execution_mode: str = Field(pattern="^(parallel|pipeline|roundtable|graph)$")
+    graph: dict = Field(default_factory=dict)
+    config: dict = Field(default_factory=dict)
+
+
+class WorkflowDefinitionOut(BaseModel):
+    id: str
+    name: str
+    description: str
+    execution_mode: str
+    graph: dict
+    config: dict
+    version: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class WorkflowRunOut(BaseModel):
     id: str
     provider_id: str
     workflow_id: str
+    workflow_definition_id: str | None
     document_id: str
     range_start: int
     range_end: int
     status: str
     external_run_id: str
     outputs: dict
+    trace: list
+    current_round: int
+    max_rounds: int
     error: str
     started_at: datetime
     finished_at: datetime | None

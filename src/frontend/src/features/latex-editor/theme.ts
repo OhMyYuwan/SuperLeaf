@@ -25,10 +25,27 @@ const overleafDarkTheme = EditorView.theme(
         'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: '14px',
       lineHeight: '1.55',
+      overflow: 'auto',
+      height: '100%',
+    },
+    '.cm-scroller::-webkit-scrollbar': {
+      width: '10px',
+      height: '10px',
+    },
+    '.cm-scroller::-webkit-scrollbar-track': {
+      background: 'transparent',
+    },
+    '.cm-scroller::-webkit-scrollbar-thumb': {
+      background: 'rgba(148, 163, 184, 0.3)',
+      borderRadius: '5px',
+    },
+    '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+      background: 'rgba(148, 163, 184, 0.5)',
     },
     '.cm-content': {
       caretColor: '#f8f8f0',
       padding: '12px 0',
+      minHeight: '100%',
     },
     '.cm-gutters': {
       backgroundColor: '#1b222c',

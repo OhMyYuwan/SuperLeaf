@@ -68,8 +68,17 @@ class ProviderService:
         p = self.get(provider_id)
         if p is None:
             return None
-        if name is not None:
+        if name is not None and name != p.name:
             p.name = name
+            # Nanobot: 1 provider = 1 agent, agent name === provider name.
+            # Cascade the rename so the UI doesn't need a re-probe to refresh.
+            if p.kind == "nanobot":
+                for cw in (
+                    self.db.query(CachedWorkflow)
+                    .filter(CachedWorkflow.provider_id == p.id)
+                    .all()
+                ):
+                    cw.name = name
         if endpoint is not None:
             p.endpoint = self._normalize_endpoint(p.kind, endpoint)
         if api_key:  # only rotate if non-empty
@@ -111,28 +120,42 @@ class ProviderService:
         try:
             if p.kind == "nanobot":
                 info = await client.probe()
+                # One provider == one Agent. The user-assigned provider name is
+                # the Agent's identity; the underlying model ids are just
+                # implementation detail (stored in meta for diagnostics). We
+                # default external_id to the first reported model; callers can
+                # override later via provider.meta if needed.
+                primary_model_id = info.models[0].id if info.models else ""
+                primary_model_desc = info.models[0].description if info.models else ""
                 self._sync_cached_workflows(
                     p,
-                    [
-                        {
-                            "external_id": model.id,
-                            "name": model.name,
-                            "description": model.description,
-                            "kind": "nanobot",
-                            "tags": _tags_from_raw(model.raw),
-                            "raw": model.raw,
-                        }
-                        for model in info.models
-                    ],
+                    (
+                        [
+                            {
+                                "external_id": primary_model_id,
+                                "name": p.name,
+                                "description": primary_model_desc,
+                                "kind": "nanobot",
+                                "tags": _tags_from_raw(info.models[0].raw) if info.models else [],
+                                "raw": info.models[0].raw if info.models else {},
+                            }
+                        ]
+                        if primary_model_id
+                        else []
+                    ),
                 )
-                p.status = "ok"
-                p.status_detail = f"{info.name} · {len(info.models)} models"
+                p.status = "ok" if primary_model_id else "error"
+                if primary_model_id:
+                    p.status_detail = f"{info.name} · model: {primary_model_id}"
+                else:
+                    p.status_detail = f"{info.name} 没有可用模型"
                 p.meta = {
                     **(p.meta or {}),
                     "kind": "nanobot",
                     "provider_name": info.name,
                     "model_count": len(info.models),
                     "model_ids": [m.id for m in info.models],
+                    "primary_model_id": primary_model_id,
                 }
             else:
                 info = await client.probe()

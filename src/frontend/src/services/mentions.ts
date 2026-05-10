@@ -113,11 +113,28 @@ export function segmentText(
 }
 
 /**
+ * Strip all @mentions from a string, leaving only the plain text content.
+ *
+ * @mentions are routing metadata for our system, not part of the actual
+ * question sent to the Agent. This prevents confusion when a user writes
+ * "@Mentor @Reviewer please check this" — each Agent should only see
+ * "please check this", not the @tags.
+ */
+export function stripMentions(text: string, mentions: readonly ParsedMention[]): string {
+  if (mentions.length === 0) return text
+  const sorted = [...mentions].sort((a, b) => b.start - a.start)
+  let result = text
+  for (const m of sorted) {
+    result = result.slice(0, m.start) + result.slice(m.end)
+  }
+  return result.trim()
+}
+
+/**
  * Build the prompt text sent to an Agent when a user comment mentions it.
  *
- * Includes: target text (the selected passage), the user's message, and the
- * prior thread of messages anchored to this card. Keeps the UI's @tags as
- * literal text since they're part of the human-readable question.
+ * Includes: target text (the selected passage), the user's message (with
+ * @mentions stripped), and the prior thread of messages anchored to this card.
  */
 export function buildAgentPrompt({
   targetText,

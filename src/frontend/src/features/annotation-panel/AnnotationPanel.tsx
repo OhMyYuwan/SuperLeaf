@@ -20,7 +20,7 @@ import { useAnnotationStore, type AnnotationItem } from '../../stores/annotation
 import { useWorkflowStore } from '../../stores/workflowStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
-import { parseMentions, segmentText, buildAgentPrompt } from '../../services/mentions'
+import { parseMentions, segmentText, buildAgentPrompt, stripMentions } from '../../services/mentions'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
@@ -98,6 +98,17 @@ export function AnnotationPanel({
       return
     }
 
+    // Parse mentions to strip them from the agent prompt.
+    // @mentions are routing metadata for our system, not part of the actual
+    // question. This prevents confusion when a user writes "@Mentor @Reviewer
+    // please check this" — each Agent should only see "please check this".
+    const mentions = parseMentions(content, agents)
+    const contentWithoutMentions = stripMentions(content, mentions)
+
+    console.log('[AnnotationPanel] submitting comment to', mentionedAgents.length, 'agents:', mentionedAgents.map(a => a.name))
+    console.log('[AnnotationPanel] original content:', content)
+    console.log('[AnnotationPanel] stripped content:', contentWithoutMentions)
+
     // For each mentioned agent, create a separate card so replies stay isolated.
     for (const agent of mentionedAgents) {
       const cardId = createUserComment({
@@ -108,12 +119,17 @@ export function AnnotationPanel({
         mentionedAgentId: agent.id,
         mentionedAgentName: agent.name,
       })
-      // Build the agent prompt including the selected text + user comment.
+      console.log('[AnnotationPanel] created card', cardId, 'for agent', agent.name, '(id:', agent.id, ')')
+
+      // Build the agent prompt with @mentions stripped.
       const prompt = buildAgentPrompt({
         targetText,
-        userMessage: content,
+        userMessage: contentWithoutMentions,
         threadHistory: [],
       })
+
+      console.log('[AnnotationPanel] firing workflow for agent', agent.name, 'with prompt:', prompt.slice(0, 100))
+
       // Fire the workflow; the run store will append to this card's thread.
       void runWorkflow(
         agent.id,
@@ -123,7 +139,7 @@ export function AnnotationPanel({
           range_end: range.to,
           inputs: {
             target_text: targetText,
-            user_message: content,
+            user_message: contentWithoutMentions,
           },
           query: prompt,
         },
@@ -165,7 +181,7 @@ export function AnnotationPanel({
             <button className="ghost-mini" onClick={() => setShowArchived(false)}>返回</button>
           </div>
           {archivedItems.map((item) => (
-            <ArchivedCard key={item.id} item={item} />
+            <ArchivedCard key={item.id} item={item} agents={agents} />
           ))}
         </div>
       ) : (
@@ -237,10 +253,21 @@ function AnnotationCard({
     setDraft('')
     setComposerOpen(false)
 
+    // For user comments without agent, just append to thread (self-discussion)
+    if (isUserComment && !item.workflowId) {
+      return
+    }
+
+    // Strip @mentions from follow-up questions. Users might write "@Mentor can
+    // you elaborate?" but the @mention is just UI sugar — the agent already
+    // knows it's being addressed because we're calling its workflow.
+    const mentions = parseMentions(question, agents)
+    const questionWithoutMentions = stripMentions(question, mentions)
+
     // Build prompt with full thread history so the agent has context.
     const prompt = buildAgentPrompt({
       targetText: item.targetText,
-      userMessage: question,
+      userMessage: questionWithoutMentions,
       threadHistory: item.thread.map((m) => ({
         role: m.role,
         content: m.content,
@@ -267,7 +294,9 @@ function AnnotationCard({
 
   const isResolved = item.status === 'archived'
   const isUserComment = item.kind === 'user-comment'
-  const canFollowUp = !!item.workflowId // Plain user comments have no agent
+  // User comments can always add follow-up comments (self-discussion)
+  // Agent cards can follow up if they have a workflowId
+  const canFollowUp = isUserComment || !!item.workflowId
 
   return (
     <div
@@ -310,17 +339,20 @@ function AnnotationCard({
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？"
+            placeholder={
+              isUserComment && !item.workflowId
+                ? "追加评论（自我讨论）"
+                : "向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？"
+            }
             rows={2}
             autoFocus
           />
           <div className="ann-composer-actions">
             <button className="ghost-mini" onClick={() => setComposerOpen(false)} disabled={isRunning}>
-              取消
+              <X size={12} />
             </button>
             <button className="primary-mini" onClick={handleContinue} disabled={isRunning || !draft.trim()}>
               {isRunning ? <Loader2 size={12} className="spin" /> : <Send size={12} />}
-              发送
             </button>
           </div>
         </div>
@@ -333,22 +365,19 @@ function AnnotationCard({
           disabled={isResolved}
           title="标记已处理并归档（不会自动修改文档，请在编辑器里手动改）"
         >
-          <Check size={12} />
-          已处理
+          <Check size={14} />
         </button>
         <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
-          <Trash2 size={12} />
-          删除
+          <Trash2 size={14} />
         </button>
         {canFollowUp && (
           <button
             className="ann-btn continue"
             onClick={() => setComposerOpen((v) => !v)}
             disabled={isRunning}
-            title="向 Agent 追问"
+            title={isUserComment && !item.workflowId ? "追加评论" : "向 Agent 追问"}
           >
-            <MessageSquarePlus size={12} />
-            追问
+            <MessageSquarePlus size={14} />
           </button>
         )}
         {siblings.length > 1 && (
@@ -357,8 +386,7 @@ function AnnotationCard({
             onClick={onCompare}
             title={`${siblings.length - 1} 个其他 Agent 也针对这段文字给出了建议，并排对比`}
           >
-            <Columns3 size={12} />
-            对比 {siblings.length}
+            <Columns3 size={14} />
           </button>
         )}
       </div>
@@ -419,23 +447,50 @@ function iconFor(item: AnnotationItem) {
   return <MessageSquarePlus size={14} />
 }
 
-function ArchivedCard({ item }: { item: AnnotationItem }) {
+function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWorkflow[] }) {
   const restore = useAnnotationStore((s) => s.restore)
   const remove = useAnnotationStore((s) => s.remove)
+  const isUserComment = item.kind === 'user-comment'
+
   return (
     <div className="ann-card ann-archived">
       <div className="ann-head">
         <span className="ann-icon">{iconFor(item)}</span>
-        <span className="ann-agent">{item.agentName || '我的批注'}</span>
+        <span className="ann-agent">
+          {isUserComment
+            ? item.agentName
+              ? `@${item.agentName}`
+              : '我的批注'
+            : item.agentName}
+        </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
+        <span className="ann-resolved-chip">已归档</span>
       </div>
-      <p className="ann-body archived-body">{ellipsis(item.content, 100)}</p>
+
+      {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
+
+      {item.content && (
+        <p className="ann-body">
+          {isUserComment ? renderWithMentions(item.content, agents) : item.content}
+        </p>
+      )}
+
+      {item.kind === 'suggestion' && item.proposed && (
+        <div className="ann-diff">
+          <div className="ann-diff-row remove">- {item.original}</div>
+          <div className="ann-diff-row add">+ {item.proposed}</div>
+          {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+        </div>
+      )}
+
+      <Thread messages={item.thread} isUserCommentCard={isUserComment} agents={agents} />
+
       <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
         <button className="ann-btn accept" onClick={() => restore(item.id)} title="重新打开">
-          <RotateCcw size={12} /> 重开
+          <RotateCcw size={14} />
         </button>
         <button className="ann-btn delete" onClick={() => remove(item.id)} title="永久删除">
-          <Trash2 size={12} />
+          <Trash2 size={14} />
         </button>
       </div>
     </div>

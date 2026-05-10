@@ -7,9 +7,9 @@
 
 import { useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
-import type { CachedWorkflow, Provider } from '../../services/backendApi'
+import type { CachedWorkflow, Provider, WorkflowDefinition, WorkflowDefinitionDraft } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
-import type { RunEvent } from '../../stores/workflowStore'
+import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
 import { WorkflowTab } from './WorkflowTab'
@@ -20,15 +20,23 @@ interface RightPanelProps {
   workflows: CachedWorkflow[]
   workflowsLoaded: boolean
   workflowError: string | null
+  definitions: WorkflowDefinition[]
   activeProvider: Provider | null
   activeSelection: Selection | null
   activeDocumentId: string | null
   runningMap: Record<string, boolean>
   eventsMap: Record<string, RunEvent[]>
+  nodeStatusesMap: Record<string, NodeStatus[]>
+  currentRoundMap: Record<string, number>
+  maxRoundsMap: Record<string, number>
   // Optional controlled-tab props. If omitted, the panel manages its own state.
   selectedTab?: string
   onTabChange?: (tab: string) => void
   onRunWorkflow: (workflowId: string, instruction: string) => void
+  onRunDefinition: (definitionId: string, instruction: string) => void
+  onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<void>
+  onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<void>
+  onDeleteDefinition: (id: string) => Promise<void>
   onReloadWorkflows: () => void
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
@@ -76,10 +84,18 @@ export function RightPanel(props: RightPanelProps) {
         <Tabs.Content value="workflow" className="tab-content">
           <WorkflowTab
             workflows={props.workflows}
+            definitions={props.definitions}
             activeSelection={props.activeSelection}
             runningMap={props.runningMap}
             eventsMap={props.eventsMap}
+            nodeStatusesMap={props.nodeStatusesMap}
+            currentRoundMap={props.currentRoundMap}
+            maxRoundsMap={props.maxRoundsMap}
             onRun={props.onRunWorkflow}
+            onRunDefinition={props.onRunDefinition}
+            onCreateDefinition={props.onCreateDefinition}
+            onUpdateDefinition={props.onUpdateDefinition}
+            onDeleteDefinition={props.onDeleteDefinition}
           />
         </Tabs.Content>
 

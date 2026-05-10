@@ -13,9 +13,13 @@
 import { create } from 'zustand'
 import {
   workflowApi,
+  workflowDefinitionApi,
   type CachedWorkflow,
   type RunRequest,
   type WorkflowRun,
+  type WorkflowDefinition,
+  type WorkflowDefinitionDraft,
+  type NodeTrace,
 } from '../services/backendApi'
 import { useAnnotationStore } from './annotationStore'
 import { useDocumentStore } from './documentStore'
@@ -25,6 +29,15 @@ export type RunEventKind =
   | 'ylw.run.started'
   | 'ylw.run.finished'
   | 'ylw.run.failed'
+  | 'workflow.started'
+  | 'workflow.completed'
+  | 'workflow.merged'
+  | 'node.started'
+  | 'node.completed'
+  | 'node.failed'
+  | 'round.started'
+  | 'round.completed'
+  | 'roundtable.converged'
   | 'dify'
   | 'nanobot'
 
@@ -32,6 +45,15 @@ export interface RunEvent {
   kind: RunEventKind
   payload: unknown
   at: number
+}
+
+export interface NodeStatus {
+  nodeId: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  startTime?: number
+  endTime?: number
+  output?: string
+  error?: string
 }
 
 interface InFlight {
@@ -57,12 +79,30 @@ interface WorkflowState {
   historyLoading: boolean
   historyError: string | null
 
+  // Workflow definitions (orchestrated multi-agent workflows)
+  definitions: WorkflowDefinition[]
+  definitionsLoading: boolean
+  definitionsLoaded: boolean
+  definitionsError: string | null
+
+  // Node-level status tracking for orchestrated runs
+  nodeStatuses: Record<string, NodeStatus[]>
+  currentRound: Record<string, number>
+  maxRounds: Record<string, number>
+
   load: () => Promise<void>
   run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string }) => Promise<void>
   loadHistory: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   deleteRun: (runId: string) => Promise<void>
   disableWorkflow: (workflowId: string) => Promise<void>
   enableWorkflow: (workflowId: string) => Promise<void>
+
+  // Workflow definition management
+  loadDefinitions: () => Promise<void>
+  createDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
+  updateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
+  deleteDefinition: (id: string) => Promise<void>
+  executeDefinition: (definitionId: string, body: RunRequest) => Promise<void>
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -75,6 +115,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   runHistory: [],
   historyLoading: false,
   historyError: null,
+  definitions: [],
+  definitionsLoading: false,
+  definitionsLoaded: false,
+  definitionsError: null,
+  nodeStatuses: {},
+  currentRound: {},
+  maxRounds: {},
 
   load: async () => {
     set({ loading: true, error: null })
@@ -131,6 +178,112 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       }))
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
+    }
+  },
+
+  loadDefinitions: async () => {
+    set({ definitionsLoading: true, definitionsError: null })
+    try {
+      const definitions = await workflowDefinitionApi.list()
+      set({ definitions, definitionsLoading: false, definitionsLoaded: true })
+    } catch (e) {
+      set({
+        definitionsLoading: false,
+        definitionsLoaded: true,
+        definitionsError: e instanceof Error ? e.message : String(e),
+      })
+    }
+  },
+
+  createDefinition: async (draft) => {
+    try {
+      const created = await workflowDefinitionApi.create(draft)
+      set((s) => ({ definitions: [...s.definitions, created] }))
+      return created
+    } catch (e) {
+      set({ definitionsError: e instanceof Error ? e.message : String(e) })
+      throw e
+    }
+  },
+
+  updateDefinition: async (id, draft) => {
+    try {
+      const updated = await workflowDefinitionApi.update(id, draft)
+      set((s) => ({
+        definitions: s.definitions.map((d) => (d.id === id ? updated : d)),
+      }))
+      return updated
+    } catch (e) {
+      set({ definitionsError: e instanceof Error ? e.message : String(e) })
+      throw e
+    }
+  },
+
+  deleteDefinition: async (id) => {
+    try {
+      await workflowDefinitionApi.delete(id)
+      set((s) => ({ definitions: s.definitions.filter((d) => d.id !== id) }))
+    } catch (e) {
+      set({ definitionsError: e instanceof Error ? e.message : String(e) })
+    }
+  },
+
+  executeDefinition: async (definitionId, body) => {
+    const def = get().definitions.find((d) => d.id === definitionId)
+    const doc = useDocumentStore.getState().documents[body.document_id]
+    const inflight: InFlight = {
+      workflowId: definitionId,
+      documentId: body.document_id,
+      range: { from: body.range_start, to: body.range_end },
+      selectionText: doc ? doc.content.slice(body.range_start, body.range_end) : '',
+    }
+
+    set((s) => ({
+      running: { ...s.running, [definitionId]: true },
+      lastRunEvents: { ...s.lastRunEvents, [definitionId]: [] },
+      nodeStatuses: { ...s.nodeStatuses, [definitionId]: [] },
+      currentRound: { ...s.currentRound, [definitionId]: 0 },
+      maxRounds: { ...s.maxRounds, [definitionId]: def?.config?.max_rounds ?? 3 },
+    }))
+
+    try {
+      const resp = await fetch(workflowDefinitionApi.executeStreamUrl(definitionId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify(body),
+      })
+      if (!resp.ok || !resp.body) {
+        const text = await resp.text().catch(() => resp.statusText)
+        throw new Error(`后端返回 ${resp.status}: ${text?.slice(0, 300) || resp.statusText}`)
+      }
+
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buf = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        let boundary = findEventBoundary(buf)
+        while (boundary !== null) {
+          const chunk = buf.slice(0, boundary.start)
+          buf = buf.slice(boundary.end)
+          const parsed = parseSseMessage(chunk)
+          if (parsed) {
+            pushEvent(set, definitionId, parsed)
+            handleOrchestratedEvent(set, definitionId, parsed, inflight, def?.name ?? definitionId)
+          }
+          boundary = findEventBoundary(buf)
+        }
+      }
+    } catch (e) {
+      pushEvent(set, definitionId, {
+        kind: 'ylw.run.failed',
+        payload: { error: e instanceof Error ? e.message : String(e) },
+        at: Date.now(),
+      })
+    } finally {
+      set((s) => ({ running: { ...s.running, [definitionId]: false } }))
     }
   },
 
@@ -307,4 +460,87 @@ function extractFirstSummary(parsed: ReturnType<typeof parseDifyOutputs>): strin
   if (parsed.suggestions[0]?.proposed) return parsed.suggestions[0].proposed
   if (parsed.risks[0]?.description) return parsed.risks[0].description
   return ''
+}
+
+function handleOrchestratedEvent(
+  set: (fn: (s: WorkflowState) => Partial<WorkflowState>) => void,
+  definitionId: string,
+  evt: RunEvent,
+  inflight: InFlight,
+  workflowName: string,
+) {
+  const payload = evt.payload as Record<string, unknown>
+
+  if (evt.kind === 'node.started') {
+    const nodeId = payload.nodeId as string
+    set((s) => ({
+      nodeStatuses: {
+        ...s.nodeStatuses,
+        [definitionId]: [
+          ...(s.nodeStatuses[definitionId] ?? []).filter((n) => n.nodeId !== nodeId),
+          { nodeId, status: 'running', startTime: Date.now() },
+        ],
+      },
+    }))
+  }
+
+  if (evt.kind === 'node.completed') {
+    const nodeId = payload.nodeId as string
+    const output = payload.output as string
+    set((s) => ({
+      nodeStatuses: {
+        ...s.nodeStatuses,
+        [definitionId]: (s.nodeStatuses[definitionId] ?? []).map((n) =>
+          n.nodeId === nodeId
+            ? { ...n, status: 'completed', endTime: Date.now(), output }
+            : n,
+        ),
+      },
+    }))
+  }
+
+  if (evt.kind === 'node.failed') {
+    const nodeId = payload.nodeId as string
+    const error = payload.error as string
+    set((s) => ({
+      nodeStatuses: {
+        ...s.nodeStatuses,
+        [definitionId]: (s.nodeStatuses[definitionId] ?? []).map((n) =>
+          n.nodeId === nodeId
+            ? { ...n, status: 'failed', endTime: Date.now(), error }
+            : n,
+        ),
+      },
+    }))
+  }
+
+  if (evt.kind === 'round.started') {
+    const round = payload.round as number
+    set((s) => ({
+      currentRound: { ...s.currentRound, [definitionId]: round },
+    }))
+  }
+
+  if (evt.kind === 'workflow.completed') {
+    const outputs = payload.outputs as unknown
+    const parsed = parseDifyOutputs(outputs, {
+      range: inflight.range,
+      selectionText: inflight.selectionText,
+    })
+
+    const ann = useAnnotationStore.getState()
+    ann.ingestRun({
+      runId: payload.run_id as string,
+      workflowId: definitionId,
+      documentId: inflight.documentId,
+      agentName: workflowName,
+      conversationId: undefined,
+      parsed,
+    })
+  }
+
+  if (evt.kind === 'ylw.run.failed') {
+    // eslint-disable-next-line no-console
+    console.error('[workflow.orchestrated.failed]', evt.payload)
+  }
 }

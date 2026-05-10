@@ -103,15 +103,77 @@ export interface WorkflowRun {
   id: string
   provider_id: string
   workflow_id: string
+  workflow_definition_id: string | null
   document_id: string
   range_start: number
   range_end: number
   status: 'running' | 'completed' | 'failed' | string
   external_run_id: string
   outputs: Record<string, unknown>
+  trace: NodeTrace[]
+  current_round: number
+  max_rounds: number
   error: string
   started_at: string
   finished_at: string | null
+}
+
+export interface NodeTrace {
+  nodeId: string
+  agentId?: string
+  workflowDefId?: string
+  startTime: string
+  endTime?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  input?: unknown
+  output?: unknown
+  error?: string
+}
+
+export interface WorkflowDefinition {
+  id: string
+  name: string
+  description: string
+  execution_mode: 'parallel' | 'pipeline' | 'roundtable' | 'graph'
+  graph: WorkflowGraph
+  config: WorkflowConfig
+  version: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkflowGraph {
+  nodes: WorkflowNode[]
+  edges: WorkflowEdge[]
+}
+
+export interface WorkflowNode {
+  id: string
+  type: 'agent' | 'workflow' | 'merge' | 'judge' | 'loop'
+  label?: string
+  config?: Record<string, unknown>
+}
+
+export interface WorkflowEdge {
+  source: string
+  target: string
+  condition?: string
+}
+
+export interface WorkflowConfig {
+  max_rounds?: number
+  stop_conditions?: string[]
+  merge_strategy?: 'concat' | 'vote' | 'first'
+  [key: string]: unknown
+}
+
+export interface WorkflowDefinitionDraft {
+  name: string
+  description?: string
+  execution_mode: WorkflowDefinition['execution_mode']
+  graph: WorkflowGraph
+  config?: WorkflowConfig
 }
 
 export interface RunListQuery {
@@ -140,6 +202,26 @@ export const workflowApi = {
     http<CachedWorkflow>(`/api/workflows/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   enable: (id: string) =>
     http<CachedWorkflow>(`/api/workflows/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+}
+
+export const workflowDefinitionApi = {
+  list: () => http<WorkflowDefinition[]>('/api/workflows/definitions'),
+  get: (id: string) =>
+    http<WorkflowDefinition>(`/api/workflows/definitions/${encodeURIComponent(id)}`),
+  create: (draft: WorkflowDefinitionDraft) =>
+    http<WorkflowDefinition>('/api/workflows/definitions', {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+  update: (id: string, draft: WorkflowDefinitionDraft) =>
+    http<WorkflowDefinition>(`/api/workflows/definitions/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(draft),
+    }),
+  delete: (id: string) =>
+    http<void>(`/api/workflows/definitions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  executeStreamUrl: (id: string) =>
+    `${BASE}/api/workflows/definitions/${encodeURIComponent(id)}/execute`,
 }
 
 export const BACKEND_BASE = BASE

@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, WorkflowRun
-from ..schemas import CachedWorkflowOut, WorkflowRunOut
+from ..models import CachedWorkflow, WorkflowDefinition, WorkflowRun
+from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
+from ..services.agent_orchestrator import WorkflowOrchestrator
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
@@ -308,3 +309,107 @@ def _extract_outputs(events: list[dict], provider_kind: str, accumulated_text: l
             message_id = evt.get("message_id", message_id)
 
     return {"text": "".join(text_parts), "outputs": structured, "message_id": message_id}
+
+
+# ---------------------------------------------------------------------------
+# Workflow Definition Management
+# ---------------------------------------------------------------------------
+
+
+@router.get("/definitions", response_model=list[WorkflowDefinitionOut])
+def list_workflow_definitions(db: Session = Depends(get_session)) -> list[WorkflowDefinitionOut]:
+    """List all workflow definitions."""
+    rows = db.query(WorkflowDefinition).filter(WorkflowDefinition.is_active == True).order_by(WorkflowDefinition.updated_at.desc()).all()
+    return [WorkflowDefinitionOut.model_validate(r) for r in rows]
+
+
+@router.get("/definitions/{definition_id}", response_model=WorkflowDefinitionOut)
+def get_workflow_definition(definition_id: str, db: Session = Depends(get_session)) -> WorkflowDefinitionOut:
+    """Get a specific workflow definition."""
+    wf = db.get(WorkflowDefinition, definition_id)
+    if wf is None:
+        raise HTTPException(404, "Workflow definition not found")
+    return WorkflowDefinitionOut.model_validate(wf)
+
+
+@router.post("/definitions", response_model=WorkflowDefinitionOut)
+def create_workflow_definition(body: WorkflowDefinitionIn, db: Session = Depends(get_session)) -> WorkflowDefinitionOut:
+    """Create a new workflow definition."""
+    wf = WorkflowDefinition(
+        name=body.name,
+        description=body.description,
+        execution_mode=body.execution_mode,
+        graph=body.graph,
+        config=body.config,
+    )
+    db.add(wf)
+    db.commit()
+    db.refresh(wf)
+    return WorkflowDefinitionOut.model_validate(wf)
+
+
+@router.put("/definitions/{definition_id}", response_model=WorkflowDefinitionOut)
+def update_workflow_definition(
+    definition_id: str,
+    body: WorkflowDefinitionIn,
+    db: Session = Depends(get_session),
+) -> WorkflowDefinitionOut:
+    """Update a workflow definition."""
+    wf = db.get(WorkflowDefinition, definition_id)
+    if wf is None:
+        raise HTTPException(404, "Workflow definition not found")
+
+    wf.name = body.name
+    wf.description = body.description
+    wf.execution_mode = body.execution_mode
+    wf.graph = body.graph
+    wf.config = body.config
+    wf.version += 1
+    wf.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(wf)
+    return WorkflowDefinitionOut.model_validate(wf)
+
+
+@router.delete("/definitions/{definition_id}", status_code=204)
+def delete_workflow_definition(definition_id: str, db: Session = Depends(get_session)) -> None:
+    """Delete (deactivate) a workflow definition."""
+    wf = db.get(WorkflowDefinition, definition_id)
+    if wf is None:
+        return None
+    wf.is_active = False
+    db.commit()
+
+
+@router.post("/definitions/{definition_id}/execute")
+async def execute_workflow_definition(
+    definition_id: str,
+    body: RunBody,
+    db: Session = Depends(get_session),
+):
+    """Execute a workflow definition with orchestration."""
+    wf = db.get(WorkflowDefinition, definition_id)
+    if wf is None:
+        raise HTTPException(404, "Workflow definition not found")
+
+    # TODO: Extract target_text from document
+    target_text = body.inputs.get("text", "")
+
+    orchestrator = WorkflowOrchestrator(db)
+
+    async def event_generator():
+        try:
+            async for event in orchestrator.execute_workflow(
+                workflow_def_id=definition_id,
+                document_id=body.document_id,
+                target_text=target_text,
+                range_start=body.range_start,
+                range_end=body.range_end,
+                user_instruction=body.query,
+            ):
+                yield {"event": event.get("event", "message"), "data": json.dumps(event.get("data", {}))}
+        except (DifyError, NanobotError) as e:
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+    return EventSourceResponse(event_generator())

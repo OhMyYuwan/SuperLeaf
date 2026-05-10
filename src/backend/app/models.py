@@ -66,18 +66,56 @@ class CachedWorkflow(Base):
     is_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class WorkflowDefinition(Base):
+    """User-defined workflow graph for orchestrating multiple agents.
+
+    Stores the node/edge structure for parallel, pipeline, roundtable, and graph execution modes.
+    Each workflow can be executed multiple times, creating WorkflowRun instances.
+
+    Execution modes:
+    - parallel: All agent nodes execute simultaneously
+    - pipeline: Sequential execution following topological order
+    - roundtable: Circular discussion with convergence detection
+    - graph: General-purpose DAG with support for nested workflows, branching, and merging
+    """
+
+    __tablename__ = "workflow_definitions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str] = mapped_column(Text, default="")
+    # 'parallel' | 'pipeline' | 'roundtable' | 'graph'
+    execution_mode: Mapped[str] = mapped_column(String(32), default="pipeline")
+    # JSON graph: { nodes: [...], edges: [...] }
+    graph: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Workflow configuration (max_rounds, stop_conditions, etc.)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Version number for tracking changes
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class WorkflowRun(Base):
     """Persisted record of a single workflow invocation.
 
-    Fine-grained node-level trace lives in Dify; we just track our side of the
-    conversation (which document/selection it applied to, final outputs, errors).
+    For simple single-agent runs (Dify/Nanobot), we track basic execution info.
+    For orchestrated multi-agent runs (WorkflowDefinition), we track node-level trace.
     """
 
     __tablename__ = "workflow_runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"))
+    # For single-agent runs: references CachedWorkflow
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"))
+    # For orchestrated runs: references WorkflowDefinition
+    workflow_definition_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_definitions.id"), nullable=True
+    )
     document_id: Mapped[str] = mapped_column(String(64))
     range_start: Mapped[int] = mapped_column(Integer)
     range_end: Mapped[int] = mapped_column(Integer)
@@ -85,6 +123,13 @@ class WorkflowRun(Base):
     # Dify run id (returned by workflow API) — useful for cross-referencing in Dify logs.
     external_run_id: Mapped[str] = mapped_column(String(128), default="")
     outputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Node-level execution trace for orchestrated workflows
+    # Format: [{ nodeId, agentId, startTime, endTime, status, input, output, error }, ...]
+    trace: Mapped[list] = mapped_column(JSON, default=list)
+    # Current round number (for roundtable mode)
+    current_round: Mapped[int] = mapped_column(Integer, default=0)
+    # Maximum rounds allowed (for roundtable mode)
+    max_rounds: Mapped[int] = mapped_column(Integer, default=3)
     error: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

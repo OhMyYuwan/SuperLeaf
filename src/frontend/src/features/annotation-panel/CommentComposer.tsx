@@ -48,7 +48,10 @@ export function CommentComposer({
     textareaRef.current?.focus()
   }, [])
 
-  const agentCandidates = useMemo(() => agents.map((a) => ({ id: a.id, name: a.name })), [agents])
+  const agentCandidates = useMemo(
+    () => agents.filter((a) => !a.is_disabled).map((a) => ({ id: a.id, name: a.name })),
+    [agents],
+  )
 
   // Filter agents by the current @ query.
   const filteredAgents = useMemo(() => {

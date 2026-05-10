@@ -25,6 +25,7 @@ from ..schemas import (
     MessageSendIn,
 )
 from ..services.dify_client import DifyError
+from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -177,7 +178,6 @@ async def send_message(
     if provider is None:
         raise HTTPException(404, "Provider for this agent is gone")
 
-    mode = (provider.meta or {}).get("mode") or cw.kind or "chat"
     client = svc.make_client(provider)
 
     # Persist user message immediately so the UI can echo even if Dify fails.
@@ -208,28 +208,57 @@ async def send_message(
         external_conv_id = conv.external_conversation_id
 
         try:
-            async for evt in client.run_streaming(
-                mode=mode,
-                inputs=body.inputs,
-                user=f"yuwanlab-conv-{conversation_id[:8]}",
-                query=body.content,
-                conversation_id=external_conv_id,
-            ):
-                kind = evt.get("event")
-                if evt.get("conversation_id"):
-                    external_conv_id = evt["conversation_id"]
-                if evt.get("message_id"):
-                    external_msg_id = evt["message_id"]
-                if kind in ("message", "agent_message") and isinstance(evt.get("answer"), str):
-                    delta = evt["answer"]
-                    agent_text_parts.append(delta)
-                    yield {
-                        "event": "ylw.msg.delta",
-                        "data": json.dumps({"delta": delta}),
-                    }
-                # Pass through other events for richer UIs (tool calls, etc.).
-                yield {"event": "dify", "data": json.dumps(evt)}
-        except DifyError as e:
+            if provider.kind == "nanobot":
+                from ..services.nanobot_client import NanobotClient
+                if not isinstance(client, NanobotClient):
+                    raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
+                # Use session_id to let Nanobot manage conversation context
+                session_id = f"ylw-{conversation_id}"
+                async for evt in client.run_streaming(
+                    model=cw.external_id,
+                    messages=[{"role": "user", "content": body.content}],
+                    session_id=session_id,
+                ):
+                    kind = evt.get("event")
+                    # Extract text from OpenAI-style delta chunks
+                    if "choices" in evt and evt["choices"]:
+                        delta = evt["choices"][0].get("delta", {})
+                        if "content" in delta:
+                            text = delta["content"]
+                            agent_text_parts.append(text)
+                            yield {
+                                "event": "ylw.msg.delta",
+                                "data": json.dumps({"delta": text}),
+                            }
+                    # Pass through raw event
+                    yield {"event": "nanobot", "data": json.dumps(evt)}
+            else:
+                from ..services.dify_client import DifyClient
+                if not isinstance(client, DifyClient):
+                    raise TypeError(f"Expected DifyClient for dify provider, got {type(client)}")
+                mode = (provider.meta or {}).get("mode") or cw.kind or "chat"
+                async for evt in client.run_streaming(
+                    mode=mode,
+                    inputs=body.inputs,
+                    user=f"yuwanlab-conv-{conversation_id[:8]}",
+                    query=body.content,
+                    conversation_id=external_conv_id,
+                ):
+                    kind = evt.get("event")
+                    if evt.get("conversation_id"):
+                        external_conv_id = evt["conversation_id"]
+                    if evt.get("message_id"):
+                        external_msg_id = evt["message_id"]
+                    if kind in ("message", "agent_message") and isinstance(evt.get("answer"), str):
+                        delta = evt["answer"]
+                        agent_text_parts.append(delta)
+                        yield {
+                            "event": "ylw.msg.delta",
+                            "data": json.dumps({"delta": delta}),
+                        }
+                    # Pass through other events for richer UIs (tool calls, etc.).
+                    yield {"event": "dify", "data": json.dumps(evt)}
+        except (DifyError, NanobotError) as e:
             err = f"{e.status}: {e.detail}"
             agent_msg = Message(
                 conversation_id=conversation_id,

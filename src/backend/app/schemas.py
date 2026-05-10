@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class ProviderIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct)$")
+    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct|nanobot)$")
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1, max_length=1024)
     activate: bool = False

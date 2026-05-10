@@ -11,7 +11,7 @@ const BASE = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string

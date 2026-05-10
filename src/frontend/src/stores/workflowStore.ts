@@ -26,6 +26,7 @@ export type RunEventKind =
   | 'ylw.run.finished'
   | 'ylw.run.failed'
   | 'dify'
+  | 'nanobot'
 
 export interface RunEvent {
   kind: RunEventKind

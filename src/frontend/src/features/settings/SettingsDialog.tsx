@@ -145,7 +145,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
           {provider.is_active && <span className="active-chip">激活</span>}
         </div>
         <div className="provider-meta">
-          <span className="kind">{provider.kind}</span>
+          <span className="kind">{kindLabel(provider.kind)}</span>
           <span className="endpoint">{provider.endpoint}</span>
         </div>
         {provider.status_detail && (
@@ -187,21 +187,30 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
       ...d,
       kind,
       endpoint:
-        kind === 'dify-cloud' ? 'https://api.dify.ai/v1'
-        : kind === 'claude-direct' ? 'https://api.anthropic.com'
-        : 'http://localhost:8080/v1',
+        kind === 'dify-cloud'
+          ? 'https://api.dify.ai/v1'
+          : kind === 'claude-direct'
+            ? 'https://api.anthropic.com'
+            : kind === 'nanobot'
+              ? 'http://127.0.0.1:8900'
+              : 'http://localhost:8080/v1',
+      api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
-    if (!draft.name.trim() || !draft.endpoint.trim() || !draft.api_key.trim()) {
+    const filledDraft: ProviderDraft = {
+      ...draft,
+      api_key: draft.kind === 'nanobot' && !draft.api_key.trim() ? 'dummy' : draft.api_key,
+    }
+    if (!filledDraft.name.trim() || !filledDraft.endpoint.trim() || !filledDraft.api_key.trim()) {
       setFormError('name / endpoint / api_key 都不能为空')
       return
     }
     setSubmitting(true)
-    const result = await create(draft)
+    const result = await create(filledDraft)
     setSubmitting(false)
     if (result) {
       onClose()
@@ -218,7 +227,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder="My Dify"
+            placeholder="My Dify / My Nanobot"
             autoFocus
           />
         </label>
@@ -228,6 +237,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
             <option value="dify-local">Dify (本地)</option>
             <option value="dify-cloud">Dify Cloud</option>
             <option value="claude-direct">Claude API 直连</option>
+            <option value="nanobot">Nanobot</option>
           </select>
         </label>
       </div>
@@ -236,6 +246,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
+          placeholder="http://127.0.0.1:8900"
         />
       </label>
       <label className="full">
@@ -244,7 +255,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
           type="password"
           value={draft.api_key}
           onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
-          placeholder="app-xxxxx / sk-xxxxx"
+          placeholder="dummy / app-xxxxx / sk-xxxxx"
         />
       </label>
       <label className="checkbox-row">
@@ -266,6 +277,14 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
       </div>
     </form>
   )
+}
+
+function kindLabel(kind: Provider['kind']) {
+  if (kind === 'dify-local') return 'Dify (本地)'
+  if (kind === 'dify-cloud') return 'Dify Cloud'
+  if (kind === 'claude-direct') return 'Claude API 直连'
+  if (kind === 'nanobot') return 'Nanobot'
+  return kind
 }
 
 function truncate(s: string, n: number) {

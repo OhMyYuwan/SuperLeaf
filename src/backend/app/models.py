@@ -24,7 +24,7 @@ class Provider(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(128))
-    # 'dify-local' | 'dify-cloud' | 'claude-direct'
+    # 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot'
     kind: Mapped[str] = mapped_column(String(32))
     # API base URL; for dify-cloud typically https://api.dify.ai/v1
     endpoint: Mapped[str] = mapped_column(String(512))

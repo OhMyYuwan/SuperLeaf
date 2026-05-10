@@ -1,4 +1,4 @@
-"""/api/workflows — list Dify apps + run streaming + continue thread."""
+"""/api/workflows — list providers' cached workflows + run streaming + continue thread."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from ..database import get_session
 from ..models import CachedWorkflow, WorkflowRun
 from ..schemas import CachedWorkflowOut, WorkflowRunOut
 from ..services.dify_client import DifyError
+from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -83,14 +84,11 @@ async def run_workflow(
     body: RunBody,
     db: Session = Depends(get_session),
 ):
-    """Proxy a Dify run as an SSE stream.
+    """Proxy a provider run as an SSE stream.
 
-    The endpoint dispatches to /workflows/run for workflow apps and
-    /chat-messages for chat / advanced-chat / agent-chat apps. We forward every
-    Dify event verbatim and add three housekeeping events:
-      - ylw.run.started   (with our run_id and resolved Dify mode)
-      - ylw.run.finished  (with parsed outputs and conversation_id if any)
-      - ylw.run.failed    (with the error string)
+    Dify stays on the existing event contract. Nanobot streams raw OpenAI-like
+    SSE events which we forward under a `nanobot` event name, then collapse into
+    `outputs.text` for the existing annotation parser.
     """
     cw = db.get(CachedWorkflow, workflow_id)
     if cw is None:
@@ -100,8 +98,6 @@ async def run_workflow(
     provider = svc.get(cw.provider_id)
     if provider is None:
         raise HTTPException(404, "Provider for this workflow is gone")
-
-    mode = (provider.meta or {}).get("mode") or cw.kind or "workflow"
 
     run = WorkflowRun(
         provider_id=provider.id,
@@ -124,30 +120,53 @@ async def run_workflow(
                 {
                     "run_id": run.id,
                     "workflow_id": workflow_id,
-                    "mode": mode,
+                    "mode": provider.kind if provider.kind == "nanobot" else (provider.meta or {}).get("mode") or cw.kind or "workflow",
                     "parent_run_id": body.parent_run_id,
                 }
             ),
         }
 
-        accumulated: list[dict] = []
-        external_run_id = ""
         conversation_id = body.conversation_id
+        external_run_id = ""
+        raw_events: list[dict] = []
+        accumulated_text: list[str] = []
+
         try:
-            async for evt in client.run_streaming(
-                mode=mode,
-                inputs=body.inputs,
-                user=body.user,
-                query=body.query,
-                conversation_id=conversation_id,
-            ):
-                accumulated.append(evt)
-                if evt.get("workflow_run_id") and not external_run_id:
-                    external_run_id = evt["workflow_run_id"]
-                if evt.get("conversation_id"):
-                    conversation_id = evt["conversation_id"]
-                yield {"event": "dify", "data": json.dumps(evt)}
-        except DifyError as e:
+            if provider.kind == "nanobot":
+                from ..services.nanobot_client import NanobotClient
+                if not isinstance(client, NanobotClient):
+                    raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
+                prompt = _nanobot_prompt(body)
+                async for evt in client.run_streaming(
+                    model=cw.external_id,
+                    messages=[{"role": "user", "content": prompt}],
+                ):
+                    raw_events.append(evt)
+                    if not external_run_id:
+                        external_run_id = str(evt.get("id") or evt.get("run_id") or "")
+                    text = _nanobot_delta_text(evt)
+                    if text:
+                        accumulated_text.append(text)
+                    yield {"event": "nanobot", "data": json.dumps(evt)}
+            else:
+                from ..services.dify_client import DifyClient
+                if not isinstance(client, DifyClient):
+                    raise TypeError(f"Expected DifyClient for dify provider, got {type(client)}")
+                mode = (provider.meta or {}).get("mode") or cw.kind or "workflow"
+                async for evt in client.run_streaming(
+                    mode=mode,
+                    inputs=body.inputs,
+                    user=body.user,
+                    query=body.query,
+                    conversation_id=conversation_id,
+                ):
+                    raw_events.append(evt)
+                    if evt.get("workflow_run_id") and not external_run_id:
+                        external_run_id = evt["workflow_run_id"]
+                    if evt.get("conversation_id"):
+                        conversation_id = evt["conversation_id"]
+                    yield {"event": "dify", "data": json.dumps(evt)}
+        except (DifyError, NanobotError) as e:
             run.status = "failed"
             run.error = f"{e.status}: {e.detail}"
             run.finished_at = datetime.utcnow()
@@ -162,7 +181,7 @@ async def run_workflow(
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
             return
 
-        outputs = _extract_outputs(accumulated, mode)
+        outputs = _extract_outputs(raw_events, provider.kind, accumulated_text)
 
         run.status = "completed"
         run.external_run_id = external_run_id
@@ -177,7 +196,7 @@ async def run_workflow(
                     "run_id": run.id,
                     "outputs": outputs,
                     "conversation_id": conversation_id,
-                    "mode": mode,
+                    "mode": provider.kind if provider.kind == "nanobot" else (provider.meta or {}).get("mode") or cw.kind or "workflow",
                 }
             ),
         }
@@ -185,17 +204,67 @@ async def run_workflow(
     return EventSourceResponse(event_gen())
 
 
-def _extract_outputs(events: list[dict], mode: str) -> dict:
-    """Recover the final output payload regardless of app mode.
+def _nanobot_prompt(body: RunBody) -> str:
+    selection_text = str(body.inputs.get("target_text") or body.query or "").strip()
+    instruction = str(body.inputs.get("instruction") or body.query or "").strip()
+    before = str(body.inputs.get("before") or "").strip()
+    after = str(body.inputs.get("after") or "").strip()
+    section_title = str(body.inputs.get("section_title") or "").strip()
 
-    - workflow:     workflow_finished.data.outputs
-    - chat-modes:   accumulated `answer` chunks from message events, plus any
-                    metadata.outputs from message_end. Returns
-                    {"text": <full answer>, "outputs": <structured if any>}
-    """
-    if mode not in {"chat", "advanced-chat", "agent-chat"}:
-        final = next((e for e in reversed(events) if e.get("event") == "workflow_finished"), None)
-        return (final or {}).get("data", {}).get("outputs") or {}
+    parts = []
+    if section_title:
+        parts.append(f"Section: {section_title}")
+    if instruction:
+        parts.append(f"Instruction: {instruction}")
+    if selection_text:
+        parts.append("Selected text:")
+        parts.append(selection_text)
+    if before or after:
+        parts.append("Context:")
+        if before:
+            parts.append(f"Before: {before}")
+        if after:
+            parts.append(f"After: {after}")
+    return "\n".join(parts).strip() or body.query or selection_text or instruction
+
+
+def _nanobot_delta_text(evt: dict) -> str:
+    choices = evt.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if isinstance(delta, dict):
+        content = delta.get("content")
+        if isinstance(content, str):
+            return content
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+    text = first.get("text")
+    if isinstance(text, str):
+        return text
+    return ""
+
+
+def _extract_outputs(events: list[dict], provider_kind: str, accumulated_text: list[str]) -> dict:
+    if provider_kind == "nanobot":
+        text = "".join(accumulated_text).strip()
+        last = next((e for e in reversed(events) if isinstance(e, dict)), {})
+        return {
+            "text": text,
+            "outputs": {"text": text},
+            "model": last.get("model", ""),
+            "raw": events[-20:],
+        }
+
+    final = next((e for e in reversed(events) if e.get("event") == "workflow_finished"), None)
+    if final is not None:
+        return (final.get("data") or {}).get("outputs") or {}
 
     text_parts: list[str] = []
     structured: dict = {}

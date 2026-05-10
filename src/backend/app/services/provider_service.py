@@ -1,4 +1,4 @@
-"""Provider registry — manages saved Dify / Claude provider configs.
+"""Provider registry — manages saved provider configs.
 
 Invariants:
 - API keys never stored in plain text (Fernet).
@@ -9,12 +9,14 @@ Invariants:
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ..models import CachedWorkflow, Provider
 from ..secrets_vault import decrypt, encrypt
 from .dify_client import DifyClient, DifyError
+from .nanobot_client import NanobotClient, NanobotError
 
 
 class ProviderService:
@@ -44,7 +46,7 @@ class ProviderService:
         p = Provider(
             name=name,
             kind=kind,
-            endpoint=endpoint.rstrip("/"),
+            endpoint=self._normalize_endpoint(kind, endpoint),
             api_key_enc=encrypt(api_key),
         )
         self.db.add(p)
@@ -69,7 +71,7 @@ class ProviderService:
         if name is not None:
             p.name = name
         if endpoint is not None:
-            p.endpoint = endpoint.rstrip("/")
+            p.endpoint = self._normalize_endpoint(p.kind, endpoint)
         if api_key:  # only rotate if non-empty
             p.api_key_enc = encrypt(api_key)
         p.updated_at = datetime.utcnow()
@@ -104,27 +106,61 @@ class ProviderService:
         p = self.get(provider_id)
         if p is None:
             return None
+
         client = self._make_client(p)
         try:
-            info = await client.probe()
-            p.status = "ok"
-            p.status_detail = f"{info.mode} · {info.name}"
-            p.meta = {**(p.meta or {}), "mode": info.mode, "app_name": info.name}
-            # Sync a cached-workflow row for this provider so the UI has something to list.
-            self._upsert_cached_workflow(
-                provider=p,
-                external_id=provider_id,  # Dify app is 1:1 with the API key, reuse id
-                name=info.name,
-                description=info.description,
-                kind=info.mode if info.mode in ("workflow", "chatflow", "agent-chat") else "workflow",
-                tags=info.tags,
-                raw={"mode": info.mode},
-            )
+            if p.kind == "nanobot":
+                info = await client.probe()
+                self._sync_cached_workflows(
+                    p,
+                    [
+                        {
+                            "external_id": model.id,
+                            "name": model.name,
+                            "description": model.description,
+                            "kind": "nanobot",
+                            "tags": _tags_from_raw(model.raw),
+                            "raw": model.raw,
+                        }
+                        for model in info.models
+                    ],
+                )
+                p.status = "ok"
+                p.status_detail = f"{info.name} · {len(info.models)} models"
+                p.meta = {
+                    **(p.meta or {}),
+                    "kind": "nanobot",
+                    "provider_name": info.name,
+                    "model_count": len(info.models),
+                    "model_ids": [m.id for m in info.models],
+                }
+            else:
+                info = await client.probe()
+                p.status = "ok"
+                p.status_detail = f"{info.mode} · {info.name}"
+                p.meta = {**(p.meta or {}), "mode": info.mode, "app_name": info.name}
+                self._sync_cached_workflows(
+                    p,
+                    [
+                        {
+                            "external_id": provider_id,  # Dify app is 1:1 with the API key, reuse id
+                            "name": info.name,
+                            "description": info.description,
+                            "kind": info.mode if info.mode in ("workflow", "chatflow", "agent-chat") else "workflow",
+                            "tags": info.tags,
+                            "raw": {"mode": info.mode},
+                        }
+                    ],
+                )
         except DifyError as e:
+            p.status = "error"
+            p.status_detail = f"HTTP {e.status}: {e.detail or '(empty body)'}"[:512]
+        except NanobotError as e:
             p.status = "error"
             p.status_detail = f"HTTP {e.status}: {e.detail or '(empty body)'}"[:512]
         except Exception as e:  # network errors etc.
             import traceback
+
             traceback.print_exc()
             p.status = "error"
             p.status_detail = f"{type(e).__name__}: {e}"[:512] or f"{type(e).__name__}: (no message)"
@@ -135,42 +171,44 @@ class ProviderService:
 
     # --- Helpers ------------------------------------------------------------
 
-    def make_client(self, provider: Provider) -> DifyClient:
+    def make_client(self, provider: Provider) -> DifyClient | NanobotClient:
         return self._make_client(provider)
 
-    def _make_client(self, provider: Provider) -> DifyClient:
-        return DifyClient(endpoint=provider.endpoint, api_key=decrypt(provider.api_key_enc))
+    def _make_client(self, provider: Provider) -> DifyClient | NanobotClient:
+        endpoint = self._normalize_endpoint(provider.kind, provider.endpoint)
+        api_key = decrypt(provider.api_key_enc)
+        if provider.kind == "nanobot":
+            return NanobotClient(endpoint=endpoint, api_key=api_key)
+        return DifyClient(endpoint=endpoint, api_key=api_key)
 
-    def _upsert_cached_workflow(
-        self,
-        *,
-        provider: Provider,
-        external_id: str,
-        name: str,
-        description: str,
-        kind: str,
-        tags: list[str],
-        raw: dict,
-    ) -> CachedWorkflow:
-        cw_id = f"{provider.id}:{external_id}"
-        cw = self.db.get(CachedWorkflow, cw_id)
-        if cw is None:
+    def _normalize_endpoint(self, kind: str, endpoint: str) -> str:
+        cleaned = endpoint.rstrip("/")
+        if kind == "nanobot" and cleaned.endswith("/v1"):
+            cleaned = cleaned[:-3].rstrip("/")
+        return cleaned
+
+    def _sync_cached_workflows(self, provider: Provider, entries: list[dict[str, Any]]) -> None:
+        self.db.query(CachedWorkflow).filter(CachedWorkflow.provider_id == provider.id).delete(
+            synchronize_session=False
+        )
+        for entry in entries:
+            external_id = str(entry["external_id"])
             cw = CachedWorkflow(
-                id=cw_id,
+                id=f"{provider.id}:{external_id}",
                 provider_id=provider.id,
                 external_id=external_id,
-                name=name,
-                description=description,
-                kind=kind,
-                tags=tags,
-                raw=raw,
+                name=str(entry["name"]),
+                description=str(entry.get("description") or ""),
+                kind=str(entry.get("kind") or "workflow"),
+                tags=list(entry.get("tags") or []),
+                raw=entry.get("raw") or {},
+                last_synced_at=datetime.utcnow(),
             )
             self.db.add(cw)
-        else:
-            cw.name = name
-            cw.description = description
-            cw.kind = kind
-            cw.tags = tags
-            cw.raw = raw
-            cw.last_synced_at = datetime.utcnow()
-        return cw
+
+
+def _tags_from_raw(raw: dict[str, Any]) -> list[str]:
+    value = raw.get("tags")
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return []

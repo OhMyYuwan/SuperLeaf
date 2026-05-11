@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -19,10 +19,52 @@ def _uuid() -> str:
     return uuid4().hex
 
 
+# ---------------------------------------------------------------------------
+# Users + sessions
+# ---------------------------------------------------------------------------
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+class Session(Base):
+    """Opaque server-side session row. `id` is the cookie value itself."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+# ---------------------------------------------------------------------------
+# Providers + cached workflows (per-user)
+# ---------------------------------------------------------------------------
+
+
 class Provider(Base):
     __tablename__ = "providers"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     name: Mapped[str] = mapped_column(String(128))
     # 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot'
     kind: Mapped[str] = mapped_column(String(32))
@@ -33,7 +75,7 @@ class Provider(Base):
     # Last known status: 'unknown' | 'ok' | 'error'
     status: Mapped[str] = mapped_column(String(16), default="unknown")
     status_detail: Mapped[str] = mapped_column(Text, default="")
-    # Only one provider can be active at a time (enforced in service layer).
+    # Only one provider can be active at a time per user (enforced in service layer).
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -52,6 +94,7 @@ class CachedWorkflow(Base):
     __tablename__ = "cached_workflows"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"))
     # Dify-side identifier
     external_id: Mapped[str] = mapped_column(String(128))
@@ -169,6 +212,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     name: Mapped[str] = mapped_column(String(128), default="Untitled Project")
     # LaTeX compile settings
     main_doc_id: Mapped[str] = mapped_column(String(32), default="")
@@ -271,3 +315,85 @@ class Message(Base):
     external_message_id: Mapped[str] = mapped_column(String(128), default="")
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# History & versioning (V3 Phase 3) — Overleaf-inspired three-table storage
+# ---------------------------------------------------------------------------
+
+
+class Blob(Base):
+    """Content-addressed blob shared by all document versions.
+
+    SHA1 hex over the raw bytes is the primary key, so identical content
+    (e.g. two snapshots taken before/after a no-op cooldown skip) reuses
+    the same row across documents.
+    """
+
+    __tablename__ = "blobs"
+
+    hash: Mapped[str] = mapped_column(String(40), primary_key=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    byte_length: Mapped[int] = mapped_column(Integer, default=0)
+    # None ⇒ binary blob (the document is not decodable as UTF-8 text).
+    string_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DocumentVersion(Base):
+    """One historical snapshot of a Doc, pointing at a Blob.
+
+    `version` is monotonically increasing per doc_id and unique within that
+    scope. The 20-version cap is enforced at write time by version_service.
+    """
+
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("doc_id", "version", name="uq_document_versions_doc_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    blob_hash: Mapped[str] = mapped_column(ForeignKey("blobs.hash"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # auto_save | accept_suggestion | manual | restore | ai_edit
+    origin: Mapped[str] = mapped_column(String(32), default="auto_save")
+    # Optional user/agent identifier (free-form; nullable for system writes).
+    actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class DocumentLabel(Base):
+    """User-named version pin. Labels protect their version from LRU eviction."""
+
+    __tablename__ = "document_labels"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Operation(Base):
+    """Append-only audit log of user/agent actions on a doc.
+
+    Captures coarse events (accept_suggestion, reject_suggestion, restore,
+    label_add, label_remove). Suggestion accept/reject originate in the
+    frontend annotation store and are POSTed here for persistence; restore
+    and label events are recorded by the version routes directly.
+    """
+
+    __tablename__ = "operations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    # accept_suggestion | reject_suggestion | restore | label_add | label_remove
+    type: Mapped[str] = mapped_column(String(32))
+    # Free-form context: { version, label_id, label_text, annotation_id,
+    # workflow_id, range_start, range_end, target_text_excerpt, ... }
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )

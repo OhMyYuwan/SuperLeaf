@@ -8,7 +8,7 @@
  * 后续 W7 会让这里直接挂"私聊"入口，所以预留 onChatWithAgent 钩子。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CheckCircle2,
   CircleAlert,
@@ -28,10 +28,13 @@ import type {
   WorkflowDefinitionDraft,
 } from '../../services/backendApi'
 import { BACKEND_BASE, getLocalServiceUrl } from '../../services/backendApi'
+import { statsApi, type AgentStat } from '../../services/statsApi'
+import { computeAgentQuality } from '../../services/agentQuality'
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import { useAnnotationStore } from '../../stores/annotationStore'
 import { WorkflowDefinitionsPanel } from './WorkflowDefinitionsPanel'
 
 interface TeamTabProps {
@@ -220,6 +223,28 @@ function ProviderBlock({
   const remove = useSettingsStore((s) => s.remove)
   const activate = useSettingsStore((s) => s.activate)
   const [busy, setBusy] = useState<'probe' | 'remove' | 'activate' | null>(null)
+  const [statsByWorkflow, setStatsByWorkflow] = useState<Record<string, AgentStat>>({})
+
+  // Fetch per-agent stats whenever the workflow set under this provider
+  // changes. Failures are non-fatal: cards just render without stats.
+  useEffect(() => {
+    if (!workflowsLoaded) return
+    let cancelled = false
+    statsApi
+      .forProvider(provider.id)
+      .then((resp) => {
+        if (cancelled) return
+        const map: Record<string, AgentStat> = {}
+        for (const a of resp.agents) map[a.workflow_id] = a
+        setStatsByWorkflow(map)
+      })
+      .catch(() => {
+        // Provider down / unauthorized — silently leave stats empty.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [provider.id, workflowsLoaded, workflows.length])
 
   const handleProbe = async () => {
     setBusy('probe')
@@ -285,6 +310,7 @@ function ProviderBlock({
           <AgentCard
             key={wf.id}
             workflow={wf}
+            stat={statsByWorkflow[wf.id] ?? null}
             onChatWithAgent={onChatWithAgent}
             onAfterMutate={onAfterMutate}
           />
@@ -296,11 +322,12 @@ function ProviderBlock({
 
 interface AgentCardProps {
   workflow: CachedWorkflow
+  stat: AgentStat | null
   onChatWithAgent?: (workflow: CachedWorkflow) => void
   onAfterMutate: () => void
 }
 
-function AgentCard({ workflow, onChatWithAgent, onAfterMutate }: AgentCardProps) {
+function AgentCard({ workflow, stat, onChatWithAgent, onAfterMutate }: AgentCardProps) {
   const disableWorkflow = useWorkflowStore((s) => s.disableWorkflow)
   const [busy, setBusy] = useState(false)
 
@@ -326,6 +353,8 @@ function AgentCard({ workflow, onChatWithAgent, onAfterMutate }: AgentCardProps)
           {workflow.kind}
           {workflow.description ? ` · ${workflow.description}` : workflow.external_id ? ` · ${workflow.external_id}` : ''}
         </span>
+        <AgentStatsRow stat={stat} />
+        <AgentQualityRow workflowId={workflow.id} />
       </div>
       <div className="agent-card-actions">
         {onChatWithAgent && (
@@ -346,6 +375,69 @@ function AgentCard({ workflow, onChatWithAgent, onAfterMutate }: AgentCardProps)
           {busy ? <Loader2 size={12} className="spin" /> : <Ban size={12} />}
         </button>
       </div>
+    </div>
+  )
+}
+
+function AgentStatsRow({ stat }: { stat: AgentStat | null }) {
+  if (!stat || stat.runs === 0) {
+    return <span className="agent-stats-empty">尚无运行记录</span>
+  }
+  const acceptRate =
+    stat.accept_rate === null ? '—' : `${Math.round(stat.accept_rate * 100)}%`
+  const decided = stat.accepts + stat.rejects
+  const avgLatency =
+    stat.avg_latency_ms === null
+      ? '—'
+      : stat.avg_latency_ms < 1000
+        ? `${Math.round(stat.avg_latency_ms)} ms`
+        : `${(stat.avg_latency_ms / 1000).toFixed(1)} s`
+  return (
+    <div className="agent-stats-row">
+      <span className="agent-stat" title="完成的运行次数">
+        产出 {stat.runs}
+      </span>
+      <span
+        className="agent-stat"
+        title={`采纳 ${stat.accepts} / 拒绝 ${stat.rejects}`}
+      >
+        接受率 {acceptRate}
+        {decided > 0 && <span className="agent-stat-dim"> ({decided})</span>}
+      </span>
+      <span className="agent-stat" title="完成运行的平均耗时">
+        平均 {avgLatency}
+      </span>
+    </div>
+  )
+}
+
+function AgentQualityRow({ workflowId }: { workflowId: string }) {
+  const annotationItems = useAnnotationStore((s) => s.items)
+  const evaluationsByAnnotation = useAnnotationStore((s) => s.evaluationsByAnnotation)
+  const quality = useMemo(
+    () => computeAgentQuality(workflowId, annotationItems, evaluationsByAnnotation),
+    [workflowId, annotationItems, evaluationsByAnnotation],
+  )
+  if (quality.total === 0) return null
+  const positiveRate =
+    quality.positiveRate === null ? '—' : `${Math.round(quality.positiveRate * 100)}%`
+  return (
+    <div className="agent-stats-row agent-quality-row">
+      <span className="agent-stat agent-stat-quality positive" title="用户判为有用的评价数">
+        ✅ {quality.positive}
+      </span>
+      <span className="agent-stat agent-stat-quality negative" title="用户判为无用的评价数">
+        ❎ {quality.negative}
+      </span>
+      <span className="agent-stat" title="有用 / 有用+无用">
+        好评率 {positiveRate}
+        <span className="agent-stat-dim"> ({quality.total})</span>
+      </span>
+      {quality.topTag && (
+        <span className="agent-stat" title={`最常见标签 (${quality.topTagCount} 次)`}>
+          Top #{quality.topTag}
+        </span>
+      )}
     </div>
   )
 }

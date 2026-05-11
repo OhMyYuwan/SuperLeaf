@@ -33,18 +33,22 @@ class ProjectService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def list(self) -> list[Project]:
+    def list(self, *, user_id: str) -> list[Project]:
         return (
             self.db.query(Project)
+            .filter(Project.user_id == user_id)
             .order_by(Project.updated_at.desc(), Project.created_at.desc())
             .all()
         )
 
-    def get(self, project_id: str) -> Project | None:
-        return self.db.get(Project, project_id)
+    def get(self, project_id: str, *, user_id: str) -> Project | None:
+        p = self.db.get(Project, project_id)
+        if p is None or p.user_id != user_id:
+            return None
+        return p
 
-    def create(self, name: str) -> Project:
-        p = Project(name=name)
+    def create(self, *, user_id: str, name: str) -> Project:
+        p = Project(name=name, user_id=user_id)
         self.db.add(p)
         self.db.commit()
         self.db.refresh(p)
@@ -54,12 +58,13 @@ class ProjectService:
         self,
         project_id: str,
         *,
+        user_id: str,
         name: str | None = None,
         main_doc_id: str | None = None,
         compiler: str | None = None,
     ) -> Project | None:
         p = self.db.get(Project, project_id)
-        if p is None:
+        if p is None or p.user_id != user_id:
             return None
         if name is not None:
             p.name = name
@@ -72,18 +77,20 @@ class ProjectService:
         self.db.refresh(p)
         return p
 
-    def delete(self, project_id: str) -> bool:
+    def delete(self, project_id: str, *, user_id: str) -> bool:
         """Cascade-delete a project and all its scoped rows.
 
-        Refuses if it's the last project (raises `LastProjectError`).
-        Returns False if the project does not exist.
+        Refuses if it's the user's last project (raises `LastProjectError`).
+        Returns False if the project does not exist or belongs to someone else.
         """
-        total = self.db.query(Project).count()
+        total = (
+            self.db.query(Project).filter(Project.user_id == user_id).count()
+        )
         if total <= 1:
             raise LastProjectError("cannot delete last project")
 
         p = self.db.get(Project, project_id)
-        if p is None:
+        if p is None or p.user_id != user_id:
             return False
 
         # Delete in dependency-safe order; everything in one transaction.

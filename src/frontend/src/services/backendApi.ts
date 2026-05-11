@@ -76,7 +76,11 @@ export async function http<T>(path: string, init?: HttpInit): Promise<T> {
   const resp = await fetch(`${BASE}${path}`, {
     ...init,
     headers,
+    credentials: 'include',
   })
+  if (resp.status === 401) {
+    notifyUnauthorized()
+  }
   if (resp.status === 204) return undefined as T
   const text = await resp.text()
   if (!resp.ok) {
@@ -121,6 +125,24 @@ export function registerProjectIdReader(reader: () => string | null): void {
 
 function readCurrentProjectId(): string | null {
   return projectIdReader ? projectIdReader() : null
+}
+
+// 401 interceptor — userStore registers a handler that clears its state and
+// triggers a router-level redirect to /login. Lazy registration same as above.
+const unauthorizedHandlers: Array<() => void> = []
+
+export function registerUnauthorizedHandler(cb: () => void): void {
+  unauthorizedHandlers.push(cb)
+}
+
+function notifyUnauthorized(): void {
+  for (const cb of unauthorizedHandlers) {
+    try {
+      cb()
+    } catch (e) {
+      console.warn('[backendApi] unauthorized handler threw', e)
+    }
+  }
 }
 
 export class BackendError extends Error {
@@ -393,9 +415,12 @@ export const compileApi = {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
     }),
-  pdfUrl: () => `${BASE}/api/compile/pdf`,
+  pdfUrl: (projectId: string) => `${BASE}/api/projects/${projectId}/compile.pdf`,
   getLog: async () => {
-    const resp = await fetch(`${BASE}/api/compile/log`)
+    const resp = await fetch(`${BASE}/api/compile/log`, {
+      credentials: 'include',
+      headers: buildHeaders(),
+    })
     if (!resp.ok) throw new BackendError(resp.status, resp.statusText)
     return resp.text()
   },

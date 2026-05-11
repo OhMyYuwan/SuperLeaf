@@ -21,6 +21,8 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
+import { EvaluationPanel } from './EvaluationPanel'
+import { ReviewStatusToggle } from './ReviewStatusToggle'
 import {
   parseMentions,
   segmentText,
@@ -37,6 +39,7 @@ import {
 } from '../../services/mentions'
 import { MentionInput, type MentionInputHandle } from '../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { AgentMarkdown } from '../shared/AgentMarkdown'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
@@ -314,6 +317,10 @@ function AnnotationCard({
   const accept = useAnnotationStore((s) => s.accept)
   const remove = useAnnotationStore((s) => s.remove)
   const appendThread = useAnnotationStore((s) => s.appendThread)
+  const reviewStatus = useAnnotationStore(
+    (s) => s.reviewStatusByAnnotation[item.id] ?? 'open',
+  )
+  const setReviewStatus = useAnnotationStore((s) => s.setReviewStatus)
   const runWorkflow = useWorkflowStore((s) => s.run)
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -461,6 +468,12 @@ function AnnotationCard({
         </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
         {isResolved && <span className="ann-resolved-chip">已处理</span>}
+        <ReviewStatusToggle
+          value={reviewStatus}
+          onChange={(next) => setReviewStatus(item.id, next)}
+          disabled={isResolved}
+          compact
+        />
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
@@ -482,11 +495,11 @@ function AnnotationCard({
       )}
 
       {item.content && (
-        <p className="ann-body">
+        <div className="ann-body">
           {isUserComment
             ? renderWithMentions(item.content, agents, fileCandidatesForCard, workflowCandidatesForCard)
-            : item.content}
-        </p>
+            : <AgentMarkdown source={item.content} />}
+        </div>
       )}
 
       {item.kind === 'suggestion' && item.proposed && (
@@ -504,6 +517,10 @@ function AnnotationCard({
         files={fileCandidatesForCard}
         workflows={workflowCandidatesForCard}
       />
+
+      {hasAgentOutput(item) && (
+        <EvaluationPanel annotationId={item.id} />
+      )}
 
       {agentDisabled && (
         <div className="ann-warning">
@@ -619,9 +636,11 @@ function Thread({
           <span className="ann-thread-role">
             {m.role === 'user' ? '我' : m.agentName ?? 'Agent'}
           </span>
-          <span className="ann-thread-content">
-            {m.role === 'user' ? renderWithMentions(m.content, agents, files, workflows) : m.content}
-          </span>
+          <div className="ann-thread-content">
+            {m.role === 'user'
+              ? renderWithMentions(m.content, agents, files, workflows)
+              : <AgentMarkdown source={m.content} />}
+          </div>
         </li>
       ))}
     </ul>
@@ -663,9 +682,21 @@ function iconFor(item: AnnotationItem) {
   return <MessageSquarePlus size={14} />
 }
 
+/** Whether this card has any Agent-authored output that's worth evaluating.
+ *  Annotation/suggestion/risk cards always do (the Agent created them).
+ *  User-comment cards only do when the user @ed an Agent and the agent
+ *  has actually replied at least once. */
+function hasAgentOutput(item: AnnotationItem): boolean {
+  if (item.kind !== 'user-comment') return true
+  return item.thread.some((m) => m.role === 'agent')
+}
+
 function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWorkflow[] }) {
   const restore = useAnnotationStore((s) => s.restore)
   const remove = useAnnotationStore((s) => s.remove)
+  const reviewStatus = useAnnotationStore(
+    (s) => s.reviewStatusByAnnotation[item.id] ?? 'open',
+  )
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
   const isUserComment = item.kind === 'user-comment'
@@ -695,6 +726,7 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
         <span className="ann-resolved-chip">已归档</span>
+        <ReviewStatusToggle value={reviewStatus} onChange={() => {}} disabled compact />
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
@@ -716,11 +748,11 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
       )}
 
       {item.content && (
-        <p className="ann-body">
+        <div className="ann-body">
           {isUserComment
             ? renderWithMentions(item.content, agents, fileCandidatesForArchived, workflowCandidatesForArchived)
-            : item.content}
-        </p>
+            : <AgentMarkdown source={item.content} />}
+        </div>
       )}
 
       {item.kind === 'suggestion' && item.proposed && (
@@ -738,6 +770,10 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         files={fileCandidatesForArchived}
         workflows={workflowCandidatesForArchived}
       />
+
+      {hasAgentOutput(item) && (
+        <EvaluationPanel annotationId={item.id} readOnly />
+      )}
 
       <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
         <button className="ann-btn accept" onClick={() => restore(item.id)} title="重新打开">
@@ -792,7 +828,11 @@ function ComparisonModal({
                 <span className="ann-agent">{it.agentName}</span>
                 <span className="ann-kind-chip">{labelFor(it.kind)}</span>
               </div>
-              <div className="comparison-body">{it.content}</div>
+              <div className="comparison-body">
+                {it.kind === 'user-comment'
+                  ? it.content
+                  : <AgentMarkdown source={it.content} />}
+              </div>
               {it.kind === 'suggestion' && it.proposed && (
                 <div className="ann-diff">
                   <div className="ann-diff-row remove">- {it.original}</div>
@@ -805,7 +845,11 @@ function ComparisonModal({
                   {it.thread.slice(1).map((m) => (
                     <li key={m.id} className={`ann-thread-msg ${m.role}`}>
                       <span className="ann-thread-role">{m.role === 'user' ? '我' : m.agentName ?? 'Agent'}</span>
-                      <span className="ann-thread-content">{m.content}</span>
+                      <div className="ann-thread-content">
+                        {m.role === 'user'
+                          ? m.content
+                          : <AgentMarkdown source={m.content} />}
+                      </div>
                     </li>
                   ))}
                 </ul>

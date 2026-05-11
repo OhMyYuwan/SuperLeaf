@@ -13,6 +13,7 @@ dependencies = [
   "python-multipart>=0.0.18",
   "sse-starlette>=2.1",
   "cryptography>=43",
+  "bcrypt>=4",
 ]
 
 [project.optional-dependencies]

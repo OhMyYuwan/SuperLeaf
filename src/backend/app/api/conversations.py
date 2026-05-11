@@ -197,11 +197,11 @@ async def send_message(
     if conv is None or conv.project_id != project.id:
         raise HTTPException(404, "Conversation not found")
     cw = db.get(CachedWorkflow, conv.workflow_id)
-    if cw is None:
+    if cw is None or cw.user_id != project.user_id:
         raise HTTPException(404, "Agent (workflow) gone")
 
     svc = ProviderService(db)
-    provider = svc.get(cw.provider_id)
+    provider = svc.get(cw.provider_id, user_id=project.user_id)
     if provider is None:
         raise HTTPException(404, "Provider for this agent is gone")
 

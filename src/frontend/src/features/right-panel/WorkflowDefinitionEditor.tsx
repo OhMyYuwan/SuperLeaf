@@ -23,6 +23,7 @@ import type {
 } from '../../services/backendApi'
 import { workflowTestCaseApi } from '../../services/backendApi'
 import type { NodeStatus, RunEvent } from '../../stores/workflowStore'
+import { AgentMarkdown } from '../shared/AgentMarkdown'
 import { WorkflowCanvas } from './workflow-canvas'
 
 type Mode = 'form' | 'canvas' | 'json'
@@ -563,11 +564,16 @@ function WorkflowTestPanel({
             <div className="workflow-test-io-title">
               {selectedNode.status === 'failed' ? 'Error' : 'Output'} · {selectedNode.nodeId}
             </div>
-            <pre className={`workflow-test-output${selectedNode.status === 'failed' ? ' error' : ''}`}>
-              {selectedNode.status === 'failed'
-                ? selectedNode.error || failed?.error || '节点执行失败'
-                : selectedNode.output?.trim() || '{}'}
-            </pre>
+            <div className={`workflow-test-output markdown${selectedNode.status === 'failed' ? ' error' : ''}`}>
+              <AgentMarkdown
+                source={
+                  selectedNode.status === 'failed'
+                    ? selectedNode.error || failed?.error || '节点执行失败'
+                    : selectedNode.output?.trim() || '{}'
+                }
+                tone={selectedNode.status === 'failed' ? 'error' : 'default'}
+              />
+            </div>
           </div>
         </div>
       )}

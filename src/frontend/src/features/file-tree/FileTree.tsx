@@ -17,6 +17,7 @@ import {
   FileType,
 } from 'lucide-react'
 import { filesystemApi, type ProjectTree, type TreeFolder, type TreeDoc, type TreeFile } from '../../services/filesystemApi'
+import { useProjectStore } from '../../stores/projectStore'
 
 // Helper function to get file icon based on format/extension
 function getFileIcon(name: string, format?: string) {
@@ -112,9 +113,12 @@ export function FileTree({
   }
 
   const handleExport = () => {
+    const projectId = useProjectStore.getState().currentProjectId
+    if (!projectId) return
     const a = document.createElement('a')
-    a.href = filesystemApi.exportZipUrl()
-    a.download = 'project.zip'
+    a.href = filesystemApi.exportZipUrl(projectId)
+    const name = (tree?.project_name || 'project').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'project'
+    a.download = `${name}.zip`
     a.click()
   }
 

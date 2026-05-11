@@ -1,14 +1,14 @@
 /**
  * Store reset helpers.
  *
- * When the current project changes, every store that caches project-specific
- * data must be cleared so we don't leak project A's tree / docs / annotations
- * into project B's workspace. We only reset the data slices — method
- * references stay intact (Zustand keeps the actions that were wired in
- * `create(...)`), so consumers keep working without re-subscribing.
+ * `resetProjectScopedStores` — clear when switching between projects within
+ *   the same user session. Keeps user / projects list / per-user providers
+ *   intact.
+ * `resetUserScopedStores` — clear on logout. Strict superset of the project
+ *   reset: also drops the project list, settings (per-user providers), and
+ *   the cached agents/workflows list (also per-user now).
  *
- * We do NOT reset: projectStore (it owns the switch), workflowStore.workflows
- * (CachedWorkflow list is global), settingsStore, viewStore (UI preferences).
+ * Methods are NOT reset; Zustand keeps actions wired in `create(...)`.
  */
 
 import { useDocumentStore } from './documentStore'
@@ -31,6 +31,8 @@ export function resetProjectScopedStores(): void {
   useAnnotationStore.setState({
     items: {},
     byRun: {},
+    reviewStatusByAnnotation: {},
+    evaluationsByAnnotation: {},
   })
 
   useFilesystemStore.setState({
@@ -76,3 +78,37 @@ export function resetProjectScopedStores(): void {
 
   useEditorStore.setState({ states: {} })
 }
+
+export async function resetUserScopedStores(): Promise<void> {
+  // Dynamic imports to avoid a load-order cycle: userStore (which calls this
+  // on logout) imports from here, and projectStore/settingsStore import
+  // userStore-adjacent helpers indirectly.
+  const { useProjectStore } = await import('./projectStore')
+  const { useSettingsStore } = await import('./settingsStore')
+
+  resetProjectScopedStores()
+
+  useProjectStore.setState({
+    projects: [],
+    currentProjectId: null,
+    loading: false,
+    loaded: false,
+    error: null,
+  })
+
+  useSettingsStore.setState({
+    providers: [],
+    loading: false,
+    loaded: false,
+    error: null,
+    backendReachable: null,
+  })
+
+  // The cached agents list is per-user now — drop it too.
+  useWorkflowStore.setState({
+    workflows: [],
+    loaded: false,
+    error: null,
+  })
+}
+

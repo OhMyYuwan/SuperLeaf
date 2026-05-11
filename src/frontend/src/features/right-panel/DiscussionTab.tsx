@@ -42,6 +42,7 @@ import {
 } from '../../services/mentions'
 import { MentionInput } from '../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { AgentMarkdown } from '../shared/AgentMarkdown'
 
 interface DiscussionTabProps {
   workflows: CachedWorkflow[]
@@ -364,7 +365,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                 {isStreaming && delta && (
                   <div className="message-bubble agent streaming">
                     <div className="message-role">Agent</div>
-                    <div className="message-content">{delta}</div>
+                    <AgentMarkdown source={delta} className="message-content" />
                   </div>
                 )}
                 {isStreaming && !delta && (
@@ -455,7 +456,11 @@ function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
-      <div className="message-content">{message.content}</div>
+      {message.role === 'agent' ? (
+        <AgentMarkdown source={message.content} className="message-content" />
+      ) : (
+        <div className="message-content">{message.content}</div>
+      )}
       {message.error && <div className="message-error">错误：{message.error}</div>}
       {hasRange && onJumpToRange && (
         <button

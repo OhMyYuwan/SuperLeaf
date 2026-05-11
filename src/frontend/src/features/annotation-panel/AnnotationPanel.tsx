@@ -442,7 +442,9 @@ function AnnotationCard({
 
       {item.content && (
         <p className="ann-body">
-          {isUserComment ? renderWithMentions(item.content, agents) : item.content}
+          {isUserComment
+            ? renderWithMentions(item.content, agents, fileCandidatesForCard, workflowCandidatesForCard)
+            : item.content}
         </p>
       )}
 
@@ -454,7 +456,13 @@ function AnnotationCard({
         </div>
       )}
 
-      <Thread messages={item.thread} isUserCommentCard={isUserComment} agents={agents} />
+      <Thread
+        messages={item.thread}
+        isUserCommentCard={isUserComment}
+        agents={agents}
+        files={fileCandidatesForCard}
+        workflows={workflowCandidatesForCard}
+      />
 
       {agentDisabled && (
         <div className="ann-warning">
@@ -549,10 +557,14 @@ function Thread({
   messages,
   isUserCommentCard,
   agents,
+  files,
+  workflows,
 }: {
   messages: AnnotationItem['thread']
   isUserCommentCard: boolean
   agents: CachedWorkflow[]
+  files: readonly FileCandidate[]
+  workflows: readonly WorkflowCandidate[]
 }) {
   // User-comment cards: thread starts with the user message, so show all.
   // Agent cards: thread[0] is the agent's initial output already rendered in
@@ -567,7 +579,7 @@ function Thread({
             {m.role === 'user' ? '我' : m.agentName ?? 'Agent'}
           </span>
           <span className="ann-thread-content">
-            {m.role === 'user' ? renderWithMentions(m.content, agents) : m.content}
+            {m.role === 'user' ? renderWithMentions(m.content, agents, files, workflows) : m.content}
           </span>
         </li>
       ))}
@@ -575,13 +587,24 @@ function Thread({
   )
 }
 
-function renderWithMentions(text: string, agents: CachedWorkflow[]): React.ReactNode[] {
-  const candidates: AgentCandidate[] = agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name }))
+function renderWithMentions(
+  text: string,
+  agents: CachedWorkflow[],
+  files: readonly FileCandidate[] = [],
+  workflows: readonly WorkflowCandidate[] = [],
+): React.ReactNode[] {
+  const agentCandidates: AgentCandidate[] = agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name }))
+  const candidates: MentionCandidate[] = [...agentCandidates, ...workflows, ...files]
   const mentions = parseMentions(text, candidates)
   const segments = segmentText(text, mentions)
   return segments.map((seg, i) => {
     if (seg.type === 'mention') {
-      const cls = seg.candidate.kind === 'file' ? 'mention-tag mention-tag-file' : 'mention-tag'
+      const cls =
+        seg.candidate.kind === 'file'
+          ? 'mention-tag mention-tag-file'
+          : seg.candidate.kind === 'workflow'
+            ? 'mention-tag mention-tag-workflow'
+            : 'mention-tag'
       return (
         <span key={i} className={cls} title={`@${seg.candidate.name}`}>
           {seg.raw}
@@ -602,7 +625,21 @@ function iconFor(item: AnnotationItem) {
 function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWorkflow[] }) {
   const restore = useAnnotationStore((s) => s.restore)
   const remove = useAnnotationStore((s) => s.remove)
+  const tree = useFilesystemStore((s) => s.tree)
+  const definitions = useWorkflowStore((s) => s.definitions)
   const isUserComment = item.kind === 'user-comment'
+
+  const fileCandidatesForArchived = useMemo(() => flattenFileCandidates(tree), [tree])
+  const workflowCandidatesForArchived: WorkflowCandidate[] = useMemo(
+    () =>
+      definitions.map((d) => ({
+        kind: 'workflow',
+        id: d.id,
+        name: d.name,
+        description: d.description ?? undefined,
+      })),
+    [definitions],
+  )
 
   return (
     <div className="ann-card ann-archived">
@@ -623,7 +660,9 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
 
       {item.content && (
         <p className="ann-body">
-          {isUserComment ? renderWithMentions(item.content, agents) : item.content}
+          {isUserComment
+            ? renderWithMentions(item.content, agents, fileCandidatesForArchived, workflowCandidatesForArchived)
+            : item.content}
         </p>
       )}
 
@@ -635,7 +674,13 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         </div>
       )}
 
-      <Thread messages={item.thread} isUserCommentCard={isUserComment} agents={agents} />
+      <Thread
+        messages={item.thread}
+        isUserCommentCard={isUserComment}
+        agents={agents}
+        files={fileCandidatesForArchived}
+        workflows={workflowCandidatesForArchived}
+      />
 
       <div className="ann-actions" onClick={(e) => e.stopPropagation()}>
         <button className="ann-btn accept" onClick={() => restore(item.id)} title="重新打开">

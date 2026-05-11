@@ -628,6 +628,12 @@
   border-color: rgba(34, 197, 94, 0.32);
 }
 
+.mention-tag-workflow {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.32);
+}
+
 /* User-comment card differentiation */
 .ann-card.ann-user-comment {
   border-color: rgba(168, 85, 247, 0.35);

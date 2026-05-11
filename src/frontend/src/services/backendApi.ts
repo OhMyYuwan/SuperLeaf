@@ -34,6 +34,15 @@ function getBackendUrl(): string {
 const BASE = getBackendUrl()
 console.log('[backendApi] Backend URL initialized:', BASE)
 
+export function getLocalServiceUrl(port: number): string {
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location
+    const host = hostname === 'localhost' ? '127.0.0.1' : hostname
+    return `${protocol}//${host}:${port}`
+  }
+  return `http://127.0.0.1:${port}`
+}
+
 export interface Provider {
   id: string
   name: string

@@ -78,13 +78,6 @@ export function RightPanel(props: RightPanelProps) {
             workflows={props.workflows}
             workflowsLoaded={props.workflowsLoaded}
             workflowError={props.workflowError}
-            onReload={props.onReloadWorkflows}
-          />
-        </Tabs.Content>
-
-        <Tabs.Content value="workflow" className="tab-content">
-          <WorkflowTab
-            workflows={props.workflows}
             definitions={props.definitions}
             activeSelection={props.activeSelection}
             runningMap={props.runningMap}
@@ -92,11 +85,21 @@ export function RightPanel(props: RightPanelProps) {
             nodeStatusesMap={props.nodeStatusesMap}
             currentRoundMap={props.currentRoundMap}
             maxRoundsMap={props.maxRoundsMap}
-            onRun={props.onRunWorkflow}
+            onReload={props.onReloadWorkflows}
             onRunDefinition={props.onRunDefinition}
             onCreateDefinition={props.onCreateDefinition}
             onUpdateDefinition={props.onUpdateDefinition}
             onDeleteDefinition={props.onDeleteDefinition}
+          />
+        </Tabs.Content>
+
+        <Tabs.Content value="workflow" className="tab-content">
+          <WorkflowTab
+            workflows={props.workflows}
+            activeSelection={props.activeSelection}
+            runningMap={props.runningMap}
+            eventsMap={props.eventsMap}
+            onRun={props.onRunWorkflow}
           />
         </Tabs.Content>
 

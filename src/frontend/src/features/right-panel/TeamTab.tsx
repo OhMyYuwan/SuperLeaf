@@ -20,25 +20,58 @@ import {
   Ban,
   CheckCircle,
 } from 'lucide-react'
-import type { CachedWorkflow, Provider, ProviderDraft } from '../../services/backendApi'
-import { BACKEND_BASE } from '../../services/backendApi'
+import type {
+  CachedWorkflow,
+  Provider,
+  ProviderDraft,
+  WorkflowDefinition,
+  WorkflowDefinitionDraft,
+} from '../../services/backendApi'
+import { BACKEND_BASE, getLocalServiceUrl } from '../../services/backendApi'
+import type { Selection } from '../../types/editor'
+import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import { WorkflowDefinitionsPanel } from './WorkflowDefinitionsPanel'
 
 interface TeamTabProps {
   workflows: CachedWorkflow[]
   workflowsLoaded: boolean
   workflowError: string | null
+  definitions: WorkflowDefinition[]
+  activeSelection: Selection | null
+  runningMap: Record<string, boolean>
+  eventsMap: Record<string, RunEvent[]>
+  nodeStatusesMap: Record<string, NodeStatus[]>
+  currentRoundMap: Record<string, number>
+  maxRoundsMap: Record<string, number>
   onReload: () => void
   onChatWithAgent?: (workflow: CachedWorkflow) => void
+  onRunDefinition: (definitionId: string, instruction: string) => void
+  onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
+  onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
+  onDeleteDefinition: (id: string) => Promise<void>
 }
+
+type SubTab = 'agents' | 'workflows'
 
 export function TeamTab({
   workflows,
   workflowsLoaded,
   workflowError,
+  definitions,
+  activeSelection,
+  runningMap,
+  eventsMap,
+  nodeStatusesMap,
+  currentRoundMap,
+  maxRoundsMap,
   onReload,
   onChatWithAgent,
+  onRunDefinition,
+  onCreateDefinition,
+  onUpdateDefinition,
+  onDeleteDefinition,
 }: TeamTabProps) {
   const load = useSettingsStore((s) => s.load)
   const loaded = useSettingsStore((s) => s.loaded)
@@ -46,6 +79,7 @@ export function TeamTab({
   const error = useSettingsStore((s) => s.error)
   const backendReachable = useSettingsStore((s) => s.backendReachable)
 
+  const [subTab, setSubTab] = useState<SubTab>('agents')
   const [showForm, setShowForm] = useState(false)
   const [showDisabledModal, setShowDisabledModal] = useState(false)
 
@@ -67,61 +101,97 @@ export function TeamTab({
 
   return (
     <div className="tab-content-wrapper">
-      <div className="tab-header-row">
-        <span>Agent 团队：{activeCount} 个活跃 · {disabledCount} 个禁用</span>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {disabledCount > 0 && (
-            <button
-              className="small-btn"
-              onClick={() => setShowDisabledModal(true)}
-              title="查看已禁用的 Agent"
-            >
-              查看已禁用
+      <div className="team-subtabs">
+        <button
+          className={subTab === 'agents' ? 'active' : ''}
+          onClick={() => setSubTab('agents')}
+        >
+          Agent（{activeCount}）
+        </button>
+        <button
+          className={subTab === 'workflows' ? 'active' : ''}
+          onClick={() => setSubTab('workflows')}
+        >
+          工作流（{definitions.length}）
+        </button>
+      </div>
+
+      {subTab === 'agents' && (
+        <>
+          <div className="tab-header-row">
+            <span>Agent 团队：{activeCount} 个活跃 · {disabledCount} 个禁用</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {disabledCount > 0 && (
+                <button
+                  className="small-btn"
+                  onClick={() => setShowDisabledModal(true)}
+                  title="查看已禁用的 Agent"
+                >
+                  查看已禁用
+                </button>
+              )}
+              <button className="small-btn" onClick={onReload} title="重新同步 Agent 列表">
+                <RefreshCw size={12} /> 同步
+              </button>
+            </div>
+          </div>
+
+          <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
+
+          {workflowError && <div className="tab-error">{workflowError}</div>}
+
+          {loaded && providers.length === 0 && !showForm && (
+            <div className="tab-empty">
+              还没有配置任何 Agent。点击下方按钮添加 Nanobot / Dify 等 Agent，
+              系统会自动同步可用的 Agent。
+            </div>
+          )}
+
+          <div className="agent-team-list">
+            {providers.map((provider) => (
+              <ProviderBlock
+                key={provider.id}
+                provider={provider}
+                workflows={workflowsByProvider[provider.id] ?? []}
+                workflowsLoaded={workflowsLoaded}
+                onChatWithAgent={onChatWithAgent}
+                onAfterMutate={onReload}
+              />
+            ))}
+          </div>
+
+          {showForm ? (
+            <ProviderForm onClose={() => setShowForm(false)} onCreated={onReload} />
+          ) : (
+            <button className="primary-btn add-provider-btn" onClick={() => setShowForm(true)}>
+              <Plus size={14} /> 添加 Agent
             </button>
           )}
-          <button className="small-btn" onClick={onReload} title="重新同步 Agent 列表">
-            <RefreshCw size={12} /> 同步
-          </button>
-        </div>
-      </div>
 
-      <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
-
-      {workflowError && <div className="tab-error">{workflowError}</div>}
-
-      {loaded && providers.length === 0 && !showForm && (
-        <div className="tab-empty">
-          还没有配置任何 Agent。点击下方按钮添加 Nanobot / Dify 等 Agent，
-          系统会自动同步可用的 Agent。
-        </div>
+          {showDisabledModal && (
+            <DisabledAgentsModal
+              workflows={workflows.filter((w) => w.is_disabled)}
+              onClose={() => setShowDisabledModal(false)}
+              onAfterMutate={onReload}
+            />
+          )}
+        </>
       )}
 
-      <div className="agent-team-list">
-        {providers.map((provider) => (
-          <ProviderBlock
-            key={provider.id}
-            provider={provider}
-            workflows={workflowsByProvider[provider.id] ?? []}
-            workflowsLoaded={workflowsLoaded}
-            onChatWithAgent={onChatWithAgent}
-            onAfterMutate={onReload}
-          />
-        ))}
-      </div>
-
-      {showForm ? (
-        <ProviderForm onClose={() => setShowForm(false)} onCreated={onReload} />
-      ) : (
-        <button className="primary-btn add-provider-btn" onClick={() => setShowForm(true)}>
-          <Plus size={14} /> 添加 Agent
-        </button>
-      )}
-
-      {showDisabledModal && (
-        <DisabledAgentsModal
-          workflows={workflows.filter((w) => w.is_disabled)}
-          onClose={() => setShowDisabledModal(false)}
-          onAfterMutate={onReload}
+      {subTab === 'workflows' && (
+        <WorkflowDefinitionsPanel
+          workflows={workflows}
+          definitions={definitions}
+          activeSelection={activeSelection}
+          runningMap={runningMap}
+          eventsMap={eventsMap}
+          nodeStatusesMap={nodeStatusesMap}
+          currentRoundMap={currentRoundMap}
+          maxRoundsMap={maxRoundsMap}
+          onRunDefinition={onRunDefinition}
+          onCreateDefinition={onCreateDefinition}
+          onUpdateDefinition={onUpdateDefinition}
+          onDeleteDefinition={onDeleteDefinition}
         />
       )}
     </div>
@@ -299,7 +369,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
             : kind === 'nanobot'
-              ? 'http://127.0.0.1:8900'
+              ? getLocalServiceUrl(8902)
               : 'http://localhost:8080/v1',
       api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
@@ -358,6 +428,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
+          placeholder={draft.kind === 'nanobot' ? getLocalServiceUrl(8902) : 'http://localhost:8080/v1'}
         />
       </label>
       <label className="full">

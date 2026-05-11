@@ -763,6 +763,35 @@
   cursor: not-allowed;
 }
 
+/* Team tab sub-tab switcher (Agent / 工作流) */
+.team-subtabs {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+.team-subtabs button {
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.team-subtabs button:hover {
+  color: #e5e7eb;
+}
+.team-subtabs button.active {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
+
 /* Tab switcher inside WorkflowTab (单 Agent / 编排 Workflow) */
 .tab-switcher {
   display: inline-flex;

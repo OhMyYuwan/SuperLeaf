@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CheckCircle2, CircleAlert, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { Provider, ProviderDraft } from '../../services/backendApi'
-import { BACKEND_BASE } from '../../services/backendApi'
+import { BACKEND_BASE, getLocalServiceUrl } from '../../services/backendApi'
 import { useSettingsStore } from '../../stores/settingsStore'
 import './settings.css'
 
@@ -193,7 +193,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
             : kind === 'nanobot'
-              ? 'http://127.0.0.1:8900'
+              ? getLocalServiceUrl(8902)
               : 'http://localhost:8080/v1',
       api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
@@ -247,7 +247,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-          placeholder="http://127.0.0.1:8900"
+          placeholder={getLocalServiceUrl(8902)}
         />
       </label>
       <label className="full">

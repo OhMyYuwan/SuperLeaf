@@ -1047,6 +1047,40 @@
   border: 1px solid rgba(239, 68, 68, 0.28);
 }
 
+.editor-notice {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+}
+
+.json-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.json-toolbar label {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.json-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.json-actions button {
+  font-size: 11px;
+  padding: 5px 10px;
+}
+
 .editor-metadata {
   display: flex;
   flex-direction: column;

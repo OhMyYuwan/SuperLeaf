@@ -30,6 +30,7 @@ export type FlowNode = Node<FlowNodeData>
 type UiMeta = {
   position?: { x: number; y: number }
   size?: { width: number; height: number }
+  parent_id?: string
 }
 
 const DEFAULT_POSITION = { x: 80, y: 80 }
@@ -154,7 +155,7 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
 
   const outNodes: WorkflowNode[] = nodes.map((n) => {
     const config = { ...(n.data.config ?? {}) }
-    const ui: UiMeta & { parent_id?: string } = { position: n.position }
+    const ui: UiMeta = { position: n.position }
     if (n.data.nodeType === 'loop') {
       const w = typeof n.style?.width === 'number' ? n.style.width : DEFAULT_LOOP_SIZE.width
       const h = typeof n.style?.height === 'number' ? n.style.height : DEFAULT_LOOP_SIZE.height

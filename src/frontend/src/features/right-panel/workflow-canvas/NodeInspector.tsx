@@ -54,18 +54,33 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
       </div>
 
       {data.nodeType === 'agent' && (
-        <div className="form-group">
-          <label>Agent ID</label>
-          <input
-            type="text"
-            value={(data.config.agent_id as string) ?? ''}
-            onChange={(e) => setConfig({ agent_id: e.target.value })}
-            placeholder="例如: reviewer / critic / polisher"
-          />
-          <div className="form-hint-sm">
-            对应 Team 页注册的 Agent 名。多个上游输入会被自动拼接传入。
+        <>
+          <div className="form-group">
+            <label>Agent ID</label>
+            <input
+              type="text"
+              value={(data.config.agent_id as string) ?? ''}
+              onChange={(e) => setConfig({ agent_id: e.target.value })}
+              placeholder="例如: reviewer / critic / polisher"
+            />
+            <div className="form-hint-sm">
+              对应 Team 页注册的 Agent 名。
+            </div>
           </div>
-        </div>
+
+          <div className="form-group">
+            <label>额外提示词（可选）</label>
+            <textarea
+              value={(data.config.additional_prompt as string) ?? ''}
+              onChange={(e) => setConfig({ additional_prompt: e.target.value })}
+              placeholder="在 workflow 中给这个 agent 的额外指令，例如：&#10;- 你的输入来自上游节点的输出&#10;- 请输出 JSON 格式：{result, confidence}&#10;- 保持简洁，不超过 100 字"
+              rows={4}
+            />
+            <div className="form-hint-sm">
+              节点级提示词，会注入到 agent 的系统提示中，告诉它在 workflow 中的角色和输出要求。
+            </div>
+          </div>
+        </>
       )}
 
       {data.nodeType === 'loop' && (

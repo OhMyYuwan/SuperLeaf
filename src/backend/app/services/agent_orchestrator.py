@@ -774,9 +774,35 @@ class WorkflowOrchestrator:
             raise
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:
-        """Build prompt for agent with context from previous outputs."""
+        """Build prompt for agent with context from previous outputs.
+
+        Injects workflow context so the agent knows:
+        - It's part of a multi-agent workflow
+        - What inputs it's receiving from upstream nodes
+        - Any node-specific instructions (additional_prompt)
+        """
         parts = []
 
+        # === Workflow context header (new) ===
+        additional_prompt = node.config.get("additional_prompt")
+        dependency_outputs = node.inputs.get("dependency_outputs", {})
+
+        if additional_prompt or dependency_outputs:
+            parts.append("[WORKFLOW CONTEXT]")
+            parts.append("You are part of a multi-agent workflow.")
+
+            if dependency_outputs:
+                parts.append(f"\nYou have {len(dependency_outputs)} upstream input(s):")
+                for dep_id, dep_output in dependency_outputs.items():
+                    preview = str(dep_output.get("text", ""))[:150]
+                    parts.append(f"  - {dep_id}: {preview}{'...' if len(str(dep_output.get('text', ''))) > 150 else ''}")
+
+            if additional_prompt:
+                parts.append(f"\nNode-specific instructions:\n{additional_prompt}")
+
+            parts.append("\n[END WORKFLOW CONTEXT]\n")
+
+        # === Original prompt building logic ===
         # User instruction
         if ctx.user_instruction:
             parts.append(f"User instruction: {ctx.user_instruction}")

@@ -12,7 +12,6 @@ import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
-import { WorkflowTab } from './WorkflowTab'
 import { RunHistoryTab } from './RunHistoryTab'
 import './right-panel.css'
 
@@ -56,9 +55,10 @@ export function RightPanel(props: RightPanelProps) {
           <Tabs.Trigger className="tab-trigger" value="agents">
             团队管理
           </Tabs.Trigger>
-          <Tabs.Trigger className="tab-trigger" value="workflow">
+          {/* 工作流 tab 已集成到团队管理的子标签中 */}
+          {/* <Tabs.Trigger className="tab-trigger" value="workflow">
             工作流
-          </Tabs.Trigger>
+          </Tabs.Trigger> */}
           <Tabs.Trigger className="tab-trigger" value="history">
             历史
           </Tabs.Trigger>
@@ -93,7 +93,8 @@ export function RightPanel(props: RightPanelProps) {
           />
         </Tabs.Content>
 
-        <Tabs.Content value="workflow" className="tab-content">
+        {/* 工作流 tab 已集成到团队管理的子标签中 */}
+        {/* <Tabs.Content value="workflow" className="tab-content">
           <WorkflowTab
             workflows={props.workflows}
             activeSelection={props.activeSelection}
@@ -101,7 +102,7 @@ export function RightPanel(props: RightPanelProps) {
             eventsMap={props.eventsMap}
             onRun={props.onRunWorkflow}
           />
-        </Tabs.Content>
+        </Tabs.Content> */}
 
         <Tabs.Content value="history" className="tab-content">
           <RunHistoryTab

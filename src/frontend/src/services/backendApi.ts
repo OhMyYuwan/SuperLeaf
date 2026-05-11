@@ -205,6 +205,12 @@ export interface WorkflowNode {
 export interface WorkflowEdge {
   source: string
   target: string
+  // React Flow handle IDs. Required for Loop containers, which expose two
+  // handles per side (source + target overlapped); without these, re-loaded
+  // graphs can't tell which handle an edge was attached to and all edges
+  // collapse onto whichever handle React Flow picks as the default.
+  source_handle?: string | null
+  target_handle?: string | null
   condition?: string
 }
 

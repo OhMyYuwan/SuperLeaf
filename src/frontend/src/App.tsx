@@ -47,6 +47,9 @@ function App() {
   const deleteEntity = useFilesystemStore((s) => s.deleteEntity)
   const uploadFile = useFilesystemStore((s) => s.uploadFile)
   const renameProject = useFilesystemStore((s) => s.renameProject)
+  const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
+  const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
+  const convertFileToDoc = useFilesystemStore((s) => s.convertFileToDoc)
 
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
@@ -88,6 +91,34 @@ function App() {
     range: { from: number; to: number }
     targetText: string
   } | null>(null)
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
+
+  // Auto-collapse when panels reach minimum width
+  const handlePanelLayout = (sizes: number[]) => {
+    // sizes is an array of panel sizes as percentages for VISIBLE panels only
+    // We need to figure out which index corresponds to which panel
+
+    let panelIndex = 0
+
+    // Left panel is at index 0 if visible and not collapsed
+    if (leftPanelVisible && !leftCollapsed) {
+      if (sizes[panelIndex] !== undefined && sizes[panelIndex] < 12) {
+        setLeftCollapsed(true)
+      }
+      panelIndex++
+    }
+
+    // Middle panel (editor) is always visible, so skip it
+    panelIndex++
+
+    // Right panel is at the last index if visible and not collapsed
+    if (rightPanelVisible && !rightCollapsed) {
+      if (sizes[panelIndex] !== undefined && sizes[panelIndex] < 18) {
+        setRightCollapsed(true)
+      }
+    }
+  }
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
@@ -148,11 +179,38 @@ function App() {
 
   // Cross-component handlers -------------------------------------------------
   const handleOpenDoc = async (docId: string) => {
+    // Opening a doc clears any binary-file preview.
+    setPreviewFile(null)
     // Auto-save current doc before switching (flush any pending debounce too)
     if (activeDocumentId && activeDocumentId !== docId) {
       await flushPendingSave(activeDocumentId)
     }
     await loadBackendDoc(docId)
+  }
+
+  const handleOpenFile = async (file: import('./services/filesystemApi').TreeFile) => {
+    const mime = file.mime_type || ''
+    const name = file.name.toLowerCase()
+    const textExts = ['.tex', '.latex', '.ltx', '.bib', '.sty', '.cls', '.bst', '.md', '.markdown', '.txt']
+    const looksText = mime.startsWith('text/') || textExts.some((ext) => name.endsWith(ext))
+    if (looksText) {
+      try {
+        const docId = await convertFileToDoc(file.id)
+        await handleOpenDoc(docId)
+      } catch (e) {
+        console.error('convert file to doc failed', e)
+      }
+      return
+    }
+    // Binary asset: show in middle preview column, leave editor empty.
+    if (activeDocumentId) {
+      await flushPendingSave(activeDocumentId)
+      useDocumentStore.setState({ activeDocumentId: null })
+    }
+    setPreviewFile(file)
+    // Ensure preview column is visible.
+    const { previewColumn, setVisibility } = useViewStore.getState()
+    if (!previewColumn) setVisibility({ previewColumn: true })
   }
 
   const handleSave = async () => {
@@ -244,19 +302,21 @@ function App() {
       />
 
       <main className="workspace">
-        <PanelGroup orientation="horizontal" style={{ height: '100%' }}>
-          {leftPanelVisible && (
+        <PanelGroup orientation="horizontal" style={{ height: '100%' }} onLayout={handlePanelLayout}>
+          {leftPanelVisible && !leftCollapsed && (
             <>
               <Panel defaultSize={20} minSize={16}>
                 <div className="panel left-panel">
                   <FileTree
                     tree={tree}
                     activeDocId={activeDocumentId}
+                    activeFileId={activePreviewFile?.id ?? null}
                     expandedFolderIds={expandedFolderIds}
                     loading={treeLoading}
                     error={treeError}
                     onToggleFolder={toggleExpanded}
                     onOpenDoc={handleOpenDoc}
+                    onOpenFile={handleOpenFile}
                     onCreateFolder={createFolder}
                     onCreateDoc={createDoc}
                     onRenameEntity={renameEntity}
@@ -273,6 +333,24 @@ function App() {
               </Panel>
               <PanelResizeHandle className="resize-handle" />
             </>
+          )}
+
+          {leftPanelVisible && (
+            <button
+              className={`panel-collapse-btn left ${leftCollapsed ? 'collapsed' : ''}`}
+              onClick={() => setLeftCollapsed(!leftCollapsed)}
+              title={leftCollapsed ? '展开左侧面板' : '收起左侧面板'}
+            >
+              <svg width="8" height="12" viewBox="0 0 8 12" fill="none">
+                <path
+                  d={leftCollapsed ? 'M2 2L6 6L2 10' : 'M6 2L2 6L6 10'}
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           )}
 
           <Panel defaultSize={50} minSize={36}>
@@ -325,7 +403,7 @@ function App() {
                 )}
                 {previewColumnVisible && (
                   <Panel defaultSize={38} minSize={20}>
-                    <PreviewColumn doc={activeDoc} />
+                    <PreviewColumn doc={activeDoc} previewFile={activePreviewFile} />
                   </Panel>
                 )}
               </PanelGroup>
@@ -334,9 +412,26 @@ function App() {
 
           {rightPanelVisible && (
             <>
-              <PanelResizeHandle className="resize-handle" />
-              <Panel defaultSize={30} minSize={24}>
-                <RightPanel
+              <button
+                className={`panel-collapse-btn right ${rightCollapsed ? 'collapsed' : ''}`}
+                onClick={() => setRightCollapsed(!rightCollapsed)}
+                title={rightCollapsed ? '展开右侧面板' : '收起右侧面板'}
+              >
+                <svg width="8" height="12" viewBox="0 0 8 12" fill="none">
+                  <path
+                    d={rightCollapsed ? 'M6 2L2 6L6 10' : 'M2 2L6 6L2 10'}
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+              {!rightCollapsed && (
+                <>
+                  <PanelResizeHandle className="resize-handle" />
+                  <Panel defaultSize={30} minSize={24}>
+                    <RightPanel
                   workflows={workflows}
                   workflowsLoaded={workflowsLoaded}
                   workflowError={workflowError}
@@ -361,7 +456,9 @@ function App() {
                     setEditorScrollTo({ pos: range.from, seq: Date.now() })
                   }
                 />
-              </Panel>
+                  </Panel>
+                </>
+              )}
             </>
           )}
         </PanelGroup>

@@ -7,8 +7,12 @@ A3: POST /api/entities/:type/:id/rename, DELETE /api/entities/:type/:id,
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
+
+from ..models import FileBlob
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -120,6 +124,26 @@ def delete_entity(
     return {"ok": True, "deleted_count": count}
 
 
+_TEXT_DOC_EXTS: dict[str, str] = {
+    # extension (no dot, lowercase) -> stored Doc.format
+    "tex": "tex",
+    "latex": "tex",
+    "ltx": "tex",
+    "bib": "tex",
+    "sty": "tex",
+    "cls": "tex",
+    "bst": "tex",
+    "md": "md",
+    "markdown": "md",
+    "txt": "txt",
+}
+
+
+def _doc_format_for_filename(name: str) -> str | None:
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return _TEXT_DOC_EXTS.get(ext)
+
+
 @router.post("/api/files/upload", status_code=201)
 async def upload_file(
     file: UploadFile,
@@ -127,17 +151,122 @@ async def upload_file(
     db: Session = Depends(get_session),
 ) -> dict:
     blob = await file.read()
+    name = file.filename or "untitled"
     svc = ProjectFsService(db)
+
+    # Text-like uploads go into `docs` so they can be opened in the editor.
+    doc_format = _doc_format_for_filename(name)
+    if doc_format is not None:
+        try:
+            content = blob.decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback: if decoding fails, treat as binary file instead.
+            doc_format = None
+
+    if doc_format is not None:
+        try:
+            d = svc.create_doc(
+                folder_id=folder_id,
+                name=name,
+                format=doc_format,
+                content=content,
+            )
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        return {
+            "kind": "doc",
+            "id": d.id,
+            "name": d.name,
+            "format": d.format,
+        }
+
+    # Improve MIME type detection: use mimetypes module if content_type is missing or generic
+    mime_type = file.content_type or "application/octet-stream"
+    if mime_type == "application/octet-stream" or not mime_type:
+        mime_type = _guess_mime(name, mime_type)
+
     try:
         f = svc.upload_file(
             folder_id=folder_id,
-            name=file.filename or "untitled",
-            mime_type=file.content_type or "application/octet-stream",
+            name=name,
+            mime_type=mime_type,
             blob=blob,
         )
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
-    return {"id": f.id, "name": f.name, "size_bytes": f.size_bytes, "mime_type": f.mime_type}
+    return {
+        "kind": "file",
+        "id": f.id,
+        "name": f.name,
+        "size_bytes": f.size_bytes,
+        "mime_type": f.mime_type,
+    }
+
+
+_INLINE_MIME_PREFIXES = ("image/", "text/", "audio/", "video/")
+_INLINE_MIME_EXACT = {
+    "application/pdf",
+    "application/json",
+    "application/xml",
+    "application/x-tex",
+    "application/x-latex",
+    "application/javascript",
+    "application/x-yaml",
+    "application/yaml",
+}
+
+
+def _guess_mime(name: str, stored: str) -> str:
+    """Upgrade application/octet-stream by filename extension when possible."""
+    if stored and stored != "application/octet-stream":
+        return stored
+    import mimetypes
+
+    guessed, _ = mimetypes.guess_type(name)
+    return guessed or stored or "application/octet-stream"
+
+
+@router.get("/api/files/{file_id}")
+def get_file(file_id: str, db: Session = Depends(get_session)) -> Response:
+    f = db.get(FileBlob, file_id)
+    if f is None:
+        raise HTTPException(404, "file not found")
+    mime = _guess_mime(f.name, f.mime_type)
+    inline = mime.startswith(_INLINE_MIME_PREFIXES) or mime in _INLINE_MIME_EXACT
+    disposition = "inline" if inline else "attachment"
+    # RFC 5987 filename* for non-ASCII names
+    quoted = quote(f.name)
+    return Response(
+        content=f.blob or b"",
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
+            "Content-Length": str(len(f.blob or b"")),
+        },
+    )
+
+
+@router.post("/api/files/{file_id}/convert-to-doc", response_model=DocOut, status_code=201)
+def convert_file_to_doc(file_id: str, db: Session = Depends(get_session)) -> DocOut:
+    """Migrate a text-like FileBlob (uploaded before the split into docs/files) into `docs`.
+
+    Deletes the original FileBlob on success so the tree stays de-duplicated.
+    """
+    f = db.get(FileBlob, file_id)
+    if f is None:
+        raise HTTPException(404, "file not found")
+    fmt = _doc_format_for_filename(f.name)
+    if fmt is None:
+        raise HTTPException(400, "file is not a recognized text format")
+    try:
+        content = (f.blob or b"").decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise HTTPException(400, "file is not valid UTF-8 text") from e
+    svc = ProjectFsService(db)
+    doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
+    db.delete(f)
+    db.commit()
+    return DocOut.model_validate(doc)
 
 
 @router.get("/api/project/export.zip")

@@ -188,6 +188,32 @@
   font-style: italic;
 }
 
+.file-preview {
+  padding: 16px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.file-preview-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+  overflow: auto;
+}
+
+.file-preview-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+
+.file-preview-pdf {
+  background: #f1f5f9;
+}
+
 .preview-paper h1 {
   margin: 0 0 12px;
   font-size: 22px;

@@ -102,6 +102,7 @@
 
 /* Nodes -------------------------------------------------------------- */
 .wf-node {
+  position: relative;
   min-width: 160px;
   background: rgba(15, 23, 42, 0.9);
   border: 1px solid rgba(148, 163, 184, 0.28);
@@ -137,13 +138,32 @@
 .wf-node-input,
 .wf-node-output {
   min-width: 150px;
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(15, 23, 42, 0.9) !important;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   font-size: 12px;
   color: #e5e7eb;
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.wf-node-input * {
+  background: transparent !important;
+}
+
+.wf-node-output * {
+  background: transparent !important;
+}
+
+.wf-boundary-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: #f97316 !important;
+  border: 2px solid #fed7aa !important;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.28), 0 0 12px rgba(249, 115, 22, 0.65);
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto;
 }
 
 .wf-node-input {
@@ -184,6 +204,7 @@
 
 .wf-node-body {
   padding: 8px 10px;
+  background: transparent;
 }
 
 .wf-node-label {
@@ -205,15 +226,25 @@
 }
 
 /* Loop container ----------------------------------------------------- */
+/* Loop sits underneath Agents as a background frame. Header only — body
+   is transparent so Agents placed on top remain fully visible and clickable. */
 .wf-node-loop {
   width: 100%;
   height: 100%;
-  background: rgba(239, 68, 68, 0.06);
+  background: rgba(239, 68, 68, 0.04);
   border: 1px dashed rgba(239, 68, 68, 0.45);
   border-radius: 10px;
   padding: 0;
   display: flex;
   flex-direction: column;
+  pointer-events: none;
+}
+
+/* Header + handles must remain interactive so the Loop can be selected and connected. */
+.wf-node-loop .wf-loop-header,
+.wf-node-loop .react-flow__handle,
+.wf-node-loop .react-flow__resize-control {
+  pointer-events: auto;
 }
 
 .wf-node-loop.selected {
@@ -438,7 +469,30 @@
   color: #fca5a5;
 }
 
+.wf-node-badge.loop-member {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  text-transform: none;
+  font-family: ui-monospace, monospace;
+}
+
+/* Agent visually tagged as Loop member — subtle red-tinted border */
+.wf-node.wf-node-in-loop {
+  border-color: rgba(239, 68, 68, 0.5);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.15), 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
 /* React Flow overrides — its default stylesheet is light-themed. ------ */
+.wf-canvas-wrapper .react-flow__node-input,
+.wf-canvas-wrapper .react-flow__node-output {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  box-shadow: none;
+}
+
 .wf-canvas-wrapper .react-flow__panel {
   background: rgba(15, 23, 42, 0.85);
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -512,8 +566,57 @@
   background: rgba(15, 23, 42, 0.6);
   color: rgba(148, 163, 184, 0.8);
   padding: 2px 6px;
-  border-radius: 4px;
 }
+
 .wf-canvas-wrapper .react-flow__attribution a {
   color: rgba(148, 163, 184, 0.85);
 }
+
+/* Loop resizer handles ------------------------------------------------ */
+.wf-loop-resizer-line {
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  border-width: 2px !important;
+}
+
+.wf-loop-resizer-handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: rgba(59, 130, 246, 0.8) !important;
+  border: 1px solid rgba(59, 130, 246, 1) !important;
+  border-radius: 2px !important;
+}
+
+/* Loop handles — one visual dot per side. Each side has two stacked Handle
+   elements (one source, one target) at the exact same pixel; React Flow
+   auto-selects by drag direction. Membership is implied by direction:
+     - drag FROM Loop port → Agent : Loop is source → Agent is INTERNAL
+     - drag FROM Agent → Loop port : Loop is target → Agent is EXTERNAL
+
+   Left port  = external input + distribute to internal
+   Right port = aggregate from internal + emit to external
+
+   The "internal-direction" handles are declared with the OPPOSITE Position
+   so React Flow draws their edge tangent pointing INTO the Loop interior
+   (avoids the ugly outside-curve). CSS pins them back on top of their
+   sibling at the correct edge. */
+.wf-loop-handle {
+  width: 11px !important;
+  height: 11px !important;
+  background: #60a5fa !important;
+  border: 2px solid rgba(15, 23, 42, 0.9) !important;
+}
+
+.wf-loop-handle-in-source {
+  left: 0 !important;
+  right: auto !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+.wf-loop-handle-out-target {
+  left: auto !important;
+  right: 0 !important;
+  transform: translate(50%, -50%) !important;
+}
+
+/* Loop input/output virtual nodes were removed in favor of Loop's own handles.
+   Styles kept only for historical graph compatibility — unused in new graphs. */

@@ -36,11 +36,13 @@ function getFileIcon(name: string, format?: string) {
 interface FileTreeProps {
   tree: ProjectTree | null
   activeDocId: string | null
+  activeFileId?: string | null
   expandedFolderIds: Record<string, boolean>
   loading: boolean
   error: string | null
   onToggleFolder: (folderId: string) => void
   onOpenDoc: (docId: string) => void
+  onOpenFile?: (file: TreeFile) => void
   onCreateFolder: (parentFolderId: string | null, name: string) => Promise<void>
   onCreateDoc: (
     folderId: string | null,
@@ -57,11 +59,13 @@ interface FileTreeProps {
 export function FileTree({
   tree,
   activeDocId,
+  activeFileId,
   expandedFolderIds,
   loading,
   error,
   onToggleFolder,
   onOpenDoc,
+  onOpenFile,
   onCreateFolder,
   onCreateDoc,
   onRenameEntity,
@@ -135,9 +139,11 @@ export function FileTree({
             folder={tree.root}
             depth={0}
             activeDocId={activeDocId}
+            activeFileId={activeFileId ?? null}
             expandedFolderIds={expandedFolderIds}
             onToggleFolder={onToggleFolder}
             onOpenDoc={onOpenDoc}
+            onOpenFile={onOpenFile}
             onCreateFolder={onCreateFolder}
             onCreateDoc={onCreateDoc}
             onRenameEntity={onRenameEntity}
@@ -154,9 +160,11 @@ interface FolderNodeProps {
   folder: TreeFolder
   depth: number
   activeDocId: string | null
+  activeFileId: string | null
   expandedFolderIds: Record<string, boolean>
   onToggleFolder: (folderId: string) => void
   onOpenDoc: (docId: string) => void
+  onOpenFile?: (file: TreeFile) => void
   onCreateFolder: (parentFolderId: string | null, name: string) => Promise<void>
   onCreateDoc: (
     folderId: string | null,
@@ -173,9 +181,11 @@ function FolderNode({
   folder,
   depth,
   activeDocId,
+  activeFileId,
   expandedFolderIds,
   onToggleFolder,
   onOpenDoc,
+  onOpenFile,
   onCreateFolder,
   onCreateDoc,
   onRenameEntity,
@@ -253,9 +263,11 @@ function FolderNode({
           folder={child}
           depth={depth + 1}
           activeDocId={activeDocId}
+          activeFileId={activeFileId}
           expandedFolderIds={expandedFolderIds}
           onToggleFolder={onToggleFolder}
           onOpenDoc={onOpenDoc}
+          onOpenFile={onOpenFile}
           onCreateFolder={onCreateFolder}
           onCreateDoc={onCreateDoc}
           onRenameEntity={onRenameEntity}
@@ -293,8 +305,9 @@ function FolderNode({
         return (
           <div
             key={file.id}
-            className="file-item tree-file-row"
+            className={`file-item tree-file-row ${activeFileId === file.id ? 'active' : ''}`}
             style={{ paddingLeft: leftPad + 28 }}
+            onClick={() => onOpenFile?.(file)}
             title={`${file.name} (${prettySize(file.size_bytes)})`}
           >
             <Icon size={14} style={{ color }} />

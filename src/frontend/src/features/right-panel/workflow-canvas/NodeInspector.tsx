@@ -170,6 +170,13 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
               提前终止的表达式。未填写则跑满 rounds。
             </div>
           </div>
+          <div className="form-hint-sm" style={{ marginTop: '12px', padding: '8px', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '6px', lineHeight: 1.6 }}>
+            💡 <strong>Loop 归属由连线方向自动判定</strong>
+            <br />· 从 Loop 端口 <strong>拖出</strong> 到 Agent ：该 Agent 在 Loop <strong>内部</strong>
+            <br />&nbsp;&nbsp;&nbsp;（左侧端口 → Agent 输入：分发；Agent 输出 → 右侧端口：汇总）
+            <br />· 从 Agent <strong>拖入</strong> Loop 端口：该 Agent 在 Loop <strong>外部</strong>
+            <br />&nbsp;&nbsp;&nbsp;（外部 Agent → 左侧端口：外部输入；右侧端口 → 外部 Agent：最终输出）
+          </div>
         </>
       )}
     </aside>

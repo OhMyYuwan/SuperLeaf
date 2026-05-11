@@ -1,13 +1,13 @@
 /**
  * Bidirectional conversion between backend WorkflowGraph and React Flow state.
  *
- * Layout + container data is stashed under `config._ui` so nothing leaks into
- * the backend schema:
- *   - position:  {x, y}
- *   - parent_id: string (set when the node lives inside a loop container)
- *   - size:      {width, height} (loop containers only)
+ * Loop membership is inferred from edges (an Agent connected to a Loop is a
+ * member), so we don't need parentId/extent gymnastics. All nodes live at the
+ * canvas root; Loop containers just render underneath with zIndex: -1.
  *
- * The backend treats _ui as opaque and passes it through untouched.
+ * Layout data is stashed under `config._ui` so nothing leaks into the backend schema:
+ *   - position:  {x, y}
+ *   - size:      {width, height} (loop containers only)
  */
 
 import type { Edge, Node } from '@xyflow/react'
@@ -29,12 +29,11 @@ export type FlowNode = Node<FlowNodeData>
 
 type UiMeta = {
   position?: { x: number; y: number }
-  parent_id?: string
   size?: { width: number; height: number }
 }
 
 const DEFAULT_POSITION = { x: 80, y: 80 }
-const DEFAULT_LOOP_SIZE = { width: 320, height: 200 }
+const DEFAULT_LOOP_SIZE = { width: 360, height: 240 }
 
 function readUi(config: Record<string, unknown>): UiMeta {
   return (config._ui as UiMeta | undefined) ?? {}
@@ -44,15 +43,7 @@ export function graphToFlow(graph: WorkflowGraph): {
   nodes: FlowNode[]
   edges: Edge[]
 } {
-  // React Flow requires parents to come before children in the array, otherwise
-  // the child nodes render at the wrong absolute position on first paint.
-  const sortedNodes = [...graph.nodes].sort((a, b) => {
-    const ap = readUi(a.config ?? {}).parent_id ? 1 : 0
-    const bp = readUi(b.config ?? {}).parent_id ? 1 : 0
-    return ap - bp
-  })
-
-  const nodes: FlowNode[] = sortedNodes.map((n, i) => {
+  const nodes: FlowNode[] = graph.nodes.map((n, i) => {
     const config = { ...(n.config ?? {}) }
     const ui = readUi(config)
     const position = ui.position ?? {
@@ -76,41 +67,104 @@ export function graphToFlow(graph: WorkflowGraph): {
       },
     }
 
-    if (ui.parent_id) {
-      flowNode.parentId = ui.parent_id
-      flowNode.extent = 'parent'
-    }
-
     if (nodeType === 'loop') {
       const size = ui.size ?? DEFAULT_LOOP_SIZE
       flowNode.style = { width: size.width, height: size.height }
+      flowNode.zIndex = -1
     }
 
     return flowNode
   })
 
-  const edges: Edge[] = graph.edges.map((e, i) => ({
-    id: `e-${i}-${e.source}-${e.target}`,
-    source: e.source,
-    target: e.target,
-    label: e.condition,
-    animated: true,
-  }))
+  // Nodes-by-id lookup for the legacy-graph handle reconstruction below.
+  const nodesById = new Map(graph.nodes.map((n) => [n.id, n]))
+  const parentOf = (id: string): string | undefined => {
+    const n = nodesById.get(id)
+    if (!n) return undefined
+    const ui = readUi(n.config ?? {})
+    return ui.parent_id
+  }
+  const isLoop = (id: string): boolean => nodesById.get(id)?.type === 'loop'
+
+  const edges: Edge[] = graph.edges.map((e, i) => {
+    // Prefer the stored handles; fall back to parent_id-based inference for
+    // legacy graphs that pre-date the handle persistence (without this, all
+    // Loop-touching edges collapse onto whichever handle React Flow picks
+    // first, which is the user-reported "everything jumped to the left" bug).
+    let sourceHandle = e.source_handle ?? null
+    let targetHandle = e.target_handle ?? null
+    if (!sourceHandle && isLoop(e.source)) {
+      // Loop is the source of the edge. Is the target a member of THIS loop?
+      sourceHandle = parentOf(e.target) === e.source ? 'loop-in-source' : 'loop-out-source'
+    }
+    if (!targetHandle && isLoop(e.target)) {
+      // Loop is the target. Is the source a member of THIS loop?
+      targetHandle = parentOf(e.source) === e.target ? 'loop-out-target' : 'loop-in-target'
+    }
+
+    return {
+      id: `e-${i}-${e.source}-${e.target}`,
+      source: e.source,
+      target: e.target,
+      sourceHandle,
+      targetHandle,
+      label: e.condition,
+      animated: true,
+    }
+  })
 
   return { nodes, edges }
 }
 
 export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
+  // Re-derive loop membership from edge handles so the persisted graph carries
+  // it explicitly via `_ui.parent_id` on each child. The canvas already keeps
+  // a transient `_loop_owner` mirror, but we recompute here to stay decoupled
+  // from canvas render order and to handle agents that haven't been touched by
+  // the canvas memo yet (e.g. fresh graph save right after edge creation).
+  //
+  // Rules (same as WorkflowCanvas.loopMembership):
+  //   - edge from Loop.loop-in-source → Agent : Agent is INTERNAL to Loop
+  //   - edge from Agent → Loop.loop-out-target : Agent is INTERNAL to Loop
+  //   - propagate via chain: any Agent reachable from a member via ordinary
+  //     (non-Loop-handle) edges is also a member of the same Loop.
+  const loopIds = new Set(
+    nodes.filter((n) => n.data.nodeType === 'loop').map((n) => n.id),
+  )
+  const membership = new Map<string, string>()
+  for (const e of edges) {
+    if (loopIds.has(e.source) && e.sourceHandle === 'loop-in-source') {
+      if (!loopIds.has(e.target)) membership.set(e.target, e.source)
+    }
+    if (loopIds.has(e.target) && e.targetHandle === 'loop-out-target') {
+      if (!loopIds.has(e.source)) membership.set(e.source, e.target)
+    }
+  }
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const e of edges) {
+      if (loopIds.has(e.source) || loopIds.has(e.target)) continue
+      const sL = membership.get(e.source)
+      const tL = membership.get(e.target)
+      if (sL && !tL) { membership.set(e.target, sL); changed = true }
+      else if (tL && !sL) { membership.set(e.source, tL); changed = true }
+    }
+  }
+
   const outNodes: WorkflowNode[] = nodes.map((n) => {
     const config = { ...(n.data.config ?? {}) }
-    const ui: UiMeta = { position: n.position }
-    if (n.parentId) ui.parent_id = n.parentId
+    const ui: UiMeta & { parent_id?: string } = { position: n.position }
     if (n.data.nodeType === 'loop') {
       const w = typeof n.style?.width === 'number' ? n.style.width : DEFAULT_LOOP_SIZE.width
       const h = typeof n.style?.height === 'number' ? n.style.height : DEFAULT_LOOP_SIZE.height
       ui.size = { width: w, height: h }
     }
+    const owner = membership.get(n.id)
+    if (owner) ui.parent_id = owner
     config._ui = ui
+    // Strip transient loop owner marker — recomputed from edges on load.
+    delete config._loop_owner
     return {
       id: n.id,
       type: n.data.nodeType,
@@ -122,6 +176,8 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
   const outEdges: WorkflowEdge[] = edges.map((e) => ({
     source: e.source,
     target: e.target,
+    source_handle: e.sourceHandle ?? null,
+    target_handle: e.targetHandle ?? null,
     condition: typeof e.label === 'string' ? e.label : undefined,
   }))
 
@@ -137,53 +193,4 @@ export function generateNodeId(existing: FlowNode[], type: CanvasNodeType): stri
   let i = existing.filter((n) => n.data.nodeType === type).length + 1
   while (existing.some((n) => n.id === `${prefix}${i}`)) i++
   return `${prefix}${i}`
-}
-
-/**
- * Given a drop point (already in flow coordinates), find the innermost loop
- * node whose bounding box contains the point. Returns undefined if the drop
- * happens on empty canvas.
- *
- * "Innermost" = deepest parent_id chain, so dropping into a nested loop
- * correctly attaches to the inner one, not the outer.
- */
-export function findDropTarget(
-  nodes: FlowNode[],
-  point: { x: number; y: number },
-): FlowNode | undefined {
-  const loops = nodes.filter((n) => n.data.nodeType === 'loop')
-
-  // Resolve absolute positions (parent position + child relative position).
-  const absolutePos = (node: FlowNode): { x: number; y: number } => {
-    if (!node.parentId) return node.position
-    const parent = nodes.find((p) => p.id === node.parentId)
-    if (!parent) return node.position
-    const parentAbs = absolutePos(parent)
-    return { x: parentAbs.x + node.position.x, y: parentAbs.y + node.position.y }
-  }
-
-  const hits = loops.filter((l) => {
-    const abs = absolutePos(l)
-    const w = (typeof l.style?.width === 'number' ? l.style.width : 0) || DEFAULT_LOOP_SIZE.width
-    const h = (typeof l.style?.height === 'number' ? l.style.height : 0) || DEFAULT_LOOP_SIZE.height
-    return (
-      point.x >= abs.x &&
-      point.x <= abs.x + w &&
-      point.y >= abs.y &&
-      point.y <= abs.y + h
-    )
-  })
-
-  // Deepest (most nested) first.
-  return hits.sort((a, b) => depth(b, nodes) - depth(a, nodes))[0]
-}
-
-function depth(node: FlowNode, nodes: FlowNode[]): number {
-  let d = 0
-  let cur: FlowNode | undefined = node
-  while (cur?.parentId) {
-    d++
-    cur = nodes.find((n) => n.id === cur!.parentId)
-  }
-  return d
 }

@@ -77,6 +77,12 @@
   flex-shrink: 0;
 }
 
+.definition-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tab-empty {
   font-size: 12px;
   color: rgba(148, 163, 184, 0.7);
@@ -1215,6 +1221,69 @@
 .workflow-test-head button {
   padding: 5px 10px;
   font-size: 11px;
+}
+
+.workflow-test-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-test-fixture-select {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  outline: none;
+}
+
+.workflow-test-fixture-select:focus {
+  border-color: rgba(249, 115, 22, 0.58);
+}
+
+.workflow-test-fixture-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.workflow-test-fixture-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  font-size: 11px;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: 12px;
+}
+
+.workflow-test-fixture-load {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+}
+
+.workflow-test-fixture-load:hover {
+  text-decoration: underline;
+}
+
+.workflow-test-fixture-del {
+  all: unset;
+  cursor: pointer;
+  padding: 0 4px;
+  color: rgba(248, 113, 113, 0.7);
+  font-weight: 600;
+  border-radius: 50%;
+}
+
+.workflow-test-fixture-del:hover {
+  color: rgba(248, 113, 113, 1);
+  background: rgba(248, 113, 113, 0.15);
 }
 
 .workflow-test-panel textarea {

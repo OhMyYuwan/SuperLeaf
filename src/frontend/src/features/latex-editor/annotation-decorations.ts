@@ -29,11 +29,17 @@ export interface DecorationSpec {
 
 export const setAnnotationsEffect = StateEffect.define<DecorationSpec[]>()
 export const focusAnnotationEffect = StateEffect.define<string | null>()
+/**
+ * Briefly highlight an annotation range (reverse direction: panel hover →
+ * editor). The host toggles this via LatexEditor's `panelHoverId` prop.
+ * Setting a non-null id sets `flashId`; setting null clears it.
+ */
+export const flashAnnotationEffect = StateEffect.define<string | null>()
 
-type AnnotationFieldValue = { specs: DecorationSpec[]; activeId: string | null }
+type AnnotationFieldValue = { specs: DecorationSpec[]; activeId: string | null; flashId: string | null }
 
 export const annotationDecorationsField = StateField.define<AnnotationFieldValue>({
-  create: () => ({ specs: [], activeId: null }),
+  create: () => ({ specs: [], activeId: null, flashId: null }),
   update(value, tr) {
     let next = value
     for (const e of tr.effects) {
@@ -42,6 +48,9 @@ export const annotationDecorationsField = StateField.define<AnnotationFieldValue
       }
       if (e.is(focusAnnotationEffect)) {
         next = { ...next, activeId: e.value }
+      }
+      if (e.is(flashAnnotationEffect)) {
+        next = { ...next, flashId: e.value }
       }
     }
     return next
@@ -59,7 +68,7 @@ function buildDecorations(value: AnnotationFieldValue): DecorationSet {
       s.from,
       s.to,
       Decoration.mark({
-        class: classFor(s, s.id === value.activeId),
+        class: classFor(s, s.id === value.activeId, s.id === value.flashId),
         attributes: {
           'data-ann-id': s.id,
           'data-ann-kind': s.kind,
@@ -71,9 +80,12 @@ function buildDecorations(value: AnnotationFieldValue): DecorationSet {
   return builder.finish()
 }
 
-function classFor(s: DecorationSpec, active: boolean): string {
+function classFor(s: DecorationSpec, active: boolean, flash: boolean): string {
   const base = `ylw-ann ylw-ann-${s.kind} ylw-sev-${s.severity}`
-  return active ? `${base} ylw-ann-active` : base
+  const parts = [base]
+  if (active) parts.push('ylw-ann-active')
+  if (flash) parts.push('ylw-ann-flash')
+  return parts.join(' ')
 }
 
 function titleFor(s: DecorationSpec): string {
@@ -93,7 +105,7 @@ const decorationView = ViewPlugin.fromClass(
       const prev = update.startState.field(annotationDecorationsField, false)
       const cur = update.state.field(annotationDecorationsField, false)
       if (update.docChanged || prev !== cur) {
-        this.decorations = buildDecorations(cur ?? { specs: [], activeId: null })
+        this.decorations = buildDecorations(cur ?? { specs: [], activeId: null, flashId: null })
       }
     }
   },

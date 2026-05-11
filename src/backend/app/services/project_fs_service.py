@@ -16,26 +16,14 @@ from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
 
 class ProjectFsService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, project: Project) -> None:
         self.db = db
-
-    # ------------------------------------------------------------------ setup
-
-    def ensure_default_project(self) -> Project:
-        """Ensure there is one default project row and return it."""
-        existing = self.db.query(Project).order_by(Project.created_at.asc()).first()
-        if existing:
-            return existing
-        p = Project()
-        self.db.add(p)
-        self.db.commit()
-        self.db.refresh(p)
-        return p
+        self.project = project
 
     # ------------------------------------------------------------------- tree
 
     def get_tree(self) -> ProjectTreeOut:
-        project = self.ensure_default_project()
+        project = self.project
 
         folders = (
             self.db.query(Folder)
@@ -116,7 +104,7 @@ class ProjectFsService:
         return ProjectTreeOut(project_id=project.id, project_name=project.name, root=root)
 
     def rename_project(self, name: str) -> Project:
-        project = self.ensure_default_project()
+        project = self.project
         project.name = name
         project.updated_at = datetime.utcnow()
         self.db.commit()
@@ -126,7 +114,7 @@ class ProjectFsService:
     # --------------------------------------------------------------- folder/doc
 
     def create_folder(self, *, parent_folder_id: str | None, name: str) -> Folder:
-        project = self.ensure_default_project()
+        project = self.project
         if parent_folder_id:
             parent = self.db.get(Folder, parent_folder_id)
             if parent is None or parent.project_id != project.id:
@@ -155,7 +143,7 @@ class ProjectFsService:
         return folder
 
     def create_doc(self, *, folder_id: str | None, name: str, format: str, content: str) -> Doc:
-        project = self.ensure_default_project()
+        project = self.project
         if folder_id:
             folder = self.db.get(Folder, folder_id)
             if folder is None or folder.project_id != project.id:
@@ -209,7 +197,7 @@ class ProjectFsService:
 
         Returns (ok, error_message). target_folder_id None means project root.
         """
-        project = self.ensure_default_project()
+        project = self.project
 
         if target_folder_id is not None:
             target = self.db.get(Folder, target_folder_id)
@@ -289,7 +277,7 @@ class ProjectFsService:
         mime_type: str,
         blob: bytes,
     ) -> FileBlob:
-        project = self.ensure_default_project()
+        project = self.project
         if folder_id:
             folder = self.db.get(Folder, folder_id)
             if folder is None or folder.project_id != project.id:
@@ -314,7 +302,7 @@ class ProjectFsService:
         import io
         import zipfile
 
-        project = self.ensure_default_project()
+        project = self.project
         buf = io.BytesIO()
 
         folders = self.db.query(Folder).filter(Folder.project_id == project.id).all()

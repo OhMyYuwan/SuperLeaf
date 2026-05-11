@@ -19,7 +19,9 @@ import type {
   WorkflowDefinitionDraft,
   WorkflowGraph,
   WorkflowConfig,
+  WorkflowTestCase,
 } from '../../services/backendApi'
+import { workflowTestCaseApi } from '../../services/backendApi'
 import type { NodeStatus, RunEvent } from '../../stores/workflowStore'
 import { WorkflowCanvas } from './workflow-canvas'
 
@@ -27,6 +29,9 @@ type Mode = 'form' | 'canvas' | 'json'
 
 interface WorkflowDefinitionEditorProps {
   definition?: WorkflowDefinition
+  /** When set, seeds the editor from a draft (e.g. a template) rather than an
+   *  existing definition. Ignored if `definition` is provided. */
+  initialDraft?: WorkflowDefinitionDraft
   onSave: (draft: WorkflowDefinitionDraft) => Promise<void>
   onCancel: () => void
   onTestDefinition?: (definitionId: string, prompt: string) => void
@@ -55,6 +60,7 @@ function buildJsonText(
 
 export function WorkflowDefinitionEditor({
   definition,
+  initialDraft,
   onSave,
   onCancel,
   onTestDefinition,
@@ -62,19 +68,20 @@ export function WorkflowDefinitionEditor({
   testEvents = [],
   testNodeStatuses = [],
 }: WorkflowDefinitionEditorProps) {
+  const seed = definition ?? initialDraft
   const [mode, setMode] = useState<Mode>('canvas')
-  const [name, setName] = useState(definition?.name ?? '')
-  const [description, setDescription] = useState(definition?.description ?? '')
+  const [name, setName] = useState(seed?.name ?? '')
+  const [description, setDescription] = useState(seed?.description ?? '')
   const executionMode: WorkflowDefinition['execution_mode'] = 'graph'
-  const [graph, setGraph] = useState<WorkflowGraph>(definition?.graph ?? EMPTY_GRAPH)
-  const [config, setConfig] = useState<WorkflowConfig>(definition?.config ?? {})
+  const [graph, setGraph] = useState<WorkflowGraph>(seed?.graph ?? EMPTY_GRAPH)
+  const [config, setConfig] = useState<WorkflowConfig>(seed?.config ?? {})
   const [jsonText, setJsonText] = useState(
-    definition
+    seed
       ? buildJsonText(
-          definition.name,
-          definition.description ?? '',
-          definition.graph,
-          definition.config ?? {},
+          seed.name ?? '',
+          seed.description ?? '',
+          seed.graph,
+          seed.config ?? {},
         )
       : '',
   )
@@ -383,10 +390,60 @@ function WorkflowTestPanel({
   nodeStatuses: NodeStatus[]
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [fixtures, setFixtures] = useState<WorkflowTestCase[]>([])
+  const [fixturesError, setFixturesError] = useState<string | null>(null)
   const failed = nodeStatuses.find((n) => n.status === 'failed')
   const latestEvent = events.at(-1)
   const selectedNode =
     nodeStatuses.find((n) => n.nodeId === selectedNodeId) ?? nodeStatuses[0] ?? null
+
+  useEffect(() => {
+    if (!definitionId) {
+      setFixtures([])
+      return
+    }
+    let cancelled = false
+    void workflowTestCaseApi
+      .list(definitionId)
+      .then((rows) => {
+        if (!cancelled) setFixtures(rows)
+      })
+      .catch((e) => {
+        if (!cancelled) setFixturesError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [definitionId])
+
+  const handleSaveFixture = async () => {
+    if (!definitionId) return
+    const name = window.prompt('测试用例名称：', `Fixture ${fixtures.length + 1}`)
+    if (!name) return
+    try {
+      const created = await workflowTestCaseApi.create(definitionId, { name, prompt })
+      setFixtures((prev) => [...prev, created])
+    } catch (e) {
+      setFixturesError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const handleLoadFixture = (caseId: string) => {
+    const fx = fixtures.find((f) => f.id === caseId)
+    if (!fx) return
+    onPromptChange(fx.prompt)
+  }
+
+  const handleDeleteFixture = async (caseId: string) => {
+    if (!definitionId) return
+    if (!window.confirm('删除这个测试用例？')) return
+    try {
+      await workflowTestCaseApi.delete(definitionId, caseId)
+      setFixtures((prev) => prev.filter((f) => f.id !== caseId))
+    } catch (e) {
+      setFixturesError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   useEffect(() => {
     if (nodeStatuses.length === 0) {
@@ -404,16 +461,71 @@ function WorkflowTestPanel({
     <div className="workflow-test-panel">
       <div className="workflow-test-head">
         <span>测试</span>
-        <button
-          className="primary-btn"
-          type="button"
-          disabled={!definitionId || !onRun || running || !prompt.trim()}
-          onClick={() => definitionId && onRun?.(definitionId, prompt)}
-          title={!definitionId ? '先保存 Workflow 后再测试' : undefined}
-        >
-          {running ? '运行中…' : '运行测试'}
-        </button>
+        <div className="workflow-test-head-actions">
+          {definitionId && fixtures.length > 0 && (
+            <select
+              className="workflow-test-fixture-select"
+              value=""
+              onChange={(e) => {
+                const v = e.target.value
+                if (v) handleLoadFixture(v)
+              }}
+              title="加载已保存的测试用例"
+            >
+              <option value="">加载用例…</option>
+              {fixtures.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {definitionId && (
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleSaveFixture}
+              disabled={!prompt.trim()}
+              title="把当前 Prompt 保存为可重复使用的测试用例"
+            >
+              💾 保存为用例
+            </button>
+          )}
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={!definitionId || !onRun || running || !prompt.trim()}
+            onClick={() => definitionId && onRun?.(definitionId, prompt)}
+            title={!definitionId ? '先保存 Workflow 后再测试' : undefined}
+          >
+            {running ? '运行中…' : '运行测试'}
+          </button>
+        </div>
       </div>
+      {fixturesError && <div className="workflow-test-hint error">{fixturesError}</div>}
+      {fixtures.length > 0 && (
+        <div className="workflow-test-fixture-chips">
+          {fixtures.map((f) => (
+            <span key={f.id} className="workflow-test-fixture-chip" title={f.name}>
+              <button
+                type="button"
+                className="workflow-test-fixture-load"
+                onClick={() => handleLoadFixture(f.id)}
+              >
+                {f.name}
+              </button>
+              <button
+                type="button"
+                className="workflow-test-fixture-del"
+                onClick={() => handleDeleteFixture(f.id)}
+                title="删除该用例"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}

@@ -64,6 +64,7 @@ class WorkflowDefinitionIn(BaseModel):
 
 class WorkflowDefinitionOut(BaseModel):
     id: str
+    project_id: str
     name: str
     description: str
     execution_mode: str
@@ -78,8 +79,28 @@ class WorkflowDefinitionOut(BaseModel):
         from_attributes = True
 
 
+class WorkflowTestCaseIn(BaseModel):
+    name: str = Field(min_length=1, max_length=256)
+    prompt: str = ""
+    inputs: dict = Field(default_factory=dict)
+
+
+class WorkflowTestCaseOut(BaseModel):
+    id: str
+    definition_id: str
+    name: str
+    prompt: str
+    inputs: dict
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class WorkflowRunOut(BaseModel):
     id: str
+    project_id: str
     provider_id: str
     workflow_id: str
     workflow_definition_id: str | None
@@ -103,6 +124,28 @@ class WorkflowRunOut(BaseModel):
 # ---------------------------------------------------------------------------
 # Local filesystem schemas (A1)
 # ---------------------------------------------------------------------------
+
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    main_doc_id: str
+    compiler: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+
+
+class ProjectUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    main_doc_id: str | None = None
+    compiler: str | None = None
 
 
 class FolderCreateIn(BaseModel):
@@ -223,6 +266,7 @@ class ProjectCompileSettingsOut(BaseModel):
 
 class ConversationOut(BaseModel):
     id: str
+    project_id: str
     document_id: str
     workflow_id: str
     title: str
@@ -269,3 +313,19 @@ class MessageSendIn(BaseModel):
     # When provided, anchored selection text + neighbouring context to send to
     # Dify's `inputs` map. Otherwise we send only the message text.
     inputs: dict = Field(default_factory=dict)
+
+
+class MessageInjectIn(BaseModel):
+    """Persist a pre-composed message without running an agent.
+
+    Used for @workflow dispatches from the discussion surface: the workflow
+    executes out-of-band via /api/workflows/definitions/{id}/execute, and the
+    synthesized summary is stored on the conversation so the chat history
+    stays coherent.
+    """
+
+    role: str = Field(pattern="^(agent|user|system)$")
+    content: str = Field(min_length=1)
+    range_start: int | None = None
+    range_end: int | None = None
+    error: str | None = None

@@ -31,5 +31,7 @@ def get_session() -> Iterator[Session]:
 def init_db() -> None:
     # Import models so Base.metadata knows about them.
     from . import models  # noqa: F401
+    from .migrations import run_migrations
 
     Base.metadata.create_all(engine)
+    run_migrations(engine)

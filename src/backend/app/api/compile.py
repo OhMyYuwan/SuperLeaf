@@ -28,7 +28,7 @@ from ..schemas import (
     ProjectCompileSettingsOut,
 )
 from ..services.latex_compiler import get_compiler_service
-from ..services.project_fs_service import ProjectFsService
+from .deps import get_current_project
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
 
@@ -56,9 +56,8 @@ def rescan_compilers() -> CompilerInfoOut:
 async def compile_project(
     body: CompileIn,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> CompileOut:
-    project = ProjectFsService(db).ensure_default_project()
-
     # Resolve settings: explicit body > project-level saved > service default.
     compiler = body.compiler or project.compiler or None
     main_doc_id = body.main_doc_id or project.main_doc_id or None
@@ -81,8 +80,10 @@ async def compile_project(
 
 
 @router.get("/pdf")
-def get_compiled_pdf(db: Session = Depends(get_session)) -> Response:
-    project = ProjectFsService(db).ensure_default_project()
+def get_compiled_pdf(
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> Response:
     svc = get_compiler_service()
     cached = svc.get_cached(project.id)
     if cached is None or cached.pdf is None:
@@ -91,8 +92,10 @@ def get_compiled_pdf(db: Session = Depends(get_session)) -> Response:
 
 
 @router.get("/log", response_class=Response)
-def get_compile_log(db: Session = Depends(get_session)) -> Response:
-    project = ProjectFsService(db).ensure_default_project()
+def get_compile_log(
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> Response:
     svc = get_compiler_service()
     cached = svc.get_cached(project.id)
     if cached is None:
@@ -101,8 +104,10 @@ def get_compile_log(db: Session = Depends(get_session)) -> Response:
 
 
 @router.get("/settings", response_model=ProjectCompileSettingsOut)
-def get_settings(db: Session = Depends(get_session)) -> ProjectCompileSettingsOut:
-    project = ProjectFsService(db).ensure_default_project()
+def get_settings(
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> ProjectCompileSettingsOut:
     return ProjectCompileSettingsOut(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
@@ -113,8 +118,8 @@ def get_settings(db: Session = Depends(get_session)) -> ProjectCompileSettingsOu
 def update_settings(
     body: ProjectCompileSettingsIn,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> ProjectCompileSettingsOut:
-    project = ProjectFsService(db).ensure_default_project()
     if body.main_doc_id is not None:
         project.main_doc_id = body.main_doc_id
     if body.compiler is not None:

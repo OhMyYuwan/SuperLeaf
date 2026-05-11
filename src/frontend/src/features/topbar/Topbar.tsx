@@ -6,8 +6,10 @@
  */
 
 import { Save, Settings2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { ProviderBadge } from './ProviderBadge'
 import { ViewControl } from './ViewControl'
+import { useProjectStore } from '../../stores/projectStore'
 import './topbar.css'
 
 interface TopbarProps {
@@ -25,10 +27,23 @@ export function Topbar({
   onOpenSettings,
   onSave,
 }: TopbarProps) {
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const projectName = useProjectStore((s) =>
+    currentProjectId ? s.projects.find((p) => p.id === currentProjectId)?.name ?? null : null,
+  )
+
   return (
     <header className="topbar">
-      <div>
-        <div className="brand">YuwanLabWriter</div>
+      <div className="topbar-brand">
+        <div className="brand-row">
+          <Link to="/projects" className="brand" title="返回项目列表">YuwanLabWriter</Link>
+          {projectName && (
+            <>
+              <span className="brand-sep" aria-hidden>/</span>
+              <span className="project-pill" title={projectName}>{projectName}</span>
+            </>
+          )}
+        </div>
         <div className="subtitle">LaTeX-first 本地科研写作工作台</div>
       </div>
       <div className="topbar-actions">

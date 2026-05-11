@@ -1,7 +1,8 @@
 # CHANGE POLICY for YuwanLabWriter
 #
 # Concrete authorization rules for mutation work.
-# Refreshed 2026-05-08 for REQ-0013 (backend + scripts added).
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh — orchestrator,
+# multi-provider, mention system, file-tree, conversations, compile surfaces).
 #
 # Resolution order: forbidden > high_risk > require_confirmation > auto_allow.
 
@@ -23,6 +24,7 @@ auto_allow:
       - frontend/src/features/**/*.ts
       - frontend/src/features/**/*.tsx
       - frontend/src/features/**/*.css
+      - frontend/src/features/**/*.json   # workflow templates (debate / consensus)
       - frontend/src/stores/*.ts
       - frontend/src/services/*.ts
       - frontend/src/types/*.ts
@@ -128,10 +130,10 @@ forbidden:
       - ../reference/**/*
     reason: Reference projects are not on our import path or in our build graph.
 
-  # Do NOT self-host a Workflow engine.
-  - operation: implement_self_hosted_workflow_engine
-    description: Writing our own DAG executor, collaboration-mode orchestrator, or Agent run loop.
-    reason: V2.1 pivot — Dify owns the agentic layer. Build against Dify's API via DifyClient instead.
+  # (Removed in REQ-0026): the historical `implement_self_hosted_workflow_engine`
+  # ban from V2.1 has been superseded by V2.2 (REQ-0015). The canonical
+  # baseline orchestrator now lives at backend/app/services/agent_orchestrator.py
+  # and the active acknowledgement / boundary is in `high_risk` below.
 
 high_risk:
   # ACP profile / version changes invalidate all prior bootstrap assumptions.
@@ -170,6 +172,42 @@ high_risk:
     paths:
       - ../scripts/dify.sh
     reason: Dify launcher is the only sanctioned path to start the agentic backend; regressions block the whole stack.
+
+  # Extending the self-hosted orchestrator (V2.2 acknowledgement).
+  - operation: extend_self_hosted_orchestrator
+    paths:
+      - backend/app/services/agent_orchestrator.py
+      - backend/app/services/attached_files.py
+    description: |
+      `agent_orchestrator.py` is the canonical baseline added in REQ-0015
+      and extended through REQ-0023. Routine extension is acceptable but
+      must respect the boundary below.
+    boundary: |
+      Acceptable in this category:
+        - bug fixes
+        - new SSE event fields
+        - changes within the existing agent + loop node model
+      Requires its own Request (NOT this category):
+        - introducing a NEW node type (e.g. debate, consensus, condition,
+          merge) as engine-level concept rather than template
+        - swapping the run loop or scheduling strategy
+        - persisting runtime state outside the existing tables
+        - introducing a DSL or external execution backend
+    reason: |
+      The orchestrator now drives multi-agent coordination across Dify
+      and Nanobot providers. Changes ripple through workflow-canvas,
+      DiscussionTab, and AnnotationPanel; a structural change here is
+      effectively a project pivot.
+
+  # Touching the Nanobot multimodal / attached-files contract.
+  - operation: edit
+    paths:
+      - backend/app/services/nanobot_client.py
+      - backend/app/services/attached_files.py
+    reason: |
+      These define how user-supplied files (text + image) reach the LLM.
+      Changes here have security and cost implications (byte caps,
+      truncation, multimodal payload shape).
 
 # Decision tree:
 #  1. forbidden → refuse

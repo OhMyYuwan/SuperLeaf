@@ -12,6 +12,7 @@ interface AnnotationColumnProps {
   documentId: string | null
   activeId: string | null
   onFocus: (id: string | null) => void
+  onHover?: (id: string | null) => void
   pendingComment?: {
     range: { from: number; to: number }
     targetText: string
@@ -24,6 +25,7 @@ export function AnnotationColumn({
   documentId,
   activeId,
   onFocus,
+  onHover,
   pendingComment,
   onDismissPendingComment,
   agents,
@@ -37,6 +39,7 @@ export function AnnotationColumn({
         documentId={documentId}
         activeId={activeId}
         onFocus={onFocus}
+        onHover={onHover}
         pendingComment={pendingComment}
         onDismissPendingComment={onDismissPendingComment}
         agents={agents}

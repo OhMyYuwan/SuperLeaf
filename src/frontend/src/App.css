@@ -189,6 +189,15 @@ button {
   outline: 1px solid rgba(59, 130, 246, 0.6);
   border-radius: 2px;
 }
+.cm-content .ylw-ann-flash {
+  animation: ylw-ann-flash-pulse 1.2s ease-out;
+  border-radius: 2px;
+}
+@keyframes ylw-ann-flash-pulse {
+  0%   { background: rgba(59, 130, 246, 0.45); outline: 1px solid rgba(59, 130, 246, 0.8); }
+  50%  { background: rgba(59, 130, 246, 0.22); outline: 1px solid rgba(59, 130, 246, 0.5); }
+  100% { background: transparent; outline: 1px solid transparent; }
+}
 
 .spin {
   animation: spin 0.9s linear infinite;

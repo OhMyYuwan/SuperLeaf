@@ -14,6 +14,7 @@ import { create } from 'zustand'
 import {
   workflowApi,
   workflowDefinitionApi,
+  buildHeaders,
   type CachedWorkflow,
   type RunRequest,
   type WorkflowRun,
@@ -106,7 +107,17 @@ interface WorkflowState {
   createDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
   updateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
   deleteDefinition: (id: string) => Promise<void>
-  executeDefinition: (definitionId: string, body: RunRequest, opts?: { autoIngestToAnnotations?: boolean }) => Promise<void>
+  executeDefinition: (definitionId: string, body: RunRequest, opts?: ExecuteDefinitionOpts) => Promise<void>
+}
+
+/** Optional callbacks for workflow definition execution. */
+export interface ExecuteDefinitionOpts {
+  autoIngestToAnnotations?: boolean
+  /** Fired when the terminal `workflow.completed` event arrives. `summary`
+   *  is the best-effort user-facing blurb extracted from outputs. */
+  onCompleted?: (summary: string, outputs: unknown) => void
+  /** Fired when the run fails (network error, orchestrator error). */
+  onFailed?: (error: string) => void
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -251,11 +262,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       maxRounds: { ...s.maxRounds, [definitionId]: def?.config?.max_rounds ?? 3 },
     }))
 
+    const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
+    const abortCtl = new AbortController()
+    const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
+
     try {
+      const headers = buildHeaders({ Accept: 'text/event-stream' })
       const resp = await fetch(workflowDefinitionApi.executeStreamUrl(definitionId), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers,
         body: JSON.stringify(body),
+        signal: abortCtl.signal,
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
@@ -265,9 +282,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const reader = resp.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buf = ''
+      let gotFirstChunk = false
       while (true) {
         const { value, done } = await reader.read()
         if (done) break
+        if (!gotFirstChunk) {
+          clearTimeout(firstByteTimer)
+          gotFirstChunk = true
+        }
         buf += decoder.decode(value, { stream: true })
         let boundary = findEventBoundary(buf)
         while (boundary !== null) {
@@ -276,18 +298,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           const parsed = parseSseMessage(chunk)
           if (parsed) {
             pushEvent(set, definitionId, parsed)
-            handleOrchestratedEvent(set, definitionId, parsed, inflight, def?.name ?? definitionId)
+            handleOrchestratedEvent(set, definitionId, parsed, inflight, def?.name ?? definitionId, opts)
           }
           boundary = findEventBoundary(buf)
         }
       }
     } catch (e) {
+      const aborted = e instanceof DOMException && e.name === 'AbortError'
+      const msg = aborted
+        ? `Workflow 响应超时（${timeoutMs / 1000}s 内无数据）`
+        : e instanceof Error ? e.message : String(e)
       pushEvent(set, definitionId, {
         kind: 'ylw.run.failed',
-        payload: { error: e instanceof Error ? e.message : String(e) },
+        payload: { error: msg },
         at: Date.now(),
       })
+      opts?.onFailed?.(msg)
     } finally {
+      clearTimeout(firstByteTimer)
       set((s) => ({ running: { ...s.running, [definitionId]: false } }))
     }
   },
@@ -311,11 +339,18 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }))
     // eslint-disable-next-line no-console
     console.log('[workflow.run] dispatching', { workflowId, body })
+
+    const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
+    const abortCtl = new AbortController()
+    const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
+
     try {
+      const headers = buildHeaders({ Accept: 'text/event-stream' })
       const resp = await fetch(workflowApi.runStreamUrl(workflowId), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers,
         body: JSON.stringify(body),
+        signal: abortCtl.signal,
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
@@ -327,9 +362,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const reader = resp.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buf = ''
+      let gotFirstChunk = false
       while (true) {
         const { value, done } = await reader.read()
         if (done) break
+        if (!gotFirstChunk) {
+          clearTimeout(firstByteTimer)
+          gotFirstChunk = true
+        }
         buf += decoder.decode(value, { stream: true })
         // SSE separates events with a blank line. Be liberal: servers use
         // either "\n\n" or "\r\n\r\n".
@@ -348,12 +388,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         }
       }
     } catch (e) {
+      const aborted = e instanceof DOMException && e.name === 'AbortError'
+      const msg = aborted
+        ? `Agent 响应超时（${timeoutMs / 1000}s 内无数据），请重试或检查 Provider`
+        : e instanceof Error ? e.message : String(e)
       pushEvent(set, workflowId, {
         kind: 'ylw.run.failed',
-        payload: { error: e instanceof Error ? e.message : String(e) },
+        payload: { error: msg },
         at: Date.now(),
       })
     } finally {
+      clearTimeout(firstByteTimer)
       set((s) => ({ running: { ...s.running, [workflowId]: false } }))
     }
   },
@@ -480,6 +525,7 @@ function handleOrchestratedEvent(
   evt: RunEvent,
   inflight: InFlight,
   workflowName: string,
+  opts?: ExecuteDefinitionOpts,
 ) {
   const payload = evt.payload as Record<string, unknown>
 
@@ -550,20 +596,29 @@ function handleOrchestratedEvent(
       selectionText: inflight.selectionText,
     })
 
-    const ann = useAnnotationStore.getState()
-    ann.ingestRun({
-      runId: payload.run_id as string,
-      workflowId: definitionId,
-      documentId: inflight.documentId,
-      agentName: workflowName,
-      conversationId: undefined,
-      parsed,
-    })
+    if (inflight.autoIngestToAnnotations) {
+      const ann = useAnnotationStore.getState()
+      ann.ingestRun({
+        runId: payload.run_id as string,
+        workflowId: definitionId,
+        documentId: inflight.documentId,
+        agentName: workflowName,
+        conversationId: undefined,
+        parsed,
+      })
+    }
+
+    if (opts?.onCompleted) {
+      const summary = extractFirstSummary(parsed) || parsed.rawText || ''
+      opts.onCompleted(summary, outputs)
+    }
   }
 
   if (evt.kind === 'ylw.run.failed') {
     // eslint-disable-next-line no-console
     console.error('[workflow.orchestrated.failed]', evt.payload)
+    const err = (payload.error as string | undefined) ?? 'workflow failed'
+    opts?.onFailed?.(err)
   }
 }
 

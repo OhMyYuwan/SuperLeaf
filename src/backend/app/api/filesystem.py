@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_session
+from ..models import FileBlob, Project
 from ..schemas import (
     DocCreateIn,
     DocOut,
@@ -26,13 +27,17 @@ from ..schemas import (
     ProjectTreeOut,
 )
 from ..services.project_fs_service import ProjectFsService
+from .deps import get_current_project
 
 router = APIRouter(tags=["filesystem"])
 
 
 @router.get("/api/project/tree", response_model=ProjectTreeOut)
-def get_project_tree(db: Session = Depends(get_session)) -> ProjectTreeOut:
-    return ProjectFsService(db).get_tree()
+def get_project_tree(
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> ProjectTreeOut:
+    return ProjectFsService(db, project).get_tree()
 
 
 class ProjectRenameBody(BaseModel):
@@ -40,14 +45,22 @@ class ProjectRenameBody(BaseModel):
 
 
 @router.put("/api/project/name", status_code=200)
-def rename_project(body: ProjectRenameBody, db: Session = Depends(get_session)) -> dict:
-    ProjectFsService(db).rename_project(body.name)
+def rename_project(
+    body: ProjectRenameBody,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> dict:
+    ProjectFsService(db, project).rename_project(body.name)
     return {"ok": True}
 
 
 @router.post("/api/folders", response_model=FolderOut, status_code=201)
-def create_folder(body: FolderCreateIn, db: Session = Depends(get_session)) -> FolderOut:
-    svc = ProjectFsService(db)
+def create_folder(
+    body: FolderCreateIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> FolderOut:
+    svc = ProjectFsService(db, project)
     try:
         folder = svc.create_folder(parent_folder_id=body.parent_folder_id, name=body.name)
     except ValueError as e:
@@ -56,8 +69,12 @@ def create_folder(body: FolderCreateIn, db: Session = Depends(get_session)) -> F
 
 
 @router.post("/api/docs", response_model=DocOut, status_code=201)
-def create_doc(body: DocCreateIn, db: Session = Depends(get_session)) -> DocOut:
-    svc = ProjectFsService(db)
+def create_doc(
+    body: DocCreateIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> DocOut:
+    svc = ProjectFsService(db, project)
     try:
         doc = svc.create_doc(
             folder_id=body.folder_id,
@@ -71,16 +88,29 @@ def create_doc(body: DocCreateIn, db: Session = Depends(get_session)) -> DocOut:
 
 
 @router.get("/api/docs/{doc_id}", response_model=DocOut)
-def get_doc(doc_id: str, db: Session = Depends(get_session)) -> DocOut:
-    doc = ProjectFsService(db).get_doc(doc_id)
-    if doc is None:
+def get_doc(
+    doc_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> DocOut:
+    doc = ProjectFsService(db, project).get_doc(doc_id)
+    if doc is None or doc.project_id != project.id:
         raise HTTPException(404, "doc not found")
     return DocOut.model_validate(doc)
 
 
 @router.put("/api/docs/{doc_id}", response_model=DocOut)
-def update_doc(doc_id: str, body: DocUpdateIn, db: Session = Depends(get_session)) -> DocOut:
-    doc = ProjectFsService(db).update_doc_content(doc_id, body.content)
+def update_doc(
+    doc_id: str,
+    body: DocUpdateIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> DocOut:
+    svc = ProjectFsService(db, project)
+    existing = svc.get_doc(doc_id)
+    if existing is None or existing.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+    doc = svc.update_doc_content(doc_id, body.content)
     if doc is None:
         raise HTTPException(404, "doc not found")
     return DocOut.model_validate(doc)
@@ -101,10 +131,11 @@ def rename_entity(
     entity_id: str,
     body: RenameBody,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
-    ok = ProjectFsService(db).rename_entity(entity_type, entity_id, body.name)
+    ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
     if not ok:
         raise HTTPException(404, "entity not found")
     return {"ok": True}
@@ -115,10 +146,11 @@ def delete_entity(
     entity_type: str,
     entity_id: str,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
-    count = ProjectFsService(db).delete_entity(entity_type, entity_id)
+    count = ProjectFsService(db, project).delete_entity(entity_type, entity_id)
     if count == 0:
         raise HTTPException(404, "entity not found")
     return {"ok": True, "deleted_count": count}
@@ -134,10 +166,11 @@ def move_entity(
     entity_id: str,
     body: MoveBody,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
-    ok, err = ProjectFsService(db).move_entity(entity_type, entity_id, body.target_folder_id)
+    ok, err = ProjectFsService(db, project).move_entity(entity_type, entity_id, body.target_folder_id)
     if not ok:
         # Cycle / not-found errors → 400 / 404 respectively.
         status = 404 if err and "not found" in err else 400
@@ -170,10 +203,11 @@ async def upload_file(
     file: UploadFile,
     folder_id: str | None = Form(None),
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> dict:
     blob = await file.read()
     name = file.filename or "untitled"
-    svc = ProjectFsService(db)
+    svc = ProjectFsService(db, project)
 
     # Text-like uploads go into `docs` so they can be opened in the editor.
     doc_format = _doc_format_for_filename(name)
@@ -268,13 +302,17 @@ def get_file(file_id: str, db: Session = Depends(get_session)) -> Response:
 
 
 @router.post("/api/files/{file_id}/convert-to-doc", response_model=DocOut, status_code=201)
-def convert_file_to_doc(file_id: str, db: Session = Depends(get_session)) -> DocOut:
+def convert_file_to_doc(
+    file_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> DocOut:
     """Migrate a text-like FileBlob (uploaded before the split into docs/files) into `docs`.
 
     Deletes the original FileBlob on success so the tree stays de-duplicated.
     """
     f = db.get(FileBlob, file_id)
-    if f is None:
+    if f is None or f.project_id != project.id:
         raise HTTPException(404, "file not found")
     fmt = _doc_format_for_filename(f.name)
     if fmt is None:
@@ -283,7 +321,7 @@ def convert_file_to_doc(file_id: str, db: Session = Depends(get_session)) -> Doc
         content = (f.blob or b"").decode("utf-8")
     except UnicodeDecodeError as e:
         raise HTTPException(400, "file is not valid UTF-8 text") from e
-    svc = ProjectFsService(db)
+    svc = ProjectFsService(db, project)
     doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
     db.delete(f)
     db.commit()
@@ -291,8 +329,11 @@ def convert_file_to_doc(file_id: str, db: Session = Depends(get_session)) -> Doc
 
 
 @router.get("/api/project/export.zip")
-def export_zip(db: Session = Depends(get_session)) -> Response:
-    data = ProjectFsService(db).export_zip()
+def export_zip(
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> Response:
+    data = ProjectFsService(db, project).export_zip()
     return Response(
         content=data,
         media_type="application/zip",

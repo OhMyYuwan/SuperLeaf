@@ -73,6 +73,7 @@ class WorkflowOrchestrator:
         self,
         *,
         workflow_def_id: str,
+        project_id: str,
         document_id: str,
         target_text: str,
         range_start: int,
@@ -88,6 +89,7 @@ class WorkflowOrchestrator:
 
         # Create workflow run record
         workflow_run = WorkflowRun(
+            project_id=project_id,
             provider_id="",  # Will be set per agent
             workflow_id="",  # Not a single-agent run
             workflow_definition_id=workflow_def_id,
@@ -597,6 +599,7 @@ class WorkflowOrchestrator:
             nested_outputs = []
             async for event in nested_orchestrator.execute_workflow(
                 workflow_def_id=nested_workflow_id,
+                project_id=ctx.workflow_run.project_id,
                 document_id=ctx.document_id,
                 target_text=ctx.target_text,
                 range_start=ctx.target_range["from"],

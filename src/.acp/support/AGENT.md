@@ -2,14 +2,14 @@
 role: quick_entry
 project:
   name: YuwanLabWriter
-  description: Local-Web LaTeX-first research writing IDE with multi-Agent review (Dify-backed agentic layer)
+  description: Local-Web LaTeX-first research writing IDE with multi-Agent review (self-hosted orchestrator over Dify / Nanobot providers)
 acp_version: "1.0.0"
 profiles:
   kernel: required
   capability: enabled
   support: enabled
-active_request_id: REQ-0013
-last_completed_request_id: REQ-0012
+active_request_id: REQ-0026
+last_completed_request_id: REQ-0025
 entry_order:
   - .acp/support/AGENT.md
   - .acp/support/PROJECT_MAP.yaml
@@ -19,15 +19,24 @@ entry_order:
 primary_capabilities:
   - project-foundation
   - frontend-workspace
+  - frontend-topbar
+  - frontend-workspace-center
+  - frontend-file-tree
+  - frontend-preview
+  - frontend-right-panel
+  - frontend-annotations
+  - frontend-conversations
+  - frontend-mention-system
   - frontend-settings
   - frontend-stores
-  - frontend-annotations
   - latex-editor
+  - latex-compile
   - domain-model
   - backend-service
   - workflow-integration
+  - workflow-orchestration
   - build-tooling
-agent_hint: src/ is project root; never commit src/.acp/kernel or src/docs (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Agent/Workflow layer is NOT self-built — Dify owns it; our backend is a thin FastAPI proxy + SQLite persistence.
+agent_hint: src/ is project root; never commit src/.acp/kernel or src/docs (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
 ```
 
 # YuwanLabWriter Agent Guide
@@ -50,14 +59,49 @@ acp:
 
 ## Project Overview
 
-YuwanLabWriter is a local-Web research writing IDE. Goal: a LaTeX-first writing surface plus a multi-Agent review/polishing layer. **V2.1 pivot**: Dify owns the agentic layer (Workflow engine, Agent runtime, 4 collaboration modes). Our FastAPI backend is a thin proxy + persistence layer; our frontend owns editor depth, annotation anchoring, and history UI.
+YuwanLabWriter is a local-Web research writing IDE with a LaTeX-first editing
+surface plus a multi-Agent review/polishing/workflow layer.
 
-**Current build (as of REQ-0013 / W2a landing):**
-- ACP governance (kernel + support + capability): in place.
-- **Frontend** (`src/frontend/`): Vite + React 19 + TS + Zustand, four-pane Overleaf-style shell, CodeMirror 6 LaTeX editor module, Document/EditorState stores wired, Provider settings dialog + backend status badge.
-- **Backend** (`src/backend/`): FastAPI + SQLAlchemy + SQLite, Fernet-encrypted provider registry, `DifyClient` (probe / run blocking / run streaming SSE), `/api/providers` CRUD + probe + activate, `/api/health`.
-- **Dify integration**: `scripts/dify.sh` wraps the official `reference/dify/docker/docker-compose.yaml`. Dify is launched out-of-tree; our backend connects via its Workflow API.
-- **Not yet implemented**: workflow listing from Dify, end-to-end selection→Dify run→annotation (W2b); editor decorations + Accept/Reject (W3); discussion + history + custom Agent UI (W7–W9).
+**Version history:**
+
+- **V1** (REQ-0001..0012): four-pane Overleaf shell, CodeMirror 6 editor,
+  Document/EditorState stores, 14 unit tests.
+- **V2.1 pivot** (REQ-0013): self-built LLMClient replaced with Dify-as-backend.
+  FastAPI becomes a thin proxy + SQLite persistence.
+- **V2.2 pivot** (REQ-0015..0023): we re-introduced a **self-hosted
+  multi-agent orchestrator** (`backend/app/services/agent_orchestrator.py`,
+  ~1267 lines) that composes agents from multiple providers (Dify, Nanobot).
+  Dify/Nanobot clients now supply single-agent execution; our orchestrator
+  composes them into graphs (agent + loop node model with arbitrary nesting).
+  REQ-0024 added the @-mention system spanning AnnotationPanel and
+  DiscussionTab with file / workflow / agent candidates + multimodal
+  Nanobot bridge.
+
+**Current scope (post REQ-0024, planned V3 in docs/v3_executive_plan.md):**
+
+- **Frontend**: Vite + React 19 + TS + Zustand (10 stores), four-pane Overleaf
+  layout. Modules: topbar, file-tree, workspace-center (editor + toolbar +
+  annotation column + preview column), annotation-panel, right-panel
+  (Discussion / Team / Workflow / Definitions / Run History), workflow-canvas
+  (react-flow), shared (MentionInput + fileSizeGate), settings, latex-editor,
+  preview (latex + markdown).
+- **Backend**: FastAPI + SQLAlchemy + SQLite, Fernet-encrypted providers,
+  7 tables (Provider, CachedWorkflow, WorkflowRun, WorkflowDefinition,
+  Project/Folder/Doc/FileBlob, Conversation, Message). Routes: health,
+  providers, workflows (+runs, definitions, definition-execute), filesystem
+  (tree + upload), conversations (+SSE messages), compile.
+- **Providers**: Dify (workflow + chat-message APIs with SSE) and Nanobot
+  (OpenAI Chat Completions-style with session_id + multimodal content blocks).
+- **Self-hosted orchestrator**: agent + loop nodes, arbitrary nesting,
+  per-node test inspection, loop entry/exit handles, per-round feedback.
+- **Compile**: latexmk wrapper in `latex_compiler.py` + `/api/compile` +
+  `LatexPreview.tsx` (pdfjs-dist) + `compileStore`.
+- **V3 roadmap** (REQ-0025 / docs/v3_executive_plan.md): 4 phases over
+  6–8 weeks — editing ergonomics (position migration, bidirectional jump,
+  attached chips, error handling), workflow deepening (@workflow in
+  discussion, test-run fixtures, debate/consensus templates, type
+  unification), history (snapshot-based, 20-cap + 10-min cooldown), deploy
+  (Pandoc, Docker, handbook, demo).
 
 ## Working Rules
 
@@ -67,9 +111,15 @@ YuwanLabWriter is a local-Web research writing IDE. Goal: a LaTeX-first writing 
 - Every mutation goes through Request → Plan → Change. Save the kernel objects under `.acp/kernel/`.
 - Branch flow: real work on `YuwanZ`; promote via `develop` → `main`.
 - Privacy: `src/.acp/kernel/` and `src/docs/` are git-ignored and MUST stay out of git.
-- Do not build a self-hosted Workflow engine. If a feature fits Dify's model, extend Dify (via DSL or external plugin) rather than FastAPI.
+- **Orchestrator boundary**: extending `agent_orchestrator.py` within the
+  agent + loop node model is acceptable. Introducing a NEW node type
+  (debate, consensus, condition, merge as engine-level concepts) OR
+  swapping the run loop OR adding a DSL requires an explicit Request
+  (see `CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator`).
+  For debate / consensus patterns, prefer workflow templates (V3 Phase 2)
+  over engine changes.
 
-## Code Layout (snapshot)
+## Code Layout (snapshot, 2026-08)
 
 ```
 .
@@ -79,104 +129,103 @@ YuwanLabWriter is a local-Web research writing IDE. Goal: a LaTeX-first writing 
     ├── .acp/                                (governance, git-ignored)
     │   ├── version.yaml
     │   ├── kernel/{requests,plans,changes}/ (REQ/PLN/CHG-NNNN)
-    │   ├── support/                         (this guide + PROJECT_MAP / LOAD_RULES / CHANGE_POLICY)
+    │   ├── support/                         (AGENT.md + PROJECT_MAP + LOAD_RULES + CHANGE_POLICY)
     │   └── capability/capabilities.yaml
     ├── docs/                                (planning, git-ignored)
     │   ├── v1_executive_plan.tex
-    │   ├── v2_executive_plan.md             (V2 engineering plan, 12 weeks)
-    │   ├── v2_executive_plan.tex            (V2 investor plan, 12 weeks)
+    │   ├── v2_executive_plan.md / .tex      (V2 plan, 12 weeks — historical)
     │   ├── v2_1_amendment_dify.md           (V2 → Dify-backed pivot)
-    │   ├── architecture_data_flow.md        (8-layer data flow architecture)
-    │   ├── doubao_v1_optimized.tex
-    │   ├── doubao.tex
-    │   └── figma.md
+    │   ├── v3_executive_plan.md             (V3 — finishing posture, 6-8 weeks)
+    │   ├── architecture_data_flow.md        (8-layer data flow)
+    │   └── figma.md / doubao*.tex / ...
     ├── backend/                             (FastAPI + SQLite + Fernet)
     │   ├── pyproject.toml                   (uv-managed, Python 3.11+)
     │   └── app/
-    │       ├── __init__.py
-    │       ├── main.py                      (FastAPI entrypoint + CORS + router)
-    │       ├── settings.py                  (env/defaults, SQLite path, secrets key)
-    │       ├── database.py                  (engine, SessionLocal, init_db)
-    │       ├── models.py                    (Provider, CachedWorkflow, WorkflowRun)
-    │       ├── secrets_vault.py             (Fernet encrypt/decrypt for API keys)
+    │       ├── main.py                      (FastAPI + CORS + router)
+    │       ├── settings.py / database.py / secrets_vault.py
+    │       ├── models.py                    (7 tables)
     │       ├── schemas.py                   (Pydantic I/O)
     │       ├── api/
-    │       │   ├── __init__.py              (api_router aggregator)
-    │       │   ├── health.py                (/api/health)
-    │       │   └── providers.py             (/api/providers CRUD + probe + activate)
+    │       │   ├── __init__.py              (router aggregator)
+    │       │   ├── health.py
+    │       │   ├── providers.py
+    │       │   ├── workflows.py             (cached + runs + definitions + execute)
+    │       │   ├── filesystem.py            (project tree + upload)
+    │       │   ├── conversations.py         (SSE chat messages)
+    │       │   └── compile.py               (latexmk wrapper)
     │       └── services/
-    │           ├── __init__.py
-    │           ├── dify_client.py           (probe, run_blocking, run_streaming, run_detail)
-    │           └── provider_service.py      (registry invariants, probe + sync)
-    └── frontend/                            (Vite + React 19 + TS + Zustand)
-        ├── package.json / vite.config.ts / tsconfig*.json / eslint.config.js / tailwind.config.js
-        ├── index.html
-        ├── public/                          (favicon.svg, icons.svg)
+    │           ├── dify_client.py           (Dify SSE)
+    │           ├── nanobot_client.py        (OpenAI-style + multimodal)
+    │           ├── provider_service.py
+    │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
+    │           ├── project_fs_service.py    (SQLite file tree)
+    │           ├── latex_compiler.py        (latexmk subprocess)
+    │           └── attached_files.py        (@ file normalization)
+    └── frontend/
+        ├── package.json / vite.config.ts / tsconfig*.json / ...
         └── src/
-            ├── main.tsx                     (React root)
-            ├── App.tsx                      (workspace shell + ProviderBadge + SettingsDialog wiring)
-            ├── App.css / index.css
-            ├── assets/                      (placeholder hero/icons)
-            ├── __tests__/                   (Vitest)
-            │   ├── documentParser.test.ts
-            │   └── selectionContext.test.ts
+            ├── main.tsx / App.tsx / App.css
+            ├── __tests__/                   (Vitest: parser / selection / output)
             ├── services/
-            │   ├── backendApi.ts            (typed fetch client for our FastAPI)
-            │   ├── documentParser.ts        (content → DocumentStructure, LaTeX/Markdown/txt)
-            │   └── selectionContext.ts      (Selection + SelectionContext extractor)
+            │   ├── backendApi.ts            (typed fetch)
+            │   ├── filesystemApi.ts         (project tree)
+            │   ├── documentParser.ts        (→ DocumentStructure)
+            │   ├── selectionContext.ts
+            │   ├── outputParser.ts          (SSE → annotations)
+            │   ├── mentions.ts              (@ parsing + attached files)
+            │   └── rangeTracker.ts          (present; wiring in V3 Phase 1)
             ├── stores/
-            │   ├── documentStore.ts         (Zustand: documents map, active id, content updates)
-            │   ├── editorStore.ts           (Zustand: per-doc EditorState + selection)
-            │   ├── settingsStore.ts         (Zustand: mirrors /api/providers)
-            │   └── seedData.ts              (W1 seed files for demo)
-            ├── features/
-            │   ├── latex-editor/            (isolated CodeMirror 6 module)
-            │   │   ├── index.ts
-            │   │   ├── LatexEditor.tsx
-            │   │   ├── extensions.ts
-            │   │   ├── latex-language.ts
-            │   │   └── theme.ts
-            │   └── settings/                (Provider registry UI)
-            │       ├── index.ts
-            │       ├── SettingsDialog.tsx   (Radix Dialog: list / add / probe / activate / delete)
-            │       └── settings.css
-            └── types/                       (8-layer domain contracts)
-                ├── document.ts              (Document / Paragraph / Section / Citation / Metadata)
-                ├── editor.ts                (EditorState / Selection / SelectionContext)
-                ├── agent.ts                 (Agent / I/O / Annotation / Suggestion / Risk)
-                ├── workflow.ts              (Workflow / Node / Edge / Execution)
-                ├── collaboration.ts         (Discussion / Message / Participant / Modes)
-                ├── history.ts               (DocumentVersion / Operation / Diff)
-                ├── ui.ts                    (EditorDecoration / PanelViews)
-                └── actions.ts               (User action discriminated union)
+            │   ├── documentStore.ts
+            │   ├── editorStore.ts
+            │   ├── settingsStore.ts
+            │   ├── workflowStore.ts         (runs + definitions + SSE)
+            │   ├── annotationStore.ts
+            │   ├── filesystemStore.ts
+            │   ├── conversationStore.ts
+            │   ├── compileStore.ts
+            │   ├── viewStore.ts
+            │   └── seedData.ts
+            ├── types/                       (8-layer domain types)
+            └── features/
+                ├── latex-editor/            (CM6 + annotation-decorations)
+                ├── settings/                (SettingsDialog)
+                ├── topbar/                  (Topbar + ProviderBadge + ViewControl)
+                ├── file-tree/               (FileTree + OutlineList)
+                ├── preview/                 (LatexPreview + MarkdownPreview)
+                ├── workspace-center/        (EditorColumn + Toolbar + AnnotationColumn + PreviewColumn)
+                ├── annotation-panel/        (AnnotationPanel + CommentComposer)
+                ├── right-panel/             (RightPanel + Discussion/Team/Workflow/Definitions/RunHistory tabs)
+                │   └── workflow-canvas/     (react-flow + palette + inspector)
+                └── shared/                  (MentionInput + fileSizeGate)
 ```
 
-Repo-root tooling outside src/: `start.sh` (dev launcher), `scripts/dify.sh` (Dify wrapper), `.gitignore`, `README.md`, `README_EN.md`, `AGENTS.md`, `HANDBOOK.md`. Dify source under `reference/dify/` is external context — see `forbidden_paths`.
+Repo-root tooling: `start.sh`, `scripts/dify.sh`, `.gitignore`, `README(.md / _EN.md)`,
+`AGENTS.md`, `HANDBOOK.md`. External context under `reference/` is forbidden.
 
 ## Capabilities
 
 - **project-foundation** — ACP governance, planning docs, repo tooling, Dify launcher.
-  - slices: `_root`, `planning-docs`, `dify-launcher`
-- **frontend-workspace** — workspace shell + top bar; Team-management and Workflow-run tabs now read from `workflowStore` but still inline.
-  - slices: `shell`, `agent-panel`
-- **frontend-settings** — Provider registry UI + backend status badge.
-  - slices: `dialog`, `badge`
-- **frontend-stores** — Zustand state layer (document / editor / settings / workflow / annotation).
-  - slices: `document`, `editor`, `settings`, `workflow`, `annotation`
-- **frontend-annotations** — Annotation card panel + CodeMirror decoration plugin. Owns Accept / Delete / Continue (with Dify conversation_id) semantics.
-  - slices: `panel`, `decorations`
-- **latex-editor** — self-contained editor module under `features/latex-editor/`. Now also hosts the annotation-decorations plugin (underlines + click handler).
-  - slices: `shell`, `extensions`, `language`, `theme`, `decorations`
-- **domain-model** — TypeScript contracts in `types/` (all 8 layers).
-  - slices: `document`, `editor`, `agent`, `workflow`, `collaboration`, `history`, `ui`, `actions`
-- **backend-service** — FastAPI proxy + SQLite persistence.
-  - slices: `app-entry`, `api-routes`, `services`, `models`, `secrets`
-- **workflow-integration** — Dify API client + provider orchestration (cross-cutting between backend-service and frontend-settings/annotations).
-  - slices: `dify-client`, `provider-registry`, `workflow-run`
-- **build-tooling** — Vite, TS, ESLint, Tailwind, PostCSS configs + backend pyproject.
-  - slices: `vite`, `typescript`, `lint-style`, `backend-pyproject`
+- **frontend-workspace** — App.tsx shell: bootstrap, layout, cross-panel store wiring.
+- **frontend-topbar** — top bar + ProviderBadge + view controls.
+- **frontend-workspace-center** — editor + toolbar + annotation column + preview column.
+- **frontend-file-tree** — left-column project tree + outline.
+- **frontend-preview** — LaTeX / Markdown preview renderers.
+- **frontend-settings** — Provider registry dialog.
+- **frontend-stores** — 10 Zustand stores.
+- **frontend-annotations** — AnnotationPanel + decorations; CommentComposer + continue composer.
+- **frontend-right-panel** — tabbed right panel (Discussion / Team / Workflow / Definitions / History). Alias of historical `frontend-workspace/agent-panel`.
+- **frontend-conversations** — doc-scoped chat (UI + store + backend).
+- **frontend-mention-system** — @-mention infrastructure (parser + input component + backend contract). Shared by annotations + discussion.
+- **latex-editor** — self-contained editor module.
+- **latex-compile** — latexmk → PDF pipeline (backend + frontend).
+- **domain-model** — TypeScript contracts across 8 layers.
+- **backend-service** — FastAPI + SQLite core.
+- **workflow-integration** — provider clients (Dify + Nanobot) + provider registry + single-agent run lifecycle.
+- **workflow-orchestration** — V2.2 self-hosted multi-agent orchestrator + definition API + visual canvas + templates. Canonical baseline.
+- **build-tooling** — Vite, TS, ESLint, Tailwind, PostCSS, pyproject.
 
-Each slice has `route_here_when` and `bridge_when` clauses in `capabilities.yaml`. Use them to pick the smallest sufficient authority boundary.
+Each slice has `route_here_when` and `bridge_when` clauses in `capabilities.yaml`.
+Use them to pick the smallest sufficient authority boundary.
 
 ## How To Start a New Task
 
@@ -187,27 +236,34 @@ Each slice has `route_here_when` and `bridge_when` clauses in `capabilities.yaml
 5. **Execute** within the Plan's File Matrix. If scope expands, pause and re-plan rather than silently widening the Request.
 6. **Commit** on the `YuwanZ` branch with a Conventional Commits message.
 7. **Record a Change** at `src/.acp/kernel/changes/CHG-NNNN.yaml` with the commit SHA.
-8. **Update this AGENT.md** if the active capability list, slices, or layout changed.
+8. **Update this AGENT.md** only when active capabilities, slices, or layout fundamentally change. Routine work does not require AGENT.md edits.
 
-## Recent Kernel Activity
+## Recent Kernel Activity (abridged)
 
-- REQ-0001..0011 (closed): ACP init, planning docs, V1 executive plan, git workflow, frontend init, workspace shell, dev launcher, isolated LaTeX editor module, ACP backfill, ACP refresh.
-- REQ-0012 (W1 complete): V2 plan (12-week, 8-layer) + TypeScript type definitions + Document/Editor stores + DocumentParser/SelectionContextExtractor + 14/14 unit tests + App.tsx refactored to store-driven.
-- REQ-0013 (active, W2a + W2b + W3 complete): Pivoted backend from self-built Workflow engine to Dify-as-backend. Delivered FastAPI skeleton, Provider CRUD, DifyClient (SSE, chat/workflow dispatch, trust_env fix), settings UI with probe + activation, scripts/dify.sh launcher, start.sh dual-stack. W2b: /api/workflows list + run proxy + Team/Workflow tabs reading Dify live. W3: liberal outputParser (strict / fenced / plain-text), annotationStore (accept/delete/continue with conversation_id), CodeMirror underline decoration plugin, AnnotationPanel card UI with three actions, App.tsx wired to real annotation data.
+- **REQ-0001..0011 (closed)**: ACP init, planning docs, V1 executive plan, git workflow, frontend init, workspace shell, dev launcher, isolated LaTeX editor module, ACP backfill + refresh.
+- **REQ-0012 (closed)**: V2 plan (12-week, 8-layer), TS types, Document/Editor stores, DocumentParser + SelectionContext, 14/14 unit tests, App.tsx store-driven.
+- **REQ-0013 (closed)**: **V2.1 pivot** — Dify-as-backend. FastAPI skeleton, Provider CRUD + probe + activate, DifyClient SSE, Settings UI, scripts/dify.sh, /api/workflows + Team/Workflow tabs, outputParser + annotationStore + CodeMirror decoration plugin + AnnotationPanel.
+- **REQ-0014 (closed)**: Nanobot provider support (OpenAI Chat Completions-style).
+- **REQ-0015..0018 (closed)**: **V2.2 pivot** — self-hosted multi-agent orchestrator with nested composition; agent + loop container model; additional_prompt; LAN-aware default endpoint; Nanobot API port exposure.
+- **REQ-0019..0023 (closed)**: Workflow canvas hardening — input/output boundary artifacts, editor ergonomics + test-run panel, node healthcheck, per-node I/O inspection, loop entry/exit + round feedback semantics.
+- **REQ-0024 (closed)**: @-mention system — files + workflows + agents, multimodal Nanobot bridge, attached-files normalizer, overlay highlight input, current-doc pinning, user-comment editor decoration.
+- **REQ-0025 (closed)**: V3 executive plan — finishing posture, 4 phases over 6-8 weeks, snapshot history with 20-cap + 10-min cooldown, debate/consensus as templates.
+- **REQ-0026 (active)**: V2.2 governance refresh — this document plus PROJECT_MAP, capabilities, LOAD_RULES, CHANGE_POLICY.
 
 Track full lineage in `.acp/kernel/changes/`. Every CHG-NNNN names its commit SHA (or `local-only` for kernel-only / docs-only Changes).
 
-## Open Questions / Next Tracks
+## Open Tracks
 
-- **W3.6 (tail of current Request)**: position mapping on document edits — use CodeMirror Transaction `changes.mapPos` so annotations survive inserts/deletes before their range. Currently a plain edit may leave stale ranges.
-- **W4 (collapsed from original W4-W6)**: Dify workflow template library (Sequential/Parallel/Debate DSL samples) + cross-run conflict detection + resolution UI. No self-built react-flow editor; Dify's canvas remains the authoring surface.
-- **W7**: Discussion region tied to document positions; `@<agent>` mentions route to Dify runs; separate from the per-card `Continue` thread already shipped in W3.
-- **W8**: `DocumentVersion` + `Operation` persistence on our side (Dify's own execution trace stays in Dify).
-- **Agent panel extraction**: Team-management + Workflow-run tabs are now wired to `workflowStore`, but still rendered inline in App.tsx. Extract to their own feature module when W4 lands.
+Per `docs/v3_executive_plan.md`:
+- **Phase 1 (W1–W2)**: range mapping (rangeTracker wiring), bidirectional annotation jump, attached-file chips in AnnotationPanel, React ErrorBoundary + timeout + skeleton.
+- **Phase 2 (W3–W4)**: @workflow in DiscussionTab triggers executeDefinition, workflow test-run as fixture, debate/consensus templates, type unification (types/workflow.ts vs backendApi.ts).
+- **Phase 3 (W5–W6)**: Snapshot-based DocumentVersion (20 cap, 10-min cooldown, locked snapshots), diff view, restore, lightweight Operation audit log, Agent statistics.
+- **Phase 4 (W7–W8)**: Pandoc conversion, docker-compose (full + minimal), user manual, developer docs, demo video, LaTeX investor version.
 
 ## Notes
 
-- Agent panel tabs (discussion / team / workflow) in `App.tsx` are still **mock state**. They will be replaced one at a time as W2b–W9 land. Do not expand mocks silently — open new slices.
 - The editor module is intentionally isolated; replacements (e.g., switching to a Lezer LaTeX grammar) should stay inside `frontend/src/features/latex-editor/` and be tagged `high_risk` per CHANGE_POLICY.
 - `scripts/dify.sh` is the only sanctioned way to start local Dify. Do not write bespoke Dify bootstrapping into `start.sh` or `docker-compose.yml`; keep Dify's stack isolated.
 - Provider API keys are Fernet-encrypted at rest in `~/.yuwanlab/yuwanlab.db`. Key lives at `~/.yuwanlab/secrets.key` (mode 600). Rotating the key invalidates all stored keys.
+- **Attached files** (from @-mention) are capped: frontend 50 KB/file + 200 KB total; backend re-caps at 80 KB/file + 320 KB total + ≤10 files. Images go through Nanobot multimodal content blocks by URL; Dify path is text-stub only.
+- **V3 design commitments**: history is snapshot-based (NOT operation-log OT/CRDT); W6 collaboration modes are templates (NOT engine-level node types). Deviation requires a new governance Request.

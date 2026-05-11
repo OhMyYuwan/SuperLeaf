@@ -17,11 +17,12 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Conversation, Message
+from ..models import CachedWorkflow, Conversation, Message, Project
 from ..schemas import (
     ConversationCreateIn,
     ConversationOut,
     ConversationUpdateIn,
+    MessageInjectIn,
     MessageOut,
     MessageSendIn,
 )
@@ -33,6 +34,7 @@ from ..services.attached_files import (
     normalize_attached_files,
     render_attached_files_block,
 )
+from .deps import get_current_project
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -40,6 +42,7 @@ router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") -> ConversationOut:
     return ConversationOut(
         id=c.id,
+        project_id=c.project_id,
         document_id=c.document_id,
         workflow_id=c.workflow_id,
         title=c.title,
@@ -56,8 +59,9 @@ def list_conversations(
     document_id: str | None = None,
     workflow_id: str | None = None,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> list[ConversationOut]:
-    q = db.query(Conversation)
+    q = db.query(Conversation).filter(Conversation.project_id == project.id)
     if document_id:
         q = q.filter(Conversation.document_id == document_id)
     if workflow_id:
@@ -93,12 +97,15 @@ def list_conversations(
 
 @router.post("", response_model=ConversationOut, status_code=201)
 def create_conversation(
-    body: ConversationCreateIn, db: Session = Depends(get_session)
+    body: ConversationCreateIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> ConversationOut:
     cw = db.get(CachedWorkflow, body.workflow_id)
     if cw is None:
         raise HTTPException(404, "Agent (workflow) not found")
     conv = Conversation(
+        project_id=project.id,
         document_id=body.document_id,
         workflow_id=body.workflow_id,
         title=body.title or cw.name,
@@ -110,9 +117,13 @@ def create_conversation(
 
 
 @router.get("/{conversation_id}", response_model=ConversationOut)
-def get_conversation(conversation_id: str, db: Session = Depends(get_session)) -> ConversationOut:
+def get_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> ConversationOut:
     c = db.get(Conversation, conversation_id)
-    if c is None:
+    if c is None or c.project_id != project.id:
         raise HTTPException(404, "Conversation not found")
     return _to_out(c)
 
@@ -122,9 +133,10 @@ def update_conversation(
     conversation_id: str,
     body: ConversationUpdateIn,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ) -> ConversationOut:
     c = db.get(Conversation, conversation_id)
-    if c is None:
+    if c is None or c.project_id != project.id:
         raise HTTPException(404, "Conversation not found")
     if body.title is not None:
         c.title = body.title
@@ -135,9 +147,13 @@ def update_conversation(
 
 
 @router.delete("/{conversation_id}", status_code=204)
-def delete_conversation(conversation_id: str, db: Session = Depends(get_session)) -> None:
+def delete_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> None:
     c = db.get(Conversation, conversation_id)
-    if c is None:
+    if c is None or c.project_id != project.id:
         return None
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(c)
@@ -145,9 +161,13 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_session)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageOut])
-def list_messages(conversation_id: str, db: Session = Depends(get_session)) -> list[MessageOut]:
+def list_messages(
+    conversation_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> list[MessageOut]:
     c = db.get(Conversation, conversation_id)
-    if c is None:
+    if c is None or c.project_id != project.id:
         raise HTTPException(404, "Conversation not found")
     rows = (
         db.query(Message)
@@ -163,6 +183,7 @@ async def send_message(
     conversation_id: str,
     body: MessageSendIn,
     db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
 ):
     """Send a user message; stream the agent reply back via SSE.
 
@@ -173,7 +194,7 @@ async def send_message(
       - ylw.msg.failed    on error
     """
     conv = db.get(Conversation, conversation_id)
-    if conv is None:
+    if conv is None or conv.project_id != project.id:
         raise HTTPException(404, "Conversation not found")
     cw = db.get(CachedWorkflow, conv.workflow_id)
     if cw is None:
@@ -363,3 +384,36 @@ async def send_message(
         }
 
     return EventSourceResponse(event_gen())
+
+
+@router.post("/{conversation_id}/messages/inject", response_model=MessageOut, status_code=201)
+def inject_message(
+    conversation_id: str,
+    body: MessageInjectIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> MessageOut:
+    """Persist a pre-composed message without running the conversation's agent.
+
+    Used by @workflow dispatches from the discussion surface: the orchestrator
+    runs the workflow independently, and the caller wants to deposit the
+    resulting summary into the conversation history so the chat stays a
+    single, linear narrative.
+    """
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id:
+        raise HTTPException(404, "Conversation not found")
+
+    msg = Message(
+        conversation_id=conversation_id,
+        role=body.role,
+        content=body.content,
+        range_start=body.range_start,
+        range_end=body.range_end,
+        error=body.error or "",
+    )
+    db.add(msg)
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(msg)
+    return MessageOut.model_validate(msg)

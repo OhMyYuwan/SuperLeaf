@@ -3,7 +3,15 @@
 # Each capability is a semantic surface, not a directory. Slices are the
 # narrowest authority boundaries; routing fields below are the contract that
 # keeps future Requests on rails.
-# Refreshed 2026-05-08 for REQ-0013 (Dify pivot + backend + stores + settings).
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+#
+# Alias notes for historical kernel records:
+#   * `frontend-workspace/agent-panel` in REQ-0001..0013 refers to the
+#     surface that has since been extracted into `frontend-right-panel`.
+#   * `workflow-integration/workflow-run` is no longer a placeholder; its
+#     modern successor is the `workflow-orchestration` capability below,
+#     plus the refreshed `workflow-integration/workflow-run` slice that
+#     describes current behavior.
 
 capabilities:
   - id: project-foundation
@@ -24,7 +32,7 @@ capabilities:
           - ../README.md
           - ../AGENTS.md
       - id: planning-docs
-        summary: Planning documents under src/docs/ (v1/v2 executive plans, architecture data flow, amendments).
+        summary: Planning documents under src/docs/ (v1 / v2 / v3 executive plans, architecture data flow, amendments).
         route_here_when: Work authors or revises product/architecture/plan documents.
         bridge_when: A plan implies code work — record a separate Request for the code change.
         primary_paths:
@@ -32,6 +40,7 @@ capabilities:
           - docs/v2_executive_plan.md
           - docs/v2_executive_plan.tex
           - docs/v2_1_amendment_dify.md
+          - docs/v3_executive_plan.md
           - docs/architecture_data_flow.md
       - id: dify-launcher
         summary: Wrapper script around Dify's official docker-compose stack under reference/dify/docker/.
@@ -42,135 +51,390 @@ capabilities:
 
   - id: frontend-workspace
     name: Frontend Workspace
-    summary: The local-Web React + Vite writing IDE shell that hosts the editor, file/outline navigation, and the (legacy mock) agent panel.
+    summary: The local-Web React + Vite writing IDE shell. Composes topbar + left file tree + center workspace + right panel. Holds cross-panel bootstrap and store wiring.
     slices:
       - id: shell
-        summary: Top-bar, four-pane layout, panel composition, ProviderBadge, file/outline rendering from Zustand stores, and global styles in App.tsx/App.css.
-        route_here_when: Work changes overall layout, top-bar actions, badge behavior, or shell-level styles.
-        bridge_when: Layout changes need new contracts with the editor, settings dialog, or agent panel — split into slice Requests.
+        summary: App.tsx entrypoint — store bootstrap (filesystem / providers / workflows), layout composition (4-column Overleaf layout), decoration specs derivation, pending-comment state.
+        route_here_when: Work changes overall layout, shell-level state derivation, or store bootstrap order.
+        bridge_when: Layout changes need new contracts with topbar / file-tree / workspace-center / right-panel — split into slice Requests.
         primary_paths:
           - frontend/src/App.tsx
           - frontend/src/App.css
           - frontend/src/main.tsx
           - frontend/src/index.css
           - frontend/index.html
-      - id: agent-panel
-        summary: Right-side tabbed Agent panel — discussion, team management, inline workflow node list. Currently mock state embedded in App.tsx; will be extracted in W4-W9.
-        route_here_when: Work changes Agent team UI, discussion thread UI, or the local workflow-node mock list.
-        bridge_when: Wiring real runs requires workflow-integration slices; wiring real team management requires Dify app metadata.
+
+  - id: frontend-topbar
+    name: Frontend Topbar
+    summary: Top bar with app title, ProviderBadge (backend status + active provider), view controls for column toggles.
+    slices:
+      - id: bar
+        summary: Topbar + its buttons. Triggers SettingsDialog open, view-store column toggles.
+        route_here_when: Work changes top-bar affordances, shortcuts, or header identity.
+        bridge_when: New buttons invoke other features — route through their capabilities.
         primary_paths:
-          - frontend/src/App.tsx
-        note: Agent-panel state still lives inline in App.tsx. When extracted, move primary_paths into the new feature module and add it to PROJECT_MAP.
+          - frontend/src/features/topbar/Topbar.tsx
+          - frontend/src/features/topbar/ViewControl.tsx
+          - frontend/src/features/topbar/topbar.css
+      - id: badge
+        summary: ProviderBadge component reflecting backend reachability + active provider status (Dify / Nanobot / offline).
+        route_here_when: Work changes the badge's tones, tooltip, or click target.
+        bridge_when: Additional status signals require new backend fields.
+        primary_paths:
+          - frontend/src/features/topbar/ProviderBadge.tsx
+          - frontend/src/features/topbar/topbar.css
+
+  - id: frontend-workspace-center
+    name: Frontend Workspace Center
+    summary: Center workspace column — editor + toolbar + annotation column + preview column. Hosts the CodeMirror mount, annotation-decorations integration, and selection-driven comment pending state.
+    slices:
+      - id: editor-column
+        summary: EditorColumn + EditorToolbar — composes LatexEditor, wires decorationSpecs, handles selection toolbar for add-comment.
+        route_here_when: Work changes editor mounting, toolbar, selection toolbar, or decoration wiring.
+        bridge_when: Decoration style changes ride through frontend-annotations/decorations.
+        primary_paths:
+          - frontend/src/features/workspace-center/EditorColumn.tsx
+          - frontend/src/features/workspace-center/EditorToolbar.tsx
+          - frontend/src/features/workspace-center/workspace-center.css
+      - id: annotation-column
+        summary: Right-of-editor narrow annotation column — hosts the AnnotationPanel inside workspace-center layout.
+        route_here_when: Work changes how AnnotationPanel integrates into the center column.
+        bridge_when: Panel content changes — see frontend-annotations.
+        primary_paths:
+          - frontend/src/features/workspace-center/AnnotationColumn.tsx
+      - id: preview-column
+        summary: Preview column — switches between LatexPreview and MarkdownPreview based on current doc format.
+        route_here_when: Work changes format-switch logic or preview-column sizing.
+        bridge_when: Actual renderer changes — see frontend-preview.
+        primary_paths:
+          - frontend/src/features/workspace-center/PreviewColumn.tsx
+
+  - id: frontend-file-tree
+    name: Frontend File Tree
+    summary: Left-column project tree + outline list. Drives activeDocumentId changes in documentStore; supports rename/create/delete/drag.
+    slices:
+      - id: tree
+        summary: FileTree component — renders filesystemStore.tree; CRUD + drag-and-drop wiring; icons per mime.
+        route_here_when: Work changes tree rendering, CRUD affordances, or drag semantics.
+        bridge_when: Tree schema changes — see filesystemStore.
+        primary_paths:
+          - frontend/src/features/file-tree/FileTree.tsx
+          - frontend/src/features/file-tree/file-tree.css
+      - id: outline
+        summary: OutlineList — derived from active document's DocumentStructure.sections; click jumps editor to position.
+        route_here_when: Work changes outline rendering, scroll-sync, or heading styles.
+        bridge_when: Structure-extraction logic change — see documentParser.
+        primary_paths:
+          - frontend/src/features/file-tree/OutlineList.tsx
+
+  - id: frontend-preview
+    name: Frontend Preview
+    summary: Document preview renderers — LaTeX (via latexmk -> PDF.js) and Markdown (markdown-it + KaTeX).
+    slices:
+      - id: latex
+        summary: LatexPreview component — requests compile via compileStore, renders PDF via pdfjs-dist.
+        route_here_when: Work changes LaTeX preview rendering, compile triggering, or PDF display.
+        bridge_when: Compile contract changes — see latex-compile capability.
+        primary_paths:
+          - frontend/src/features/preview/LatexPreview.tsx
+          - frontend/src/features/preview/latex-preview.css
+      - id: markdown
+        summary: MarkdownPreview — markdown-it with KaTeX plugin; live-updates from documentStore.
+        route_here_when: Work changes Markdown rendering, plugin set, or math support.
+        bridge_when: Pandoc conversion added — future separate capability.
+        primary_paths:
+          - frontend/src/features/preview/MarkdownPreview.tsx
+          - frontend/src/features/preview/markdown-preview.css
 
   - id: frontend-annotations
     name: Frontend Annotations
-    summary: Card-based UI for Dify-produced annotations / suggestions / risks, plus the CodeMirror underline decoration plugin that anchors them in the editor. Owns Accept / Delete / Continue-query semantics.
+    summary: Card-based UI for annotations / suggestions / risks / user-comments. Hosts CommentComposer + continue composer. Integrates with mention system for @-mention routing to agents / workflows / files.
     slices:
       - id: panel
-        summary: AnnotationPanel component — card list with three actions. Accept writes suggestions back to documentStore; Delete hides the card; Continue posts a follow-up query reusing Dify conversation_id.
-        route_here_when: Work changes card rendering, action semantics, or the follow-up composer.
-        bridge_when: New card fields require annotationStore changes and potentially outputParser changes.
+        summary: AnnotationPanel — card list with Accept / Delete / Continue. Composer for new user-comment with @-mention, and inline continue composer with @-mention.
+        route_here_when: Work changes card rendering, action semantics, composer behavior, or continue-thread logic.
+        bridge_when: Changes interact with annotationStore, mention system, or editor decorations.
         primary_paths:
           - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+          - frontend/src/features/annotation-panel/CommentComposer.tsx
           - frontend/src/features/annotation-panel/annotation-panel.css
           - frontend/src/features/annotation-panel/index.ts
           - frontend/src/stores/annotationStore.ts
           - frontend/src/services/outputParser.ts
       - id: decorations
-        summary: CodeMirror plugin that renders underline marks for each annotation and emits click events so the host can focus the matching card.
-        route_here_when: Work changes underline styles, click handling, or decoration state machine.
-        bridge_when: Changes interact with latex-editor/shell (the editor mounts the plugin) and with the panel (which drives active id).
+        summary: CodeMirror plugin that renders marks for each annotation kind (annotation wavy yellow, suggestion solid blue, risk wavy red, user-comment solid yellow) and emits click events to host.
+        route_here_when: Work changes underline styles, hover behavior, click dispatch, or new decoration kinds.
+        bridge_when: New kinds require paired annotationStore + AnnotationPanel updates.
         primary_paths:
           - frontend/src/features/latex-editor/annotation-decorations.ts
+          - frontend/src/App.css   # decoration class CSS lives here
+
+  - id: frontend-right-panel
+    name: Frontend Right Panel
+    summary: |
+      Right-side tabbed panel. Tabs: Discussion (doc-scoped chats with agents),
+      Team (provider + agent management), Workflow (cached agent list + inline
+      run history), Workflow Definitions (custom multi-agent workflows with
+      canvas), Run History (SSE trace of past runs).
+      (Alias: `frontend-workspace/agent-panel` from REQ-0001..0013.)
+    slices:
+      - id: panel-shell
+        summary: RightPanel component — tab switching, header layout.
+        route_here_when: Work changes tab set or panel composition.
+        bridge_when: New tab requires its own slice here + its own store.
+        primary_paths:
+          - frontend/src/features/right-panel/RightPanel.tsx
+          - frontend/src/features/right-panel/right-panel.css
+      - id: discussion
+        summary: DiscussionTab — chat-style conversations per (document × agent). Supports @-mention of agents / workflows / files; auto-attaches selection context; SSE streaming.
+        route_here_when: Work changes discussion UI, conversation lifecycle, or mention handling in discussion.
+        bridge_when: Message contract changes — see conversationStore + conversations API.
+        primary_paths:
+          - frontend/src/features/right-panel/DiscussionTab.tsx
+          - frontend/src/features/right-panel/discussion.css
+      - id: team
+        summary: TeamTab — provider CRUD entry point; agent cards per provider; enable/disable; chat-with-agent entry into Discussion.
+        route_here_when: Work changes team-management UI, agent listings, or provider sync UX.
+        bridge_when: Provider schema changes — see workflow-integration/provider-registry.
+        primary_paths:
+          - frontend/src/features/right-panel/TeamTab.tsx
+      - id: workflow-tab
+        summary: WorkflowTab — cached agent-workflow listing + per-agent run history, invoked from editor selection.
+        route_here_when: Work changes how agent workflows are displayed or invoked inline.
+        bridge_when: Run contract changes — see workflow-integration/workflow-run.
+        primary_paths:
+          - frontend/src/features/right-panel/WorkflowTab.tsx
+      - id: workflow-definitions
+        summary: WorkflowDefinitionsPanel + WorkflowDefinitionEditor — CRUD for user-authored multi-agent workflows; embeds workflow-canvas for visual editing; test-run panel.
+        route_here_when: Work changes definition CRUD, editor layout, or test-run inspection UI.
+        bridge_when: Graph schema or test-run event shape change — see workflow-orchestration.
+        primary_paths:
+          - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+          - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+      - id: run-history
+        summary: RunHistoryTab — lists past WorkflowRun entries per document; click reopens the trace.
+        route_here_when: Work changes history listing, filters, or replay UX.
+        bridge_when: WorkflowRun schema changes — see backend-service/models.
+        primary_paths:
+          - frontend/src/features/right-panel/RunHistoryTab.tsx
+
+  - id: frontend-feature-workflow-canvas
+    name: Workflow Canvas
+    summary: Visual multi-agent workflow editor (react-flow / @xyflow/react). Agent + loop node model with arbitrary nesting. Embedded inside WorkflowDefinitionEditor.
+    slices:
+      - id: canvas
+        summary: WorkflowCanvas — react-flow mount, drag-and-drop, edge validation, health check integration.
+        route_here_when: Work changes canvas interactions, edge rules, or react-flow wiring.
+        bridge_when: Node type additions (beyond agent/loop) escalate to high_risk — see CHANGE_POLICY.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+          - frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
+      - id: palette
+        summary: NodePalette — source of draggable node templates.
+        route_here_when: Work changes available node types or palette UX.
+        bridge_when: New node type requires orchestrator + type updates.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+      - id: inspector
+        summary: NodeInspector — right-side node config form (agent-id picker, additional_prompt, loop config).
+        route_here_when: Work changes per-node configuration fields or validation.
+        bridge_when: Config schema changes — see frontend-stores/workflow + backend models.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+      - id: nodes
+        summary: Visual node components (AgentNode, LoopNode, InputNode, OutputNode).
+        route_here_when: Work changes node rendering, status indicators, or capsule UI.
+        bridge_when: Status events change — see workflow-orchestration.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+      - id: graph-conversion
+        summary: graphConversion + health — convert between react-flow state and persisted graph JSON; health check (reachability, missing-agent detection).
+        route_here_when: Work changes graph persistence or validation.
+        bridge_when: Backend graph schema changes — see backend-service/models.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+          - frontend/src/features/right-panel/workflow-canvas/health.ts
+
+  - id: frontend-conversations
+    name: Frontend Conversations
+    summary: Chat-style doc-scoped conversations with agents. Spans DiscussionTab (UI) + conversationStore (state) + /api/conversations (backend).
+    slices:
+      - id: store
+        summary: conversationStore — per-conversation message list, SSE streaming delta accumulation, create/delete/title update, send-message lifecycle.
+        route_here_when: Work changes message send/stream/persist logic or conversation lifecycle.
+        bridge_when: Backend conversation API schema change.
+        primary_paths:
+          - frontend/src/stores/conversationStore.ts
+          - frontend/src/services/backendApi.ts
+      - id: api
+        summary: /api/conversations CRUD + SSE message streaming (user → agent reply). Weaves attached-files into prompt; handles Dify + Nanobot paths.
+        route_here_when: Work changes message send/stream behavior, attached-files weaving, or conversation persistence.
+        bridge_when: Attached-files contract change — see frontend-mention-system + CHANGE_POLICY.
+        primary_paths:
+          - backend/app/api/conversations.py
+          - backend/app/services/attached_files.py
+
+  - id: frontend-mention-system
+    name: Frontend Mention System
+    summary: |
+      @-mention infrastructure shared across AnnotationPanel (CommentComposer +
+      continue composer) and DiscussionTab. Parses @Agent / @Workflow / @File
+      tokens; resolves files to attached content (text) or multimodal URLs
+      (images); gates large files behind confirmation; highlights mentions
+      inline via mirror overlay.
+    slices:
+      - id: parser
+        summary: mentions.ts — parseMentions, segmentText, formatInsertion, uniqueMentionedAgents/Files/Workflows, flattenFileCandidates, sortFilesCurrentFirst, truncateForLLM, resolveAttachedFiles, buildAgentPrompt.
+        route_here_when: Work changes mention parsing, candidate shape, prompt assembly, or file resolution.
+        bridge_when: New candidate kind — update MentionInput dropdown + rendering callers.
+        primary_paths:
+          - frontend/src/services/mentions.ts
+      - id: input-component
+        summary: MentionInput + fileSizeGate — shared textarea with dropdown + highlight overlay; large-file confirmation dialog.
+        route_here_when: Work changes input rendering, dropdown UX, overlay highlight, or size-gate thresholds.
+        bridge_when: Parser contract change — see parser slice.
+        primary_paths:
+          - frontend/src/features/shared/MentionInput.tsx
+          - frontend/src/features/shared/fileSizeGate.ts
+          - frontend/src/features/shared/mention-input.css
+      - id: backend-contract
+        summary: attached_files.py — server-side normalize / clip / render for attached files; shared between conversations and workflows routes.
+        route_here_when: Work changes per-file caps, total-budget caps, or rendered block format.
+        bridge_when: Multimodal payload shape change — see workflow-integration/nanobot-client.
+        primary_paths:
+          - backend/app/services/attached_files.py
 
   - id: frontend-settings
     name: Frontend Settings UI
-    summary: Provider registry management surface — dialog for CRUD + probe + activation, plus the backend status badge rendered in the top bar.
+    summary: Provider registry management surface — dialog for CRUD + probe + activation.
     slices:
       - id: dialog
-        summary: Radix Dialog that lists providers and hosts the add/edit form (Dify local / Dify cloud / Claude direct).
+        summary: Radix Dialog that lists providers and hosts the add/edit form (Dify local / Dify cloud / Nanobot).
         route_here_when: Work changes provider CRUD UX, form validation, or supported provider kinds.
-        bridge_when: New provider kind requires new backend DifyClient variant — coordinate with workflow-integration.
+        bridge_when: New provider kind requires new backend client — coordinate with workflow-integration.
         primary_paths:
           - frontend/src/features/settings/SettingsDialog.tsx
           - frontend/src/features/settings/settings.css
           - frontend/src/features/settings/index.ts
-      - id: badge
-        summary: ProviderBadge component in App.tsx that reflects backend reachability + active provider status.
-        route_here_when: Work changes the badge's tones, tooltip, or click target.
-        bridge_when: Additional status signals (e.g. Dify quota) require new backend fields.
-        primary_paths:
-          - frontend/src/App.tsx
-          - frontend/src/App.css
 
   - id: frontend-stores
     name: Frontend State Layer
-    summary: Zustand stores that hold the single source of truth on the client: document map, per-doc editor state, provider registry mirror.
+    summary: Zustand stores that hold single source of truth on the client — 10 stores.
     slices:
       - id: document
-        summary: documentStore — Document map, active id, content updates re-parse structure.
+        summary: documentStore — documents map, active id, content updates re-parse structure.
         route_here_when: Work changes how documents are loaded, activated, or mutated on the client.
         bridge_when: Schema changes to Document propagate across editor / parser / selection.
         primary_paths:
           - frontend/src/stores/documentStore.ts
           - frontend/src/stores/seedData.ts
       - id: editor
-        summary: editorStore — per-doc EditorState with derived Selection (context extracted via services/selectionContext).
+        summary: editorStore — per-doc EditorState with derived Selection.
         route_here_when: Work changes selection handling, cursor/viewport tracking, focus paragraph derivation.
-        bridge_when: Selection shape changes force updates to future Agent run inputs.
+        bridge_when: Selection shape changes force updates to Agent run inputs.
         primary_paths:
           - frontend/src/stores/editorStore.ts
       - id: settings
-        summary: settingsStore — mirrors /api/providers and exposes load/create/update/delete/activate/probe actions.
-        route_here_when: Work changes provider sync semantics, active-provider invariants, or error handling in the settings layer.
-        bridge_when: New provider fields require schema updates in backendApi + backend schemas.
+        summary: settingsStore — mirrors /api/providers; load/create/update/delete/activate/probe.
+        route_here_when: Work changes provider sync semantics, active-provider invariants, or error handling.
+        bridge_when: New provider fields require schema updates.
         primary_paths:
           - frontend/src/stores/settingsStore.ts
           - frontend/src/services/backendApi.ts
       - id: workflow
-        summary: workflowStore — list + run Dify workflows with SSE; also routes `ylw.run.finished` events through outputParser into annotationStore.
-        route_here_when: Work changes how Dify runs are dispatched, events are parsed, or outputs are handed to the annotation layer.
-        bridge_when: New event types surface that need new annotation kinds or new UI views.
+        summary: workflowStore — cached workflows + workflow definitions CRUD; run (single-agent) + executeDefinition (multi-agent); SSE event consumption; annotation ingestion via outputParser.
+        route_here_when: Work changes how runs are dispatched, events parsed, or outputs ingested.
+        bridge_when: New SSE event surface — may require outputParser + annotationStore updates.
         primary_paths:
           - frontend/src/stores/workflowStore.ts
           - frontend/src/services/backendApi.ts
           - frontend/src/services/outputParser.ts
       - id: annotation
-        summary: annotationStore — items keyed by documentId, status machine (pending / accepted / resolved / deleted / superseded), per-card conversation thread for Continue-query.
+        summary: annotationStore — items keyed by documentId, status machine, per-card thread; createUserComment for user-authored comments with optional agent/workflow mention.
         route_here_when: Work changes card semantics, status transitions, accept/delete logic, or thread handling.
-        bridge_when: Card changes usually require paired edits in the annotation-panel slice and the editor decorations slice.
+        bridge_when: Card changes require paired AnnotationPanel + decorations updates.
         primary_paths:
           - frontend/src/stores/annotationStore.ts
+      - id: filesystem
+        summary: filesystemStore — project tree (folders / docs / binary blobs) from /api/filesystem; CRUD + upload; getDoc for @-mention file resolution.
+        route_here_when: Work changes tree loading, CRUD, or per-file fetch semantics.
+        bridge_when: Tree schema changes — coordinate with backend project_fs_service.
+        primary_paths:
+          - frontend/src/stores/filesystemStore.ts
+          - frontend/src/services/filesystemApi.ts
+      - id: conversation
+        summary: conversationStore — per-conversation message lists, SSE streaming, create/delete/title, send-message dispatch to /api/conversations.
+        route_here_when: Work changes discussion state machine.
+        bridge_when: Backend conversation contract change.
+        primary_paths:
+          - frontend/src/stores/conversationStore.ts
+      - id: compile
+        summary: compileStore — LaTeX compile state (idle / compiling / done / error), PDF url, triggers /api/compile.
+        route_here_when: Work changes compile lifecycle or status UI.
+        bridge_when: Backend compile contract change — see latex-compile capability.
+        primary_paths:
+          - frontend/src/stores/compileStore.ts
+      - id: view
+        summary: viewStore — column widths, collapse states for left/center/right columns.
+        route_here_when: Work changes layout persistence or responsive behavior.
+        bridge_when: Layout change touches workspace shell.
+        primary_paths:
+          - frontend/src/stores/viewStore.ts
 
   - id: latex-editor
     name: LaTeX Editor Module
     summary: Self-contained CodeMirror 6 editor under src/frontend/src/features/latex-editor/. Owns syntax, theme, autocomplete, and the format Compartment.
     slices:
       - id: shell
-        summary: LatexEditor.tsx + public surface (index.ts). Mount/unmount lifecycle, value/format/onChange/onSelectionChange contract.
+        summary: LatexEditor.tsx + index.ts — mount/unmount, value/format/onChange/onSelectionChange contract, decoration plugin mount.
         route_here_when: Work changes editor public API, mounting behavior, or the shell-to-editor contract.
-        bridge_when: Public API changes require shell updates — coordinate with frontend-workspace/shell.
+        bridge_when: Public API changes require workspace-center updates.
         primary_paths:
           - frontend/src/features/latex-editor/LatexEditor.tsx
           - frontend/src/features/latex-editor/index.ts
       - id: extensions
-        summary: CodeMirror 6 extension bundle. baseExtensions() is language-free; language Compartment is wired exclusively by LatexEditor.
+        summary: CodeMirror 6 extension bundle. baseExtensions() is language-free; language Compartment wired by LatexEditor.
         route_here_when: Work adds, removes, or reorders editor extensions, keymaps, or language hooks.
-        bridge_when: A new extension introduces side effects outside the editor (e.g., emits annotations to the agent panel).
+        bridge_when: A new extension introduces side effects outside the editor.
         primary_paths:
           - frontend/src/features/latex-editor/extensions.ts
       - id: language
-        summary: LaTeX language definition: stex stream parser plus command/environment autocomplete sources.
+        summary: LaTeX language definition — stex stream parser plus command/environment autocomplete sources.
         route_here_when: Work expands LaTeX language support, autocomplete data, or grammar choice.
-        bridge_when: Switching to a real Lezer LaTeX grammar — major Request because it adds a build step.
+        bridge_when: Switching to Lezer LaTeX grammar — high_risk.
         primary_paths:
           - frontend/src/features/latex-editor/latex-language.ts
       - id: theme
         summary: Editor theme — overleaf_dark port (CM6 theme + HighlightStyle).
         route_here_when: Work tunes editor colors, font, or syntax highlight palette.
-        bridge_when: Workspace shell theme changes — coordinate with frontend-workspace/shell.
+        bridge_when: Workspace shell theme changes.
         primary_paths:
           - frontend/src/features/latex-editor/theme.ts
+      - id: decorations
+        summary: annotation-decorations plugin — StateField + Decoration.mark + click handler for annotation kinds.
+        route_here_when: Work changes decoration rendering or click handling.
+        bridge_when: New decoration kinds require paired annotationStore updates.
+        primary_paths:
+          - frontend/src/features/latex-editor/annotation-decorations.ts
+
+  - id: latex-compile
+    name: LaTeX Compile
+    summary: End-to-end LaTeX → PDF pipeline. Spans backend latex_compiler service + /api/compile route + frontend LatexPreview + compileStore.
+    slices:
+      - id: backend
+        summary: latex_compiler.py — latexmk subprocess wrapper; tempdir management; returns PDF bytes or error log.
+        route_here_when: Work changes compile flags, output format, or error extraction.
+        bridge_when: Compile backend change (pandoc / tectonic) escalates to high_risk.
+        primary_paths:
+          - backend/app/services/latex_compiler.py
+          - backend/app/api/compile.py
+      - id: frontend
+        summary: LatexPreview + compileStore — triggers compile, displays PDF via pdfjs-dist, shows error log on failure.
+        route_here_when: Work changes preview rendering, PDF navigation, or compile triggering.
+        bridge_when: Backend contract change.
+        primary_paths:
+          - frontend/src/features/preview/LatexPreview.tsx
+          - frontend/src/stores/compileStore.ts
 
   - id: domain-model
     name: Domain Model
@@ -191,25 +455,27 @@ capabilities:
       - id: agent
         summary: Agent / AgentInput / AgentOutput / Annotation / Suggestion / Risk.
         route_here_when: Work touches Agent input/output schema, annotation/suggestion/risk shape, or permission model.
-        bridge_when: Schema change implies backend DifyClient output parsing updates.
+        bridge_when: Schema change implies outputParser + ingest updates.
         primary_paths:
           - frontend/src/types/agent.ts
       - id: workflow
         summary: Workflow / WorkflowNode / WorkflowEdge / WorkflowTrigger / WorkflowExecution / ExecutionStep.
         route_here_when: Work changes Workflow definitions or execution tracking.
-        bridge_when: Workflow changes require backend DifyClient adaptation or Dify DSL changes.
+        bridge_when: |
+          Workflow shape changes often conflict with runtime types in
+          services/backendApi.ts — unification is a V3 Phase 2 task.
         primary_paths:
           - frontend/src/types/workflow.ts
       - id: collaboration
         summary: TeamDiscussion / Message / Participant / AgentCollaboration modes / UserParticipation.
         route_here_when: Work changes multi-agent or user-in-team collaboration shape.
-        bridge_when: Collaboration mode changes may need Dify workflow templates updated.
+        bridge_when: Collaboration mode changes may need workflow templates updated.
         primary_paths:
           - frontend/src/types/collaboration.ts
       - id: history
         summary: DocumentHistory / DocumentVersion / Operation / Diff.
         route_here_when: Work changes versioning / audit trail contracts.
-        bridge_when: History changes propagate to backend persistence (W8).
+        bridge_when: History changes propagate to backend persistence (V3 Phase 3).
         primary_paths:
           - frontend/src/types/history.ts
       - id: ui
@@ -227,7 +493,7 @@ capabilities:
 
   - id: backend-service
     name: Backend Service (FastAPI)
-    summary: Thin FastAPI service — proxies Dify Workflow API and persists documents / providers / annotations / runs in SQLite. uv-managed; never self-hosts a workflow engine.
+    summary: FastAPI service with SQLite persistence. Proxies Dify + Nanobot providers; runs self-hosted multi-agent orchestrator; owns project filesystem, conversations, LaTeX compile.
     slices:
       - id: app-entry
         summary: FastAPI entrypoint, settings, CORS, router aggregation.
@@ -238,23 +504,32 @@ capabilities:
           - backend/app/settings.py
           - backend/app/__init__.py
       - id: api-routes
-        summary: HTTP routes — health, /api/providers CRUD + probe + activate. W2b will add /api/workflows and /api/runs.
+        summary: HTTP routes — health, providers, workflows (+runs, definitions, definition-execute), filesystem (tree + upload), conversations (+messages SSE), compile.
         route_here_when: Work adds, changes, or retires API routes.
         bridge_when: New routes need new services, models, or schemas.
         primary_paths:
           - backend/app/api/__init__.py
           - backend/app/api/health.py
           - backend/app/api/providers.py
+          - backend/app/api/workflows.py
+          - backend/app/api/filesystem.py
+          - backend/app/api/conversations.py
+          - backend/app/api/compile.py
       - id: services
-        summary: Domain services — DifyClient and ProviderService. Any new cross-cutting logic lives here, not in routes.
-        route_here_when: Work changes Dify API interaction or provider registry invariants.
-        bridge_when: Service changes impact api-routes contracts.
+        summary: Domain services — DifyClient, NanobotClient, ProviderService, AgentOrchestrator, ProjectFsService, LatexCompiler, AttachedFiles normalizer.
+        route_here_when: Work changes provider client behavior, orchestration, filesystem service, compile wrapper, or attached-files shape.
+        bridge_when: Cross-cutting changes — see workflow-orchestration / workflow-integration / frontend-mention-system.
         primary_paths:
           - backend/app/services/__init__.py
           - backend/app/services/dify_client.py
+          - backend/app/services/nanobot_client.py
           - backend/app/services/provider_service.py
+          - backend/app/services/agent_orchestrator.py
+          - backend/app/services/project_fs_service.py
+          - backend/app/services/latex_compiler.py
+          - backend/app/services/attached_files.py
       - id: models
-        summary: SQLAlchemy ORM + Pydantic I/O schemas. Current: Provider, CachedWorkflow, WorkflowRun.
+        summary: SQLAlchemy ORM + Pydantic I/O schemas. Tables — Provider, CachedWorkflow, WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob, Conversation, Message.
         route_here_when: Work adds new tables or changes existing columns.
         bridge_when: Schema migration needed — future alembic setup.
         primary_paths:
@@ -264,23 +539,33 @@ capabilities:
       - id: secrets
         summary: Fernet-based API-key encryption (secrets_vault). Key at ~/.yuwanlab/secrets.key (mode 600).
         route_here_when: Work changes how secrets are stored, rotated, or retrieved.
-        bridge_when: Rotation invalidates all provider keys — user-visible; flag in CHANGE_POLICY.
+        bridge_when: Rotation invalidates all provider keys — flagged in CHANGE_POLICY.
         primary_paths:
           - backend/app/secrets_vault.py
 
   - id: workflow-integration
-    name: Workflow Integration (Dify)
-    summary: Cross-cutting surface that owns the contract between our code and Dify's Workflow API. Spans backend services and frontend settings; ensures the Dify-backed agentic layer stays swappable (local vs cloud).
+    name: Workflow Integration (Providers)
+    summary: |
+      Cross-cutting surface that owns how our system speaks to external provider
+      runtimes (Dify, Nanobot). Spans backend clients + frontend settings.
+      Distinct from workflow-orchestration: this capability is about **single
+      agent calls to one provider**; orchestration composes many into graphs.
     slices:
       - id: dify-client
-        summary: Typed async client for Dify's /workflows/run (blocking + streaming SSE), /info, /workflows/run/:id endpoints.
+        summary: Typed async client for Dify's /workflows/run, /chat-messages, /info, /workflows/run/:id; SSE handler.
         route_here_when: Work changes how we speak to Dify, parse responses, or handle SSE.
-        bridge_when: New Dify Workflow output fields require types/agent.ts and types/workflow.ts updates.
+        bridge_when: New Dify Workflow output fields require types/agent.ts + outputParser updates.
         primary_paths:
           - backend/app/services/dify_client.py
+      - id: nanobot-client
+        summary: OpenAI Chat Completions-style client for Nanobot; session_id support; multimodal content blocks (text + image_url).
+        route_here_when: Work changes Nanobot API interaction, session semantics, or multimodal payload shape.
+        bridge_when: Multimodal contract change — see frontend-mention-system/backend-contract.
+        primary_paths:
+          - backend/app/services/nanobot_client.py
       - id: provider-registry
-        summary: Provider model + service + CRUD API; ProviderBadge state machine on the frontend.
-        route_here_when: Work changes the provider lifecycle — registration, probing, activation, rotation.
+        summary: Provider model + service + CRUD API; ProviderBadge state machine on frontend.
+        route_here_when: Work changes provider lifecycle — registration, probing, activation, rotation.
         bridge_when: New provider kinds require backend services AND frontend form branches.
         primary_paths:
           - backend/app/models.py
@@ -289,13 +574,51 @@ capabilities:
           - frontend/src/stores/settingsStore.ts
           - frontend/src/features/settings/SettingsDialog.tsx
       - id: workflow-run
-        summary: End-to-end selection → Dify run → streamed annotations (W2b, not yet implemented).
-        route_here_when: Work lands W2b (trigger workflow, stream events, persist annotations).
-        bridge_when: Requires types/workflow.ts + types/agent.ts + annotation store wiring.
+        summary: End-to-end single-agent run — selection → /api/workflows/{id}/run → SSE → outputParser → annotationStore.
+        route_here_when: Work changes how a single agent workflow is triggered, streamed, or ingested.
+        bridge_when: Adds multi-agent composition — see workflow-orchestration instead.
         primary_paths:
+          - backend/app/api/workflows.py
           - backend/app/services/dify_client.py
-          - backend/app/api/providers.py
-        note: placeholder — concrete files will appear under backend/app/api/workflows.py and frontend/src/stores/annotationStore.ts in W2b.
+          - backend/app/services/nanobot_client.py
+          - frontend/src/stores/workflowStore.ts
+          - frontend/src/services/outputParser.ts
+
+  - id: workflow-orchestration
+    name: Workflow Orchestration (Self-hosted)
+    summary: |
+      The V2.2 self-hosted multi-agent orchestrator. Introduced by REQ-0015 and
+      extended through REQ-0023. Supports `agent` (atomic) + `loop` (container)
+      node types with arbitrary nesting. CANONICAL BASELINE — see
+      CHANGE_POLICY high_risk.extend_self_hosted_orchestrator for boundary.
+    slices:
+      - id: orchestrator
+        summary: agent_orchestrator.py — graph traversal, SSE event emission, loop round-tripping, per-node input/output capture.
+        route_here_when: Work fixes bugs or extends behavior WITHIN the agent + loop model.
+        bridge_when: New node type / swap run loop / new persistence — escalate to Request (boundary in CHANGE_POLICY).
+        primary_paths:
+          - backend/app/services/agent_orchestrator.py
+      - id: definition-api
+        summary: /api/workflows/definitions CRUD + /definitions/{id}/execute SSE streaming endpoint.
+        route_here_when: Work changes definition API, graph validation, or execute endpoint.
+        bridge_when: Graph schema change — see WorkflowDefinition model.
+        primary_paths:
+          - backend/app/api/workflows.py
+      - id: canvas
+        summary: Visual authoring surface — workflow-canvas module (react-flow). See frontend-feature-workflow-canvas for slice detail.
+        route_here_when: Work changes visual authoring.
+        bridge_when: See frontend-feature-workflow-canvas.
+        primary_paths:
+          - frontend/src/features/right-panel/workflow-canvas/
+      - id: templates
+        summary: |
+          Workflow templates under frontend/src/features/right-panel/templates/
+          (V3 Phase 2: debate.json, consensus.json). One-click create
+          pre-wired collaboration patterns without engine changes.
+        route_here_when: Work adds or edits template JSONs.
+        bridge_when: New template needs a new node type — escalate.
+        primary_paths:
+          - frontend/src/features/right-panel/templates/
 
   - id: build-tooling
     name: Build & Tooling
@@ -311,7 +634,7 @@ capabilities:
       - id: typescript
         summary: TypeScript project references and compiler options.
         route_here_when: Work changes TS config, paths, or strictness.
-        bridge_when: A TS change forces broad type fixes — record those as separate Requests.
+        bridge_when: Strictness change forces broad type fixes.
         primary_paths:
           - frontend/tsconfig.json
           - frontend/tsconfig.app.json
@@ -326,6 +649,6 @@ capabilities:
       - id: backend-pyproject
         summary: Backend dependency list (uv-managed) + ruff config.
         route_here_when: Work adds/removes Python deps or adjusts ruff rules.
-        bridge_when: Dep changes may require Docker image updates (future).
+        bridge_when: Dep changes may require Docker image updates (V3 Phase 4).
         primary_paths:
           - backend/pyproject.toml

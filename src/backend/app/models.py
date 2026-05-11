@@ -82,6 +82,7 @@ class WorkflowDefinition(Base):
     __tablename__ = "workflow_definitions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
     name: Mapped[str] = mapped_column(String(256))
     description: Mapped[str] = mapped_column(Text, default="")
     # 'parallel' | 'pipeline' | 'roundtable' | 'graph'
@@ -99,6 +100,29 @@ class WorkflowDefinition(Base):
     )
 
 
+class WorkflowTestCase(Base):
+    """Reusable test fixture for a WorkflowDefinition.
+
+    Stores the inputs (prompt text + extra JSON inputs) under a name so the
+    user can re-run the same scenario against an edited workflow definition
+    and eyeball the diff in the editor's test panel.
+    """
+
+    __tablename__ = "workflow_test_cases"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    definition_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_definitions.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(256))
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class WorkflowRun(Base):
     """Persisted record of a single workflow invocation.
 
@@ -109,6 +133,7 @@ class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"))
     # For single-agent runs: references CachedWorkflow
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"))
@@ -216,6 +241,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
     document_id: Mapped[str] = mapped_column(String(64), index=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"), index=True)
     title: Mapped[str] = mapped_column(String(256), default="")

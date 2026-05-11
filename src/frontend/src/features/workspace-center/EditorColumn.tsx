@@ -22,6 +22,7 @@ interface EditorColumnProps {
   doc: Document | null
   decorations: DecorationSpec[]
   activeAnnotationId: string | null
+  hoveredAnnotationId?: string | null
   scrollTo: { pos: number; seq: number } | null
   onChange: (next: string) => void
   onSelectionChange: (info: { from: number; to: number; text: string }) => void
@@ -37,6 +38,7 @@ export function EditorColumn({
   doc,
   decorations,
   activeAnnotationId,
+  hoveredAnnotationId,
   scrollTo,
   onChange,
   onSelectionChange,
@@ -88,6 +90,7 @@ export function EditorColumn({
             onDocChange={onDocChange}
             decorations={decorations}
             activeDecorationId={activeAnnotationId}
+            panelHoverId={hoveredAnnotationId ?? null}
             onDecorationClick={onDecorationClick}
             scrollTo={scrollTo}
             overlay={

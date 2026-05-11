@@ -2,7 +2,7 @@
 #
 # Structural map of the project rooted at src/. Update whenever a module is
 # added or removed; this file is the agent's structural index, not a wishlist.
-# Refreshed 2026-05-08 for REQ-0013 (Dify pivot + backend skeleton).
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
 
 project:
   name: YuwanLabWriter
@@ -59,6 +59,7 @@ modules:
       - docs/v2_executive_plan.md
       - docs/v2_executive_plan.tex
       - docs/v2_1_amendment_dify.md
+      - docs/v3_executive_plan.md
       - docs/architecture_data_flow.md
       - docs/doubao_v1_optimized.tex
       - docs/doubao.tex
@@ -68,7 +69,7 @@ modules:
   - id: backend
     path: backend
     kind: service
-    description: FastAPI proxy to Dify + local SQLite persistence. uv-managed, Python 3.11+.
+    description: FastAPI proxy to Dify / Nanobot + local SQLite persistence. uv-managed, Python 3.11+.
     entry_files:
       - backend/pyproject.toml
       - backend/app/main.py
@@ -85,24 +86,42 @@ modules:
       - backend/app/secrets_vault.py
       - backend/app/models.py
       - backend/app/schemas.py
+    note: |
+      `models.py` now declares 7 tables: Provider, CachedWorkflow,
+      WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob,
+      Conversation, Message.
 
   - id: backend-api
     path: backend/app/api
     kind: api-routes
-    description: HTTP routes — health, providers CRUD + probe + activate.
+    description: HTTP routes — health, providers, workflows, filesystem, conversations, compile.
     entry_files:
       - backend/app/api/__init__.py
       - backend/app/api/health.py
       - backend/app/api/providers.py
+      - backend/app/api/workflows.py
+      - backend/app/api/filesystem.py
+      - backend/app/api/conversations.py
+      - backend/app/api/compile.py
 
   - id: backend-services
     path: backend/app/services
     kind: domain-services
-    description: Dify API client (probe / run blocking / run streaming) and provider registry invariants.
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer.
     entry_files:
       - backend/app/services/__init__.py
       - backend/app/services/dify_client.py
+      - backend/app/services/nanobot_client.py
       - backend/app/services/provider_service.py
+      - backend/app/services/agent_orchestrator.py
+      - backend/app/services/project_fs_service.py
+      - backend/app/services/latex_compiler.py
+      - backend/app/services/attached_files.py
+    note: |
+      `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
+      multi-agent + loop runner; canonical baseline since REQ-0015.
+      Extension boundaries are documented in CHANGE_POLICY.yaml under
+      `high_risk.extend_self_hosted_orchestrator`.
 
   # ── Frontend application ─────────────────────────────────────────
   - id: frontend
@@ -118,7 +137,7 @@ modules:
   - id: frontend-app-shell
     path: frontend/src
     kind: application-shell
-    description: React entry, App.tsx workspace shell with ProviderBadge + SettingsDialog wiring.
+    description: React entry, App.tsx workspace shell, top-level layout composition.
     entry_files:
       - frontend/src/main.tsx
       - frontend/src/App.tsx
@@ -138,28 +157,39 @@ modules:
       - frontend/src/types/history.ts
       - frontend/src/types/ui.ts
       - frontend/src/types/actions.ts
+    note: |
+      Runtime types for WorkflowDefinition / Provider / Message / etc
+      currently live in `services/backendApi.ts`. Unification with
+      `types/*` is a V3 Phase 2 task (B2).
 
   - id: frontend-stores
     path: frontend/src/stores
     kind: state
-    description: Zustand stores — document / editor / settings / workflow / annotation + demo seed data.
+    description: Zustand stores — 10 stores covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, plus demo seed.
     entry_files:
       - frontend/src/stores/documentStore.ts
       - frontend/src/stores/editorStore.ts
       - frontend/src/stores/settingsStore.ts
       - frontend/src/stores/workflowStore.ts
       - frontend/src/stores/annotationStore.ts
+      - frontend/src/stores/filesystemStore.ts
+      - frontend/src/stores/conversationStore.ts
+      - frontend/src/stores/compileStore.ts
+      - frontend/src/stores/viewStore.ts
       - frontend/src/stores/seedData.ts
 
   - id: frontend-services
     path: frontend/src/services
     kind: service-layer
-    description: Frontend business logic — document parser, selection context, Dify output parser, typed backend API client.
+    description: Frontend business logic — typed backend API client, parsers, selection context, output parser, mention system, range tracker, filesystem API.
     entry_files:
       - frontend/src/services/backendApi.ts
+      - frontend/src/services/filesystemApi.ts
       - frontend/src/services/documentParser.ts
       - frontend/src/services/selectionContext.ts
       - frontend/src/services/outputParser.ts
+      - frontend/src/services/mentions.ts
+      - frontend/src/services/rangeTracker.ts
 
   - id: frontend-tests
     path: frontend/src/__tests__
@@ -194,16 +224,35 @@ modules:
   - id: frontend-feature-annotation-panel
     path: frontend/src/features/annotation-panel
     kind: feature-module
-    description: Annotation card panel — renders Dify-produced annotations / suggestions / risks with Accept / Delete / Continue-query actions.
+    description: Annotation card panel — renders annotations / suggestions / risks / user-comments; hosts CommentComposer and continue composer; integrates with mention system for @-mention routing to agents / workflows / files.
     entry_files:
       - frontend/src/features/annotation-panel/index.ts
       - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+      - frontend/src/features/annotation-panel/CommentComposer.tsx
       - frontend/src/features/annotation-panel/annotation-panel.css
+
+  - id: frontend-feature-right-panel
+    path: frontend/src/features/right-panel
+    kind: feature-module
+    description: |
+      Right-side tabbed panel — Discussion, Team management, Workflow tab,
+      Workflow Definitions panel + canvas editor, Run history. Hosts the
+      workflow-canvas subsurface.
+    entry_files:
+      - frontend/src/features/right-panel/RightPanel.tsx
+      - frontend/src/features/right-panel/DiscussionTab.tsx
+      - frontend/src/features/right-panel/TeamTab.tsx
+      - frontend/src/features/right-panel/WorkflowTab.tsx
+      - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+      - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+      - frontend/src/features/right-panel/RunHistoryTab.tsx
+      - frontend/src/features/right-panel/discussion.css
+      - frontend/src/features/right-panel/right-panel.css
 
   - id: frontend-feature-workflow-canvas
     path: frontend/src/features/right-panel/workflow-canvas
     kind: feature-module
-    description: Visual workflow canvas with drag-and-drop interface for building multi-agent workflows. Supports agent (atomic) + loop (container) nodes with arbitrary nesting.
+    description: Visual workflow canvas (react-flow / @xyflow/react) for building multi-agent workflows. Supports agent (atomic) + loop (container) nodes with arbitrary nesting. Includes test-run panel.
     entry_files:
       - frontend/src/features/right-panel/workflow-canvas/index.ts
       - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
@@ -211,7 +260,61 @@ modules:
       - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
       - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
       - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+      - frontend/src/features/right-panel/workflow-canvas/health.ts
       - frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
+
+  - id: frontend-feature-file-tree
+    path: frontend/src/features/file-tree
+    kind: feature-module
+    description: Left-column project tree + outline list (Overleaf-style). Reads from `filesystemStore`; supports rename / create / delete / drag-and-drop.
+    entry_files:
+      - frontend/src/features/file-tree/index.ts
+      - frontend/src/features/file-tree/FileTree.tsx
+      - frontend/src/features/file-tree/OutlineList.tsx
+      - frontend/src/features/file-tree/file-tree.css
+
+  - id: frontend-feature-preview
+    path: frontend/src/features/preview
+    kind: feature-module
+    description: Right-column preview renderers — LaTeX (PDF via latexmk + PDF.js) and Markdown (markdown-it + KaTeX).
+    entry_files:
+      - frontend/src/features/preview/index.ts
+      - frontend/src/features/preview/LatexPreview.tsx
+      - frontend/src/features/preview/MarkdownPreview.tsx
+      - frontend/src/features/preview/latex-preview.css
+      - frontend/src/features/preview/markdown-preview.css
+
+  - id: frontend-feature-topbar
+    path: frontend/src/features/topbar
+    kind: feature-module
+    description: Top bar — app title, ProviderBadge, view controls (column toggles).
+    entry_files:
+      - frontend/src/features/topbar/index.ts
+      - frontend/src/features/topbar/Topbar.tsx
+      - frontend/src/features/topbar/ProviderBadge.tsx
+      - frontend/src/features/topbar/ViewControl.tsx
+      - frontend/src/features/topbar/topbar.css
+
+  - id: frontend-feature-workspace-center
+    path: frontend/src/features/workspace-center
+    kind: feature-module
+    description: Center workspace column composition — editor + toolbar + annotation column + preview column. Hosts the editor mount and integrates annotation decorations + selection sync.
+    entry_files:
+      - frontend/src/features/workspace-center/index.ts
+      - frontend/src/features/workspace-center/EditorColumn.tsx
+      - frontend/src/features/workspace-center/EditorToolbar.tsx
+      - frontend/src/features/workspace-center/AnnotationColumn.tsx
+      - frontend/src/features/workspace-center/PreviewColumn.tsx
+      - frontend/src/features/workspace-center/workspace-center.css
+
+  - id: frontend-feature-shared
+    path: frontend/src/features/shared
+    kind: feature-module
+    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate. Used by AnnotationPanel CommentComposer / continue composer and DiscussionTab input.
+    entry_files:
+      - frontend/src/features/shared/MentionInput.tsx
+      - frontend/src/features/shared/fileSizeGate.ts
+      - frontend/src/features/shared/mention-input.css
 
   - id: frontend-build-tooling
     path: frontend
@@ -261,7 +364,41 @@ capability_routes:
     primary_module: frontend-app-shell
     supporting_modules:
       - frontend
+      - frontend-feature-topbar
+      - frontend-feature-workspace-center
       - frontend-public
+
+  frontend-right-panel:
+    primary_module: frontend-feature-right-panel
+    supporting_modules:
+      - frontend-feature-workflow-canvas
+      - frontend-stores
+      - frontend-services
+
+  frontend-file-tree:
+    primary_module: frontend-feature-file-tree
+    supporting_modules:
+      - frontend-stores
+      - frontend-services
+
+  frontend-preview:
+    primary_module: frontend-feature-preview
+    supporting_modules:
+      - frontend-feature-workspace-center
+      - frontend-stores
+
+  frontend-topbar:
+    primary_module: frontend-feature-topbar
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-stores
+
+  frontend-workspace-center:
+    primary_module: frontend-feature-workspace-center
+    supporting_modules:
+      - frontend-feature-latex-editor
+      - frontend-feature-annotation-panel
+      - frontend-feature-preview
 
   frontend-settings:
     primary_module: frontend-feature-settings
@@ -274,9 +411,24 @@ capability_routes:
     primary_module: frontend-feature-annotation-panel
     supporting_modules:
       - frontend-feature-latex-editor
+      - frontend-feature-shared
       - frontend-stores
       - frontend-services
       - frontend-types
+
+  frontend-conversations:
+    primary_module: frontend-feature-right-panel
+    supporting_modules:
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
+
+  frontend-mention-system:
+    primary_module: frontend-feature-shared
+    supporting_modules:
+      - frontend-services
+      - frontend-feature-annotation-panel
+      - frontend-feature-right-panel
 
   frontend-stores:
     primary_module: frontend-stores
@@ -287,8 +439,15 @@ capability_routes:
   latex-editor:
     primary_module: frontend-feature-latex-editor
     supporting_modules:
-      - frontend-app-shell
+      - frontend-feature-workspace-center
       - frontend-types
+
+  latex-compile:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-preview
+      - frontend-stores
 
   domain-model:
     primary_module: frontend-types
@@ -311,6 +470,14 @@ capability_routes:
       - frontend-feature-settings
       - frontend-stores
       - repo-root
+
+  workflow-orchestration:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-workflow-canvas
+      - frontend-feature-right-panel
+      - frontend-stores
 
   build-tooling:
     primary_module: frontend-build-tooling

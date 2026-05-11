@@ -71,13 +71,11 @@ export interface ProviderUpdate {
   api_key?: string
 }
 
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
+export async function http<T>(path: string, init?: HttpInit): Promise<T> {
+  const headers = buildHeaders(init?.headers, init?.scope ?? 'project')
   const resp = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
   })
   if (resp.status === 204) return undefined as T
   const text = await resp.text()
@@ -85,6 +83,44 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     throw new BackendError(resp.status, text || resp.statusText)
   }
   return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+export type RequestScope = 'project' | 'global'
+
+export interface HttpInit extends Omit<RequestInit, 'headers'> {
+  headers?: HeadersInit
+  // 'project' (default) injects the X-Project-Id header from projectStore.
+  // 'global' skips that injection — used by /api/projects, /api/health, etc.
+  scope?: RequestScope
+}
+
+/** Compose request headers with optional X-Project-Id injection.
+ *
+ *  Exposed so SSE callers (which use fetch directly) can reuse the same logic.
+ *  Reads `currentProjectId` from `projectStore` lazily to avoid an import cycle.
+ */
+export function buildHeaders(extra?: HeadersInit, scope: RequestScope = 'project'): Headers {
+  const headers = new Headers(extra ?? undefined)
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  if (scope === 'project' && !headers.has('X-Project-Id')) {
+    const pid = readCurrentProjectId()
+    if (pid) headers.set('X-Project-Id', pid)
+  }
+  return headers
+}
+
+// Avoids `import { useProjectStore }` at module load (circular: projectStore
+// uses backendApi for its own HTTP calls). Resolved lazily on first call.
+let projectIdReader: (() => string | null) | null = null
+
+export function registerProjectIdReader(reader: () => string | null): void {
+  projectIdReader = reader
+}
+
+function readCurrentProjectId(): string | null {
+  return projectIdReader ? projectIdReader() : null
 }
 
 export class BackendError extends Error {
@@ -277,6 +313,46 @@ export const workflowDefinitionApi = {
     `${BASE}/api/workflows/definitions/${encodeURIComponent(id)}/execute`,
 }
 
+// Workflow Test Cases — reusable fixtures for running the test panel against
+// a saved scenario. Orthogonal to run-history (which is every real invocation).
+export interface WorkflowTestCase {
+  id: string
+  definition_id: string
+  name: string
+  prompt: string
+  inputs: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkflowTestCaseDraft {
+  name: string
+  prompt?: string
+  inputs?: Record<string, unknown>
+}
+
+export const workflowTestCaseApi = {
+  list: (definitionId: string) =>
+    http<WorkflowTestCase[]>(
+      `/api/workflows/definitions/${encodeURIComponent(definitionId)}/test-cases`,
+    ),
+  create: (definitionId: string, draft: WorkflowTestCaseDraft) =>
+    http<WorkflowTestCase>(
+      `/api/workflows/definitions/${encodeURIComponent(definitionId)}/test-cases`,
+      { method: 'POST', body: JSON.stringify(draft) },
+    ),
+  update: (definitionId: string, caseId: string, draft: WorkflowTestCaseDraft) =>
+    http<WorkflowTestCase>(
+      `/api/workflows/definitions/${encodeURIComponent(definitionId)}/test-cases/${encodeURIComponent(caseId)}`,
+      { method: 'PUT', body: JSON.stringify(draft) },
+    ),
+  delete: (definitionId: string, caseId: string) =>
+    http<void>(
+      `/api/workflows/definitions/${encodeURIComponent(definitionId)}/test-cases/${encodeURIComponent(caseId)}`,
+      { method: 'DELETE' },
+    ),
+}
+
 export const BACKEND_BASE = BASE
 
 export const healthApi = {
@@ -357,7 +433,7 @@ export interface ConversationUpdate {
 export interface Message {
   id: string
   conversation_id: string
-  role: 'user' | 'agent'
+  role: 'user' | 'agent' | 'system'
   content: string
   range_start: number | null
   range_end: number | null
@@ -371,6 +447,14 @@ export interface MessageSend {
   range_start?: number
   range_end?: number
   inputs?: Record<string, unknown>
+}
+
+export interface MessageInject {
+  role: 'agent' | 'user' | 'system'
+  content: string
+  range_start?: number
+  range_end?: number
+  error?: string
 }
 
 export interface ConversationListQuery {
@@ -401,4 +485,9 @@ export const conversationApi = {
   // sendMessage returns SSE stream URL; caller uses EventSource or fetch.
   sendMessageUrl: (conversationId: string) =>
     `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+  injectMessage: (conversationId: string, body: MessageInject) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/messages/inject`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 }

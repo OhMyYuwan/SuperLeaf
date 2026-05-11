@@ -30,7 +30,6 @@ import {
   sortFilesCurrentFirst,
   resolveAttachedFiles,
   uniqueMentionedFiles,
-  uniqueMentionedWorkflows,
   type AgentCandidate,
   type FileCandidate,
   type MentionCandidate,
@@ -44,6 +43,9 @@ interface AnnotationPanelProps {
   documentId: string | null
   activeId?: string | null
   onFocus?: (id: string | null) => void
+  /** Called while the cursor is over a card (id) or has left all cards (null).
+   *  Used by the host to flash the matching editor decoration. */
+  onHover?: (id: string | null) => void
   // The selection the user clicked "add comment" on, if any. When non-null,
   // a composer is rendered at the top of the panel.
   pendingComment?: {
@@ -58,6 +60,7 @@ export function AnnotationPanel({
   documentId,
   activeId,
   onFocus,
+  onHover,
   pendingComment,
   onDismissPendingComment,
   agents = [],
@@ -128,12 +131,19 @@ export function AnnotationPanel({
     const { range, targetText } = pendingComment
 
     if (mentionedAgents.length === 0 && mentionedWorkflows.length === 0) {
-      // Plain user comment, no agent trigger.
+      // Plain user comment, no agent trigger — still resolve files so the
+      // chip row shows what the user attached.
+      const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
+        onFetchError: (file) => {
+          console.warn('[AnnotationPanel] failed to fetch file for @mention', file.path)
+        },
+      })
       createUserComment({
         documentId,
         range,
         targetText,
         content,
+        attachedFiles,
       })
       onDismissPendingComment?.()
       return
@@ -164,6 +174,7 @@ export function AnnotationPanel({
         content,
         mentionedAgentId: agent.id,
         mentionedAgentName: agent.name,
+        attachedFiles,
       })
 
       // Build the agent prompt with @mentions stripped.
@@ -266,6 +277,7 @@ export function AnnotationPanel({
                 isActive={item.id === activeId}
                 agents={agents}
                 onFocus={() => onFocus?.(item.id === activeId ? null : item.id)}
+                onHover={(hovering) => onHover?.(hovering ? item.id : null)}
                 onCompare={() => setCompareCluster(siblings)}
               />
             )
@@ -288,6 +300,7 @@ function AnnotationCard({
   isActive,
   agents,
   onFocus,
+  onHover,
   onCompare,
 }: {
   item: AnnotationItem
@@ -295,6 +308,7 @@ function AnnotationCard({
   isActive: boolean
   agents: CachedWorkflow[]
   onFocus: () => void
+  onHover?: (hovering: boolean) => void
   onCompare: () => void
 }) {
   const accept = useAnnotationStore((s) => s.accept)
@@ -311,10 +325,18 @@ function AnnotationCard({
   const [draft, setDraft] = useState('')
   const [enablingAgent, setEnablingAgent] = useState(false)
   const draftRef = useRef<MentionInputHandle>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (composerOpen) draftRef.current?.focus()
   }, [composerOpen])
+
+  // When this card becomes active (e.g. user clicked the highlight in the
+  // editor), scroll it into view so they don't have to hunt.
+  useEffect(() => {
+    if (!isActive || !cardRef.current) return
+    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [isActive])
 
   const agentCandidatesForCard: AgentCandidate[] = useMemo(
     () => agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name })),
@@ -422,8 +444,11 @@ function AnnotationCard({
 
   return (
     <div
+      ref={cardRef}
       className={`ann-card ann-${item.kind} sev-${item.severity} ${isActive ? 'active' : ''} ${isResolved ? 'resolved' : ''}`}
       onClick={onFocus}
+      onMouseEnter={() => onHover?.(true)}
+      onMouseLeave={() => onHover?.(false)}
     >
       <div className="ann-head">
         <span className="ann-icon">{iconFor(item)}</span>
@@ -439,6 +464,22 @@ function AnnotationCard({
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
+
+      {item.attachedFiles && item.attachedFiles.length > 0 && (
+        <div className="ann-attached-chips">
+          {item.attachedFiles.map((f, i) => (
+            <span
+              key={`${f.path}-${i}`}
+              className={`ann-attached-chip ${f.omitted ? 'omitted' : ''}`}
+              title={f.omitted ? `${f.path} · ${f.omit_reason ?? 'omitted'}` : f.path}
+            >
+              📎 {f.name}
+              {f.truncated && <span className="ann-attached-flag">截断</span>}
+              {f.omitted && <span className="ann-attached-flag">未附带</span>}
+            </span>
+          ))}
+        </div>
+      )}
 
       {item.content && (
         <p className="ann-body">
@@ -657,6 +698,22 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
+
+      {item.attachedFiles && item.attachedFiles.length > 0 && (
+        <div className="ann-attached-chips">
+          {item.attachedFiles.map((f, i) => (
+            <span
+              key={`${f.path}-${i}`}
+              className={`ann-attached-chip ${f.omitted ? 'omitted' : ''}`}
+              title={f.omitted ? `${f.path} · ${f.omit_reason ?? 'omitted'}` : f.path}
+            >
+              📎 {f.name}
+              {f.truncated && <span className="ann-attached-flag">截断</span>}
+              {f.omitted && <span className="ann-attached-flag">未附带</span>}
+            </span>
+          ))}
+        </div>
+      )}
 
       {item.content && (
         <p className="ann-body">

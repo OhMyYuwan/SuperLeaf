@@ -7,6 +7,7 @@
  */
 
 import { useState } from 'react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type {
   CachedWorkflow,
   WorkflowDefinition,
@@ -16,6 +17,7 @@ import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { WorkflowDefinitionEditor } from './WorkflowDefinitionEditor'
 import { inspectDefinition, type DefinitionHealthReport } from './workflow-canvas/health'
+import { WORKFLOW_TEMPLATES, cloneTemplate, type WorkflowTemplate } from './templates'
 
 interface WorkflowDefinitionsPanelProps {
   workflows: CachedWorkflow[]
@@ -60,10 +62,12 @@ export function WorkflowDefinitionsPanel({
   const [instruction, setInstruction] = useState('')
   const [showEditor, setShowEditor] = useState(false)
   const [editingDefinition, setEditingDefinition] = useState<WorkflowDefinition | undefined>()
+  const [draftFromTemplate, setDraftFromTemplate] = useState<WorkflowDefinitionDraft | undefined>()
 
   const handleCreateDefinition = async (draft: WorkflowDefinitionDraft) => {
     await onCreateDefinition(draft)
     setShowEditor(false)
+    setDraftFromTemplate(undefined)
   }
   const handleUpdateDefinition = async (draft: WorkflowDefinitionDraft) => {
     if (editingDefinition) {
@@ -74,17 +78,27 @@ export function WorkflowDefinitionsPanel({
   }
   const handleEditDefinition = (def: WorkflowDefinition) => {
     setEditingDefinition(def)
+    setDraftFromTemplate(undefined)
     setShowEditor(true)
   }
   const handleCancelEditor = () => {
     setShowEditor(false)
     setEditingDefinition(undefined)
+    setDraftFromTemplate(undefined)
+  }
+  const handleImportTemplate = (tpl: WorkflowTemplate) => {
+    const draft = cloneTemplate(tpl.id)
+    if (!draft) return
+    setEditingDefinition(undefined)
+    setDraftFromTemplate(draft)
+    setShowEditor(true)
   }
 
   if (showEditor) {
     return (
       <WorkflowDefinitionEditor
         definition={editingDefinition}
+        initialDraft={draftFromTemplate}
         onSave={editingDefinition ? handleUpdateDefinition : handleCreateDefinition}
         onCancel={handleCancelEditor}
         onTestDefinition={onTestDefinition}
@@ -99,9 +113,39 @@ export function WorkflowDefinitionsPanel({
     <>
       <div className="tab-header-row">
         <span>编排 Workflow：{definitions.length} 个</span>
-        <button className="primary-btn" onClick={() => setShowEditor(true)}>
-          <span>+</span> 创建 Workflow
-        </button>
+        <div className="definition-header-actions">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button className="secondary-btn">
+                从模板新建 ▾
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="conversation-dropdown" sideOffset={4} align="end">
+                <div className="conversation-dropdown-header">
+                  <span>Workflow 模板</span>
+                </div>
+                {WORKFLOW_TEMPLATES.map((tpl) => (
+                  <DropdownMenu.Item
+                    key={tpl.id}
+                    className="conversation-dropdown-item"
+                    onSelect={() => handleImportTemplate(tpl)}
+                  >
+                    <div className="conversation-dropdown-item-content">
+                      <div className="conversation-dropdown-item-header">
+                        <span className="conversation-dropdown-title">{tpl.label}</span>
+                      </div>
+                      <div className="conversation-dropdown-preview">{tpl.description}</div>
+                    </div>
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <button className="primary-btn" onClick={() => setShowEditor(true)}>
+            <span>+</span> 创建 Workflow
+          </button>
+        </div>
       </div>
 
       {!activeSelection && <div className="tab-empty">先在编辑器里选中一段文字再运行。</div>}

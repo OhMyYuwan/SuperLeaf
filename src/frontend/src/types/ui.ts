@@ -12,7 +12,6 @@ export type SeverityLevel = 'low' | 'medium' | 'high' | 'critical'
 
 import type { Agent } from './agent'
 import type { TeamDiscussion, Message, Participant } from './collaboration'
-import type { Workflow, WorkflowExecution } from './workflow'
 
 // 编辑器里的装饰（用于在文本上标记批注、建议、风险）
 export interface EditorDecoration {
@@ -77,14 +76,6 @@ export interface DiscussionPanelView {
   recentMessages: Message[]
   unreadCount: number
   participants: Participant[]
-}
-
-// Workflow 面板的视图模型
-export interface WorkflowPanelView {
-  workflows: Workflow[]
-  activeWorkflow?: string  // workflow id
-  runningExecutions: WorkflowExecution[]
-  recentExecutions: WorkflowExecution[]
 }
 
 // Agent 团队面板的视图模型

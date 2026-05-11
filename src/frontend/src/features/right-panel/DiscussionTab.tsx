@@ -33,6 +33,7 @@ import {
   flattenFileCandidates,
   sortFilesCurrentFirst,
   uniqueMentionedFiles,
+  uniqueMentionedWorkflows,
   resolveAttachedFiles,
   type AgentCandidate,
   type FileCandidate,
@@ -60,6 +61,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const deleteConversation = useConversationStore((s) => s.deleteConversation)
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
+  const injectMessage = useConversationStore((s) => s.injectMessage)
+  const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -160,6 +163,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     const mentions = parseMentions(rawText, allCandidates)
     const cleanedText = stripMentions(rawText, mentions) || rawText
     const mentionedFiles = uniqueMentionedFiles(mentions)
+    const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
     const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
       onFetchError: (file) =>
         console.warn('[DiscussionTab] failed to fetch file', file.path),
@@ -167,6 +171,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
     setInputText('')
 
+    // Build selection + attached-file context once; reused by both the agent
+    // send path and any workflow dispatch.
     const inputs: Record<string, unknown> = {}
     const body: Parameters<typeof sendMessage>[1] = { content: cleanedText }
     if (activeSelection && activeSelection.to > activeSelection.from) {
@@ -184,7 +190,27 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       body.inputs = inputs
     }
 
+    // If the user only @-mentioned workflows (no fresh agent question),
+    // dispatch workflow(s) without routing through sendMessage. Otherwise
+    // the Agent picker path runs normally AND any @workflow mentions fan out.
     await sendMessage(activeConversationId, body)
+
+    if (mentionedWorkflows.length > 0 && documentId) {
+      await Promise.all(
+        mentionedWorkflows.map((wf) =>
+          dispatchWorkflowToConversation({
+            workflow: wf,
+            conversationId: activeConversationId,
+            documentId,
+            selection: activeSelection,
+            attachedFiles,
+            query: cleanedText,
+            executeDefinition,
+            injectMessage,
+          }),
+        ),
+      )
+    }
   }
 
   const removeFileMention = (fileId: string) => {
@@ -451,4 +477,69 @@ function formatTime(iso: string): string {
   const sameDay = d.toDateString() === now.toDateString()
   if (sameDay) return d.toLocaleTimeString()
   return d.toLocaleDateString()
+}
+
+/**
+ * Run a workflow definition out-of-band and deposit its summary into the
+ * active conversation as a synthetic agent message. Failures are captured
+ * via the same injection channel so the user can see why the run collapsed
+ * without leaving the discussion surface.
+ */
+async function dispatchWorkflowToConversation({
+  workflow,
+  conversationId,
+  documentId,
+  selection,
+  attachedFiles,
+  query,
+  executeDefinition,
+  injectMessage,
+}: {
+  workflow: WorkflowCandidate
+  conversationId: string
+  documentId: string
+  selection: Selection | null
+  attachedFiles: Awaited<ReturnType<typeof resolveAttachedFiles>>
+  query: string
+  executeDefinition: ReturnType<typeof useWorkflowStore.getState>['executeDefinition']
+  injectMessage: ReturnType<typeof useConversationStore.getState>['injectMessage']
+}): Promise<void> {
+  const rangeStart = selection && selection.to > selection.from ? selection.from : 0
+  const rangeEnd = selection && selection.to > selection.from ? selection.to : 0
+  const targetText = selection?.text ?? ''
+
+  await executeDefinition(
+    workflow.id,
+    {
+      document_id: documentId,
+      range_start: rangeStart,
+      range_end: rangeEnd,
+      inputs: {
+        target_text: targetText,
+        user_message: query,
+        text: targetText,
+        attached_files: attachedFiles,
+      },
+      query,
+    },
+    {
+      autoIngestToAnnotations: false,
+      onCompleted: async (summary) => {
+        const body = summary && summary.trim() ? summary.trim() : `（${workflow.name} 已运行完毕，未产出摘要文本）`
+        await injectMessage(conversationId, {
+          role: 'agent',
+          content: `【Workflow · ${workflow.name}】\n${body}`,
+          range_start: selection && selection.to > selection.from ? selection.from : undefined,
+          range_end: selection && selection.to > selection.from ? selection.to : undefined,
+        })
+      },
+      onFailed: async (err) => {
+        await injectMessage(conversationId, {
+          role: 'agent',
+          content: `【Workflow · ${workflow.name}】运行失败`,
+          error: err,
+        })
+      },
+    },
+  )
 }

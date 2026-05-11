@@ -9,9 +9,11 @@
 import { create } from 'zustand'
 import {
   conversationApi,
+  buildHeaders,
   type Conversation,
   type ConversationCreate,
   type Message,
+  type MessageInject,
   type MessageSend,
 } from '../services/backendApi'
 
@@ -30,6 +32,7 @@ interface ConversationState {
   deleteConversation: (id: string) => Promise<void>
   loadMessages: (conversationId: string) => Promise<void>
   sendMessage: (conversationId: string, body: MessageSend) => Promise<void>
+  injectMessage: (conversationId: string, body: MessageInject) => Promise<Message | null>
   clearStreamingDelta: (conversationId: string) => void
 }
 
@@ -102,11 +105,20 @@ export const useConversationStore = create<ConversationState>((set) => ({
       error: null,
     }))
 
+    // Abort the request if the server hasn't produced any bytes within
+    // FIRST_BYTE_TIMEOUT_MS. Clears on first chunk so a long-running
+    // agent reply isn't cut off. User-configurable via env.
+    const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
+    const abortCtl = new AbortController()
+    const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
+
     try {
+      const headers = buildHeaders({ Accept: 'text/event-stream' })
       const resp = await fetch(conversationApi.sendMessageUrl(conversationId), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers,
         body: JSON.stringify(body),
+        signal: abortCtl.signal,
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
@@ -116,10 +128,15 @@ export const useConversationStore = create<ConversationState>((set) => ({
       const reader = resp.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buf = ''
+      let gotFirstChunk = false
 
       while (true) {
         const { value, done } = await reader.read()
         if (done) break
+        if (!gotFirstChunk) {
+          clearTimeout(firstByteTimer)
+          gotFirstChunk = true
+        }
         buf += decoder.decode(value, { stream: true })
 
         let boundary = findEventBoundary(buf)
@@ -134,11 +151,16 @@ export const useConversationStore = create<ConversationState>((set) => ({
         }
       }
     } catch (e) {
+      const aborted =
+        e instanceof DOMException && e.name === 'AbortError'
       set((s) => ({
         streaming: { ...s.streaming, [conversationId]: false },
-        error: e instanceof Error ? e.message : String(e),
+        error: aborted
+          ? `Agent 响应超时（${timeoutMs / 1000}s 内无数据），请重试或检查 Provider`
+          : e instanceof Error ? e.message : String(e),
       }))
     } finally {
+      clearTimeout(firstByteTimer)
       set((s) => ({
         streaming: { ...s.streaming, [conversationId]: false },
       }))
@@ -147,6 +169,22 @@ export const useConversationStore = create<ConversationState>((set) => ({
 
   clearStreamingDelta: (conversationId) => {
     set((s) => ({ streamingDelta: { ...s.streamingDelta, [conversationId]: '' } }))
+  },
+
+  injectMessage: async (conversationId, body) => {
+    try {
+      const msg = await conversationApi.injectMessage(conversationId, body)
+      set((s) => ({
+        messages: {
+          ...s.messages,
+          [conversationId]: [...(s.messages[conversationId] ?? []), msg],
+        },
+      }))
+      return msg
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
   },
 }))
 

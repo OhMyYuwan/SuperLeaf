@@ -23,6 +23,7 @@ import { baseExtensions, languageFor } from './extensions'
 import type { EditorFormat } from './extensions'
 import {
   annotationDecorationsExtension,
+  flashAnnotationEffect,
   focusAnnotationEffect,
   setAnnotationsEffect,
   type DecorationSpec,
@@ -52,6 +53,8 @@ export interface LatexEditorProps {
   onDocChange?: (changes: DocChangeInfo[]) => void
   decorations?: DecorationSpec[]
   activeDecorationId?: string | null
+  /** When set, the matching decoration flashes (used for panel hover preview). */
+  panelHoverId?: string | null
   onDecorationClick?: (id: string) => void
   scrollTo?: { pos: number; seq: number } | null
   className?: string
@@ -68,6 +71,7 @@ export function LatexEditor({
   onDocChange,
   decorations,
   activeDecorationId,
+  panelHoverId,
   onDecorationClick,
   scrollTo,
   className,
@@ -199,6 +203,13 @@ export function LatexEditor({
       effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
     })
   }, [activeDecorationId, decorations])
+
+  // Flash the hovered-in-panel annotation without moving the caret or scroll.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: flashAnnotationEffect.of(panelHoverId ?? null) })
+  }, [panelHoverId])
 
   useEffect(() => {
     const view = viewRef.current

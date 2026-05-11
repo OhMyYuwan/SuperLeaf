@@ -9,7 +9,7 @@
  *   PUT  /api/docs/:id
  */
 
-import { BACKEND_BASE } from './backendApi'
+import { BACKEND_BASE, buildHeaders, http } from './backendApi'
 
 const BASE = BACKEND_BASE
 
@@ -52,21 +52,6 @@ export interface BackendDoc {
   content: string
   version: number
   updated_at: string
-}
-
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => resp.statusText)
-    throw new Error(`filesystem API ${resp.status}: ${text}`)
-  }
-  return (await resp.json()) as T
 }
 
 export const filesystemApi = {
@@ -136,7 +121,17 @@ export const filesystemApi = {
     const form = new FormData()
     form.append('file', file)
     if (folderId) form.append('folder_id', folderId)
-    const resp = await fetch(`${BASE}/api/files/upload`, { method: 'POST', body: form })
+    // buildHeaders injects X-Project-Id, but for FormData we must let the
+    // browser set Content-Type (multipart boundary). So copy just X-Project-Id.
+    const projectHeaders = buildHeaders()
+    const headers: Record<string, string> = {}
+    const pid = projectHeaders.get('X-Project-Id')
+    if (pid) headers['X-Project-Id'] = pid
+    const resp = await fetch(`${BASE}/api/files/upload`, {
+      method: 'POST',
+      body: form,
+      headers,
+    })
     if (!resp.ok) throw new Error(`upload ${resp.status}`)
     return resp.json()
   },

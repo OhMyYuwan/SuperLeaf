@@ -20,6 +20,7 @@ import { persist } from 'zustand/middleware'
 import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
 import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
+import type { AttachedFile } from '../services/mentions'
 import { uuid } from '../lib/uuid'
 
 export type CardKind = 'annotation' | 'suggestion' | 'risk' | 'user-comment'
@@ -58,6 +59,9 @@ export interface AnnotationItem {
   // Conversation context for follow-up queries.
   conversationId?: string
   thread: ThreadMessage[]
+  /** Files the user attached via @-mention when creating / continuing this card.
+   *  Kept so the UI can render `📎 name` chips without hitting the filesystem. */
+  attachedFiles?: AttachedFile[]
   createdAt: Date
 }
 
@@ -83,6 +87,7 @@ interface AnnotationState {
     content: string
     mentionedAgentId?: string
     mentionedAgentName?: string
+    attachedFiles?: AttachedFile[]
   }) => string
 
   accept: (id: string) => void
@@ -127,7 +132,7 @@ export const useAnnotationStore = create<AnnotationState>()(
     })
   },
 
-  createUserComment: ({ documentId, range, targetText, content, mentionedAgentId, mentionedAgentName }) => {
+  createUserComment: ({ documentId, range, targetText, content, mentionedAgentId, mentionedAgentName, attachedFiles }) => {
     const id = uuid()
     const item: AnnotationItem = {
       id,
@@ -143,6 +148,7 @@ export const useAnnotationStore = create<AnnotationState>()(
       thread: [
         { id: uuid(), role: 'user', content, createdAt: new Date() },
       ],
+      attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
       createdAt: new Date(),
     }
     set((state) => ({ items: { ...state.items, [id]: item } }))

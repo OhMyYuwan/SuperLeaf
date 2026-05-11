@@ -200,6 +200,19 @@ modules:
       - frontend/src/features/annotation-panel/AnnotationPanel.tsx
       - frontend/src/features/annotation-panel/annotation-panel.css
 
+  - id: frontend-feature-workflow-canvas
+    path: frontend/src/features/right-panel/workflow-canvas
+    kind: feature-module
+    description: Visual workflow canvas with drag-and-drop interface for building multi-agent workflows. Supports agent (atomic) + loop (container) nodes with arbitrary nesting.
+    entry_files:
+      - frontend/src/features/right-panel/workflow-canvas/index.ts
+      - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+      - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+      - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+      - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+      - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+      - frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
+
   - id: frontend-build-tooling
     path: frontend
     kind: build-tooling

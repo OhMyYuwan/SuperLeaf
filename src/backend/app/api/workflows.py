@@ -23,7 +23,17 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 @router.get("", response_model=list[CachedWorkflowOut])
 def list_workflows(db: Session = Depends(get_session)) -> list[CachedWorkflowOut]:
-    rows = db.query(CachedWorkflow).order_by(CachedWorkflow.last_synced_at.desc()).all()
+    """List all cached workflows whose provider still exists.
+
+    Filters out orphan workflows (provider was deleted but CASCADE didn't fire yet).
+    """
+    from ..models import Provider
+    rows = (
+        db.query(CachedWorkflow)
+        .join(Provider, CachedWorkflow.provider_id == Provider.id)
+        .order_by(CachedWorkflow.last_synced_at.desc())
+        .all()
+    )
     return [CachedWorkflowOut.model_validate(r) for r in rows]
 
 

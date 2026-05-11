@@ -5,6 +5,9 @@
  *   - input:  workflow entry (selection + instruction + referenced files)
  *   - agent:  atomic execution unit
  *   - loop:   container that iterates a sub-graph N times
+ *             Loop input connects to internal agent inputs
+ *             Internal agent outputs connect to Loop output
+ *             Loop output feeds back to Loop input (feedback loop)
  *   - output: workflow exit (text | json | annotations)
  *
  * Parallel vs sequential is expressed by topology — two disconnected agents
@@ -51,6 +54,7 @@ export function NodePalette() {
       <div className="wf-palette-footnote">
         <div className="wf-footnote-line">💡 工作流结构：</div>
         <div className="wf-footnote-line">· Input → Agent(s) → Output</div>
+        <div className="wf-footnote-line">· Loop 输入输出可直接连线</div>
         <div className="wf-footnote-line">· Agent 不连线 → 平行</div>
         <div className="wf-footnote-line">· A → B 连线 → 顺序</div>
       </div>

@@ -220,7 +220,12 @@
 }
 
 .tree-file-row {
-  color: rgba(148, 163, 184, 0.85);
+  color: #e5e7eb;
+}
+
+.tree-file-row.active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #dbeafe;
 }
 
 .tree-error {

@@ -2,14 +2,14 @@
  * WorkflowCanvas — React Flow editor for a WorkflowGraph.
  *
  * Key behaviors:
- *   - Palette drop: detects which (possibly nested) loop contains the drop point
- *     and sets parentId accordingly. Agents dropped inside a loop become its
- *     children; a loop dropped inside another loop nests.
- *   - Parent-child positions are relative to the parent, so we convert drop
- *     point → flow coords → parent-relative coords.
- *   - Loops expand to fit children via expandParent on the children.
- *   - Delete removes the node and any edges touching it; deleting a loop also
- *     removes its children recursively.
+ *   - Loop containers sit at the bottom layer (zIndex: -1), never stealing
+ *     focus from Agent nodes. Users don't drag Agents into loops.
+ *   - Connection-based loop membership: when an Agent connects to a Loop's
+ *     input or output handle, it's marked as belonging to that loop via
+ *     `config._ui.loop_id`. Removing the connection unbinds it automatically.
+ *   - Loop auto-resizes to visually encompass its member Agents.
+ *   - Palette drop: places nodes at absolute canvas coords, no nesting logic.
+ *   - Delete removes the node and any edges touching it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
@@ -34,7 +34,6 @@ import { NodePalette } from './NodePalette'
 import { NodeInspector } from './NodeInspector'
 import { nodeTypes } from './nodes'
 import {
-  findDropTarget,
   flowToGraph,
   generateNodeId,
   graphToFlow,
@@ -48,7 +47,8 @@ interface WorkflowCanvasProps {
   onGraphChange: (graph: WorkflowGraph) => void
 }
 
-const LOOP_DEFAULT_SIZE = { width: 320, height: 200 }
+const LOOP_DEFAULT_SIZE = { width: 360, height: 240 }
+const LOOP_PADDING = 40
 
 function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
   const initial = useMemo(() => graphToFlow(initialGraph), [initialGraph])
@@ -63,10 +63,195 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges])
 
+  /**
+   * Derive which Agents belong to which Loop based on directional edge handles.
+   *
+   * Internal membership rule (direction-sensitive):
+   *   - Loop.loop-in-source → Agent.target : Agent is INSIDE the loop
+   *     (Loop is feeding its input into the Agent)
+   *   - Agent.source → Loop.loop-out-target : Agent is INSIDE the loop
+   *     (Agent is feeding its output back into the Loop)
+   *
+   * External (not membership):
+   *   - Agent.source → Loop.loop-in-target : external Agent feeds Loop from outside
+   *   - Loop.loop-out-source → Agent.target : Loop feeds external Agent as final output
+   *
+   * Once an Agent is marked as a member, we also propagate to nested Agents
+   * inside the loop (Agents chained off member Agents via ordinary edges).
+   */
+  const loopMembership = useMemo(() => {
+    const membership = new Map<string, string>() // agentId -> loopId
+    const loopIds = new Set(
+      nodes.filter((n) => n.data.nodeType === 'loop').map((n) => n.id),
+    )
+
+    // Seed membership from direction-sensitive edges on Loop handles.
+    for (const edge of edges) {
+      if (loopIds.has(edge.source) && edge.sourceHandle === 'loop-in-source') {
+        if (!loopIds.has(edge.target)) membership.set(edge.target, edge.source)
+      }
+      if (loopIds.has(edge.target) && edge.targetHandle === 'loop-out-target') {
+        if (!loopIds.has(edge.source)) membership.set(edge.source, edge.target)
+      }
+    }
+
+    // Propagate: any Agent reachable via ordinary edges from an existing
+    // member (within the same connected internal chain) is also a member.
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const edge of edges) {
+        // Skip edges that touch a Loop directly — those were handled above.
+        if (loopIds.has(edge.source) || loopIds.has(edge.target)) continue
+        const srcLoop = membership.get(edge.source)
+        const tgtLoop = membership.get(edge.target)
+        if (srcLoop && !tgtLoop) {
+          membership.set(edge.target, srcLoop)
+          changed = true
+        } else if (tgtLoop && !srcLoop) {
+          membership.set(edge.source, tgtLoop)
+          changed = true
+        }
+      }
+    }
+
+    return membership
+  }, [nodes, edges])
+
+  /**
+   * Auto-resize Loop containers to encompass their member Agents.
+   * Runs whenever membership or Agent positions change.
+   */
+  const nodesWithLoopSizing = useMemo(() => {
+    const agentBounds = new Map<string, { x: number; y: number; w: number; h: number }>()
+    for (const n of nodes) {
+      if (n.data.nodeType !== 'loop' && !n.parentId) {
+        const w = typeof n.width === 'number' ? n.width : 180
+        const h = typeof n.height === 'number' ? n.height : 80
+        agentBounds.set(n.id, { x: n.position.x, y: n.position.y, w, h })
+      }
+    }
+
+    return nodes.map((n) => {
+      if (n.data.nodeType !== 'loop') {
+        // Mark Agent with loop_id visually (for styling), store in data
+        const ownerLoopId = loopMembership.get(n.id)
+        if (ownerLoopId !== (n.data.config._loop_owner as string | undefined)) {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              config: { ...n.data.config, _loop_owner: ownerLoopId ?? '' },
+            },
+          }
+        }
+        return n
+      }
+
+      // Loop node: compute bounding box of member agents
+      const memberIds = [...loopMembership.entries()]
+        .filter(([, loopId]) => loopId === n.id)
+        .map(([agentId]) => agentId)
+
+      if (memberIds.length === 0) {
+        // No members — keep original size, but ensure loop stays at bottom
+        return { ...n, zIndex: -1 }
+      }
+
+      const bounds = memberIds
+        .map((id) => agentBounds.get(id))
+        .filter((b): b is NonNullable<typeof b> => b !== undefined)
+
+      if (bounds.length === 0) {
+        return { ...n, zIndex: -1 }
+      }
+
+      const minX = Math.min(...bounds.map((b) => b.x)) - LOOP_PADDING
+      const minY = Math.min(...bounds.map((b) => b.y)) - LOOP_PADDING - 30 // extra for header
+      const maxX = Math.max(...bounds.map((b) => b.x + b.w)) + LOOP_PADDING
+      const maxY = Math.max(...bounds.map((b) => b.y + b.h)) + LOOP_PADDING
+
+      return {
+        ...n,
+        position: { x: minX, y: minY },
+        style: {
+          ...n.style,
+          width: Math.max(LOOP_DEFAULT_SIZE.width, maxX - minX),
+          height: Math.max(LOOP_DEFAULT_SIZE.height, maxY - minY),
+        },
+        zIndex: -1,
+      }
+    })
+  }, [nodes, loopMembership])
+
   const onConnect: OnConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
     [setEdges],
   )
+
+  /**
+   * Dragging a Loop translates its member Agents with it. Without this, the
+   * `nodesWithLoopSizing` memo recomputes the Loop's position from the
+   * unchanged member bounds every frame and snaps it back to where it was.
+   *
+   * At drag start we snapshot the Loop's start position and each member's
+   * start position; during drag we apply the total delta to every member so
+   * the Loop's recomputed bounds follow the cursor naturally.
+   */
+  const dragSyncRef = useRef<{
+    loopId: string
+    startLoopPos: { x: number; y: number }
+    startMemberPositions: Map<string, { x: number; y: number }>
+  } | null>(null)
+
+  const onNodeDragStart = useCallback(
+    (_: unknown, node: FlowNode) => {
+      if (node.type !== 'loop') {
+        dragSyncRef.current = null
+        return
+      }
+      const memberIds = [...loopMembership.entries()]
+        .filter(([, loopId]) => loopId === node.id)
+        .map(([agentId]) => agentId)
+      if (memberIds.length === 0) {
+        dragSyncRef.current = null
+        return
+      }
+      const currentNodes = getNodes() as FlowNode[]
+      const startMemberPositions = new Map<string, { x: number; y: number }>()
+      for (const m of memberIds) {
+        const found = currentNodes.find((n) => n.id === m)
+        if (found) startMemberPositions.set(m, { ...found.position })
+      }
+      dragSyncRef.current = {
+        loopId: node.id,
+        startLoopPos: { ...node.position },
+        startMemberPositions,
+      }
+    },
+    [loopMembership, getNodes],
+  )
+
+  const onNodeDrag = useCallback(
+    (_: unknown, node: FlowNode) => {
+      const state = dragSyncRef.current
+      if (!state || state.loopId !== node.id) return
+      const dx = node.position.x - state.startLoopPos.x
+      const dy = node.position.y - state.startLoopPos.y
+      setNodes((nds) =>
+        nds.map((n) => {
+          const start = state.startMemberPositions.get(n.id)
+          if (!start) return n
+          return { ...n, position: { x: start.x + dx, y: start.y + dy } }
+        }),
+      )
+    },
+    [setNodes],
+  )
+
+  const onNodeDragStop = useCallback(() => {
+    dragSyncRef.current = null
+  }, [])
 
   const onDragOver = useCallback((event: DragEvent) => {
     event.preventDefault()
@@ -87,8 +272,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
 
       const currentNodes = getNodes() as FlowNode[]
 
-      // Input / output nodes are workflow boundaries — only one of each,
-      // and they never live inside a loop container.
+      // Input / output nodes are workflow boundaries — only one of each.
       if (nodeType === 'input' && currentNodes.some((n) => n.data.nodeType === 'input')) {
         // eslint-disable-next-line no-console
         console.warn('[workflow-canvas] input node already exists, ignoring drop')
@@ -100,23 +284,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
         return
       }
 
-      const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      // input / output bypass container nesting by design.
-      const dropParent =
-        nodeType === 'input' || nodeType === 'output'
-          ? undefined
-          : findDropTarget(currentNodes, flowPoint)
-
-      // React Flow stores child position relative to parent. Convert absolute
-      // flow coords into parent-relative if the drop lands inside a loop.
-      let position = flowPoint
-      if (dropParent) {
-        const parentAbs = absolutePosition(currentNodes, dropParent.id)
-        position = {
-          x: flowPoint.x - parentAbs.x,
-          y: flowPoint.y - parentAbs.y,
-        }
-      }
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
 
       setNodes((nds) => {
         const id = generateNodeId(nds, nodeType)
@@ -143,11 +311,8 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
             nodeType,
             config: defaultConfig,
           },
-          ...(dropParent
-            ? { parentId: dropParent.id, extent: 'parent' as const, expandParent: true }
-            : {}),
           ...(nodeType === 'loop'
-            ? { style: { ...LOOP_DEFAULT_SIZE } }
+            ? { style: { ...LOOP_DEFAULT_SIZE }, zIndex: -1 }
             : {}),
         }
         return nds.concat(newNode)
@@ -176,21 +341,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
 
   const deleteNode = useCallback(
     (id: string) => {
-      setNodes((nds) => {
-        // Remove the node itself plus any descendants (recursive via parentId chain).
-        const toRemove = new Set<string>([id])
-        let grew = true
-        while (grew) {
-          grew = false
-          for (const n of nds) {
-            if (n.parentId && toRemove.has(n.parentId) && !toRemove.has(n.id)) {
-              toRemove.add(n.id)
-              grew = true
-            }
-          }
-        }
-        return nds.filter((n) => !toRemove.has(n.id))
-      })
+      setNodes((nds) => nds.filter((n) => n.id !== id))
       setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id))
       setSelectedId(null)
     },
@@ -202,11 +353,14 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
       <NodePalette />
       <div className="wf-canvas-wrapper" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
-          nodes={nodes}
+          nodes={nodesWithLoopSizing}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
           onNodeClick={(_, node) => setSelectedId(node.id)}
           onPaneClick={() => setSelectedId(null)}
           nodeTypes={nodeTypes}
@@ -221,14 +375,6 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
       <NodeInspector node={selectedNode} onUpdate={updateNodeData} onDelete={deleteNode} />
     </div>
   )
-}
-
-function absolutePosition(nodes: FlowNode[], id: string): { x: number; y: number } {
-  const node = nodes.find((n) => n.id === id)
-  if (!node) return { x: 0, y: 0 }
-  if (!node.parentId) return node.position
-  const parent = absolutePosition(nodes, node.parentId)
-  return { x: parent.x + node.position.x, y: parent.y + node.position.y }
 }
 
 export function WorkflowCanvas(props: WorkflowCanvasProps) {

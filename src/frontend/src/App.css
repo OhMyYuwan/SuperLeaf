@@ -79,6 +79,54 @@ button {
   background: rgba(59, 130, 246, 0.4);
 }
 
+.panel-collapse-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  width: 24px;
+  height: 48px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0 6px 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(148, 163, 184, 0.8);
+  transition: all 0.2s ease;
+  padding: 0;
+  backdrop-filter: blur(8px);
+}
+
+.panel-collapse-btn:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: rgba(59, 130, 246, 0.9);
+}
+
+.panel-collapse-btn.left {
+  left: 0;
+}
+
+.panel-collapse-btn.left.collapsed {
+  left: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.panel-collapse-btn.right {
+  right: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.panel-collapse-btn.right.collapsed {
+  right: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.panel-collapse-btn svg {
+  transition: transform 0.2s ease;
+}
+
 /* Radix ScrollArea chrome — used by the preview column */
 .scroll-root,
 .scroll-viewport {

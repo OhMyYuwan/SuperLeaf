@@ -122,14 +122,27 @@ export const filesystemApi = {
       { method: 'DELETE' },
     ),
 
-  uploadFile: async (file: File, folderId?: string | null): Promise<{ id: string; name: string }> => {
+  uploadFile: async (
+    file: File,
+    folderId?: string | null,
+  ): Promise<
+    | { kind: 'doc'; id: string; name: string; format: 'tex' | 'md' | 'txt' }
+    | { kind: 'file'; id: string; name: string; size_bytes: number; mime_type: string }
+  > => {
     const form = new FormData()
     form.append('file', file)
     if (folderId) form.append('folder_id', folderId)
     const resp = await fetch(`${BASE}/api/files/upload`, { method: 'POST', body: form })
     if (!resp.ok) throw new Error(`upload ${resp.status}`)
-    return (await resp.json()) as { id: string; name: string }
+    return resp.json()
   },
+
+  convertFileToDoc: (fileId: string) =>
+    http<BackendDoc>(`/api/files/${encodeURIComponent(fileId)}/convert-to-doc`, {
+      method: 'POST',
+    }),
+
+  fileUrl: (fileId: string) => `${BASE}/api/files/${encodeURIComponent(fileId)}`,
 
   exportZipUrl: () => `${BASE}/api/project/export.zip`,
 }

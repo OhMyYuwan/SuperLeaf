@@ -6,7 +6,14 @@
  */
 
 import { create } from 'zustand'
-import { filesystemApi, type ProjectTree } from '../services/filesystemApi'
+import { filesystemApi, type ProjectTree, type TreeFile } from '../services/filesystemApi'
+
+export interface ActivePreviewFile {
+  id: string
+  name: string
+  mimeType: string
+  url: string
+}
 
 interface FilesystemState {
   tree: ProjectTree | null
@@ -14,6 +21,8 @@ interface FilesystemState {
   error: string | null
 
   expandedFolderIds: Record<string, boolean>
+
+  activePreviewFile: ActivePreviewFile | null
 
   loadTree: () => Promise<void>
   setExpanded: (folderId: string, expanded: boolean) => void
@@ -32,6 +41,9 @@ interface FilesystemState {
   renameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
   deleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
   uploadFile: (file: File, folderId?: string | null) => Promise<void>
+
+  setPreviewFile: (file: TreeFile | null) => void
+  convertFileToDoc: (fileId: string) => Promise<string>
 }
 
 export const useFilesystemStore = create<FilesystemState>((set, get) => ({
@@ -39,6 +51,7 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
   loading: false,
   error: null,
   expandedFolderIds: {},
+  activePreviewFile: null,
 
   loadTree: async () => {
     set({ loading: true, error: null })
@@ -113,5 +126,26 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
   uploadFile: async (file, folderId) => {
     await filesystemApi.uploadFile(file, folderId)
     await get().loadTree()
+  },
+
+  setPreviewFile: (file) => {
+    if (!file) {
+      set({ activePreviewFile: null })
+      return
+    }
+    set({
+      activePreviewFile: {
+        id: file.id,
+        name: file.name,
+        mimeType: file.mime_type,
+        url: filesystemApi.fileUrl(file.id),
+      },
+    })
+  },
+
+  convertFileToDoc: async (fileId) => {
+    const doc = await filesystemApi.convertFileToDoc(fileId)
+    await get().loadTree()
+    return doc.id
   },
 }))

@@ -52,7 +52,7 @@ class CachedWorkflow(Base):
     __tablename__ = "cached_workflows"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"))
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"))
     # Dify-side identifier
     external_id: Mapped[str] = mapped_column(String(128))
     name: Mapped[str] = mapped_column(String(256))

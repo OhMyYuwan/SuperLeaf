@@ -38,9 +38,8 @@ export function WorkflowDefinitionEditor({
   const [mode, setMode] = useState<Mode>(definition ? 'canvas' : 'canvas')
   const [name, setName] = useState(definition?.name ?? '')
   const [description, setDescription] = useState(definition?.description ?? '')
-  const [executionMode, setExecutionMode] = useState<WorkflowDefinition['execution_mode']>(
-    definition?.execution_mode ?? 'graph',
-  )
+  // Execution mode is always 'graph' now
+  const executionMode: WorkflowDefinition['execution_mode'] = 'graph'
   const [graph, setGraph] = useState<WorkflowGraph>(definition?.graph ?? EMPTY_GRAPH)
   const [config, setConfig] = useState<WorkflowConfig>(definition?.config ?? {})
   const [jsonText, setJsonText] = useState(
@@ -145,19 +144,6 @@ export function WorkflowDefinitionEditor({
             placeholder="简要描述这个 workflow 的用途"
             rows={2}
           />
-        </div>
-
-        <div className="form-group">
-          <label>执行模式</label>
-          <select
-            value={executionMode}
-            onChange={(e) => setExecutionMode(e.target.value as WorkflowDefinition['execution_mode'])}
-          >
-            <option value="parallel">Parallel - 多个 Agent 并行执行</option>
-            <option value="pipeline">Pipeline - 顺序执行 A → B → C</option>
-            <option value="roundtable">Roundtable - 循环讨论直到收敛</option>
-            <option value="graph">Graph - 自定义 DAG 结构</option>
-          </select>
         </div>
       </div>
 

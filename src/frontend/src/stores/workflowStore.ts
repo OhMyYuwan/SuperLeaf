@@ -19,7 +19,6 @@ import {
   type WorkflowRun,
   type WorkflowDefinition,
   type WorkflowDefinitionDraft,
-  type NodeTrace,
 } from '../services/backendApi'
 import { useAnnotationStore } from './annotationStore'
 import { useDocumentStore } from './documentStore'

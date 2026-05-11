@@ -34,8 +34,8 @@ interface RightPanelProps {
   onTabChange?: (tab: string) => void
   onRunWorkflow: (workflowId: string, instruction: string) => void
   onRunDefinition: (definitionId: string, instruction: string) => void
-  onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<void>
-  onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<void>
+  onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
+  onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onDeleteDefinition: (id: string) => Promise<void>
   onReloadWorkflows: () => void
   onJumpToRange?: (range: { from: number; to: number }) => void

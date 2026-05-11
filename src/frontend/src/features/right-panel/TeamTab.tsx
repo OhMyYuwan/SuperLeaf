@@ -48,6 +48,7 @@ interface TeamTabProps {
   onReload: () => void
   onChatWithAgent?: (workflow: CachedWorkflow) => void
   onRunDefinition: (definitionId: string, instruction: string) => void
+  onTestDefinition: (definitionId: string, prompt: string) => void
   onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onDeleteDefinition: (id: string) => Promise<void>
@@ -69,6 +70,7 @@ export function TeamTab({
   onReload,
   onChatWithAgent,
   onRunDefinition,
+  onTestDefinition,
   onCreateDefinition,
   onUpdateDefinition,
   onDeleteDefinition,
@@ -189,6 +191,7 @@ export function TeamTab({
           currentRoundMap={currentRoundMap}
           maxRoundsMap={maxRoundsMap}
           onRunDefinition={onRunDefinition}
+          onTestDefinition={onTestDefinition}
           onCreateDefinition={onCreateDefinition}
           onUpdateDefinition={onUpdateDefinition}
           onDeleteDefinition={onDeleteDefinition}

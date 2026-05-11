@@ -12,6 +12,7 @@ interface NodeInspectorProps {
   node: FlowNode | null
   onUpdate: (id: string, patch: Partial<FlowNodeData>) => void
   onDelete: (id: string) => void
+  onClose: () => void
 }
 
 function formatAgentOption(name: string, id: string): string {
@@ -19,7 +20,7 @@ function formatAgentOption(name: string, id: string): string {
   return `${name} · ${shortId}`
 }
 
-export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) {
+export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspectorProps) {
   const allWorkflows = useWorkflowStore((s) => s.workflows)
   if (!node) {
     return (
@@ -40,9 +41,12 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
     <aside className="wf-inspector">
       <div className="wf-inspector-header">
         <span>{inspectorHeaderLabel(data.nodeType)}</span>
-        <button className="danger-btn" onClick={() => onDelete(node.id)}>
-          删除
-        </button>
+        <div className="wf-inspector-actions">
+          <button className="secondary-btn" onClick={onClose}>收起</button>
+          <button className="danger-btn" onClick={() => onDelete(node.id)}>
+            删除
+          </button>
+        </div>
       </div>
 
       <div className="form-group">
@@ -64,7 +68,7 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
       {data.nodeType === 'output' && <OutputNodeForm data={data} setConfig={setConfig} />}
 
       {data.nodeType === 'agent' && (() => {
-        const currentAgentId = (data.config.agent_id as string) ?? ''
+        const currentAgentId = readAgentId(data.config)
         const activeAgents = allWorkflows.filter((w) => !w.is_disabled)
         const disabledAgents = allWorkflows.filter((w) => w.is_disabled)
         const selectedAgent = allWorkflows.find((w) => w.id === currentAgentId)
@@ -77,7 +81,7 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
               <label>Agent</label>
               <select
                 value={currentAgentId}
-                onChange={(e) => setConfig({ agent_id: e.target.value })}
+                onChange={(e) => setConfig({ agent_id: e.target.value, agentId: undefined })}
                 className={selectedIsDisabled || selectedIsOrphan ? 'input-warning' : ''}
               >
                 <option value="">— 未选择 Agent —</option>
@@ -181,6 +185,11 @@ export function NodeInspector({ node, onUpdate, onDelete }: NodeInspectorProps) 
       )}
     </aside>
   )
+}
+
+function readAgentId(config: Record<string, unknown>): string {
+  const raw = config.agent_id ?? config.agentId
+  return typeof raw === 'string' ? raw.trim() : ''
 }
 
 function inspectorHeaderLabel(type: FlowNodeData['nodeType']): string {

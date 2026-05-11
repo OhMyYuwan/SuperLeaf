@@ -17,6 +17,7 @@ export interface TreeDoc {
   id: string
   name: string
   format: 'tex' | 'md' | 'txt'
+  size_bytes: number
   updated_at: string
 }
 
@@ -78,13 +79,16 @@ export const filesystemApi = {
     }),
 
   createFolder: (payload: { parent_folder_id?: string | null; name: string }) =>
-    http('/api/folders', {
-      method: 'POST',
-      body: JSON.stringify({
-        parent_folder_id: payload.parent_folder_id ?? null,
-        name: payload.name,
-      }),
-    }),
+    http<{ id: string; project_id: string; parent_folder_id: string | null; name: string }>(
+      '/api/folders',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          parent_folder_id: payload.parent_folder_id ?? null,
+          name: payload.name,
+        }),
+      },
+    ),
 
   createDoc: (payload: {
     folder_id?: string | null
@@ -141,6 +145,19 @@ export const filesystemApi = {
     http<BackendDoc>(`/api/files/${encodeURIComponent(fileId)}/convert-to-doc`, {
       method: 'POST',
     }),
+
+  moveEntity: (
+    entityType: 'folder' | 'doc' | 'file',
+    entityId: string,
+    targetFolderId: string | null,
+  ) =>
+    http<{ ok: boolean }>(
+      `/api/entities/${entityType}/${encodeURIComponent(entityId)}/move`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ target_folder_id: targetFolderId }),
+      },
+    ),
 
   fileUrl: (fileId: string) => `${BASE}/api/files/${encodeURIComponent(fileId)}`,
 

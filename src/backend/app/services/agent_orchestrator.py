@@ -205,22 +205,24 @@ class WorkflowOrchestrator:
         # Collect outputs
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                yield {
-                    "event": "node.failed",
-                    "data": {
-                        "node_id": agent_nodes[i]["id"],
-                        "error": str(result),
-                    },
-                }
+                    yield {
+                        "event": "node.failed",
+                        "data": {
+                            "node_id": agent_nodes[i]["id"],
+                            "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
+                            "error": str(result),
+                        },
+                    }
             else:
                 ctx.all_outputs.append(result)
                 yield {
                     "event": "node.completed",
-                    "data": {
-                        "node_id": agent_nodes[i]["id"],
-                        "output": result,
-                    },
-                }
+                        "data": {
+                            "node_id": agent_nodes[i]["id"],
+                            "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
+                            "output": result,
+                        },
+                    }
 
         # Merge results
         merged = self._merge_outputs(ctx.all_outputs, strategy="concat")
@@ -253,7 +255,11 @@ class WorkflowOrchestrator:
 
                 yield {
                     "event": "node.completed",
-                    "data": {"node_id": node_id, "output": output},
+                    "data": {
+                        "node_id": node_id,
+                        "input": node.inputs,
+                        "output": output,
+                    },
                 }
 
     async def _execute_roundtable(self, ctx: OrchestrationContext) -> AsyncIterator[dict]:
@@ -298,6 +304,7 @@ class WorkflowOrchestrator:
                     "data": {
                         "node_id": node["id"],
                         "round": round_num,
+                        "input": ctx.nodes[node["id"]].inputs,
                         "output": output,
                     },
                 }
@@ -374,6 +381,13 @@ class WorkflowOrchestrator:
                     # Start execution
                     task = asyncio.create_task(self._execute_node(ctx, node_id))
                     pending_tasks[node_id] = task
+                    yield {
+                        "event": "node.started",
+                        "data": {
+                            "node_id": node_id,
+                            "input": node.inputs,
+                        },
+                    }
 
                 ready_nodes = []
 
@@ -403,9 +417,22 @@ class WorkflowOrchestrator:
                                 "event": "node.completed",
                                 "data": {
                                     "node_id": completed_node_id,
+                                    "input": ctx.nodes[completed_node_id].inputs,
                                     "output": output,
                                 },
                             }
+                            if ctx.nodes[completed_node_id].node_type == "loop":
+                                for child_id in _loop_child_ids(ctx, completed_node_id):
+                                    child = ctx.nodes[child_id]
+                                    if child.status == "completed":
+                                        yield {
+                                            "event": "node.completed",
+                                            "data": {
+                                                "node_id": child_id,
+                                                "input": child.inputs,
+                                                "output": child.outputs,
+                                            },
+                                        }
 
                             # Check if any dependent nodes are now ready
                             for dependent_id in dependents[completed_node_id]:
@@ -419,6 +446,7 @@ class WorkflowOrchestrator:
                                 "event": "node.failed",
                                 "data": {
                                     "node_id": completed_node_id,
+                                    "input": ctx.nodes[completed_node_id].inputs,
                                     "error": str(e),
                                 },
                             }
@@ -735,13 +763,38 @@ class WorkflowOrchestrator:
             e for e in graph_edges
             if _edge_source(e) in child_ids and _edge_target(e) in child_ids
         ]
+        entry_child_ids = _loop_entry_child_ids(graph_edges, node_id, child_ids)
+        exit_child_ids = _loop_exit_child_ids(graph_edges, node_id, child_ids)
+        if not entry_child_ids:
+            internal_targets = {_edge_target(e) for e in child_edges}
+            entry_child_ids = [child_id for child_id in child_ids if child_id not in internal_targets]
 
         round_outputs: list[dict] = []
+        next_round_feedback: dict[str, dict] | None = None
         for round_num in range(1, rounds + 1):
+            loop_inputs = (
+                next_round_feedback
+                if next_round_feedback is not None
+                else dict(node.inputs.get("dependency_outputs") or {})
+            )
+            initial_inputs = {
+                child_id: loop_inputs
+                for child_id in entry_child_ids
+                if loop_inputs
+            }
             outputs_this_round = await self._execute_subgraph_once(
-                ctx, child_nodes, child_edges, round_num
+                ctx,
+                child_nodes,
+                child_edges,
+                round_num,
+                initial_inputs=initial_inputs,
             )
             round_outputs.append(outputs_this_round)
+            next_round_feedback = _select_loop_feedback(
+                outputs_this_round,
+                child_edges,
+                exit_child_ids,
+            )
 
         node.outputs = {
             "rounds": rounds,
@@ -759,6 +812,7 @@ class WorkflowOrchestrator:
         sub_nodes: list[dict],
         sub_edges: list[dict],
         round_num: int,
+        initial_inputs: dict[str, dict[str, dict]] | None = None,
     ) -> dict[str, dict]:
         """Run a subgraph (loop body or similar) once, returning nodeId → output.
 
@@ -778,14 +832,17 @@ class WorkflowOrchestrator:
 
         completed: dict[str, dict] = {}
         pending: dict[str, asyncio.Task] = {}
+        initial_inputs = initial_inputs or {}
         ready = [nid for nid, d in in_degree.items() if d == 0]
 
         while ready or pending:
             for nid in ready:
                 node_ctx = ctx.nodes[nid]
-                node_ctx.inputs["dependency_outputs"] = {
+                dependency_outputs = {
                     dep: completed[dep] for dep in dependencies[nid]
                 }
+                dependency_outputs.update(initial_inputs.get(nid, {}))
+                node_ctx.inputs["dependency_outputs"] = dependency_outputs
                 node_ctx.inputs["current_round"] = round_num
                 pending[nid] = asyncio.create_task(self._execute_node(ctx, nid))
             ready = []
@@ -1072,6 +1129,57 @@ def _parent_id(node: dict) -> str | None:
     return ui.get("parent_id")
 
 
+def _loop_child_ids(ctx: OrchestrationContext, loop_id: str) -> list[str]:
+    nodes = ctx.workflow_def.graph.get("nodes", [])
+    return [n["id"] for n in nodes if _parent_id(n) == loop_id and n["id"] in ctx.nodes]
+
+
+def _loop_entry_child_ids(edges: list[dict], loop_id: str, child_ids: set[str]) -> list[str]:
+    return [
+        _edge_target(e)
+        for e in edges
+        if _edge_source(e) == loop_id
+        and e.get("source_handle") == "loop-in-source"
+        and _edge_target(e) in child_ids
+    ]
+
+
+def _loop_exit_child_ids(edges: list[dict], loop_id: str, child_ids: set[str]) -> list[str]:
+    return [
+        _edge_source(e)
+        for e in edges
+        if _edge_target(e) == loop_id
+        and e.get("target_handle") == "loop-out-target"
+        and _edge_source(e) in child_ids
+    ]
+
+
+def _select_loop_feedback(
+    outputs_this_round: dict[str, dict],
+    child_edges: list[dict],
+    exit_child_ids: list[str],
+) -> dict[str, dict]:
+    if exit_child_ids:
+        return {
+            child_id: outputs_this_round[child_id]
+            for child_id in exit_child_ids
+            if child_id in outputs_this_round
+        }
+
+    # Fallback for older graphs that have no explicit loop-out-target edge:
+    # treat terminal child nodes as the loop's feedback output.
+    sources = {_edge_source(e) for e in child_edges}
+    targets = {_edge_target(e) for e in child_edges}
+    terminal_ids = targets - sources
+    if terminal_ids:
+        return {
+            child_id: outputs_this_round[child_id]
+            for child_id in terminal_ids
+            if child_id in outputs_this_round
+        }
+    return dict(outputs_this_round)
+
+
 def _aggregate_as_text(dep_outputs: dict[str, dict]) -> str:
     """Concat each upstream's text with a source marker."""
     parts: list[str] = []
@@ -1157,4 +1265,3 @@ def _aggregate_as_annotation_schema(dep_outputs: dict[str, dict]) -> dict:
         "suggestions": suggestions,
         "risks": risks,
     }
-

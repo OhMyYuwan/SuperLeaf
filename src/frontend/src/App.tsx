@@ -45,7 +45,9 @@ function App() {
   const createDoc = useFilesystemStore((s) => s.createDoc)
   const renameEntity = useFilesystemStore((s) => s.renameEntity)
   const deleteEntity = useFilesystemStore((s) => s.deleteEntity)
+  const moveEntity = useFilesystemStore((s) => s.moveEntity)
   const uploadFile = useFilesystemStore((s) => s.uploadFile)
+  const uploadFolder = useFilesystemStore((s) => s.uploadFolder)
   const renameProject = useFilesystemStore((s) => s.renameProject)
   const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
   const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
@@ -266,6 +268,24 @@ function App() {
     }, { autoIngestToAnnotations: false })
   }
 
+  const handleTestDefinition = (definitionId: string, prompt: string) => {
+    const trimmed = prompt.trim()
+    if (!trimmed) {
+      alert('请输入测试 Prompt')
+      return
+    }
+    executeDefinition(definitionId, {
+      document_id: activeDocumentId ?? 'workflow-test',
+      range_start: activeSelection?.from ?? 0,
+      range_end: activeSelection?.to ?? trimmed.length,
+      inputs: {
+        text: activeSelection?.text || trimmed,
+        test_prompt: trimmed,
+      },
+      query: trimmed,
+    }, { autoIngestToAnnotations: false })
+  }
+
   const handleEditorChange = (next: string) => {
     if (!activeDocumentId) return
     updateContent(activeDocumentId, next)
@@ -302,7 +322,11 @@ function App() {
       />
 
       <main className="workspace">
-        <PanelGroup orientation="horizontal" style={{ height: '100%' }} onLayout={handlePanelLayout}>
+        <PanelGroup
+          orientation="horizontal"
+          style={{ height: '100%' }}
+          onLayoutChanged={(layout) => handlePanelLayout(Object.values(layout))}
+        >
           {leftPanelVisible && !leftCollapsed && (
             <>
               <Panel defaultSize={20} minSize={16}>
@@ -321,7 +345,9 @@ function App() {
                     onCreateDoc={createDoc}
                     onRenameEntity={renameEntity}
                     onDeleteEntity={deleteEntity}
+                    onMoveEntity={moveEntity}
                     onUploadFile={uploadFile}
+                    onUploadFolder={uploadFolder}
                     onRenameProject={renameProject}
                   />
                   <OutlineList
@@ -448,6 +474,7 @@ function App() {
                   onTabChange={setRightTab}
                   onRunWorkflow={handleRunWorkflow}
                   onRunDefinition={handleRunDefinition}
+                  onTestDefinition={handleTestDefinition}
                   onCreateDefinition={createDefinition}
                   onUpdateDefinition={updateDefinition}
                   onDeleteDefinition={deleteDefinition}

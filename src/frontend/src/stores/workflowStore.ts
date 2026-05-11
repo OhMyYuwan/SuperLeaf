@@ -51,6 +51,7 @@ export interface NodeStatus {
   status: 'pending' | 'running' | 'completed' | 'failed'
   startTime?: number
   endTime?: number
+  input?: string
   output?: string
   error?: string
 }
@@ -483,44 +484,54 @@ function handleOrchestratedEvent(
   const payload = evt.payload as Record<string, unknown>
 
   if (evt.kind === 'node.started') {
-    const nodeId = payload.nodeId as string
+    const nodeId = nodeIdFromPayload(payload)
+    if (!nodeId) return
+    const input = formatNodeJson(payload.input)
     set((s) => ({
       nodeStatuses: {
         ...s.nodeStatuses,
         [definitionId]: [
           ...(s.nodeStatuses[definitionId] ?? []).filter((n) => n.nodeId !== nodeId),
-          { nodeId, status: 'running', startTime: Date.now() },
+          { nodeId, status: 'running', startTime: Date.now(), input },
         ],
       },
     }))
   }
 
   if (evt.kind === 'node.completed') {
-    const nodeId = payload.nodeId as string
-    const output = payload.output as string
+    const nodeId = nodeIdFromPayload(payload)
+    if (!nodeId) return
+    const input = formatNodeJson(payload.input)
+    const output = formatNodeJson(payload.output)
     set((s) => ({
       nodeStatuses: {
         ...s.nodeStatuses,
-        [definitionId]: (s.nodeStatuses[definitionId] ?? []).map((n) =>
-          n.nodeId === nodeId
-            ? { ...n, status: 'completed', endTime: Date.now(), output }
-            : n,
-        ),
+        [definitionId]: upsertNodeStatus(s.nodeStatuses[definitionId] ?? [], {
+          nodeId,
+          status: 'completed',
+          endTime: Date.now(),
+          input,
+          output,
+        }),
       },
     }))
   }
 
   if (evt.kind === 'node.failed') {
-    const nodeId = payload.nodeId as string
+    const nodeId = nodeIdFromPayload(payload)
+    if (!nodeId) return
+    const input = formatNodeJson(payload.input)
     const error = payload.error as string
     set((s) => ({
       nodeStatuses: {
         ...s.nodeStatuses,
-        [definitionId]: (s.nodeStatuses[definitionId] ?? []).map((n) =>
-          n.nodeId === nodeId
-            ? { ...n, status: 'failed', endTime: Date.now(), error }
-            : n,
-        ),
+        [definitionId]: upsertNodeStatus(s.nodeStatuses[definitionId] ?? [], {
+          nodeId,
+          status: 'failed',
+          endTime: Date.now(),
+          input,
+          error,
+        }),
       },
     }))
   }
@@ -556,6 +567,25 @@ function handleOrchestratedEvent(
   }
 }
 
+function nodeIdFromPayload(payload: Record<string, unknown>): string {
+  return String(payload.nodeId ?? payload.node_id ?? '')
+}
+
+function formatNodeJson(value: unknown): string {
+  if (value == null) return ''
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return JSON.stringify(String(value), null, 2)
+  }
+}
+
+function upsertNodeStatus(nodes: NodeStatus[], patch: NodeStatus): NodeStatus[] {
+  const idx = nodes.findIndex((n) => n.nodeId === patch.nodeId)
+  if (idx === -1) return [...nodes, patch]
+  return nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n))
+}
+
 /**
  * Render a backend error body into a user-facing string. Backend returns
  * structured detail for 409 (degraded workflow / missing boundary); fall back
@@ -576,7 +606,10 @@ function formatExecuteError(status: number, body: string): string {
       if (detail?.code === 'workflow_degraded') {
         const msg = detail.message ?? 'Workflow 中存在不可用的 Agent'
         const list = (detail.issues ?? [])
-          .map((i) => `  · ${i.node_id} → ${i.agent_id?.slice(0, 10) ?? ''}… (${i.reason})`)
+          .map((i) => {
+            const agent = i.agent_id ? `${i.agent_id.slice(0, 10)}…` : '未选择 Agent'
+            return `  · ${i.node_id} → ${agent} (${i.reason})`
+          })
           .join('\n')
         return list ? `${msg}\n${list}` : msg
       }

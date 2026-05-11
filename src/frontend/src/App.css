@@ -159,7 +159,14 @@ button {
   cursor: pointer;
 }
 .cm-content .ylw-ann-annotation {
+  background: rgba(234, 179, 8, 0.16);
   text-decoration: underline wavy rgba(234, 179, 8, 0.85);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.cm-content .ylw-ann-user-comment {
+  background: rgba(234, 179, 8, 0.16);
+  text-decoration: underline solid rgba(234, 179, 8, 0.9);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }

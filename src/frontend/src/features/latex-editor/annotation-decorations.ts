@@ -79,6 +79,7 @@ function classFor(s: DecorationSpec, active: boolean): string {
 function titleFor(s: DecorationSpec): string {
   if (s.kind === 'suggestion') return '建议（Suggestion）'
   if (s.kind === 'risk') return '风险（Risk）'
+  if (s.kind === 'user-comment') return '我的批注（User comment）'
   return '批注（Annotation）'
 }
 

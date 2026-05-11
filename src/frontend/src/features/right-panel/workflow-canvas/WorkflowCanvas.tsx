@@ -12,11 +12,10 @@
  *   - Delete removes the node and any edges touching it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   Background,
   Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -30,6 +29,7 @@ import {
 import '@xyflow/react/dist/style.css'
 
 import type { WorkflowGraph } from '../../../services/backendApi'
+import type { NodeStatus } from '../../../stores/workflowStore'
 import { NodePalette } from './NodePalette'
 import { NodeInspector } from './NodeInspector'
 import { nodeTypes } from './nodes'
@@ -45,16 +45,18 @@ import {
 interface WorkflowCanvasProps {
   initialGraph: WorkflowGraph
   onGraphChange: (graph: WorkflowGraph) => void
+  nodeStatuses?: NodeStatus[]
 }
 
 const LOOP_DEFAULT_SIZE = { width: 360, height: 240 }
 const LOOP_PADDING = 40
 
-function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
+function CanvasInner({ initialGraph, onGraphChange, nodeStatuses = [] }: WorkflowCanvasProps) {
   const initial = useMemo(() => graphToFlow(initialGraph), [initialGraph])
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [inspectorId, setInspectorId] = useState<string | null>(null)
+  const [paletteWidth, setPaletteWidth] = useState(200)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, getNodes } = useReactFlow()
 
@@ -123,6 +125,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
    * Runs whenever membership or Agent positions change.
    */
   const nodesWithLoopSizing = useMemo(() => {
+    const runStatusByNode = new Map(nodeStatuses.map((n) => [n.nodeId, n.status]))
     const agentBounds = new Map<string, { x: number; y: number; w: number; h: number }>()
     for (const n of nodes) {
       if (n.data.nodeType !== 'loop' && !n.parentId) {
@@ -136,12 +139,16 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
       if (n.data.nodeType !== 'loop') {
         // Mark Agent with loop_id visually (for styling), store in data
         const ownerLoopId = loopMembership.get(n.id)
-        if (ownerLoopId !== (n.data.config._loop_owner as string | undefined)) {
+        const runStatus = runStatusByNode.get(n.id) ?? ''
+        if (
+          ownerLoopId !== (n.data.config._loop_owner as string | undefined) ||
+          runStatus !== (n.data.config._run_status as string | undefined)
+        ) {
           return {
             ...n,
             data: {
               ...n.data,
-              config: { ...n.data.config, _loop_owner: ownerLoopId ?? '' },
+              config: { ...n.data.config, _loop_owner: ownerLoopId ?? '', _run_status: runStatus },
             },
           }
         }
@@ -182,7 +189,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
         zIndex: -1,
       }
     })
-  }, [nodes, loopMembership])
+  }, [nodes, loopMembership, nodeStatuses])
 
   const onConnect: OnConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
@@ -321,7 +328,7 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
     [screenToFlowPosition, getNodes, setNodes],
   )
 
-  const selectedNode = nodes.find((n) => n.id === selectedId) ?? null
+  const inspectorNode = nodes.find((n) => n.id === inspectorId) ?? null
 
   const updateNodeData = useCallback(
     (id: string, patch: Partial<FlowNodeData>) => {
@@ -343,14 +350,34 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
     (id: string) => {
       setNodes((nds) => nds.filter((n) => n.id !== id))
       setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id))
-      setSelectedId(null)
+      setInspectorId(null)
     },
     [setNodes, setEdges],
   )
 
+  const startPaletteResize = useCallback((event: ReactMouseEvent) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = paletteWidth
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = Math.max(56, Math.min(260, startWidth + moveEvent.clientX - startX))
+      setPaletteWidth(next)
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [paletteWidth])
+
   return (
-    <div className="wf-canvas-root">
-      <NodePalette />
+    <div
+      className={`wf-canvas-root${inspectorNode ? ' has-inspector' : ''}`}
+      style={{ '--wf-palette-width': `${paletteWidth}px` } as CSSProperties}
+    >
+      <NodePalette compact={paletteWidth < 108} />
+      <div className="wf-palette-resizer" onMouseDown={startPaletteResize} title="拖动调整节点桶宽度" />
       <div className="wf-canvas-wrapper" ref={wrapperRef} onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodesWithLoopSizing}
@@ -361,18 +388,29 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
-          onNodeClick={(_, node) => setSelectedId(node.id)}
-          onPaneClick={() => setSelectedId(null)}
+          onNodeDoubleClick={(_, node) => {
+            setInspectorId(node.id)
+          }}
+          onPaneClick={() => {
+            setInspectorId(null)
+          }}
           nodeTypes={nodeTypes}
           fitView
           deleteKeyCode={['Backspace', 'Delete']}
+          proOptions={{ hideAttribution: true }}
         >
           <Background />
           <Controls />
-          <MiniMap pannable zoomable />
         </ReactFlow>
       </div>
-      <NodeInspector node={selectedNode} onUpdate={updateNodeData} onDelete={deleteNode} />
+      {inspectorNode && (
+        <NodeInspector
+          node={inspectorNode}
+          onUpdate={updateNodeData}
+          onDelete={deleteNode}
+          onClose={() => setInspectorId(null)}
+        />
+      )}
     </div>
   )
 }

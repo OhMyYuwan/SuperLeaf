@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, Form
 from fastapi.responses import Response
 
 from ..models import FileBlob
@@ -124,6 +124,27 @@ def delete_entity(
     return {"ok": True, "deleted_count": count}
 
 
+class MoveBody(BaseModel):
+    target_folder_id: str | None = None
+
+
+@router.post("/api/entities/{entity_type}/{entity_id}/move", status_code=200)
+def move_entity(
+    entity_type: str,
+    entity_id: str,
+    body: MoveBody,
+    db: Session = Depends(get_session),
+) -> dict:
+    if entity_type not in ("folder", "doc", "file"):
+        raise HTTPException(400, "entity_type must be folder|doc|file")
+    ok, err = ProjectFsService(db).move_entity(entity_type, entity_id, body.target_folder_id)
+    if not ok:
+        # Cycle / not-found errors → 400 / 404 respectively.
+        status = 404 if err and "not found" in err else 400
+        raise HTTPException(status, err or "move failed")
+    return {"ok": True}
+
+
 _TEXT_DOC_EXTS: dict[str, str] = {
     # extension (no dot, lowercase) -> stored Doc.format
     "tex": "tex",
@@ -147,7 +168,7 @@ def _doc_format_for_filename(name: str) -> str | None:
 @router.post("/api/files/upload", status_code=201)
 async def upload_file(
     file: UploadFile,
-    folder_id: str | None = None,
+    folder_id: str | None = Form(None),
     db: Session = Depends(get_session),
 ) -> dict:
     blob = await file.read()

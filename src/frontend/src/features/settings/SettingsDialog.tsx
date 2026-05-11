@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CheckCircle2, CircleAlert, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { Provider, ProviderDraft } from '../../services/backendApi'
+import { BACKEND_BASE } from '../../services/backendApi'
 import { useSettingsStore } from '../../stores/settingsStore'
 import './settings.css'
 
@@ -101,7 +102,7 @@ function BackendStatusBar({
   return (
     <div className="status-bar error">
       <CircleAlert size={14} />
-      <span>无法连接到后端（默认 http://localhost:8000）。{error ? ` · ${truncate(error, 120)}` : ''}</span>
+      <span>无法连接到后端（{BACKEND_BASE}）。{error ? ` · ${truncate(error, 120)}` : ''}</span>
       <button className="inline-btn" onClick={onRetry}>
         <RefreshCw size={12} /> 重试
       </button>

@@ -1,17 +1,25 @@
 /**
  * NodePalette — the draggable palette of node types.
  *
- * Minimal: just agent (atom) + loop (container). Parallel vs sequential is
- * expressed by topology (two disconnected agents = parallel; connected = serial).
+ * Minimum set:
+ *   - input:  workflow entry (selection + instruction + referenced files)
+ *   - agent:  atomic execution unit
+ *   - loop:   container that iterates a sub-graph N times
+ *   - output: workflow exit (text | json | annotations)
+ *
+ * Parallel vs sequential is expressed by topology — two disconnected agents
+ * = parallel, connected = serial.
  */
 
 import type { DragEvent } from 'react'
 
-type PaletteType = 'agent' | 'loop'
+type PaletteType = 'input' | 'agent' | 'loop' | 'output'
 
 const PALETTE: Array<{ type: PaletteType; icon: string; label: string; hint: string }> = [
+  { type: 'input', icon: '📥', label: 'Input', hint: '工作流入口' },
   { type: 'agent', icon: '🤖', label: 'Agent', hint: '最小执行单元' },
   { type: 'loop', icon: '🔁', label: 'Loop 容器', hint: '框住一组节点，循环 N 次' },
+  { type: 'output', icon: '📤', label: 'Output', hint: '工作流出口' },
 ]
 
 export function NodePalette() {
@@ -41,10 +49,10 @@ export function NodePalette() {
       ))}
 
       <div className="wf-palette-footnote">
-        <div className="wf-footnote-line">💡 拓扑即模式：</div>
-        <div className="wf-footnote-line">· 两个 agent 不连线 → 平行</div>
+        <div className="wf-footnote-line">💡 工作流结构：</div>
+        <div className="wf-footnote-line">· Input → Agent(s) → Output</div>
+        <div className="wf-footnote-line">· Agent 不连线 → 平行</div>
         <div className="wf-footnote-line">· A → B 连线 → 顺序</div>
-        <div className="wf-footnote-line">· agent 有多输入 → 下游天然合并</div>
       </div>
     </aside>
   )

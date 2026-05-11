@@ -77,11 +77,35 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
     (event: DragEvent) => {
       event.preventDefault()
       const nodeType = event.dataTransfer.getData('application/reactflow') as CanvasNodeType | ''
-      if (nodeType !== 'agent' && nodeType !== 'loop') return
+      if (
+        nodeType !== 'agent' &&
+        nodeType !== 'loop' &&
+        nodeType !== 'input' &&
+        nodeType !== 'output'
+      )
+        return
+
+      const currentNodes = getNodes() as FlowNode[]
+
+      // Input / output nodes are workflow boundaries — only one of each,
+      // and they never live inside a loop container.
+      if (nodeType === 'input' && currentNodes.some((n) => n.data.nodeType === 'input')) {
+        // eslint-disable-next-line no-console
+        console.warn('[workflow-canvas] input node already exists, ignoring drop')
+        return
+      }
+      if (nodeType === 'output' && currentNodes.some((n) => n.data.nodeType === 'output')) {
+        // eslint-disable-next-line no-console
+        console.warn('[workflow-canvas] output node already exists, ignoring drop')
+        return
+      }
 
       const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      const currentNodes = getNodes() as FlowNode[]
-      const dropParent = findDropTarget(currentNodes, flowPoint)
+      // input / output bypass container nesting by design.
+      const dropParent =
+        nodeType === 'input' || nodeType === 'output'
+          ? undefined
+          : findDropTarget(currentNodes, flowPoint)
 
       // React Flow stores child position relative to parent. Convert absolute
       // flow coords into parent-relative if the drop lands inside a loop.
@@ -96,14 +120,28 @@ function CanvasInner({ initialGraph, onGraphChange }: WorkflowCanvasProps) {
 
       setNodes((nds) => {
         const id = generateNodeId(nds, nodeType)
+        const defaultConfig: Record<string, unknown> =
+          nodeType === 'loop' ? { rounds: 3 }
+          : nodeType === 'input' ? {
+              include_instruction: true,
+              context_files: [],
+              extra_inputs: {},
+            }
+          : nodeType === 'output' ? { format: 'text', source_node_ids: [] }
+          : {}
+        const defaultLabel =
+          nodeType === 'loop' ? 'Loop'
+          : nodeType === 'input' ? 'Input'
+          : nodeType === 'output' ? 'Output'
+          : id
         const newNode: FlowNode = {
           id,
           type: nodeType,
           position,
           data: {
-            label: nodeType === 'loop' ? 'Loop' : id,
+            label: defaultLabel,
             nodeType,
-            config: nodeType === 'loop' ? { rounds: 3 } : {},
+            config: defaultConfig,
           },
           ...(dropParent
             ? { parentId: dropParent.id, extent: 'parent' as const, expandParent: true }

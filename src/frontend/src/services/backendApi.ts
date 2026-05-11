@@ -3,10 +3,36 @@
  *
  * Base URL resolution:
  *   1. import.meta.env.VITE_BACKEND_URL if provided
- *   2. http://localhost:8000 (dev default)
+ *   2. Auto-detect based on current hostname (for LAN access)
+ *   3. http://localhost:8000 (fallback)
  */
 
-const BASE = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
+function getBackendUrl(): string {
+  if (import.meta.env.VITE_BACKEND_URL) {
+    return import.meta.env.VITE_BACKEND_URL
+  }
+  // Auto-detect: use current hostname with backend port
+  // This allows LAN devices to access backend via server IP
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location
+    // Only auto-detect for non-localhost access
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      const url = `${protocol}//${hostname}:8000`
+      console.log('[backendApi] Auto-detected backend URL:', url, '(from hostname:', hostname, ')')
+      return url
+    }
+    // For localhost, use 127.0.0.1 to force IPv4 (backend only listens on IPv4)
+    if (hostname === 'localhost') {
+      console.log('[backendApi] Using IPv4 backend URL: http://127.0.0.1:8000 (forced IPv4 for localhost)')
+      return 'http://127.0.0.1:8000'
+    }
+  }
+  console.log('[backendApi] Using default backend URL: http://127.0.0.1:8000')
+  return 'http://127.0.0.1:8000'
+}
+
+const BASE = getBackendUrl()
+console.log('[backendApi] Backend URL initialized:', BASE)
 
 export interface Provider {
   id: string
@@ -88,6 +114,12 @@ export interface CachedWorkflow {
   is_disabled: boolean
 }
 
+export interface ContextFileRef {
+  name?: string
+  document_id?: string
+  content?: string
+}
+
 export interface RunRequest {
   document_id: string
   range_start: number
@@ -97,6 +129,9 @@ export interface RunRequest {
   query?: string
   conversation_id?: string
   parent_run_id?: string
+  // Files referenced via @-mention. Content is injected verbatim into the
+  // workflow's input node output (and, downstream, into agent prompts).
+  context_files?: ContextFileRef[]
 }
 
 export interface WorkflowRun {
@@ -150,9 +185,10 @@ export interface WorkflowGraph {
 
 export interface WorkflowNode {
   id: string
-  // Canvas-generated graphs use 'agent' (atom) and 'loop' (container).
-  // Legacy modes (parallel/pipeline/roundtable) may still carry other values.
-  type: 'agent' | 'loop' | 'workflow' | 'merge' | 'judge'
+  // Canvas-generated graphs use 'agent' (atom), 'loop' (container), and
+  // 'input' / 'output' (workflow boundary nodes). Legacy modes
+  // (parallel/pipeline/roundtable) may still carry other values.
+  type: 'agent' | 'loop' | 'input' | 'output' | 'workflow' | 'merge' | 'judge'
   label?: string
   config?: Record<string, unknown>
 }

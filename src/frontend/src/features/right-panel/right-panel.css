@@ -297,6 +297,46 @@
   color: rgba(148, 163, 184, 0.75);
 }
 
+/* Definition card health states */
+.workflow-definition-card.is-degraded {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.workflow-health-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-left: 8px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.workflow-health-detail {
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  color: rgba(251, 191, 36, 0.92);
+  line-height: 1.55;
+}
+
+.workflow-health-detail ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.workflow-health-detail code {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  background: rgba(15, 23, 42, 0.5);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
 .primary-btn {
   display: inline-flex;
   align-items: center;
@@ -721,4 +761,368 @@
 .ghost-btn.small:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Tab switcher inside WorkflowTab (单 Agent / 编排 Workflow) */
+.tab-switcher {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+.tab-switcher button {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tab-switcher button:hover {
+  color: #e5e7eb;
+}
+.tab-switcher button.active {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
+
+/* Buttons — secondary / danger used across workflow tab + editor */
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: 7px;
+  background: rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.22);
+  border-color: rgba(148, 163, 184, 0.32);
+}
+.secondary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.danger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: 7px;
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.danger-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.26);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.danger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Definition list (编排 Workflow) */
+.workflow-definitions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.workflow-definition-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.definition-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.definition-description {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.85);
+  line-height: 1.55;
+  padding: 6px 10px;
+  background: rgba(2, 6, 23, 0.4);
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.round-indicator {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  background: rgba(148, 163, 184, 0.12);
+  padding: 1px 7px;
+  border-radius: 999px;
+  margin-left: 6px;
+}
+
+.node-statuses {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.node-statuses-header {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.node-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+.node-status .node-id {
+  font-family: ui-monospace, monospace;
+  color: rgba(226, 232, 240, 0.9);
+}
+.node-status .node-status-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(226, 232, 240, 0.85);
+  margin-left: auto;
+  letter-spacing: 0.03em;
+}
+.node-status .node-error {
+  font-size: 10.5px;
+  color: #fca5a5;
+}
+.node-status.running {
+  border-color: rgba(234, 179, 8, 0.28);
+}
+.node-status.running .node-status-badge {
+  background: rgba(234, 179, 8, 0.18);
+  color: #fde68a;
+}
+.node-status.completed {
+  border-color: rgba(34, 197, 94, 0.28);
+}
+.node-status.completed .node-status-badge {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+.node-status.failed {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.node-status.failed .node-status-badge {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+/* Workflow definition editor */
+.workflow-definition-editor {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.editor-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+.mode-toggle button {
+  padding: 5px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mode-toggle button:hover {
+  color: #e5e7eb;
+}
+.mode-toggle button.active {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
+
+.editor-error {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+}
+
+.editor-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.editor-metadata .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editor-metadata .form-group label {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.editor-metadata .form-group input,
+.editor-metadata .form-group textarea,
+.editor-metadata .form-group select {
+  padding: 7px 10px;
+  font-size: 12px;
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: #e5e7eb;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.editor-metadata .form-group input:focus,
+.editor-metadata .form-group textarea:focus,
+.editor-metadata .form-group select:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+.editor-metadata .form-group select option,
+.editor-metadata .form-group select optgroup {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.editor-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-form,
+.editor-json {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-json .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.editor-json .form-group label {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.json-editor {
+  width: 100%;
+  min-height: 320px;
+  padding: 10px 12px;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: #e5e7eb;
+  outline: none;
+  resize: vertical;
+}
+.json-editor:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.75);
+  padding: 8px 10px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  line-height: 1.55;
+}
+
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  margin-top: auto;
 }

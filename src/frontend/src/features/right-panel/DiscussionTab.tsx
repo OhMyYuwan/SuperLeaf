@@ -23,14 +23,16 @@ import {
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
 import type { CachedWorkflow, Message } from '../../services/backendApi'
+import type { Selection } from '../../types/editor'
 
 interface DiscussionTabProps {
   workflows: CachedWorkflow[]
   documentId: string | null
+  activeSelection: Selection | null
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
-export function DiscussionTab({ workflows, documentId, onJumpToRange }: DiscussionTabProps) {
+export function DiscussionTab({ workflows, documentId, activeSelection, onJumpToRange }: DiscussionTabProps) {
   const conversations = useConversationStore((s) => s.conversations)
   const messages = useConversationStore((s) => s.messages)
   const streaming = useConversationStore((s) => s.streaming)
@@ -106,7 +108,20 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
     const text = inputText.trim()
     if (!text || !activeConversationId) return
     setInputText('')
-    await sendMessage(activeConversationId, { content: text })
+
+    const body: Parameters<typeof sendMessage>[1] = { content: text }
+    if (activeSelection && activeSelection.to > activeSelection.from) {
+      body.range_start = activeSelection.from
+      body.range_end = activeSelection.to
+      body.inputs = {
+        target_text: activeSelection.text,
+        section_title: activeSelection.context.sectionTitle ?? '',
+        before: activeSelection.context.before,
+        after: activeSelection.context.after,
+      }
+    }
+
+    await sendMessage(activeConversationId, body)
   }
 
   const activeMessages = activeConversationId ? messages[activeConversationId] ?? [] : []
@@ -260,6 +275,28 @@ export function DiscussionTab({ workflows, documentId, onJumpToRange }: Discussi
                 )}
               </div>
               <div className="message-input-row">
+                {activeSelection && activeSelection.to > activeSelection.from && (
+                  <div
+                    className="discussion-selection-chip"
+                    title={activeSelection.text}
+                    onClick={() =>
+                      onJumpToRange?.({
+                        from: activeSelection.from,
+                        to: activeSelection.to,
+                      })
+                    }
+                  >
+                    <span className="chip-label">选区已附带</span>
+                    <span className="chip-preview">
+                      {activeSelection.text.length > 40
+                        ? `${activeSelection.text.slice(0, 40)}…`
+                        : activeSelection.text}
+                    </span>
+                    <span className="chip-range">
+                      {activeSelection.from}–{activeSelection.to}
+                    </span>
+                  </div>
+                )}
                 <input
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}

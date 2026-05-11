@@ -200,6 +200,33 @@ async def send_message(
 
     user_msg_payload = MessageOut.model_validate(user_msg).model_dump(mode="json")
 
+    # Build the prompt that actually goes to the agent. When the user has a
+    # selection active, weave it into the query so the agent can see the
+    # discussed text + its neighbouring context. We do this here (not in the
+    # Message.content) so the persisted conversation log keeps the user's own
+    # words, while the agent still gets enough context to answer coherently.
+    target_text = str(body.inputs.get("target_text") or "").strip()
+    before = str(body.inputs.get("before") or "").strip()
+    after = str(body.inputs.get("after") or "").strip()
+    section_title = str(body.inputs.get("section_title") or "").strip()
+
+    if target_text and (body.range_start is not None and body.range_end is not None):
+        context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
+        if section_title:
+            context_parts.append(f"章节：{section_title}")
+        context_parts.append(
+            f"选区位置：文档偏移 {body.range_start}–{body.range_end}"
+        )
+        if before:
+            context_parts.append(f"上文：\n{before}")
+        context_parts.append(f"选中文本：\n{target_text}")
+        if after:
+            context_parts.append(f"下文：\n{after}")
+        context_parts.append("[END DISCUSSION CONTEXT]")
+        agent_query = "\n\n".join(context_parts) + f"\n\n用户消息：{body.content}"
+    else:
+        agent_query = body.content
+
     async def event_gen():
         yield {"event": "ylw.msg.user", "data": json.dumps(user_msg_payload)}
 
@@ -216,7 +243,7 @@ async def send_message(
                 session_id = f"ylw-{conversation_id}"
                 async for evt in client.run_streaming(
                     model=cw.external_id,
-                    messages=[{"role": "user", "content": body.content}],
+                    messages=[{"role": "user", "content": agent_query}],
                     session_id=session_id,
                 ):
                     kind = evt.get("event")
@@ -241,7 +268,7 @@ async def send_message(
                     mode=mode,
                     inputs=body.inputs,
                     user=f"yuwanlab-conv-{conversation_id[:8]}",
-                    query=body.content,
+                    query=agent_query,
                     conversation_id=external_conv_id,
                 ):
                     kind = evt.get("event")

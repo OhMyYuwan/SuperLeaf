@@ -170,7 +170,8 @@
 }
 
 .tree-list {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .tree-folder-row:hover .tree-actions.inline,
@@ -204,6 +205,8 @@
 }
 
 .tree-node-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -213,6 +216,7 @@
 .tree-file-row {
   font-size: 12px;
   cursor: pointer;
+  min-width: 0;
 }
 
 .tree-file-row {

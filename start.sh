@@ -65,10 +65,10 @@ ensure_backend() {
 
 start_backend_bg() {
   stop_port "$BACKEND_PORT" "backend"
-  log "Starting backend on http://localhost:$BACKEND_PORT"
+  log "Starting backend on http://0.0.0.0:$BACKEND_PORT"
   (
     cd "$BACKEND_DIR"
-    .venv/bin/uvicorn app.main:app --port "$BACKEND_PORT" --reload
+    .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
   ) &
   BACKEND_PID=$!
   # Give uvicorn a moment to bind
@@ -87,8 +87,8 @@ start_frontend_fg() {
   log "Starting frontend on http://localhost:$FRONTEND_PORT"
   log "Press Ctrl+C to stop both"
   cd "$FRONTEND_DIR"
-  # Make the backend URL discoverable to Vite
-  export VITE_BACKEND_URL="${VITE_BACKEND_URL:-http://localhost:$BACKEND_PORT}"
+  # Let frontend auto-detect backend URL based on access method (localhost vs LAN IP)
+  # Only set VITE_BACKEND_URL if explicitly provided by user
   exec npx vite --host --port "$FRONTEND_PORT"
 }
 
@@ -126,7 +126,7 @@ case "${1:-up}" in
     ensure_backend
     stop_port "$BACKEND_PORT" "backend"
     cd "$BACKEND_DIR"
-    exec .venv/bin/uvicorn app.main:app --port "$BACKEND_PORT" --reload
+    exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
     ;;
 
   frontend)
@@ -136,7 +136,7 @@ case "${1:-up}" in
     ensure_frontend
     stop_port "$FRONTEND_PORT" "frontend"
     cd "$FRONTEND_DIR"
-    export VITE_BACKEND_URL="${VITE_BACKEND_URL:-http://localhost:$BACKEND_PORT}"
+    # Let frontend auto-detect backend URL based on access method
     exec npx vite --host --port "$FRONTEND_PORT"
     ;;
 

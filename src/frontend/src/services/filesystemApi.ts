@@ -9,7 +9,9 @@
  *   PUT  /api/docs/:id
  */
 
-const BASE = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
+import { BACKEND_BASE } from './backendApi'
+
+const BASE = BACKEND_BASE
 
 export interface TreeDoc {
   id: string

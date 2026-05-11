@@ -183,7 +183,7 @@ function App() {
         instruction: userPrompt,
       },
       query: `${userPrompt}\n\n---\n${selectionText}`,
-    })
+    }, { autoIngestToAnnotations: false })
   }
 
   const handleRunDefinition = (definitionId: string, instruction: string) => {
@@ -205,7 +205,7 @@ function App() {
         text: selectionText,
       },
       query: userPrompt,
-    })
+    }, { autoIngestToAnnotations: false })
   }
 
   const handleEditorChange = (next: string) => {

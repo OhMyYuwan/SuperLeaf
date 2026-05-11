@@ -51,6 +51,9 @@ class OrchestrationContext:
     target_range: dict
     user_instruction: str
     db: Session
+    # Files referenced via @-mentions in the run request. Each entry carries
+    # at minimum { name, content }, and optionally { document_id }.
+    context_files: list[dict] = field(default_factory=list)
     # Node execution contexts
     nodes: dict[str, NodeContext] = field(default_factory=dict)
     # Accumulated outputs from all agents
@@ -75,6 +78,7 @@ class WorkflowOrchestrator:
         range_start: int,
         range_end: int,
         user_instruction: str = "",
+        context_files: list[dict] | None = None,
     ) -> AsyncIterator[dict]:
         """Execute a workflow definition and stream events."""
         # Load workflow definition
@@ -105,6 +109,7 @@ class WorkflowOrchestrator:
             target_text=target_text,
             target_range={"from": range_start, "to": range_end},
             user_instruction=user_instruction,
+            context_files=list(context_files or []),
             db=self.db,
         )
 
@@ -138,11 +143,33 @@ class WorkflowOrchestrator:
             workflow_run.finished_at = datetime.utcnow()
             self.db.commit()
 
+            # When the graph has explicit `output` nodes, the final payload is
+            # their aggregated result (parseDifyOutputs-compatible). When it
+            # doesn't, fall back to the legacy behavior of shipping the raw
+            # all_outputs list so existing parallel/pipeline/roundtable
+            # workflows keep working.
+            output_nodes = [
+                nc for nc in ctx.nodes.values()
+                if nc.node_type == "output" and nc.status == "completed"
+            ]
+            if output_nodes:
+                if len(output_nodes) == 1:
+                    final_outputs = output_nodes[0].outputs.get("outputs") or {
+                        "text": output_nodes[0].outputs.get("text", ""),
+                    }
+                else:
+                    final_outputs = {
+                        nc.node_id: nc.outputs.get("outputs") or {"text": nc.outputs.get("text", "")}
+                        for nc in output_nodes
+                    }
+            else:
+                final_outputs = ctx.all_outputs
+
             yield {
                 "event": "workflow.completed",
                 "data": {
                     "run_id": workflow_run.id,
-                    "outputs": ctx.all_outputs,
+                    "outputs": final_outputs,
                 },
             }
 
@@ -413,8 +440,115 @@ class WorkflowOrchestrator:
             return await self._execute_judge_node(ctx, node_id)
         elif node.node_type == "loop":
             return await self._execute_loop_node(ctx, node_id)
+        elif node.node_type == "input":
+            return await self._execute_input_node(ctx, node_id)
+        elif node.node_type == "output":
+            return await self._execute_output_node(ctx, node_id)
         else:
             raise ValueError(f"Unknown node type: {node.node_type}")
+
+    async def _execute_input_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
+        """Produce the workflow's entry payload.
+
+        Downstream agents pick this up from their `dependency_outputs[input_id]`
+        and it gives them, in one structured bundle, everything the user
+        supplied: the selection, the instruction, any @-mentioned files, and any
+        user-defined extras. The `include_instruction` flag lets a workflow
+        author hide the instruction from the rest of the graph when the agents
+        are supposed to react purely to the selected text.
+        """
+        node = ctx.nodes[node_id]
+        node.status = "running"
+        node.started_at = datetime.utcnow()
+
+        try:
+            include_instruction = node.config.get("include_instruction", True)
+            extra_inputs = node.config.get("extra_inputs") or {}
+
+            output = {
+                "text": ctx.target_text,
+                "target_text": ctx.target_text,
+                "user_instruction": ctx.user_instruction if include_instruction else "",
+                "context_files": list(ctx.context_files),
+                "extra": dict(extra_inputs) if isinstance(extra_inputs, dict) else {},
+                "node_id": node_id,
+            }
+
+            node.outputs = output
+            node.status = "completed"
+            node.finished_at = datetime.utcnow()
+            return output
+
+        except Exception as e:
+            node.status = "failed"
+            node.error = str(e)
+            node.finished_at = datetime.utcnow()
+            raise
+
+    async def _execute_output_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
+        """Aggregate upstream outputs according to the configured `format`.
+
+        Formats:
+          - text:        concatenate each upstream's `.text` with a separator.
+          - json:        shallow-merge each upstream dict (later keys win); if
+                         upstream is a JSON string, parse it first, otherwise
+                         slot it under its node_id.
+          - annotations: pass upstream payloads through untouched, labeled by
+                         node_id. The frontend parseDifyOutputs then routes them
+                         into the annotation/suggestion/risk panes.
+        """
+        node = ctx.nodes[node_id]
+        node.status = "running"
+        node.started_at = datetime.utcnow()
+
+        try:
+            dep_outputs = node.inputs.get("dependency_outputs") or {}
+            source_ids = node.config.get("source_node_ids") or []
+            fmt = node.config.get("format", "text")
+
+            # If source_node_ids is specified, restrict to those; otherwise use
+            # every dependency the DAG scheduler wired into this node.
+            if isinstance(source_ids, list) and source_ids:
+                dep_outputs = {k: v for k, v in dep_outputs.items() if k in source_ids}
+
+            if fmt == "text":
+                aggregated = _aggregate_as_text(dep_outputs)
+                output = {
+                    "text": aggregated,
+                    "outputs": {"text": aggregated},
+                    "format": "text",
+                    "sources": list(dep_outputs.keys()),
+                    "node_id": node_id,
+                }
+            elif fmt == "json":
+                merged = _aggregate_as_json(dep_outputs)
+                output = {
+                    "text": "",
+                    "outputs": merged,
+                    "format": "json",
+                    "sources": list(dep_outputs.keys()),
+                    "node_id": node_id,
+                }
+            else:  # "annotations"
+                structured = _aggregate_as_annotation_schema(dep_outputs)
+                output = {
+                    "text": "",
+                    "outputs": structured,
+                    "format": "annotations",
+                    "sources": list(dep_outputs.keys()),
+                    "node_id": node_id,
+                }
+
+            node.outputs = output
+            node.status = "completed"
+            node.finished_at = datetime.utcnow()
+            return output
+
+        except Exception as e:
+            node.status = "failed"
+            node.error = str(e)
+            node.finished_at = datetime.utcnow()
+            raise
 
     async def _execute_workflow_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
         """Execute a nested workflow node."""
@@ -779,11 +913,12 @@ class WorkflowOrchestrator:
         Injects workflow context so the agent knows:
         - It's part of a multi-agent workflow
         - What inputs it's receiving from upstream nodes
+        - Any referenced files (either via upstream input node or ctx fallback)
         - Any node-specific instructions (additional_prompt)
         """
         parts = []
 
-        # === Workflow context header (new) ===
+        # === Workflow context header ===
         additional_prompt = node.config.get("additional_prompt")
         dependency_outputs = node.inputs.get("dependency_outputs", {})
 
@@ -801,6 +936,20 @@ class WorkflowOrchestrator:
                 parts.append(f"\nNode-specific instructions:\n{additional_prompt}")
 
             parts.append("\n[END WORKFLOW CONTEXT]\n")
+
+        # === Referenced files ===
+        # Files reach agents via the upstream input node's context_files (when
+        # present) or directly from the run-level context_files (legacy /
+        # no-input-node workflows). Surface them verbatim so any agent can
+        # consume them, regardless of file-tool support.
+        reference_files = self._collect_reference_files(ctx, node)
+        if reference_files:
+            parts.append("[REFERENCE FILES]")
+            for f in reference_files:
+                name = f.get("name") or f.get("document_id") or "file"
+                content = f.get("content") or ""
+                parts.append(f"\n--- {name} ---\n{content}")
+            parts.append("\n[END REFERENCE FILES]\n")
 
         # === Original prompt building logic ===
         # User instruction
@@ -837,6 +986,24 @@ class WorkflowOrchestrator:
 
         # TODO: Implement other strategies (deduplicate, vote, priority)
         return {"text": "", "strategy": strategy, "count": len(outputs)}
+
+    def _collect_reference_files(
+        self, ctx: OrchestrationContext, node: NodeContext,
+    ) -> list[dict]:
+        """Return files that should reach this agent as [REFERENCE FILES].
+
+        Priority:
+          1. An upstream input node's context_files (preferred — topology-aware)
+          2. Run-level ctx.context_files (legacy / no input node present)
+        """
+        dep_outputs = node.inputs.get("dependency_outputs") or {}
+        for dep in dep_outputs.values():
+            if not isinstance(dep, dict):
+                continue
+            files = dep.get("context_files")
+            if isinstance(files, list) and files:
+                return [f for f in files if isinstance(f, dict)]
+        return [f for f in ctx.context_files if isinstance(f, dict)]
 
     def _check_convergence(self, round_outputs: list[dict], threshold: float) -> bool:
         """Check if agents have converged (simple heuristic)."""
@@ -903,4 +1070,91 @@ def _parent_id(node: dict) -> str | None:
     config = node.get("config") or {}
     ui = config.get("_ui") or {}
     return ui.get("parent_id")
+
+
+def _aggregate_as_text(dep_outputs: dict[str, dict]) -> str:
+    """Concat each upstream's text with a source marker."""
+    parts: list[str] = []
+    for nid, out in dep_outputs.items():
+        if isinstance(out, dict):
+            text = str(out.get("text") or "").strip()
+        else:
+            text = str(out).strip()
+        if text:
+            parts.append(f"[{nid}]\n{text}")
+    return "\n\n---\n\n".join(parts)
+
+
+def _aggregate_as_annotation_schema(dep_outputs: dict[str, dict]) -> dict:
+    """Translate upstream outputs into parseDifyOutputs-compatible annotation schema.
+
+    Rules:
+      1. If upstream already produced {annotations,suggestions,risks}, keep them.
+      2. Else try to parse JSON from its text/result/answer.
+      3. Else degrade plain text into a generic comment annotation.
+
+    This keeps `output.format = "annotations"` faithful to the annotation panel
+    contract while still tolerating mixed upstream nodes.
+    """
+    import json as _json
+
+    annotations: list[dict] = []
+    suggestions: list[dict] = []
+    risks: list[dict] = []
+
+    def merge_structured(payload: dict) -> bool:
+        hit = False
+        if isinstance(payload.get("annotations"), list):
+            annotations.extend([a for a in payload["annotations"] if isinstance(a, dict)])
+            hit = True
+        if isinstance(payload.get("suggestions"), list):
+            suggestions.extend([s for s in payload["suggestions"] if isinstance(s, dict)])
+            hit = True
+        if isinstance(payload.get("risks"), list):
+            risks.extend([r for r in payload["risks"] if isinstance(r, dict)])
+            hit = True
+        return hit
+
+    for nid, out in dep_outputs.items():
+        if not isinstance(out, dict):
+            raw = str(out).strip()
+            if raw:
+                annotations.append({
+                    "content": raw,
+                    "type": "comment",
+                    "severity": "medium",
+                    "tags": [nid],
+                })
+            continue
+
+        payload = out.get("outputs") if isinstance(out.get("outputs"), dict) else out
+
+        # 1) already structured
+        if merge_structured(payload):
+            continue
+
+        # 2) JSON encoded in text/result/answer
+        raw_text = str(payload.get("text") or payload.get("answer") or payload.get("result") or "").strip()
+        if raw_text:
+            try:
+                parsed = _json.loads(raw_text)
+                if isinstance(parsed, dict) and merge_structured(parsed):
+                    continue
+            except Exception:
+                pass
+
+        # 3) generic fallback comment
+        if raw_text:
+            annotations.append({
+                "content": raw_text,
+                "type": "comment",
+                "severity": "medium",
+                "tags": [nid],
+            })
+
+    return {
+        "annotations": annotations,
+        "suggestions": suggestions,
+        "risks": risks,
+    }
 

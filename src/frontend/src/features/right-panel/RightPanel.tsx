@@ -68,6 +68,7 @@ export function RightPanel(props: RightPanelProps) {
           <DiscussionTab
             workflows={props.workflows}
             documentId={props.activeDocumentId}
+            activeSelection={props.activeSelection}
             onJumpToRange={props.onJumpToRange}
           />
         </Tabs.Content>

@@ -90,6 +90,18 @@ def enable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> Cac
     return CachedWorkflowOut.model_validate(cw)
 
 
+class ContextFileRef(BaseModel):
+    """File referenced via @-mention in the run request.
+
+    `content` holds the entire file text — we currently inject it verbatim into
+    the agent prompt rather than passing a path, because most agents have no
+    file-read tool. Truncation happens at prompt-build time if needed.
+    """
+    name: str = ""
+    document_id: str = ""
+    content: str = ""
+
+
 class RunBody(BaseModel):
     document_id: str
     range_start: int = Field(ge=0)
@@ -101,6 +113,9 @@ class RunBody(BaseModel):
     conversation_id: str = ""
     # Optional anchor: a parent run id, when this run is a follow-up question.
     parent_run_id: str = ""
+    # Referenced files (from @-mention UI). Injected into the workflow's input
+    # node output and, for agent nodes downstream, into the prompt itself.
+    context_files: list[ContextFileRef] = Field(default_factory=list)
 
 
 @router.post("/{workflow_id}/run")
@@ -388,13 +403,38 @@ async def execute_workflow_definition(
     body: RunBody,
     db: Session = Depends(get_session),
 ):
-    """Execute a workflow definition with orchestration."""
+    """Execute a workflow definition with orchestration.
+
+    Pre-flight checks:
+      1. The graph must contain an `input` and an `output` node — they frame
+         what the user provided and what will be returned. Enforced here
+         rather than in the canvas so API-level callers can't skip it.
+      2. Every `agent` node must reference an enabled CachedWorkflow.
+
+    Either failure yields 409 with a code the frontend can branch on.
+    """
     wf = db.get(WorkflowDefinition, definition_id)
     if wf is None:
         raise HTTPException(404, "Workflow definition not found")
 
+    boundary_error = _check_boundary_nodes(wf)
+    if boundary_error:
+        raise HTTPException(status_code=409, detail=boundary_error)
+
+    issues = _collect_unhealthy_agents(wf, db)
+    if issues:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "workflow_degraded",
+                "message": "Workflow 中存在已禁用或缺失的 Agent，请先编辑后再运行。",
+                "issues": issues,
+            },
+        )
+
     # TODO: Extract target_text from document
     target_text = body.inputs.get("text", "")
+    context_files = [cf.model_dump() for cf in body.context_files]
 
     orchestrator = WorkflowOrchestrator(db)
 
@@ -407,9 +447,67 @@ async def execute_workflow_definition(
                 range_start=body.range_start,
                 range_end=body.range_end,
                 user_instruction=body.query,
+                context_files=context_files,
             ):
                 yield {"event": event.get("event", "message"), "data": json.dumps(event.get("data", {}))}
         except (DifyError, NanobotError) as e:
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
 
     return EventSourceResponse(event_generator())
+
+
+def _check_boundary_nodes(wf: WorkflowDefinition) -> dict | None:
+    """Return a 409 detail dict if the graph lacks an input or output node.
+
+    Per product decision: even a pass-through workflow must make its I/O
+    contract visible. Enforcing at runtime keeps older canvases (no boundary
+    nodes) from silently producing empty payloads.
+    """
+    nodes = (wf.graph or {}).get("nodes", []) or []
+    has_input = any(n.get("type") == "input" for n in nodes)
+    has_output = any(n.get("type") == "output" for n in nodes)
+    if has_input and has_output:
+        return None
+    missing: list[str] = []
+    if not has_input:
+        missing.append("input")
+    if not has_output:
+        missing.append("output")
+    return {
+        "code": "workflow_missing_boundary",
+        "message": "Workflow 必须包含 input 和 output 节点，请进入编辑器补齐。",
+        "missing": missing,
+    }
+
+
+def _collect_unhealthy_agents(
+    wf: WorkflowDefinition,
+    db: Session,
+) -> list[dict]:
+    """Return a list of {node_id, agent_id, reason} for every agent node whose
+    referenced CachedWorkflow is missing or disabled. Empty list == healthy.
+    """
+    nodes = (wf.graph or {}).get("nodes", []) or []
+    issues: list[dict] = []
+    for n in nodes:
+        if n.get("type") != "agent":
+            continue
+        cfg = n.get("config") or {}
+        agent_id = cfg.get("agent_id") or cfg.get("agentId") or ""
+        if not agent_id:
+            continue
+        cw = db.get(CachedWorkflow, agent_id)
+        if cw is None:
+            issues.append({
+                "node_id": n.get("id"),
+                "agent_id": agent_id,
+                "reason": "missing",
+            })
+            continue
+        if cw.is_disabled:
+            issues.append({
+                "node_id": n.get("id"),
+                "agent_id": agent_id,
+                "reason": "disabled",
+            })
+    return issues

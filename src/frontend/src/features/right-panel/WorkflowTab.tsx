@@ -16,6 +16,7 @@ import type {
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { WorkflowDefinitionEditor } from './WorkflowDefinitionEditor'
+import { inspectDefinition, type DefinitionHealthReport } from './workflow-canvas/health'
 
 interface WorkflowTabProps {
   workflows: CachedWorkflow[]
@@ -180,14 +181,36 @@ export function WorkflowTab({
             const nodeStatuses = nodeStatusesMap[def.id] ?? []
             const currentRound = currentRoundMap[def.id] ?? 0
             const maxRounds = maxRoundsMap[def.id] ?? 0
+            const health: DefinitionHealthReport = inspectDefinition(def, workflows)
+            const isDegraded = health.status === 'degraded'
+            const isMissing = health.status === 'missing'
+            // Boundary nodes (input + output) are required; degraded agent
+            // refs also block execution. `empty` (no agents between
+            // input/output) is still runnable — input passes through to output.
+            const runBlocked = isDegraded || isMissing
             return (
-              <div key={def.id} className="workflow-definition-card">
+              <div
+                key={def.id}
+                className={`workflow-definition-card${
+                  isDegraded || isMissing ? ' is-degraded' : ''
+                }`}
+              >
                 <div className="workflow-run-head">
                   <div>
                     <strong>{def.name}</strong>
                     <span className="workflow-run-kind"> · {def.execution_mode}</span>
                     {def.execution_mode === 'roundtable' && maxRounds > 0 && (
                       <span className="round-indicator"> · 第 {currentRound}/{maxRounds} 轮</span>
+                    )}
+                    {isDegraded && (
+                      <span className="workflow-health-badge">
+                        ⚠ {health.issues.length} 个节点不可用
+                      </span>
+                    )}
+                    {isMissing && (
+                      <span className="workflow-health-badge">
+                        ⚠ 缺少 {health.missingBoundary.join(' / ')} 节点
+                      </span>
                     )}
                   </div>
                   <div className="definition-actions">
@@ -208,7 +231,14 @@ export function WorkflowTab({
                     <button
                       className="primary-btn run-btn"
                       onClick={() => onRunDefinition(def.id, instruction)}
-                      disabled={running}
+                      disabled={running || runBlocked}
+                      title={
+                        isDegraded
+                          ? '存在被禁用或缺失的 Agent，请先编辑 workflow'
+                          : isMissing
+                          ? `缺少 ${health.missingBoundary.join(' / ')} 节点，请先在编辑器中添加`
+                          : undefined
+                      }
                     >
                       {running ? '运行中…' : '▶ 运行'}
                     </button>
@@ -216,6 +246,34 @@ export function WorkflowTab({
                 </div>
                 {def.description && (
                   <div className="definition-description">{def.description}</div>
+                )}
+                {isMissing && (
+                  <div className="workflow-health-detail">
+                    Workflow 缺少必要的边界节点：
+                    <ul>
+                      {health.missingBoundary.map((kind) => (
+                        <li key={kind}>
+                          <code>{kind}</code> 节点 —— 用于
+                          {kind === 'input' ? '声明输入（选中文本、指令、引用文件）' : '声明最终输出的格式'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {isDegraded && (
+                  <div className="workflow-health-detail">
+                    以下节点引用的 Agent 已禁用或缺失，需要进入编辑器修改后才能运行：
+                    <ul>
+                      {health.issues.map((iss) => (
+                        <li key={iss.nodeId}>
+                          <code>{iss.nodeId}</code>
+                          {' → '}
+                          <code>{iss.agentId.slice(0, 12)}{iss.agentId.length > 12 ? '…' : ''}</code>
+                          {iss.reason === 'disabled' ? '（已禁用）' : '（已删除）'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
                 {nodeStatuses.length > 0 && (
                   <div className="node-statuses">

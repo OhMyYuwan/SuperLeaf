@@ -176,6 +176,7 @@
 
 .message-input-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
   border-radius: 10px;
@@ -198,6 +199,41 @@
 }
 .message-input-row .primary-btn {
   padding: 8px 12px;
+  flex-shrink: 0;
+}
+
+.discussion-selection-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #bfdbfe;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.discussion-selection-chip:hover {
+  background: rgba(59, 130, 246, 0.18);
+}
+.discussion-selection-chip .chip-label {
+  font-weight: 500;
+  color: #93c5fd;
+  flex-shrink: 0;
+}
+.discussion-selection-chip .chip-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(226, 232, 240, 0.8);
+}
+.discussion-selection-chip .chip-range {
+  font-variant-numeric: tabular-nums;
+  color: rgba(148, 163, 184, 0.7);
   flex-shrink: 0;
 }
 

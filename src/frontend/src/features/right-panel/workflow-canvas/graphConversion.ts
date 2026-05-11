@@ -17,7 +17,7 @@ import type {
   WorkflowNode,
 } from '../../../services/backendApi'
 
-export type CanvasNodeType = 'agent' | 'loop'
+export type CanvasNodeType = 'agent' | 'loop' | 'input' | 'output'
 
 export type FlowNodeData = {
   label: string
@@ -59,7 +59,11 @@ export function graphToFlow(graph: WorkflowGraph): {
       x: DEFAULT_POSITION.x + (i % 3) * 220,
       y: DEFAULT_POSITION.y + Math.floor(i / 3) * 140,
     }
-    const nodeType: CanvasNodeType = n.type === 'loop' ? 'loop' : 'agent'
+    const nodeType: CanvasNodeType =
+      n.type === 'loop' ? 'loop'
+      : n.type === 'input' ? 'input'
+      : n.type === 'output' ? 'output'
+      : 'agent'
 
     const flowNode: FlowNode = {
       id: n.id,
@@ -125,7 +129,11 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
 }
 
 export function generateNodeId(existing: FlowNode[], type: CanvasNodeType): string {
-  const prefix = type === 'loop' ? 'L' : 'a'
+  const prefix =
+    type === 'loop' ? 'L'
+    : type === 'input' ? 'in'
+    : type === 'output' ? 'out'
+    : 'a'
   let i = existing.filter((n) => n.data.nodeType === type).length + 1
   while (existing.some((n) => n.id === `${prefix}${i}`)) i++
   return `${prefix}${i}`

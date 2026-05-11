@@ -62,6 +62,10 @@ interface InFlight {
   selectionText: string
   // Card whose follow-up (Continue) triggered this run, if any.
   threadCardId?: string
+  // true => terminal workflow result should be ingested into annotationStore.
+  // This is the default path for running a workflow from the annotation column
+  // or the workflow tab. Discussion/chat flows will explicitly turn it off.
+  autoIngestToAnnotations?: boolean
 }
 
 interface WorkflowState {
@@ -90,7 +94,7 @@ interface WorkflowState {
   maxRounds: Record<string, number>
 
   load: () => Promise<void>
-  run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string }) => Promise<void>
+  run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string; autoIngestToAnnotations?: boolean }) => Promise<void>
   loadHistory: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   deleteRun: (runId: string) => Promise<void>
   disableWorkflow: (workflowId: string) => Promise<void>
@@ -101,7 +105,7 @@ interface WorkflowState {
   createDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
   updateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
   deleteDefinition: (id: string) => Promise<void>
-  executeDefinition: (definitionId: string, body: RunRequest) => Promise<void>
+  executeDefinition: (definitionId: string, body: RunRequest, opts?: { autoIngestToAnnotations?: boolean }) => Promise<void>
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -227,7 +231,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  executeDefinition: async (definitionId, body) => {
+  executeDefinition: async (definitionId, body, opts) => {
     const def = get().definitions.find((d) => d.id === definitionId)
     const doc = useDocumentStore.getState().documents[body.document_id]
     const inflight: InFlight = {
@@ -235,6 +239,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       documentId: body.document_id,
       range: { from: body.range_start, to: body.range_end },
       selectionText: doc ? doc.content.slice(body.range_start, body.range_end) : '',
+      autoIngestToAnnotations: opts?.autoIngestToAnnotations ?? true,
     }
 
     set((s) => ({
@@ -253,7 +258,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
-        throw new Error(`后端返回 ${resp.status}: ${text?.slice(0, 300) || resp.statusText}`)
+        throw new Error(formatExecuteError(resp.status, text))
       }
 
       const reader = resp.body.getReader()
@@ -295,6 +300,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       range: { from: body.range_start, to: body.range_end },
       selectionText: doc ? doc.content.slice(body.range_start, body.range_end) : '',
       threadCardId: opts?.threadCardId,
+      autoIngestToAnnotations:
+        opts?.autoIngestToAnnotations ?? (opts?.threadCardId ? false : true),
     }
 
     set((s) => ({
@@ -420,6 +427,7 @@ function handleTerminalEvent(evt: RunEvent, inflight: InFlight, agentName: strin
       parsed,
       range: inflight.range,
       threadCardId: inflight.threadCardId,
+      autoIngestToAnnotations: inflight.autoIngestToAnnotations,
     })
 
     const ann = useAnnotationStore.getState()
@@ -433,6 +441,10 @@ function handleTerminalEvent(evt: RunEvent, inflight: InFlight, agentName: strin
       if (payload.conversation_id) {
         ann.setConversationId(inflight.threadCardId, payload.conversation_id)
       }
+      return
+    }
+
+    if (!inflight.autoIngestToAnnotations) {
       return
     }
 
@@ -542,4 +554,40 @@ function handleOrchestratedEvent(
     // eslint-disable-next-line no-console
     console.error('[workflow.orchestrated.failed]', evt.payload)
   }
+}
+
+/**
+ * Render a backend error body into a user-facing string. Backend returns
+ * structured detail for 409 (degraded workflow / missing boundary); fall back
+ * to raw text otherwise.
+ */
+function formatExecuteError(status: number, body: string): string {
+  if (status === 409 && body) {
+    try {
+      const parsed = JSON.parse(body) as {
+        detail?: {
+          code?: string
+          message?: string
+          issues?: { node_id?: string; agent_id?: string; reason?: string }[]
+          missing?: string[]
+        }
+      }
+      const detail = parsed.detail
+      if (detail?.code === 'workflow_degraded') {
+        const msg = detail.message ?? 'Workflow 中存在不可用的 Agent'
+        const list = (detail.issues ?? [])
+          .map((i) => `  · ${i.node_id} → ${i.agent_id?.slice(0, 10) ?? ''}… (${i.reason})`)
+          .join('\n')
+        return list ? `${msg}\n${list}` : msg
+      }
+      if (detail?.code === 'workflow_missing_boundary') {
+        const msg = detail.message ?? 'Workflow 缺少边界节点'
+        const missing = (detail.missing ?? []).join(' / ')
+        return missing ? `${msg}（缺少：${missing}）` : msg
+      }
+    } catch {
+      /* fall through to raw */
+    }
+  }
+  return `后端返回 ${status}: ${body?.slice(0, 300) || ''}`
 }

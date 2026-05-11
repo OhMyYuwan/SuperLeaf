@@ -1,0 +1,249 @@
+/* Workflow canvas layout + node/palette/inspector styling */
+
+.wf-canvas-root {
+  display: grid;
+  grid-template-columns: 200px 1fr 280px;
+  height: 560px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-surface, #1a1a1a);
+}
+
+.wf-canvas-wrapper {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Palette ------------------------------------------------------------ */
+.wf-palette {
+  border-right: 1px solid var(--border-color, #2a2a2a);
+  padding: 10px 8px;
+  overflow-y: auto;
+  background: var(--bg-panel, #161616);
+}
+
+.wf-palette-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.wf-palette-hint {
+  font-size: 11px;
+  color: var(--text-tertiary, #777);
+  margin-bottom: 10px;
+}
+
+.wf-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 5px;
+  cursor: grab;
+  background: var(--bg-surface, #1a1a1a);
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.wf-palette-item:hover {
+  background: var(--bg-hover, #222);
+  border-color: var(--border-hover, #3a3a3a);
+}
+
+.wf-palette-item:active {
+  cursor: grabbing;
+}
+
+.wf-palette-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.wf-palette-labels {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-palette-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.wf-palette-hint-sm {
+  font-size: 10px;
+  color: var(--text-tertiary, #777);
+  margin-top: 2px;
+}
+
+.wf-palette-footnote {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color, #2a2a2a);
+  font-size: 10px;
+  color: var(--text-tertiary, #777);
+  line-height: 1.6;
+}
+
+.wf-footnote-line {
+  margin-bottom: 2px;
+}
+
+/* Nodes -------------------------------------------------------------- */
+.wf-node {
+  min-width: 160px;
+  background: var(--bg-surface, #1a1a1a);
+  border: 2px solid var(--border-color, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.wf-node.selected {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+.wf-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wf-head-agent {
+  background: #3b82f6;
+}
+
+.wf-node-body {
+  padding: 8px 10px;
+}
+
+.wf-node-label {
+  font-weight: 500;
+  color: var(--text-primary, #fff);
+  margin-bottom: 4px;
+}
+
+.wf-node-config {
+  font-size: 11px;
+  color: var(--text-tertiary, #888);
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.wf-node-config.missing {
+  color: #ef4444;
+  font-style: italic;
+}
+
+/* Loop container ----------------------------------------------------- */
+.wf-node-loop {
+  width: 100%;
+  height: 100%;
+  background: rgba(239, 68, 68, 0.06);
+  border: 2px dashed rgba(239, 68, 68, 0.5);
+  border-radius: 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-node-loop.selected {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+}
+
+.wf-loop-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(239, 68, 68, 0.18);
+  color: #fecaca;
+  font-size: 11px;
+  font-weight: 600;
+  border-bottom: 1px dashed rgba(239, 68, 68, 0.4);
+  flex-shrink: 0;
+}
+
+.wf-loop-title {
+  flex: 1;
+}
+
+.wf-loop-rounds {
+  font-family: ui-monospace, monospace;
+  background: rgba(239, 68, 68, 0.25);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+/* Inspector ---------------------------------------------------------- */
+.wf-inspector {
+  border-left: 1px solid var(--border-color, #2a2a2a);
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--bg-panel, #161616);
+}
+
+.wf-inspector-empty {
+  color: var(--text-tertiary, #777);
+  font-size: 12px;
+  padding-top: 40px;
+  text-align: center;
+}
+
+.wf-inspector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color, #2a2a2a);
+}
+
+.wf-inspector .form-group {
+  margin-bottom: 12px;
+}
+
+.wf-inspector .form-group label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.wf-inspector .form-group input,
+.wf-inspector .form-group textarea,
+.wf-inspector .form-group select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--bg-surface, #1a1a1a);
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 4px;
+  color: var(--text-primary, #fff);
+}
+
+.wf-inspector .form-group input:disabled {
+  opacity: 0.5;
+}
+
+.form-hint-sm {
+  font-size: 10px;
+  color: var(--text-tertiary, #777);
+  margin-top: 4px;
+}

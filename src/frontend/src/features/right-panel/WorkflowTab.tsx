@@ -8,7 +8,11 @@
  */
 
 import { useState } from 'react'
-import type { CachedWorkflow, WorkflowDefinition } from '../../services/backendApi'
+import type {
+  CachedWorkflow,
+  WorkflowDefinition,
+  WorkflowDefinitionDraft,
+} from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { WorkflowDefinitionEditor } from './WorkflowDefinitionEditor'
@@ -24,8 +28,8 @@ interface WorkflowTabProps {
   maxRoundsMap: Record<string, number>
   onRun: (workflowId: string, instruction: string) => void
   onRunDefinition: (definitionId: string, instruction: string) => void
-  onCreateDefinition: (draft: any) => Promise<void>
-  onUpdateDefinition: (id: string, draft: any) => Promise<void>
+  onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
+  onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onDeleteDefinition: (id: string) => Promise<void>
 }
 
@@ -49,12 +53,12 @@ export function WorkflowTab({
   const [editingDefinition, setEditingDefinition] = useState<WorkflowDefinition | undefined>()
   const [activeTab, setActiveTab] = useState<'workflows' | 'definitions'>('workflows')
 
-  const handleCreateDefinition = async (draft: any) => {
+  const handleCreateDefinition = async (draft: WorkflowDefinitionDraft) => {
     await onCreateDefinition(draft)
     setShowEditor(false)
   }
 
-  const handleUpdateDefinition = async (draft: any) => {
+  const handleUpdateDefinition = async (draft: WorkflowDefinitionDraft) => {
     if (editingDefinition) {
       await onUpdateDefinition(editingDefinition.id, draft)
       setShowEditor(false)

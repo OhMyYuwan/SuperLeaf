@@ -294,14 +294,36 @@ class WorkflowOrchestrator:
         nodes = ctx.workflow_def.graph.get("nodes", [])
         edges = ctx.workflow_def.graph.get("edges", [])
 
-        # Build dependency graph
-        dependencies = {node["id"]: [] for node in nodes}
-        dependents = {node["id"]: [] for node in nodes}
-        in_degree = {node["id"]: 0 for node in nodes}
+        # Loop containers execute their children as a sub-graph for N rounds.
+        # Filter them out of the top-level DAG — children are driven from inside
+        # _execute_loop_node instead.
+        loop_ids = {n["id"] for n in nodes if n.get("type") == "loop"}
+        child_ids = {n["id"] for n in nodes if _parent_id(n) in loop_ids}
+        top_nodes = [
+            n for n in nodes
+            if n.get("type") != "loop" and n["id"] not in child_ids
+        ]
+        top_node_ids = {n["id"] for n in top_nodes}
+        # Also expose loop containers themselves as top-level nodes so they can
+        # participate in the outer topology.
+        for ln in nodes:
+            if ln.get("type") == "loop" and not _parent_id(ln):
+                top_nodes.append(ln)
+                top_node_ids.add(ln["id"])
 
-        for edge in edges:
-            from_node = edge["from"]
-            to_node = edge["to"]
+        top_edges = [
+            e for e in edges
+            if _edge_source(e) in top_node_ids and _edge_target(e) in top_node_ids
+        ]
+
+        # Build dependency graph
+        dependencies = {node["id"]: [] for node in top_nodes}
+        dependents = {node["id"]: [] for node in top_nodes}
+        in_degree = {node["id"]: 0 for node in top_nodes}
+
+        for edge in top_edges:
+            from_node = _edge_source(edge)
+            to_node = _edge_target(edge)
             dependencies[to_node].append(from_node)
             dependents[from_node].append(to_node)
             in_degree[to_node] += 1
@@ -553,37 +575,107 @@ class WorkflowOrchestrator:
             raise
 
     async def _execute_loop_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
-        """Execute a loop node that controls iteration."""
+        """Execute a loop container: run its child subgraph `rounds` times.
+
+        The loop node holds children via `config._ui.parent_id` on each child.
+        Children can themselves be agents or nested loops; this method recurses
+        via _execute_subgraph_once, which delegates loop children back here.
+
+        Termination: either `rounds` iterations elapse, or (future work) a
+        user-supplied stop_condition evaluates truthy against last output.
+        """
         node = ctx.nodes[node_id]
         node.status = "running"
         node.started_at = datetime.utcnow()
 
-        try:
-            # Get loop configuration
-            max_iterations = node.config.get("max_iterations", 3)
-            current_iteration = node.inputs.get("current_iteration", 0)
+        rounds = int(node.config.get("rounds", 3))
+        graph_nodes = ctx.workflow_def.graph.get("nodes", [])
+        graph_edges = ctx.workflow_def.graph.get("edges", [])
 
-            # Check if we should continue looping
-            should_continue = current_iteration < max_iterations
+        # Direct children of this loop (not transitively — nested loops handle
+        # their own descendants).
+        child_nodes = [n for n in graph_nodes if _parent_id(n) == node_id]
+        child_ids = {n["id"] for n in child_nodes}
+        # Edges fully contained inside this loop's child set.
+        child_edges = [
+            e for e in graph_edges
+            if _edge_source(e) in child_ids and _edge_target(e) in child_ids
+        ]
 
-            output = {
-                "should_continue": should_continue,
-                "current_iteration": current_iteration,
-                "max_iterations": max_iterations,
-                "node_id": node_id,
-            }
+        round_outputs: list[dict] = []
+        for round_num in range(1, rounds + 1):
+            outputs_this_round = await self._execute_subgraph_once(
+                ctx, child_nodes, child_edges, round_num
+            )
+            round_outputs.append(outputs_this_round)
 
-            node.outputs = output
-            node.status = "completed"
-            node.finished_at = datetime.utcnow()
+        node.outputs = {
+            "rounds": rounds,
+            "last_round_outputs": round_outputs[-1] if round_outputs else {},
+            "all_rounds": round_outputs,
+            "node_id": node_id,
+        }
+        node.status = "completed"
+        node.finished_at = datetime.utcnow()
+        return node.outputs
 
-            return output
+    async def _execute_subgraph_once(
+        self,
+        ctx: OrchestrationContext,
+        sub_nodes: list[dict],
+        sub_edges: list[dict],
+        round_num: int,
+    ) -> dict[str, dict]:
+        """Run a subgraph (loop body or similar) once, returning nodeId → output.
 
-        except Exception as e:
-            node.status = "failed"
-            node.error = str(e)
-            node.finished_at = datetime.utcnow()
-            raise
+        Mirrors _execute_graph's DAG scheduler but scoped to a node subset.
+        Does NOT emit outer events — each iteration is reported as one
+        node.completed at the parent loop level.
+        """
+        ids = {n["id"] for n in sub_nodes}
+        dependencies: dict[str, list[str]] = {nid: [] for nid in ids}
+        in_degree: dict[str, int] = {nid: 0 for nid in ids}
+        dependents: dict[str, list[str]] = {nid: [] for nid in ids}
+        for e in sub_edges:
+            src, tgt = _edge_source(e), _edge_target(e)
+            dependencies[tgt].append(src)
+            dependents[src].append(tgt)
+            in_degree[tgt] += 1
+
+        completed: dict[str, dict] = {}
+        pending: dict[str, asyncio.Task] = {}
+        ready = [nid for nid, d in in_degree.items() if d == 0]
+
+        while ready or pending:
+            for nid in ready:
+                node_ctx = ctx.nodes[nid]
+                node_ctx.inputs["dependency_outputs"] = {
+                    dep: completed[dep] for dep in dependencies[nid]
+                }
+                node_ctx.inputs["current_round"] = round_num
+                pending[nid] = asyncio.create_task(self._execute_node(ctx, nid))
+            ready = []
+
+            if pending:
+                done, _ = await asyncio.wait(
+                    pending.values(), return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    done_id = next((k for k, v in pending.items() if v == task), None)
+                    if not done_id:
+                        continue
+                    try:
+                        output = await task
+                        completed[done_id] = output
+                        for dep_of in dependents[done_id]:
+                            in_degree[dep_of] -= 1
+                            if in_degree[dep_of] == 0:
+                                ready.append(dep_of)
+                    except Exception as e:
+                        completed[done_id] = {"error": str(e), "node_id": done_id}
+                    del pending[done_id]
+
+        return completed
 
     async def _execute_agent_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
         """Execute a single agent node and return its output."""
@@ -737,8 +829,10 @@ class WorkflowOrchestrator:
         in_degree = {node["id"]: 0 for node in nodes}
 
         for edge in edges:
-            graph[edge["from"]].append(edge["to"])
-            in_degree[edge["to"]] += 1
+            src = _edge_source(edge)
+            tgt = _edge_target(edge)
+            graph[src].append(tgt)
+            in_degree[tgt] += 1
 
         # Find nodes with no incoming edges
         queue = [node_id for node_id, degree in in_degree.items() if degree == 0]
@@ -757,4 +851,30 @@ class WorkflowOrchestrator:
             raise ValueError("Workflow graph contains a cycle")
 
         return result
+
+
+# ---------------------------------------------------------------------------
+# Edge / node helpers
+# ---------------------------------------------------------------------------
+#
+# Frontend canvas serializes edges as {source, target}; older backend code used
+# {from, to}. These helpers accept both so we don't break legacy workflows.
+
+
+def _edge_source(edge: dict) -> str:
+    return edge.get("source") or edge.get("from", "")
+
+
+def _edge_target(edge: dict) -> str:
+    return edge.get("target") or edge.get("to", "")
+
+
+def _parent_id(node: dict) -> str | None:
+    """Extract the canvas parent_id (container membership) from a node's config._ui.
+
+    Returns None for top-level nodes (no container).
+    """
+    config = node.get("config") or {}
+    ui = config.get("_ui") or {}
+    return ui.get("parent_id")
 

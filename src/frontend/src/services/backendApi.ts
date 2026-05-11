@@ -150,7 +150,9 @@ export interface WorkflowGraph {
 
 export interface WorkflowNode {
   id: string
-  type: 'agent' | 'workflow' | 'merge' | 'judge' | 'loop'
+  // Canvas-generated graphs use 'agent' (atom) and 'loop' (container).
+  // Legacy modes (parallel/pipeline/roundtable) may still carry other values.
+  type: 'agent' | 'loop' | 'workflow' | 'merge' | 'judge'
   label?: string
   config?: Record<string, unknown>
 }

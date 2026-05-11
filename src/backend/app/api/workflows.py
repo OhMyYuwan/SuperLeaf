@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -14,6 +15,11 @@ from ..database import get_session
 from ..models import CachedWorkflow, WorkflowDefinition, WorkflowRun
 from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
 from ..services.agent_orchestrator import WorkflowOrchestrator
+from ..services.attached_files import (
+    collect_image_attachments,
+    normalize_attached_files,
+    render_attached_files_block,
+)
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
@@ -182,14 +188,31 @@ async def run_workflow(
         accumulated_text: list[str] = []
 
         try:
+            attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+            image_attachments = collect_image_attachments(attached_files)
+            # Mirror the normalized list back into inputs so the Dify path sees
+            # server-clipped data, not the raw client payload.
+            if attached_files:
+                body.inputs["attached_files"] = attached_files
+
             if provider.kind == "nanobot":
                 from ..services.nanobot_client import NanobotClient
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
-                prompt = _nanobot_prompt(body)
+                prompt = _nanobot_prompt(body, attached_files)
+                if image_attachments:
+                    user_content: list[dict[str, Any]] | str = [
+                        {"type": "text", "text": prompt},
+                    ]
+                    for img in image_attachments:
+                        user_content.append(
+                            {"type": "image_url", "image_url": {"url": img["url"]}}
+                        )
+                else:
+                    user_content = prompt
                 async for evt in client.run_streaming(
                     model=cw.external_id,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": user_content}],
                 ):
                     raw_events.append(evt)
                     if not external_run_id:
@@ -254,7 +277,7 @@ async def run_workflow(
     return EventSourceResponse(event_gen())
 
 
-def _nanobot_prompt(body: RunBody) -> str:
+def _nanobot_prompt(body: RunBody, attached_files: list[dict[str, Any]] | None = None) -> str:
     selection_text = str(body.inputs.get("target_text") or body.query or "").strip()
     instruction = str(body.inputs.get("instruction") or body.query or "").strip()
     before = str(body.inputs.get("before") or "").strip()
@@ -275,6 +298,10 @@ def _nanobot_prompt(body: RunBody) -> str:
             parts.append(f"Before: {before}")
         if after:
             parts.append(f"After: {after}")
+    if attached_files:
+        block = render_attached_files_block(attached_files)
+        if block:
+            parts.append(block)
     return "\n".join(parts).strip() or body.query or selection_text or instruction
 
 
@@ -437,7 +464,7 @@ async def execute_workflow_definition(
             status_code=409,
             detail={
                 "code": "workflow_degraded",
-                "message": "Workflow 中存在已禁用或缺失的 Agent，请先编辑后再运行。",
+                "message": "Workflow 中存在未配置、已禁用或缺失的 Agent，请先编辑后再运行。",
                 "issues": issues,
             },
         )
@@ -495,7 +522,8 @@ def _collect_unhealthy_agents(
     db: Session,
 ) -> list[dict]:
     """Return a list of {node_id, agent_id, reason} for every agent node whose
-    referenced CachedWorkflow is missing or disabled. Empty list == healthy.
+    referenced CachedWorkflow is unconfigured, missing, or disabled.
+    Empty list == healthy.
     """
     nodes = (wf.graph or {}).get("nodes", []) or []
     issues: list[dict] = []
@@ -503,8 +531,13 @@ def _collect_unhealthy_agents(
         if n.get("type") != "agent":
             continue
         cfg = n.get("config") or {}
-        agent_id = cfg.get("agent_id") or cfg.get("agentId") or ""
+        agent_id = str(cfg.get("agent_id") or cfg.get("agentId") or "").strip()
         if not agent_id:
+            issues.append({
+                "node_id": n.get("id"),
+                "agent_id": "",
+                "reason": "unconfigured",
+            })
             continue
         cw = db.get(CachedWorkflow, agent_id)
         if cw is None:

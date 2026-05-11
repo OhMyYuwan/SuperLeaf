@@ -151,6 +151,7 @@ class TreeDocOut(BaseModel):
     id: str
     name: str
     format: str
+    size_bytes: int
     updated_at: datetime
 
 

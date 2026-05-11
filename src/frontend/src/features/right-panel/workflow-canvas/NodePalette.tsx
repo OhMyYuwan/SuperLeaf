@@ -25,39 +25,41 @@ const PALETTE: Array<{ type: PaletteType; icon: string; label: string; hint: str
   { type: 'output', icon: '📤', label: 'Output', hint: '工作流出口' },
 ]
 
-export function NodePalette() {
+export function NodePalette({ compact = false }: { compact?: boolean }) {
   const handleDragStart = (event: DragEvent, nodeType: PaletteType) => {
     event.dataTransfer.setData('application/reactflow', nodeType)
     event.dataTransfer.effectAllowed = 'move'
   }
 
   return (
-    <aside className="wf-palette">
+    <aside className={`wf-palette${compact ? ' compact' : ''}`}>
       <div className="wf-palette-header">节点</div>
-      <div className="wf-palette-hint">拖到画布添加</div>
+      {!compact && <div className="wf-palette-hint">拖到画布添加</div>}
       {PALETTE.map((item) => (
         <div
           key={item.type}
           className={`wf-palette-item wf-palette-${item.type}`}
           draggable
           onDragStart={(e) => handleDragStart(e, item.type)}
-          title={item.hint}
+          title={`${item.label} · ${item.hint}`}
         >
           <span className="wf-palette-icon">{item.icon}</span>
-          <div className="wf-palette-labels">
-            <div className="wf-palette-label">{item.label}</div>
-            <div className="wf-palette-hint-sm">{item.hint}</div>
-          </div>
+          {!compact && (
+            <div className="wf-palette-labels">
+              <div className="wf-palette-label">{item.label}</div>
+              <div className="wf-palette-hint-sm">{item.hint}</div>
+            </div>
+          )}
         </div>
       ))}
 
-      <div className="wf-palette-footnote">
+      {!compact && <div className="wf-palette-footnote">
         <div className="wf-footnote-line">💡 工作流结构：</div>
         <div className="wf-footnote-line">· Input → Agent(s) → Output</div>
         <div className="wf-footnote-line">· Loop 输入输出可直接连线</div>
         <div className="wf-footnote-line">· Agent 不连线 → 平行</div>
         <div className="wf-footnote-line">· A → B 连线 → 顺序</div>
-      </div>
+      </div>}
     </aside>
   )
 }

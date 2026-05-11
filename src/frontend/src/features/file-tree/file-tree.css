@@ -236,3 +236,23 @@
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
+
+/* Drag-and-drop visual feedback */
+.tree-folder-block.drag-over {
+  background: rgba(59, 130, 246, 0.1);
+  outline: 1px dashed rgba(59, 130, 246, 0.6);
+  outline-offset: -1px;
+  border-radius: 6px;
+}
+
+.tree-folder-row[draggable='true'],
+.tree-doc-row[draggable='true'],
+.tree-file-row[draggable='true'] {
+  cursor: grab;
+}
+
+.tree-folder-row[draggable='true']:active,
+.tree-doc-row[draggable='true']:active,
+.tree-file-row[draggable='true']:active {
+  cursor: grabbing;
+}

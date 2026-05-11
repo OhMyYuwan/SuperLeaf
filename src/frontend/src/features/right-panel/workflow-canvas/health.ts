@@ -19,7 +19,7 @@ export type DefinitionHealth = 'ok' | 'degraded' | 'missing' | 'empty'
 export interface NodeHealthIssue {
   nodeId: string
   agentId: string
-  reason: 'disabled' | 'missing'
+  reason: 'disabled' | 'missing' | 'unconfigured'
 }
 
 export interface DefinitionHealthReport {
@@ -33,12 +33,17 @@ export function inspectAgentNode(
   workflows: CachedWorkflow[],
 ): NodeHealthIssue | null {
   if (node.type !== 'agent') return null
-  const agentId = (node.config?.agent_id as string | undefined) ?? ''
-  if (!agentId) return null
+  const agentId = readAgentId(node.config)
+  if (!agentId) return { nodeId: node.id, agentId: '', reason: 'unconfigured' }
   const hit = workflows.find((w) => w.id === agentId)
   if (!hit) return { nodeId: node.id, agentId, reason: 'missing' }
   if (hit.is_disabled) return { nodeId: node.id, agentId, reason: 'disabled' }
   return null
+}
+
+function readAgentId(config: WorkflowNode['config']): string {
+  const raw = config?.agent_id ?? config?.agentId
+  return typeof raw === 'string' ? raw.trim() : ''
 }
 
 export function inspectDefinition(

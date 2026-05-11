@@ -1,62 +1,109 @@
 /**
- * mentions — parse @AgentName tokens out of user-authored comments.
+ * mentions — parse @Name tokens (agents AND files) out of user-authored text.
  *
- * We intentionally keep this dumb: an @ mention is the literal character `@`
- * followed by a non-whitespace run (letters / digits / CJK / punctuation
- * except whitespace). Agent names may contain spaces, so the caller provides
- * the list of known agents and we match the LONGEST one at each `@`.
+ * Candidates are a discriminated union:
+ *   - agent: { kind: 'agent', id, name }
+ *   - file:  { kind: 'file', id, name, path, format, size_bytes, mime?, ext? }
+ *
+ * Two surface syntaxes:
+ *   - bare:    @MyAgent  or  @file.tex  (matched by longest-name match against
+ *              the candidate list)
+ *   - quoted:  @"my doc with spaces.md"  (delimits names containing whitespace,
+ *              `@`, or other awkward characters — borrowed from openclaude)
  */
 
-export interface MentionCandidate {
+import type { ProjectTree, TreeDoc, TreeFile, TreeFolder } from './filesystemApi'
+import { filesystemApi } from './filesystemApi'
+
+export type AgentCandidate = { kind: 'agent'; id: string; name: string }
+export type WorkflowCandidate = { kind: 'workflow'; id: string; name: string; description?: string }
+export type FileCandidate = {
+  kind: 'file'
   id: string
   name: string
+  path: string
+  format: 'doc' | 'binary'
+  size_bytes: number
+  docFormat?: 'tex' | 'md' | 'txt'
+  mime?: string
+  ext?: string
+  /** True when this is the currently-open document; consumers may pin it to top. */
+  isCurrent?: boolean
 }
+export type MentionCandidate = AgentCandidate | WorkflowCandidate | FileCandidate
 
 export interface ParsedMention {
-  // Character offsets in the source string.
   start: number
   end: number
-  agent: MentionCandidate
+  candidate: MentionCandidate
+  /** True when the mention used the quoted form `@"…"`. */
+  quoted: boolean
 }
 
+const BOUNDARY_BEFORE = /[\s\(\[,;:。，、；：]/
+
 /**
- * Find all @mentions in `text` that resolve to one of the provided agents.
+ * Find all @mentions in `text` that resolve to one of the provided candidates.
  *
- * For each `@` we try the longest-matching known agent name at that position.
- * If nothing matches (e.g. the user typed `@foo` but no Agent is named "foo"),
- * the `@` is ignored — it stays as plain text.
+ * Two forms:
+ *   - `@Name`            longest-prefix match against candidate names
+ *   - `@"Name with @"`   anything until the closing quote
+ *
+ * Unmatched `@` is left as plain text. The `@` must be at string start or
+ * follow whitespace/punctuation so emails like `user@host.com` don't trip.
  */
 export function parseMentions(
   text: string,
-  agents: readonly MentionCandidate[],
+  candidates: readonly MentionCandidate[],
 ): ParsedMention[] {
-  if (agents.length === 0) return []
-  // Sort by name length descending so "@Reviewer Pro" is preferred over "@Reviewer".
-  const sorted = [...agents].sort((a, b) => b.name.length - a.name.length)
+  if (candidates.length === 0) return []
+  const sorted = [...candidates].sort((a, b) => b.name.length - a.name.length)
+  const byName = new Map<string, MentionCandidate>()
+  for (const c of sorted) {
+    if (!byName.has(c.name)) byName.set(c.name, c)
+  }
 
   const out: ParsedMention[] = []
   let i = 0
   while (i < text.length) {
     const at = text.indexOf('@', i)
     if (at === -1) break
-    // Require that the @ is at the start OR preceded by whitespace/punctuation,
-    // so emails like user@host.com don't trip it.
-    if (at > 0) {
-      const prev = text[at - 1]
-      if (!/[\s\(\[,;:。，、；：]/.test(prev)) {
-        i = at + 1
-        continue
-      }
+    if (at > 0 && !BOUNDARY_BEFORE.test(text[at - 1])) {
+      i = at + 1
+      continue
     }
+
+    // Quoted form: @"…"
+    if (text[at + 1] === '"') {
+      const close = text.indexOf('"', at + 2)
+      if (close !== -1) {
+        const name = text.slice(at + 2, close)
+        const match = byName.get(name)
+        if (match) {
+          out.push({ start: at, end: close + 1, candidate: match, quoted: true })
+          i = close + 1
+          continue
+        }
+      }
+      i = at + 1
+      continue
+    }
+
+    // Bare form: longest-prefix match.
     let matched: MentionCandidate | null = null
-    for (const a of sorted) {
-      if (text.startsWith(a.name, at + 1)) {
-        matched = a
+    for (const c of sorted) {
+      if (text.startsWith(c.name, at + 1)) {
+        matched = c
         break
       }
     }
     if (matched) {
-      out.push({ start: at, end: at + 1 + matched.name.length, agent: matched })
+      out.push({
+        start: at,
+        end: at + 1 + matched.name.length,
+        candidate: matched,
+        quoted: false,
+      })
       i = at + 1 + matched.name.length
     } else {
       i = at + 1
@@ -65,27 +112,47 @@ export function parseMentions(
   return out
 }
 
-/**
- * Deduplicate mentions by agent id, preserving order of first occurrence.
- */
-export function uniqueMentionedAgents(mentions: readonly ParsedMention[]): MentionCandidate[] {
+export function uniqueMentionedAgents(mentions: readonly ParsedMention[]): AgentCandidate[] {
   const seen = new Set<string>()
-  const out: MentionCandidate[] = []
+  const out: AgentCandidate[] = []
   for (const m of mentions) {
-    if (seen.has(m.agent.id)) continue
-    seen.add(m.agent.id)
-    out.push(m.agent)
+    if (m.candidate.kind !== 'agent') continue
+    if (seen.has(m.candidate.id)) continue
+    seen.add(m.candidate.id)
+    out.push(m.candidate)
   }
   return out
 }
 
-/**
- * Segments a string into plain-text and mention spans, in order. Used by the
- * renderer to draw highlighted tags inline.
- */
+export function uniqueMentionedWorkflows(
+  mentions: readonly ParsedMention[],
+): WorkflowCandidate[] {
+  const seen = new Set<string>()
+  const out: WorkflowCandidate[] = []
+  for (const m of mentions) {
+    if (m.candidate.kind !== 'workflow') continue
+    if (seen.has(m.candidate.id)) continue
+    seen.add(m.candidate.id)
+    out.push(m.candidate)
+  }
+  return out
+}
+
+export function uniqueMentionedFiles(mentions: readonly ParsedMention[]): FileCandidate[] {
+  const seen = new Set<string>()
+  const out: FileCandidate[] = []
+  for (const m of mentions) {
+    if (m.candidate.kind !== 'file') continue
+    if (seen.has(m.candidate.id)) continue
+    seen.add(m.candidate.id)
+    out.push(m.candidate)
+  }
+  return out
+}
+
 export type MentionSegment =
   | { type: 'text'; content: string }
-  | { type: 'mention'; agent: MentionCandidate; raw: string }
+  | { type: 'mention'; candidate: MentionCandidate; raw: string }
 
 export function segmentText(
   text: string,
@@ -101,7 +168,7 @@ export function segmentText(
     }
     out.push({
       type: 'mention',
-      agent: m.agent,
+      candidate: m.candidate,
       raw: text.slice(m.start, m.end),
     })
     cursor = m.end
@@ -113,12 +180,8 @@ export function segmentText(
 }
 
 /**
- * Strip all @mentions from a string, leaving only the plain text content.
- *
- * @mentions are routing metadata for our system, not part of the actual
- * question sent to the Agent. This prevents confusion when a user writes
- * "@Mentor @Reviewer please check this" — each Agent should only see
- * "please check this", not the @tags.
+ * Strip all @mentions from a string. Used before sending to an Agent so the
+ * raw routing tokens don't show up in the prompt.
  */
 export function stripMentions(text: string, mentions: readonly ParsedMention[]): string {
   if (mentions.length === 0) return text
@@ -130,25 +193,245 @@ export function stripMentions(text: string, mentions: readonly ParsedMention[]):
   return result.trim()
 }
 
+/* ------------------------------------------------------------------ files */
+
+/** Flatten the nested project tree into a flat candidate list keyed by id. */
+export function flattenFileCandidates(tree: ProjectTree | null): FileCandidate[] {
+  if (!tree) return []
+  const out: FileCandidate[] = []
+
+  const walk = (folder: TreeFolder, parents: string[]) => {
+    const here = folder.id === 'root' ? parents : [...parents, folder.name]
+    const pathPrefix = here.join('/')
+    for (const doc of folder.docs) {
+      out.push(docToCandidate(doc, pathPrefix))
+    }
+    for (const file of folder.files) {
+      out.push(fileToCandidate(file, pathPrefix))
+    }
+    for (const child of folder.folders) walk(child, here)
+  }
+  walk(tree.root, [])
+  return out
+}
+
+function docToCandidate(d: TreeDoc, pathPrefix: string): FileCandidate {
+  return {
+    kind: 'file',
+    id: d.id,
+    name: d.name,
+    path: pathPrefix ? `${pathPrefix}/${d.name}` : d.name,
+    format: 'doc',
+    size_bytes: d.size_bytes,
+    docFormat: d.format,
+    ext: d.format,
+  }
+}
+
+function fileToCandidate(f: TreeFile, pathPrefix: string): FileCandidate {
+  const ext = f.name.includes('.') ? f.name.slice(f.name.lastIndexOf('.') + 1).toLowerCase() : ''
+  return {
+    kind: 'file',
+    id: f.id,
+    name: f.name,
+    path: pathPrefix ? `${pathPrefix}/${f.name}` : f.name,
+    format: 'binary',
+    size_bytes: f.size_bytes,
+    mime: f.mime_type,
+    ext,
+  }
+}
+
 /**
- * Build the prompt text sent to an Agent when a user comment mentions it.
+ * Reorder file candidates so the currently-open doc (if any) is the first
+ * entry, marked with `isCurrent: true` so the UI can decorate it. Everything
+ * else keeps its original order.
+ */
+export function sortFilesCurrentFirst(
+  files: readonly FileCandidate[],
+  currentDocId: string | null,
+): FileCandidate[] {
+  if (!currentDocId) return [...files]
+  const current: FileCandidate[] = []
+  const others: FileCandidate[] = []
+  for (const f of files) {
+    if (f.id === currentDocId) current.push({ ...f, isCurrent: true })
+    else others.push(f)
+  }
+  return [...current, ...others]
+}
+
+/* -------------------------------------------------------------- truncation */
+
+export const PER_FILE_CAP_BYTES = 50 * 1024
+export const TOTAL_BUDGET_BYTES = 200 * 1024
+export const SOFT_WARN_BYTES = 1024 * 1024
+export const HARD_REJECT_BYTES = 50 * 1024 * 1024
+
+/**
+ * UTF-8-safe byte-level truncation. We slice the byte buffer then decode
+ * tolerantly so we never split a multi-byte codepoint.
+ */
+export function truncateForLLM(
+  content: string,
+  capBytes: number,
+): { content: string; truncated: boolean; originalBytes: number } {
+  const enc = new TextEncoder()
+  const dec = new TextDecoder('utf-8', { fatal: false })
+  const bytes = enc.encode(content)
+  if (bytes.length <= capBytes) {
+    return { content, truncated: false, originalBytes: bytes.length }
+  }
+  const head = dec.decode(bytes.slice(0, capBytes))
+  const originalKB = Math.round(bytes.length / 1024)
+  const keptKB = Math.round(capBytes / 1024)
+  return {
+    content: `${head}\n[...内容已截断，原文 ${originalKB} KB，仅保留前 ${keptKB} KB]`,
+    truncated: true,
+    originalBytes: bytes.length,
+  }
+}
+
+/* -------------------------------------------------------------- resolve */
+
+export interface AttachedFile {
+  name: string
+  path: string
+  kind: 'doc' | 'binary'
+  content?: string
+  truncated?: boolean
+  original_size_bytes: number
+  mime?: string
+  url?: string
+  /** Set when this file was reduced to a stub because total budget was hit. */
+  omitted?: boolean
+  omit_reason?: string
+}
+
+export interface ResolveAttachedFilesOptions {
+  /**
+   * Called when a file fetch fails. The caller can surface a toast or just
+   * silently drop the attachment.
+   */
+  onFetchError?: (file: FileCandidate, error: unknown) => void
+  /** Override per-file cap (mostly for tests). */
+  perFileCap?: number
+  /** Override total budget (mostly for tests). */
+  totalBudget?: number
+}
+
+/**
+ * Resolve mentioned files into ready-to-ship `AttachedFile` payloads.
  *
- * Includes: target text (the selected passage), the user's message (with
- * @mentions stripped), and the prior thread of messages anchored to this card.
+ * Pipeline:
+ *   1. For each candidate, fetch text content via filesystemApi.getDoc (docs)
+ *      or build a metadata stub (binary).
+ *   2. Apply per-file truncation cap to text content.
+ *   3. Once running total exceeds `totalBudget`, downgrade remaining files to
+ *      omitted stubs so the request can still go out.
+ *   4. Failed fetches (deleted file etc.) are dropped and reported via
+ *      onFetchError so the UI can toast.
+ */
+export async function resolveAttachedFiles(
+  candidates: readonly FileCandidate[],
+  opts: ResolveAttachedFilesOptions = {},
+): Promise<AttachedFile[]> {
+  const perFileCap = opts.perFileCap ?? PER_FILE_CAP_BYTES
+  const totalBudget = opts.totalBudget ?? TOTAL_BUDGET_BYTES
+
+  const fetched = await Promise.all(
+    candidates.map(async (c) => {
+      if (c.format === 'binary') {
+        const stub: AttachedFile = {
+          name: c.name,
+          path: c.path,
+          kind: 'binary',
+          original_size_bytes: c.size_bytes,
+          mime: c.mime,
+          url: filesystemApi.fileUrl(c.id),
+        }
+        return { candidate: c, attached: stub, ok: true as const }
+      }
+      try {
+        const doc = await filesystemApi.getDoc(c.id)
+        const truncated = truncateForLLM(doc.content ?? '', perFileCap)
+        const attached: AttachedFile = {
+          name: c.name,
+          path: c.path,
+          kind: 'doc',
+          content: truncated.content,
+          truncated: truncated.truncated,
+          original_size_bytes: truncated.originalBytes,
+        }
+        return { candidate: c, attached, ok: true as const }
+      } catch (err) {
+        opts.onFetchError?.(c, err)
+        return { candidate: c, attached: null, ok: false as const }
+      }
+    }),
+  )
+
+  const out: AttachedFile[] = []
+  let used = 0
+  for (const r of fetched) {
+    if (!r.ok || !r.attached) continue
+    const cost = r.attached.kind === 'doc' ? (r.attached.content?.length ?? 0) : 0
+    if (used + cost > totalBudget && r.attached.kind === 'doc') {
+      out.push({
+        name: r.attached.name,
+        path: r.attached.path,
+        kind: 'doc',
+        original_size_bytes: r.attached.original_size_bytes,
+        omitted: true,
+        omit_reason: 'total attachment budget exceeded',
+      })
+      continue
+    }
+    used += cost
+    out.push(r.attached)
+  }
+  return out
+}
+
+/* ----------------------------------------------------------- agent prompt */
+
+/**
+ * Build the prompt sent to an Agent when triggered by a user comment.
+ *
+ * Layered: target passage → attached files → thread history → user question.
  */
 export function buildAgentPrompt({
   targetText,
   userMessage,
   threadHistory,
+  attachedFiles,
 }: {
   targetText: string
   userMessage: string
   threadHistory: Array<{ role: 'user' | 'agent'; content: string; agentName?: string }>
+  attachedFiles?: readonly AttachedFile[]
 }): string {
   const lines: string[] = []
   if (targetText.trim()) {
     lines.push('上下文（正文被批注的片段）:')
     lines.push(targetText.trim())
+    lines.push('')
+  }
+  if (attachedFiles && attachedFiles.length > 0) {
+    lines.push('[ATTACHED FILES]')
+    for (const f of attachedFiles) {
+      const header = formatFileHeader(f)
+      lines.push(header)
+      if (f.omitted) {
+        lines.push(`[file omitted: ${f.omit_reason ?? 'budget exceeded'}]`)
+      } else if (f.kind === 'doc') {
+        lines.push(f.content ?? '')
+      } else {
+        lines.push('（二进制文件已通过多模态附件传递；若 Agent 不支持视觉则只能看到此元数据）')
+      }
+      lines.push(`[END FILE: ${f.name}]`)
+    }
+    lines.push('[END ATTACHED FILES]')
     lines.push('')
   }
   if (threadHistory.length > 0) {
@@ -162,4 +445,23 @@ export function buildAgentPrompt({
   lines.push('当前提问:')
   lines.push(userMessage)
   return lines.join('\n')
+}
+
+function formatFileHeader(f: AttachedFile): string {
+  const parts: string[] = [`[FILE: ${f.name}`, `kind=${f.kind}`]
+  parts.push(`size=${f.original_size_bytes}B`)
+  if (f.truncated) parts.push('truncated=true')
+  if (f.kind === 'binary' && f.mime) parts.push(`mime=${f.mime}`)
+  if (f.kind === 'binary' && f.url) parts.push(`url=${f.url}`)
+  return parts.join(' | ') + ']'
+}
+
+/**
+ * Format a candidate as the literal text that should be inserted into a
+ * textarea. Names with whitespace / `@` / non-ASCII punctuation get the
+ * quoted form to keep the parser happy.
+ */
+export function formatInsertion(c: MentionCandidate): string {
+  const needsQuote = /[\s"@]/.test(c.name)
+  return needsQuote ? `@"${c.name}" ` : `@${c.name} `
 }

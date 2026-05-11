@@ -33,6 +33,7 @@ interface RightPanelProps {
   onTabChange?: (tab: string) => void
   onRunWorkflow: (workflowId: string, instruction: string) => void
   onRunDefinition: (definitionId: string, instruction: string) => void
+  onTestDefinition: (definitionId: string, prompt: string) => void
   onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onDeleteDefinition: (id: string) => Promise<void>
@@ -87,6 +88,7 @@ export function RightPanel(props: RightPanelProps) {
             maxRoundsMap={props.maxRoundsMap}
             onReload={props.onReloadWorkflows}
             onRunDefinition={props.onRunDefinition}
+            onTestDefinition={props.onTestDefinition}
             onCreateDefinition={props.onCreateDefinition}
             onUpdateDefinition={props.onUpdateDefinition}
             onDeleteDefinition={props.onDeleteDefinition}

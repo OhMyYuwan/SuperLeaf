@@ -13,13 +13,14 @@
  * together — one paste fully reconstructs a workflow.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type {
   WorkflowDefinition,
   WorkflowDefinitionDraft,
   WorkflowGraph,
   WorkflowConfig,
 } from '../../services/backendApi'
+import type { NodeStatus, RunEvent } from '../../stores/workflowStore'
 import { WorkflowCanvas } from './workflow-canvas'
 
 type Mode = 'form' | 'canvas' | 'json'
@@ -28,6 +29,10 @@ interface WorkflowDefinitionEditorProps {
   definition?: WorkflowDefinition
   onSave: (draft: WorkflowDefinitionDraft) => Promise<void>
   onCancel: () => void
+  onTestDefinition?: (definitionId: string, prompt: string) => void
+  testRunning?: boolean
+  testEvents?: RunEvent[]
+  testNodeStatuses?: NodeStatus[]
 }
 
 interface WorkflowJsonPayload {
@@ -52,6 +57,10 @@ export function WorkflowDefinitionEditor({
   definition,
   onSave,
   onCancel,
+  onTestDefinition,
+  testRunning = false,
+  testEvents = [],
+  testNodeStatuses = [],
 }: WorkflowDefinitionEditorProps) {
   const [mode, setMode] = useState<Mode>('canvas')
   const [name, setName] = useState(definition?.name ?? '')
@@ -71,6 +80,7 @@ export function WorkflowDefinitionEditor({
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [testPrompt, setTestPrompt] = useState('现在开始接龙，你需要讲这段完整输出，并在最后添数，以此给后面的 Agent 足够的信息：\n报数开始，每次多报一个数，每个数单独一行：\n1')
   const [notice, setNotice] = useState<string | null>(null)
 
   const flashNotice = (msg: string) => {
@@ -265,7 +275,11 @@ export function WorkflowDefinitionEditor({
 
       {mode === 'canvas' && (
         <div className="editor-canvas">
-          <WorkflowCanvas initialGraph={graph} onGraphChange={setGraph} />
+          <WorkflowCanvas
+            initialGraph={graph}
+            onGraphChange={setGraph}
+            nodeStatuses={testNodeStatuses}
+          />
           <div className="form-hint">
             💡 从左侧拖拽节点到画布，拖线连接，点击节点在右侧编辑配置。按 Delete/Backspace 删除选中项。
           </div>
@@ -331,6 +345,15 @@ export function WorkflowDefinitionEditor({
       )}
 
       <div className="editor-actions">
+        <WorkflowTestPanel
+          definitionId={definition?.id}
+          prompt={testPrompt}
+          onPromptChange={setTestPrompt}
+          onRun={onTestDefinition}
+          running={testRunning}
+          events={testEvents}
+          nodeStatuses={testNodeStatuses}
+        />
         <button className="secondary-btn" onClick={onCancel} disabled={saving}>
           取消
         </button>
@@ -340,4 +363,123 @@ export function WorkflowDefinitionEditor({
       </div>
     </div>
   )
+}
+
+function WorkflowTestPanel({
+  definitionId,
+  prompt,
+  onPromptChange,
+  onRun,
+  running,
+  events,
+  nodeStatuses,
+}: {
+  definitionId?: string
+  prompt: string
+  onPromptChange: (value: string) => void
+  onRun?: (definitionId: string, prompt: string) => void
+  running: boolean
+  events: RunEvent[]
+  nodeStatuses: NodeStatus[]
+}) {
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const failed = nodeStatuses.find((n) => n.status === 'failed')
+  const latestEvent = events.at(-1)
+  const selectedNode =
+    nodeStatuses.find((n) => n.nodeId === selectedNodeId) ?? nodeStatuses[0] ?? null
+
+  useEffect(() => {
+    if (nodeStatuses.length === 0) {
+      setSelectedNodeId(null)
+      return
+    }
+    setSelectedNodeId((curr) =>
+      curr && nodeStatuses.some((n) => n.nodeId === curr)
+        ? curr
+        : nodeStatuses[0].nodeId,
+    )
+  }, [nodeStatuses])
+
+  return (
+    <div className="workflow-test-panel">
+      <div className="workflow-test-head">
+        <span>测试</span>
+        <button
+          className="primary-btn"
+          type="button"
+          disabled={!definitionId || !onRun || running || !prompt.trim()}
+          onClick={() => definitionId && onRun?.(definitionId, prompt)}
+          title={!definitionId ? '先保存 Workflow 后再测试' : undefined}
+        >
+          {running ? '运行中…' : '运行测试'}
+        </button>
+      </div>
+      <textarea
+        value={prompt}
+        onChange={(e) => onPromptChange(e.target.value)}
+        placeholder="输入测试 Prompt，例如：请从 1 数到 5"
+        rows={2}
+      />
+      {!definitionId && <div className="workflow-test-hint">新建 Workflow 需要先保存，才能运行测试。</div>}
+      <div className="workflow-test-trace">
+        {nodeStatuses.length === 0 && !latestEvent && (
+          <span className="workflow-test-muted">运行后这里会显示每个 Agent 的进度和输出。</span>
+        )}
+        {nodeStatuses.map((node) => (
+          <button
+            key={node.nodeId}
+            type="button"
+            className={`workflow-test-node ${node.status}${
+              selectedNode?.nodeId === node.nodeId ? ' selected' : ''
+            }`}
+            onClick={() => setSelectedNodeId(node.nodeId)}
+          >
+            <span className="workflow-test-node-id">{node.nodeId}</span>
+            <span className="workflow-test-node-state">{nodeStatusLabel(node.status)}</span>
+          </button>
+        ))}
+      </div>
+      {selectedNode && (
+        <div className="workflow-test-io">
+          <div className="workflow-test-io-block">
+            <div className="workflow-test-io-title">Input · {selectedNode.nodeId}</div>
+            <pre className="workflow-test-output">
+              {selectedNode.input?.trim() || '{}'}
+            </pre>
+          </div>
+          <div className="workflow-test-io-block">
+            <div className="workflow-test-io-title">
+              {selectedNode.status === 'failed' ? 'Error' : 'Output'} · {selectedNode.nodeId}
+            </div>
+            <pre className={`workflow-test-output${selectedNode.status === 'failed' ? ' error' : ''}`}>
+              {selectedNode.status === 'failed'
+                ? selectedNode.error || failed?.error || '节点执行失败'
+                : selectedNode.output?.trim() || '{}'}
+            </pre>
+          </div>
+        </div>
+      )}
+      {!selectedNode && latestEvent && (
+        <div className="workflow-test-muted">{eventLabel(latestEvent)}</div>
+      )}
+    </div>
+  )
+}
+
+function nodeStatusLabel(status: string): string {
+  if (status === 'pending') return '等待'
+  if (status === 'running') return '运行中'
+  if (status === 'completed') return '完成'
+  if (status === 'failed') return '失败'
+  return status
+}
+
+function eventLabel(evt: RunEvent): string {
+  if (evt.kind === 'workflow.started') return 'Workflow 已开始'
+  if (evt.kind === 'workflow.completed') return 'Workflow 已完成'
+  if (evt.kind === 'ylw.run.failed') return '运行失败'
+  if (evt.kind === 'node.started') return '节点开始运行'
+  if (evt.kind === 'node.completed') return '节点完成'
+  if (evt.kind === 'node.failed') return '节点失败'
+  return evt.kind
 }

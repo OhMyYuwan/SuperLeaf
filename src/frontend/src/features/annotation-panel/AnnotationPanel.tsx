@@ -14,13 +14,30 @@
  * enabled once an agent is @-mentioned.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import { useFilesystemStore } from '../../stores/filesystemStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
-import { parseMentions, segmentText, buildAgentPrompt, stripMentions } from '../../services/mentions'
+import {
+  parseMentions,
+  segmentText,
+  buildAgentPrompt,
+  stripMentions,
+  flattenFileCandidates,
+  sortFilesCurrentFirst,
+  resolveAttachedFiles,
+  uniqueMentionedFiles,
+  uniqueMentionedWorkflows,
+  type AgentCandidate,
+  type FileCandidate,
+  type MentionCandidate,
+  type WorkflowCandidate,
+} from '../../services/mentions'
+import { MentionInput, type MentionInputHandle } from '../shared/MentionInput'
+import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
@@ -48,9 +65,29 @@ export function AnnotationPanel({
   const itemsById = useAnnotationStore((s) => s.items)
   const createUserComment = useAnnotationStore((s) => s.createUserComment)
   const runWorkflow = useWorkflowStore((s) => s.run)
+  const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
+  const definitions = useWorkflowStore((s) => s.definitions)
+  const tree = useFilesystemStore((s) => s.tree)
   const [showArchived, setShowArchived] = useState(false)
   const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
 
+  const fileCandidates = useMemo(() => flattenFileCandidates(tree), [tree])
+  // Pin the currently-open document to the top of the file list (marked
+  // `isCurrent`) so the user can quickly @ it without scrolling.
+  const fileCandidatesForUser = useMemo(
+    () => sortFilesCurrentFirst(fileCandidates, documentId),
+    [fileCandidates, documentId],
+  )
+  const workflowCandidates: WorkflowCandidate[] = useMemo(
+    () =>
+      definitions.map((d) => ({
+        kind: 'workflow',
+        id: d.id,
+        name: d.name,
+        description: d.description ?? undefined,
+      })),
+    [definitions],
+  )
   const items = useMemo(() => {
     if (!documentId) return [] as AnnotationItem[]
     return Object.values(itemsById)
@@ -79,14 +116,18 @@ export function AnnotationPanel({
   const handleSubmitComment = async ({
     content,
     mentionedAgents,
+    mentionedWorkflows,
+    mentionedFiles,
   }: {
     content: string
     mentionedAgents: { id: string; name: string }[]
+    mentionedWorkflows: WorkflowCandidate[]
+    mentionedFiles: FileCandidate[]
   }) => {
     if (!documentId || !pendingComment) return
     const { range, targetText } = pendingComment
 
-    if (mentionedAgents.length === 0) {
+    if (mentionedAgents.length === 0 && mentionedWorkflows.length === 0) {
       // Plain user comment, no agent trigger.
       createUserComment({
         documentId,
@@ -102,12 +143,17 @@ export function AnnotationPanel({
     // @mentions are routing metadata for our system, not part of the actual
     // question. This prevents confusion when a user writes "@Mentor @Reviewer
     // please check this" — each Agent should only see "please check this".
-    const mentions = parseMentions(content, agents)
+    const agentCandidates: AgentCandidate[] = agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name }))
+    const allCandidates: MentionCandidate[] = [...agentCandidates, ...workflowCandidates, ...fileCandidates]
+    const mentions = parseMentions(content, allCandidates)
     const contentWithoutMentions = stripMentions(content, mentions)
 
-    console.log('[AnnotationPanel] submitting comment to', mentionedAgents.length, 'agents:', mentionedAgents.map(a => a.name))
-    console.log('[AnnotationPanel] original content:', content)
-    console.log('[AnnotationPanel] stripped content:', contentWithoutMentions)
+    // Resolve file contents up-front so all agents see the same snapshot.
+    const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
+      onFetchError: (file) => {
+        console.warn('[AnnotationPanel] failed to fetch file for @mention', file.path)
+      },
+    })
 
     // For each mentioned agent, create a separate card so replies stay isolated.
     for (const agent of mentionedAgents) {
@@ -119,16 +165,14 @@ export function AnnotationPanel({
         mentionedAgentId: agent.id,
         mentionedAgentName: agent.name,
       })
-      console.log('[AnnotationPanel] created card', cardId, 'for agent', agent.name, '(id:', agent.id, ')')
 
       // Build the agent prompt with @mentions stripped.
       const prompt = buildAgentPrompt({
         targetText,
         userMessage: contentWithoutMentions,
         threadHistory: [],
+        attachedFiles,
       })
-
-      console.log('[AnnotationPanel] firing workflow for agent', agent.name, 'with prompt:', prompt.slice(0, 100))
 
       // Fire the workflow; the run store will append to this card's thread.
       void runWorkflow(
@@ -140,12 +184,31 @@ export function AnnotationPanel({
           inputs: {
             target_text: targetText,
             user_message: contentWithoutMentions,
+            attached_files: attachedFiles,
           },
           query: prompt,
         },
         { threadCardId: cardId },
       )
     }
+
+    // Also fan out to any mentioned workflow definitions — these run the
+    // multi-agent graph rather than a single agent.
+    for (const wf of mentionedWorkflows) {
+      void executeDefinition(wf.id, {
+        document_id: documentId,
+        range_start: range.from,
+        range_end: range.to,
+        inputs: {
+          target_text: targetText,
+          user_message: contentWithoutMentions,
+          text: targetText,
+          attached_files: attachedFiles,
+        },
+        query: contentWithoutMentions,
+      })
+    }
+
     onDismissPendingComment?.()
   }
 
@@ -159,6 +222,8 @@ export function AnnotationPanel({
         <CommentComposer
           selectedText={pendingComment.targetText}
           agents={agents}
+          workflows={workflowCandidates}
+          files={fileCandidatesForUser}
           onSubmit={handleSubmitComment}
           onCancel={() => onDismissPendingComment?.()}
         />
@@ -239,10 +304,36 @@ function AnnotationCard({
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
   const isRunning = useWorkflowStore((s) => s.running[item.workflowId])
+  const tree = useFilesystemStore((s) => s.tree)
+  const definitions = useWorkflowStore((s) => s.definitions)
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const [enablingAgent, setEnablingAgent] = useState(false)
+  const draftRef = useRef<MentionInputHandle>(null)
+
+  useEffect(() => {
+    if (composerOpen) draftRef.current?.focus()
+  }, [composerOpen])
+
+  const agentCandidatesForCard: AgentCandidate[] = useMemo(
+    () => agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name })),
+    [agents],
+  )
+  const workflowCandidatesForCard: WorkflowCandidate[] = useMemo(
+    () =>
+      definitions.map((d) => ({
+        kind: 'workflow',
+        id: d.id,
+        name: d.name,
+        description: d.description ?? undefined,
+      })),
+    [definitions],
+  )
+  const fileCandidatesForCard = useMemo(() => {
+    const all = flattenFileCandidates(tree)
+    return sortFilesCurrentFirst(all, item.documentId)
+  }, [tree, item.documentId])
 
   const handleAccept = () => accept(item.id)
   const handleDelete = () => {
@@ -274,8 +365,19 @@ function AnnotationCard({
     // Strip @mentions from follow-up questions. Users might write "@Mentor can
     // you elaborate?" but the @mention is just UI sugar — the agent already
     // knows it's being addressed because we're calling its workflow.
-    const mentions = parseMentions(question, agents)
+    const candidates: MentionCandidate[] = [
+      ...agentCandidatesForCard,
+      ...workflowCandidatesForCard,
+      ...fileCandidatesForCard,
+    ]
+    const mentions = parseMentions(question, candidates)
     const questionWithoutMentions = stripMentions(question, mentions)
+    const mentionedFiles = uniqueMentionedFiles(mentions)
+    const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
+      onFetchError: (file) => {
+        console.warn('[AnnotationCard] failed to fetch file', file.path)
+      },
+    })
 
     // Build prompt with full thread history so the agent has context.
     const prompt = buildAgentPrompt({
@@ -286,6 +388,7 @@ function AnnotationCard({
         content: m.content,
         agentName: m.agentName ?? item.agentName,
       })),
+      attachedFiles,
     })
 
     await runWorkflow(
@@ -297,6 +400,7 @@ function AnnotationCard({
         inputs: {
           target_text: item.targetText,
           previous_answer: item.thread.findLast?.((m) => m.role === 'agent')?.content ?? '',
+          attached_files: attachedFiles,
         },
         query: prompt,
         conversation_id: item.conversationId,
@@ -368,16 +472,21 @@ function AnnotationCard({
 
       {composerOpen && (
         <div className="ann-composer" onClick={(e) => e.stopPropagation()}>
-          <textarea
+          <MentionInput
+            ref={draftRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={setDraft}
+            agents={agentCandidatesForCard}
+            workflows={workflowCandidatesForCard}
+            files={fileCandidatesForCard}
             placeholder={
               isUserComment && !item.workflowId
-                ? "追加评论（自我讨论）"
-                : "向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？"
+                ? '追加评论（自我讨论）'
+                : '向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？'
             }
             rows={2}
-            autoFocus
+            onCandidatePicked={(c) => (c.kind === 'file' ? confirmLargeFileAttachment(c) : true)}
+            onSubmit={handleContinue}
           />
           <div className="ann-composer-actions">
             <button className="ghost-mini" onClick={() => setComposerOpen(false)} disabled={isRunning}>
@@ -467,13 +576,14 @@ function Thread({
 }
 
 function renderWithMentions(text: string, agents: CachedWorkflow[]): React.ReactNode[] {
-  const candidates = agents.map((a) => ({ id: a.id, name: a.name }))
+  const candidates: AgentCandidate[] = agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name }))
   const mentions = parseMentions(text, candidates)
   const segments = segmentText(text, mentions)
   return segments.map((seg, i) => {
     if (seg.type === 'mention') {
+      const cls = seg.candidate.kind === 'file' ? 'mention-tag mention-tag-file' : 'mention-tag'
       return (
-        <span key={i} className="mention-tag" title={`@${seg.agent.name}`}>
+        <span key={i} className={cls} title={`@${seg.candidate.name}`}>
           {seg.raw}
         </span>
       )

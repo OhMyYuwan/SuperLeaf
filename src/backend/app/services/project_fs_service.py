@@ -95,6 +95,7 @@ class ProjectFsService:
                         id=d.id,
                         name=d.name,
                         format=d.format,
+                        size_bytes=len((d.content or "").encode("utf-8")),
                         updated_at=d.updated_at,
                     )
                     for d in doc_rows
@@ -200,6 +201,55 @@ class ProjectFsService:
         entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
         self.db.commit()
         return True
+
+    def move_entity(
+        self, entity_type: str, entity_id: str, target_folder_id: str | None
+    ) -> tuple[bool, str | None]:
+        """Move a folder/doc/file under a new parent folder.
+
+        Returns (ok, error_message). target_folder_id None means project root.
+        """
+        project = self.ensure_default_project()
+
+        if target_folder_id is not None:
+            target = self.db.get(Folder, target_folder_id)
+            if target is None or target.project_id != project.id:
+                return False, "target folder not found"
+
+        if entity_type == "folder":
+            folder = self.db.get(Folder, entity_id)
+            if folder is None or folder.project_id != project.id:
+                return False, "folder not found"
+            if target_folder_id == entity_id:
+                return False, "cannot move folder into itself"
+            # Prevent cycles: walk target's ancestors; if we hit entity_id, reject.
+            ancestor_id = target_folder_id
+            while ancestor_id is not None:
+                if ancestor_id == entity_id:
+                    return False, "cannot move folder into its descendant"
+                ancestor = self.db.get(Folder, ancestor_id)
+                ancestor_id = ancestor.parent_folder_id if ancestor else None
+            if folder.parent_folder_id == target_folder_id:
+                return True, None  # no-op
+            folder.parent_folder_id = target_folder_id
+            folder.updated_at = datetime.utcnow()
+        elif entity_type == "doc":
+            doc = self.db.get(Doc, entity_id)
+            if doc is None or doc.project_id != project.id:
+                return False, "doc not found"
+            doc.folder_id = target_folder_id
+            doc.updated_at = datetime.utcnow()
+        elif entity_type == "file":
+            f = self.db.get(FileBlob, entity_id)
+            if f is None or f.project_id != project.id:
+                return False, "file not found"
+            f.folder_id = target_folder_id
+            f.updated_at = datetime.utcnow()
+        else:
+            return False, "invalid entity type"
+
+        self.db.commit()
+        return True, None
 
     def delete_entity(self, entity_type: str, entity_id: str) -> int:
         """Delete an entity and return the count of deleted rows (recursive for folders)."""

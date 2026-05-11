@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, func
@@ -27,6 +28,11 @@ from ..schemas import (
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
+from ..services.attached_files import (
+    collect_image_attachments,
+    normalize_attached_files,
+    render_attached_files_block,
+)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -209,8 +215,14 @@ async def send_message(
     before = str(body.inputs.get("before") or "").strip()
     after = str(body.inputs.get("after") or "").strip()
     section_title = str(body.inputs.get("section_title") or "").strip()
+    attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+    image_attachments = collect_image_attachments(attached_files)
 
-    if target_text and (body.range_start is not None and body.range_end is not None):
+    has_selection = bool(target_text) and (
+        body.range_start is not None and body.range_end is not None
+    )
+
+    if has_selection:
         context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
         if section_title:
             context_parts.append(f"章节：{section_title}")
@@ -223,7 +235,16 @@ async def send_message(
         if after:
             context_parts.append(f"下文：\n{after}")
         context_parts.append("[END DISCUSSION CONTEXT]")
-        agent_query = "\n\n".join(context_parts) + f"\n\n用户消息：{body.content}"
+        agent_query = "\n\n".join(context_parts)
+    else:
+        agent_query = ""
+
+    attached_block = render_attached_files_block(attached_files)
+    if attached_block:
+        agent_query = f"{agent_query}\n\n{attached_block}" if agent_query else attached_block
+
+    if agent_query:
+        agent_query = f"{agent_query}\n\n用户消息：{body.content}"
     else:
         agent_query = body.content
 
@@ -241,9 +262,19 @@ async def send_message(
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
                 # Use session_id to let Nanobot manage conversation context
                 session_id = f"ylw-{conversation_id}"
+                if image_attachments:
+                    user_content: list[dict[str, Any]] | str = [
+                        {"type": "text", "text": agent_query},
+                    ]
+                    for img in image_attachments:
+                        user_content.append(
+                            {"type": "image_url", "image_url": {"url": img["url"]}}
+                        )
+                else:
+                    user_content = agent_query
                 async for evt in client.run_streaming(
                     model=cw.external_id,
-                    messages=[{"role": "user", "content": agent_query}],
+                    messages=[{"role": "user", "content": user_content}],
                     session_id=session_id,
                 ):
                     kind = evt.get("event")

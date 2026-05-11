@@ -20,10 +20,27 @@ import {
   Loader2,
   History,
   Check,
+  X,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
+import { useFilesystemStore } from '../../stores/filesystemStore'
+import { useWorkflowStore } from '../../stores/workflowStore'
 import type { CachedWorkflow, Message } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
+import {
+  parseMentions,
+  stripMentions,
+  flattenFileCandidates,
+  sortFilesCurrentFirst,
+  uniqueMentionedFiles,
+  resolveAttachedFiles,
+  type AgentCandidate,
+  type FileCandidate,
+  type MentionCandidate,
+  type WorkflowCandidate,
+} from '../../services/mentions'
+import { MentionInput } from '../shared/MentionInput'
+import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 
 interface DiscussionTabProps {
   workflows: CachedWorkflow[]
@@ -47,6 +64,38 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [inputText, setInputText] = useState('')
+
+  const tree = useFilesystemStore((s) => s.tree)
+  const definitions = useWorkflowStore((s) => s.definitions)
+  const fileCandidates = useMemo(
+    () => sortFilesCurrentFirst(flattenFileCandidates(tree), documentId),
+    [tree, documentId],
+  )
+  const agentCandidates: AgentCandidate[] = useMemo(
+    () => workflows.map((w) => ({ kind: 'agent', id: w.id, name: w.name })),
+    [workflows],
+  )
+  const workflowCandidates: WorkflowCandidate[] = useMemo(
+    () =>
+      definitions.map((d) => ({
+        kind: 'workflow',
+        id: d.id,
+        name: d.name,
+        description: d.description ?? undefined,
+      })),
+    [definitions],
+  )
+  const allCandidates: MentionCandidate[] = useMemo(
+    () => [...agentCandidates, ...workflowCandidates, ...fileCandidates],
+    [agentCandidates, workflowCandidates, fileCandidates],
+  )
+
+  // Files the user has @-mentioned in the current draft (for chip row preview).
+  const pendingFileMentions = useMemo(() => {
+    if (!inputText.trim()) return [] as FileCandidate[]
+    const mentions = parseMentions(inputText, allCandidates)
+    return uniqueMentionedFiles(mentions)
+  }, [inputText, allCandidates])
 
   // Auto-select first agent if none selected.
   useEffect(() => {
@@ -105,23 +154,50 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   }
 
   const handleSend = async () => {
-    const text = inputText.trim()
-    if (!text || !activeConversationId) return
+    const rawText = inputText.trim()
+    if (!rawText || !activeConversationId) return
+
+    const mentions = parseMentions(rawText, allCandidates)
+    const cleanedText = stripMentions(rawText, mentions) || rawText
+    const mentionedFiles = uniqueMentionedFiles(mentions)
+    const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
+      onFetchError: (file) =>
+        console.warn('[DiscussionTab] failed to fetch file', file.path),
+    })
+
     setInputText('')
 
-    const body: Parameters<typeof sendMessage>[1] = { content: text }
+    const inputs: Record<string, unknown> = {}
+    const body: Parameters<typeof sendMessage>[1] = { content: cleanedText }
     if (activeSelection && activeSelection.to > activeSelection.from) {
       body.range_start = activeSelection.from
       body.range_end = activeSelection.to
-      body.inputs = {
-        target_text: activeSelection.text,
-        section_title: activeSelection.context.sectionTitle ?? '',
-        before: activeSelection.context.before,
-        after: activeSelection.context.after,
-      }
+      inputs.target_text = activeSelection.text
+      inputs.section_title = activeSelection.context.sectionTitle ?? ''
+      inputs.before = activeSelection.context.before
+      inputs.after = activeSelection.context.after
+    }
+    if (attachedFiles.length > 0) {
+      inputs.attached_files = attachedFiles
+    }
+    if (Object.keys(inputs).length > 0) {
+      body.inputs = inputs
     }
 
     await sendMessage(activeConversationId, body)
+  }
+
+  const removeFileMention = (fileId: string) => {
+    const mentions = parseMentions(inputText, allCandidates)
+    // Walk in reverse so offsets stay valid as we delete.
+    const targets = [...mentions]
+      .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
+      .sort((a, b) => b.start - a.start)
+    let next = inputText
+    for (const m of targets) {
+      next = next.slice(0, m.start) + next.slice(m.end)
+    }
+    setInputText(next.replace(/\s{2,}/g, ' '))
   }
 
   const activeMessages = activeConversationId ? messages[activeConversationId] ?? [] : []
@@ -297,17 +373,36 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     </span>
                   </div>
                 )}
-                <input
+                {pendingFileMentions.length > 0 && (
+                  <div className="discussion-attached-chips">
+                    {pendingFileMentions.map((f) => (
+                      <div key={f.id} className="discussion-attached-chip" title={f.path}>
+                        <span className="chip-label">附件</span>
+                        <span className="chip-preview">{f.name}</span>
+                        <button
+                          className="chip-remove"
+                          title="移除该附件"
+                          onClick={() => removeFileMention(f.id)}
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <MentionInput
                   value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="输入消息…"
+                  onChange={setInputText}
+                  agents={agentCandidates}
+                  workflows={workflowCandidates}
+                  files={fileCandidates}
+                  placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
                   disabled={isStreaming}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSend()
-                    }
-                  }}
+                  rows={2}
+                  onCandidatePicked={(c) =>
+                    c.kind === 'file' ? confirmLargeFileAttachment(c) : true
+                  }
+                  onSubmit={handleSend}
                 />
                 <button
                   className="primary-btn"

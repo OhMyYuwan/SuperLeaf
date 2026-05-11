@@ -27,6 +27,7 @@ interface WorkflowDefinitionsPanelProps {
   currentRoundMap: Record<string, number>
   maxRoundsMap: Record<string, number>
   onRunDefinition: (definitionId: string, instruction: string) => void
+  onTestDefinition: (definitionId: string, prompt: string) => void
   onCreateDefinition: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onUpdateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onDeleteDefinition: (id: string) => Promise<void>
@@ -51,6 +52,7 @@ export function WorkflowDefinitionsPanel({
   currentRoundMap,
   maxRoundsMap,
   onRunDefinition,
+  onTestDefinition,
   onCreateDefinition,
   onUpdateDefinition,
   onDeleteDefinition,
@@ -85,6 +87,10 @@ export function WorkflowDefinitionsPanel({
         definition={editingDefinition}
         onSave={editingDefinition ? handleUpdateDefinition : handleCreateDefinition}
         onCancel={handleCancelEditor}
+        onTestDefinition={onTestDefinition}
+        testRunning={editingDefinition ? !!runningMap[editingDefinition.id] : false}
+        testEvents={editingDefinition ? eventsMap[editingDefinition.id] ?? [] : []}
+        testNodeStatuses={editingDefinition ? nodeStatusesMap[editingDefinition.id] ?? [] : []}
       />
     )
   }
@@ -216,14 +222,18 @@ export function WorkflowDefinitionsPanel({
               )}
               {isDegraded && (
                 <div className="workflow-health-detail">
-                  以下节点引用的 Agent 已禁用或缺失，需要进入编辑器修改后才能运行：
+                  以下节点的 Agent 配置不可用，需要进入编辑器修改后才能运行：
                   <ul>
                     {health.issues.map((iss) => (
                       <li key={iss.nodeId}>
                         <code>{iss.nodeId}</code>
                         {' → '}
-                        <code>{iss.agentId.slice(0, 12)}{iss.agentId.length > 12 ? '…' : ''}</code>
-                        {iss.reason === 'disabled' ? '（已禁用）' : '（已删除）'}
+                        <code>
+                          {iss.agentId
+                            ? `${iss.agentId.slice(0, 12)}${iss.agentId.length > 12 ? '…' : ''}`
+                            : '未选择 Agent'}
+                        </code>
+                        {issueReasonLabel(iss.reason)}
                       </li>
                     ))}
                   </ul>
@@ -263,6 +273,12 @@ export function WorkflowDefinitionsPanel({
 interface EventLike {
   kind: string
   payload: unknown
+}
+
+function issueReasonLabel(reason: string): string {
+  if (reason === 'unconfigured') return '（未配置）'
+  if (reason === 'disabled') return '（已禁用）'
+  return '（已删除）'
 }
 
 function eventLabel(evt: EventLike): string {

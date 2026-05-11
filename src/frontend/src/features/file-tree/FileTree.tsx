@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -7,6 +8,7 @@ import {
   File,
   Plus,
   FolderPlus,
+  FolderUp,
   Pencil,
   Trash2,
   Upload,
@@ -52,7 +54,13 @@ interface FileTreeProps {
   ) => Promise<string | null>
   onRenameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
   onDeleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
+  onMoveEntity: (
+    entityType: 'folder' | 'doc' | 'file',
+    entityId: string,
+    targetFolderId: string | null,
+  ) => Promise<void>
   onUploadFile: (file: File, folderId?: string | null) => Promise<void>
+  onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
   onRenameProject: (name: string) => Promise<void>
 }
 
@@ -70,7 +78,9 @@ export function FileTree({
   onCreateDoc,
   onRenameEntity,
   onDeleteEntity,
+  onMoveEntity,
   onUploadFile,
+  onUploadFolder,
   onRenameProject,
 }: FileTreeProps) {
   const handleCreateRootFolder = async () => {
@@ -89,6 +99,10 @@ export function FileTree({
 
   const handleUploadRoot = () => {
     triggerUpload((file) => onUploadFile(file, null))
+  }
+
+  const handleUploadFolderRoot = () => {
+    triggerUploadFolder((files) => onUploadFolder(files, null))
   }
 
   const handleRenameProject = () => {
@@ -116,6 +130,9 @@ export function FileTree({
         <span className="tree-actions">
           <button className="tree-action-btn" title="上传文件" onClick={handleUploadRoot}>
             <Upload size={13} />
+          </button>
+          <button className="tree-action-btn" title="上传文件夹" onClick={handleUploadFolderRoot}>
+            <FolderUp size={13} />
           </button>
           <button className="tree-action-btn" title="导出 ZIP" onClick={handleExport}>
             <Download size={13} />
@@ -148,7 +165,9 @@ export function FileTree({
             onCreateDoc={onCreateDoc}
             onRenameEntity={onRenameEntity}
             onDeleteEntity={onDeleteEntity}
+            onMoveEntity={onMoveEntity}
             onUploadFile={onUploadFile}
+            onUploadFolder={onUploadFolder}
           />
         )}
       </div>
@@ -174,7 +193,13 @@ interface FolderNodeProps {
   ) => Promise<string | null>
   onRenameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) => Promise<void>
   onDeleteEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string) => Promise<void>
+  onMoveEntity: (
+    entityType: 'folder' | 'doc' | 'file',
+    entityId: string,
+    targetFolderId: string | null,
+  ) => Promise<void>
   onUploadFile: (file: File, folderId?: string | null) => Promise<void>
+  onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
 }
 
 function FolderNode({
@@ -190,12 +215,74 @@ function FolderNode({
   onCreateDoc,
   onRenameEntity,
   onDeleteEntity,
+  onMoveEntity,
   onUploadFile,
+  onUploadFolder,
 }: FolderNodeProps) {
   const expanded = depth === 0 ? true : !!expandedFolderIds[folder.id]
   const leftPad = depth === 0 ? 0 : 10 + (depth - 1) * 14
   const isRoot = depth === 0
   const folderId = isRoot ? null : folder.id
+
+  const [dragOver, setDragOver] = useState(false)
+
+  const handleDragStart = (
+    e: React.DragEvent,
+    entityType: 'folder' | 'doc' | 'file',
+    entityId: string,
+  ) => {
+    e.stopPropagation()
+    const payload = JSON.stringify({ entityType, entityId })
+    e.dataTransfer.setData('application/x-ylw-entity', payload)
+    e.dataTransfer.setData('text/plain', payload)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const readDragPayload = (
+    e: React.DragEvent,
+  ): { entityType: 'folder' | 'doc' | 'file'; entityId: string } | null => {
+    const raw =
+      e.dataTransfer.getData('application/x-ylw-entity') ||
+      e.dataTransfer.getData('text/plain')
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.entityType && parsed.entityId) return parsed
+    } catch {
+      return null
+    }
+    return null
+  }
+
+  const handleDropOnFolder = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOver(false)
+    const payload = readDragPayload(e)
+    if (!payload) return
+    // No-op when dropping a folder onto itself.
+    if (payload.entityType === 'folder' && payload.entityId === folder.id) return
+    try {
+      await onMoveEntity(payload.entityType, payload.entityId, folderId)
+    } catch (err) {
+      console.error('move entity failed', err)
+    }
+  }
+
+  const handleDragOverFolder = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('application/x-ylw-entity')) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    if (!dragOver) setDragOver(true)
+  }
+
+  const handleDragLeaveFolder = (e: React.DragEvent) => {
+    // Only clear when leaving to outside this folder block.
+    const related = e.relatedTarget as Node | null
+    if (related && e.currentTarget.contains(related)) return
+    setDragOver(false)
+  }
 
   const handleCreateSubFolder = async () => {
     const name = prompt(`在 ${folder.name} 下新建文件夹`)?.trim()
@@ -227,6 +314,11 @@ function FolderNode({
   const handleUpload = (e: React.MouseEvent) => {
     e.stopPropagation()
     triggerUpload((file) => onUploadFile(file, folderId))
+  }
+
+  const handleUploadFolder = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    triggerUploadFolder((files) => onUploadFolder(files, folderId))
   }
 
   const handleRenameDoc = (e: React.MouseEvent, doc: TreeDoc) => {
@@ -272,7 +364,9 @@ function FolderNode({
           onCreateDoc={onCreateDoc}
           onRenameEntity={onRenameEntity}
           onDeleteEntity={onDeleteEntity}
+          onMoveEntity={onMoveEntity}
           onUploadFile={onUploadFile}
+          onUploadFolder={onUploadFolder}
         />
       ))}
 
@@ -285,6 +379,8 @@ function FolderNode({
             style={{ paddingLeft: leftPad + 28 }}
             onClick={() => onOpenDoc(doc.id)}
             title={`${doc.name} (${doc.format.toUpperCase()})`}
+            draggable
+            onDragStart={(e) => handleDragStart(e, 'doc', doc.id)}
           >
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{doc.name}</span>
@@ -309,6 +405,8 @@ function FolderNode({
             style={{ paddingLeft: leftPad + 28 }}
             onClick={() => onOpenFile?.(file)}
             title={`${file.name} (${prettySize(file.size_bytes)})`}
+            draggable
+            onDragStart={(e) => handleDragStart(e, 'file', file.id)}
           >
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{file.name}</span>
@@ -326,11 +424,32 @@ function FolderNode({
     </>
   )
 
-  if (isRoot) return <div className="tree-folder-block">{children}</div>
+  if (isRoot) {
+    return (
+      <div
+        className="tree-folder-block root"
+        onDragOver={handleDragOverFolder}
+        onDragLeave={handleDragLeaveFolder}
+        onDrop={handleDropOnFolder}
+      >
+        {children}
+      </div>
+    )
+  }
 
   return (
-    <div className="tree-folder-block">
-      <div className="file-item tree-folder-row" style={{ paddingLeft: leftPad }}>
+    <div
+      className={`tree-folder-block ${dragOver ? 'drag-over' : ''}`}
+      onDragOver={handleDragOverFolder}
+      onDragLeave={handleDragLeaveFolder}
+      onDrop={handleDropOnFolder}
+    >
+      <div
+        className="file-item tree-folder-row"
+        style={{ paddingLeft: leftPad }}
+        draggable
+        onDragStart={(e) => handleDragStart(e, 'folder', folder.id)}
+      >
         <button className="tree-toggle-btn" onClick={() => onToggleFolder(folder.id)}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
@@ -339,6 +458,9 @@ function FolderNode({
         <span className="tree-actions inline">
           <button className="tree-action-btn" title="上传文件" onClick={handleUpload}>
             <Upload size={11} />
+          </button>
+          <button className="tree-action-btn" title="上传文件夹" onClick={handleUploadFolder}>
+            <FolderUp size={11} />
           </button>
           <button className="tree-action-btn" title="新建子文件夹" onClick={handleCreateSubFolder}>
             <FolderPlus size={12} />
@@ -366,6 +488,20 @@ function triggerUpload(onFile: (file: File) => void) {
   input.onchange = () => {
     const file = input.files?.[0]
     if (file) onFile(file)
+  }
+  input.click()
+}
+
+function triggerUploadFolder(onFiles: (files: FileList) => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  // Non-standard but widely supported attributes for directory upload.
+  input.setAttribute('webkitdirectory', '')
+  input.setAttribute('directory', '')
+  input.multiple = true
+  input.onchange = () => {
+    const files = input.files
+    if (files && files.length > 0) onFiles(files)
   }
   input.click()
 }

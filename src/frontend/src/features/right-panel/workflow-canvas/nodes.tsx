@@ -22,8 +22,9 @@ import type { FlowNode, FlowNodeData } from './graphConversion'
 type Props = NodeProps<FlowNode>
 
 function AgentCard({ data, selected }: Props) {
-  const agentId = (data.config.agent_id as string) ?? ''
+  const agentId = readAgentId(data.config)
   const loopOwner = (data.config._loop_owner as string) ?? ''
+  const runStatus = (data.config._run_status as string) ?? ''
   const workflow = useWorkflowStore((s) =>
     agentId ? s.workflows.find((w) => w.id === agentId) : undefined,
   )
@@ -37,13 +38,14 @@ function AgentCard({ data, selected }: Props) {
     <div
       className={`wf-node wf-node-agent${selected ? ' selected' : ''}${
         unhealthy ? ' wf-node-disabled' : ''
-      }${loopOwner ? ' wf-node-in-loop' : ''}`}
+      }${loopOwner ? ' wf-node-in-loop' : ''}${runStatus ? ` wf-run-${runStatus}` : ''}`}
     >
       <div className="wf-node-head wf-head-agent">
         <span className="wf-node-icon">🤖</span>
         <span className="wf-node-kind">Agent</span>
         {loopOwner && <span className="wf-node-badge loop-member" title={`属于 ${loopOwner}`}>🔁 {loopOwner}</span>}
         {disabled && <span className="wf-node-badge">已禁用</span>}
+        {!agentId && <span className="wf-node-badge danger">未配置</span>}
         {missing && <span className="wf-node-badge danger">缺失</span>}
       </div>
       <div className="wf-node-body">
@@ -52,6 +54,11 @@ function AgentCard({ data, selected }: Props) {
       </div>
     </div>
   )
+}
+
+function readAgentId(config: Record<string, unknown>): string {
+  const raw = config.agent_id ?? config.agentId
+  return typeof raw === 'string' ? raw.trim() : ''
 }
 
 export const AgentNode = memo((props: Props) => (
@@ -70,12 +77,13 @@ AgentNode.displayName = 'AgentNode'
  */
 export const InputNode = memo(({ data, selected }: Props) => {
   const includeInstruction = (data.config.include_instruction as boolean) ?? true
+  const runStatus = (data.config._run_status as string) ?? ''
   const fileCount =
     Array.isArray(data.config.context_files)
       ? (data.config.context_files as unknown[]).length
       : 0
   return (
-    <div className={`wf-node wf-node-input${selected ? ' selected' : ''}`}>
+    <div className={`wf-node wf-node-input${selected ? ' selected' : ''}${runStatus ? ` wf-run-${runStatus}` : ''}`}>
       <div className="wf-node-head wf-head-input">
         <span className="wf-node-icon">📥</span>
         <span className="wf-node-kind">Input</span>
@@ -106,8 +114,9 @@ InputNode.displayName = 'InputNode'
  */
 export const OutputNode = memo(({ data, selected }: Props) => {
   const format = (data.config.format as string) ?? 'text'
+  const runStatus = (data.config._run_status as string) ?? ''
   return (
-    <div className={`wf-node wf-node-output${selected ? ' selected' : ''}`}>
+    <div className={`wf-node wf-node-output${selected ? ' selected' : ''}${runStatus ? ` wf-run-${runStatus}` : ''}`}>
       <Handle type="target" position={Position.Left} className="wf-boundary-handle" />
       <div className="wf-node-head wf-head-output">
         <span className="wf-node-icon">📤</span>
@@ -157,7 +166,7 @@ function countUnhealthyMembers(
   for (const n of nodes) {
     if (n.data.nodeType !== 'agent') continue
     if (!memberIds.has(n.id)) continue
-    const aid = (n.data.config.agent_id as string) ?? ''
+    const aid = readAgentId(n.data.config)
     if (!aid) continue
     const hit = workflows.find((w) => w.id === aid)
     if (!hit || hit.is_disabled) count++

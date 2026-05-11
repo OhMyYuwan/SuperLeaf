@@ -23,6 +23,7 @@ import {
   ChevronUp,
   ZoomIn,
   ZoomOut,
+  Download,
 } from 'lucide-react'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -30,6 +31,7 @@ import 'react-pdf/dist/Page/TextLayer.css'
 // This is the correct way to point pdfjs at its worker in a bundled app.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useCompileStore } from '../../stores/compileStore'
+import { useProjectStore } from '../../stores/projectStore'
 import { compileApi } from '../../services/backendApi'
 import './latex-preview.css'
 
@@ -54,6 +56,12 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
   const compile = useCompileStore((s) => s.compile)
   const loadFullLog = useCompileStore((s) => s.loadFullLog)
   const setAutoCompile = useCompileStore((s) => s.setAutoCompile)
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const projectName = useProjectStore((s) =>
+    s.currentProjectId
+      ? s.projects.find((p) => p.id === s.currentProjectId)?.name ?? null
+      : null,
+  )
 
   const [numPages, setNumPages] = useState<number>(0)
   const [showLog, setShowLog] = useState(false)
@@ -97,9 +105,15 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
   }
 
   const pdfUrl = useMemo(() => {
+    if (pdfVersion <= 0 || !currentProjectId) return ''
     // Append pdfVersion as cache-buster so fresh compiles are not served stale.
-    return pdfVersion > 0 ? `${compileApi.pdfUrl()}?v=${pdfVersion}` : ''
-  }, [pdfVersion])
+    return `${compileApi.pdfUrl(currentProjectId)}?v=${pdfVersion}`
+  }, [pdfVersion, currentProjectId])
+
+  const downloadName = useMemo(() => {
+    const base = (projectName || 'document').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'document'
+    return `${base}.pdf`
+  }, [projectName])
 
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
@@ -141,6 +155,19 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
           />
           <span>自动</span>
         </label>
+
+        <a
+          className={`small-btn latex-preview-download${pdfUrl ? '' : ' is-disabled'}`}
+          href={pdfUrl || undefined}
+          download={downloadName}
+          aria-disabled={!pdfUrl}
+          title={pdfUrl ? `下载 ${downloadName}` : '尚未编译'}
+          onClick={(e) => {
+            if (!pdfUrl) e.preventDefault()
+          }}
+        >
+          <Download size={12} />
+        </a>
 
         <div className="latex-preview-zoom">
           <button
@@ -227,7 +254,7 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
         {pdfUrl && (
           <Document
             key={pdfVersion}
-            file={pdfUrl}
+            file={{ url: pdfUrl, withCredentials: true } as { url: string }}
             onLoadSuccess={({ numPages }) => setNumPages(numPages)}
             onLoadError={(err) => console.error('PDF load error', err)}
             loading={<div className="latex-preview-empty">加载 PDF…</div>}

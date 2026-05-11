@@ -159,11 +159,17 @@ export function WorkspacePage() {
   useEffect(() => {
     if (!projectId) return
     const projectStore = useProjectStore.getState()
+    const previousProjectId = projectStore.currentProjectId
     projectStore.setCurrent(projectId)
     if (!projectStore.loaded && !projectStore.loading) {
       projectStore.load()
     }
-    resetProjectScopedStores()
+    // Only drop caches when we're actually switching to a different project.
+    // A hard refresh re-mounts WorkspacePage with the same projectId; clearing
+    // here would wipe persisted annotations / evaluations for no reason.
+    if (previousProjectId && previousProjectId !== projectId) {
+      resetProjectScopedStores()
+    }
     loadTree()
     loadProviders()
     loadWorkflows()

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Project, WorkflowDefinition, WorkflowRun
+from ..models import CachedWorkflow, Project, User, WorkflowDefinition, WorkflowRun
 from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
 from ..services.agent_orchestrator import WorkflowOrchestrator
 from ..services.attached_files import (
@@ -23,14 +23,17 @@ from ..services.attached_files import (
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
 from ..services.provider_service import ProviderService
-from .deps import get_current_project
+from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
 @router.get("", response_model=list[CachedWorkflowOut])
-def list_workflows(db: Session = Depends(get_session)) -> list[CachedWorkflowOut]:
-    """List all cached workflows whose provider still exists.
+def list_workflows(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> list[CachedWorkflowOut]:
+    """List all cached workflows for the current user whose provider still exists.
 
     Filters out orphan workflows (provider was deleted but CASCADE didn't fire yet).
     """
@@ -38,6 +41,7 @@ def list_workflows(db: Session = Depends(get_session)) -> list[CachedWorkflowOut
     rows = (
         db.query(CachedWorkflow)
         .join(Provider, CachedWorkflow.provider_id == Provider.id)
+        .filter(CachedWorkflow.user_id == user.id)
         .order_by(CachedWorkflow.last_synced_at.desc())
         .all()
     )
@@ -93,10 +97,14 @@ def delete_run(
 
 
 @router.post("/{workflow_id}/disable", response_model=CachedWorkflowOut)
-def disable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> CachedWorkflowOut:
+def disable_workflow(
+    workflow_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> CachedWorkflowOut:
     """Disable an agent (hide from @mention, prevent follow-up)."""
     cw = db.get(CachedWorkflow, workflow_id)
-    if cw is None:
+    if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
     cw.is_disabled = True
     db.commit()
@@ -105,10 +113,14 @@ def disable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> Ca
 
 
 @router.post("/{workflow_id}/enable", response_model=CachedWorkflowOut)
-def enable_workflow(workflow_id: str, db: Session = Depends(get_session)) -> CachedWorkflowOut:
+def enable_workflow(
+    workflow_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> CachedWorkflowOut:
     """Enable (reactivate) a disabled agent."""
     cw = db.get(CachedWorkflow, workflow_id)
-    if cw is None:
+    if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
     cw.is_disabled = False
     db.commit()
@@ -158,11 +170,11 @@ async def run_workflow(
     `outputs.text` for the existing annotation parser.
     """
     cw = db.get(CachedWorkflow, workflow_id)
-    if cw is None:
+    if cw is None or cw.user_id != project.user_id:
         raise HTTPException(404, "Workflow not found")
 
     svc = ProviderService(db)
-    provider = svc.get(cw.provider_id)
+    provider = svc.get(cw.provider_id, user_id=project.user_id)
     if provider is None:
         raise HTTPException(404, "Provider for this workflow is gone")
 

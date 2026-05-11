@@ -149,6 +149,9 @@
   line-height: 1.5;
   white-space: pre-wrap;
 }
+.message-content.agent-md {
+  white-space: normal;
+}
 
 .message-error {
   font-size: 11px;

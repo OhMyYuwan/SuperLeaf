@@ -9,6 +9,7 @@ import { Save, Settings2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { ProviderBadge } from './ProviderBadge'
 import { ViewControl } from './ViewControl'
+import { UserMenu } from './UserMenu'
 import { useProjectStore } from '../../stores/projectStore'
 import './topbar.css'
 
@@ -60,6 +61,7 @@ export function Topbar({
         <button className="ghost-btn" onClick={onOpenSettings}>
           <Settings2 size={16} /> 设置
         </button>
+        <UserMenu />
       </div>
     </header>
   )

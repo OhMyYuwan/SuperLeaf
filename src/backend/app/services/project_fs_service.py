@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
+from . import version_service
 
 class ProjectFsService:
     def __init__(self, db: Session, project: Project) -> None:
@@ -165,7 +166,14 @@ class ProjectFsService:
     def get_doc(self, doc_id: str) -> Doc | None:
         return self.db.get(Doc, doc_id)
 
-    def update_doc_content(self, doc_id: str, content: str) -> Doc | None:
+    def update_doc_content(
+        self,
+        doc_id: str,
+        content: str,
+        *,
+        origin: str = "auto_save",
+        actor: str | None = None,
+    ) -> Doc | None:
         doc = self.db.get(Doc, doc_id)
         if doc is None:
             return None
@@ -174,6 +182,16 @@ class ProjectFsService:
         doc.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(doc)
+        # Snapshot for the V3 history pipeline. Cooldown/LRU live inside
+        # version_service; this call is cheap when the autosave path keeps
+        # firing with no meaningful change.
+        version_service.snapshot(
+            self.db,
+            doc_id,
+            content.encode("utf-8"),
+            origin=origin,
+            actor=actor,
+        )
         return doc
 
     # --------------------------------------------------------- rename / delete

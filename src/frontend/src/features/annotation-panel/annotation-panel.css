@@ -405,8 +405,15 @@
   color: #93c5fd;
 }
 .ann-thread-content {
+  flex: 1;
+  min-width: 0;
   color: rgba(226, 232, 240, 0.92);
   white-space: pre-wrap;
+}
+.ann-thread-content .agent-md,
+.ann-body .agent-md,
+.comparison-body .agent-md {
+  white-space: normal;
 }
 
 .ann-actions {
@@ -712,4 +719,343 @@
 .selection-toolbar-btn:hover {
   background: rgba(59, 130, 246, 0.25);
   color: #dbeafe;
+}
+
+/* ============================================================
+ * V3 Phase 4 — Review status toggle + Evaluation panel
+ * ============================================================ */
+
+.review-status-toggle {
+  display: inline-flex;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  gap: 1px;
+}
+.review-status-toggle.is-compact .review-status-btn {
+  padding: 2px 7px;
+  font-size: 10.5px;
+}
+
+.review-status-btn {
+  padding: 3px 9px;
+  font-size: 11px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.review-status-btn:hover:not(:disabled) {
+  color: #e5e7eb;
+  background: rgba(148, 163, 184, 0.12);
+}
+.review-status-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.review-status-btn.is-active.is-open {
+  background: rgba(148, 163, 184, 0.22);
+  color: rgba(226, 232, 240, 0.95);
+}
+.review-status-btn.is-active.is-considered {
+  background: rgba(56, 189, 248, 0.22);
+  color: #bae6fd;
+}
+.review-status-btn.is-active.is-addressed {
+  background: rgba(16, 185, 129, 0.24);
+  color: #bbf7d0;
+}
+.review-status-btn.is-active.is-dismissed {
+  background: rgba(244, 63, 94, 0.22);
+  color: #fecaca;
+}
+
+.eval-panel {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.18);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eval-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.88);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.eval-panel-header:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.eval-panel-title {
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.eval-panel-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  flex-wrap: wrap;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.eval-verdict-mini {
+  font-size: 11px;
+  line-height: 1;
+}
+.eval-verdict-mini.eval-verdict-positive {
+  color: #86efac;
+}
+.eval-verdict-mini.eval-verdict-negative {
+  color: #fca5a5;
+}
+
+.eval-more {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.75);
+}
+.eval-time-dim {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.eval-panel-body {
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(2, 6, 23, 0.32);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+}
+
+.eval-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eval-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 7px;
+}
+
+.eval-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eval-row-reason {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.92);
+  line-height: 1.5;
+}
+
+.eval-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.eval-row-meta {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.eval-row-actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.eval-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(226, 232, 240, 0.78);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.eval-icon-btn:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: #e5e7eb;
+}
+.eval-icon-btn.danger:hover {
+  background: rgba(244, 63, 94, 0.22);
+  color: #fecaca;
+}
+
+.eval-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eval-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eval-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.eval-required {
+  color: #fca5a5;
+}
+
+.eval-verdict-row {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.eval-verdict-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.55);
+  color: rgba(226, 232, 240, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.eval-verdict-btn:hover {
+  background: rgba(148, 163, 184, 0.16);
+}
+.eval-verdict-btn.positive.is-active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #bbf7d0;
+}
+.eval-verdict-btn.negative.is-active {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.5);
+  color: #fecaca;
+}
+
+.eval-reason,
+.eval-custom-input,
+.eval-select {
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: #e5e7eb;
+  outline: none;
+  resize: vertical;
+}
+.eval-reason:focus,
+.eval-custom-input:focus,
+.eval-select:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.eval-tag-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.eval-training-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.85);
+}
+.eval-training-row input[type='checkbox'] {
+  cursor: pointer;
+}
+.eval-training-hint {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.eval-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.eval-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  border: 1px solid transparent;
+}
+.eval-btn.primary {
+  background: rgba(59, 130, 246, 0.28);
+  color: #dbeafe;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.eval-btn.primary:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.4);
+}
+.eval-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.eval-btn.ghost {
+  background: rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.85);
+  border-color: rgba(148, 163, 184, 0.24);
+}
+.eval-btn.ghost:hover {
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.eval-empty {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.65);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+/* Avoid the toggle pushing the kind chip down when card is narrow. */
+.ann-head {
+  flex-wrap: wrap;
 }

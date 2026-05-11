@@ -21,10 +21,46 @@ import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
 import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
 import type { AttachedFile } from '../services/mentions'
+import { operationApi } from '../services/operationApi'
 import { uuid } from '../lib/uuid'
 
 export type CardKind = 'annotation' | 'suggestion' | 'risk' | 'user-comment'
 export type CardStatus = 'pending' | 'accepted' | 'archived' | 'deleted' | 'superseded'
+
+// V3 Phase 4 — user's review of the annotation itself (orthogonal to
+// CardStatus). Tracks whether the user has acted on this annotation, not
+// whether they liked the Agent output.
+export type ReviewStatus = 'open' | 'considered' | 'addressed' | 'dismissed'
+
+export type EvaluationVerdict = 'positive' | 'negative'
+
+export type EvaluationAdoption =
+  | 'unknown'
+  | 'used'
+  | 'partially_used'
+  | 'not_used'
+  | 'later'
+
+export type EvaluationTargetType =
+  | 'agent_output'
+  | 'workflow_run'
+  | 'annotation'
+  | 'suggestion'
+
+export interface AgentEvaluation {
+  id: string
+  annotationId: string
+  targetType: EvaluationTargetType
+  targetId: string
+  verdict: EvaluationVerdict
+  reason: string
+  tags: string[]
+  adoption: EvaluationAdoption
+  trainingCandidate: boolean
+  context: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
 
 export interface ThreadMessage {
   id: string
@@ -69,6 +105,10 @@ interface AnnotationState {
   items: Record<string, AnnotationItem>
   // Track which workflow run produced which cards (used to clear/replace on re-run).
   byRun: Record<string, string[]>
+  // V3 Phase 4 — user-driven review state, kept separate from CardStatus so an
+  // archived card can still be marked `dismissed`, etc.
+  reviewStatusByAnnotation: Record<string, ReviewStatus>
+  evaluationsByAnnotation: Record<string, AgentEvaluation[]>
 
   ingestRun: (params: {
     runId: string
@@ -98,6 +138,22 @@ interface AnnotationState {
   appendThread: (id: string, message: Omit<ThreadMessage, 'id' | 'createdAt'>) => void
   setConversationId: (id: string, conversationId: string) => void
 
+  // V3 Phase 4 actions
+  setReviewStatus: (annotationId: string, status: ReviewStatus) => void
+  addEvaluation: (
+    annotationId: string,
+    draft: Omit<AgentEvaluation, 'id' | 'annotationId' | 'createdAt' | 'updatedAt'>,
+  ) => string
+  updateEvaluation: (
+    annotationId: string,
+    evaluationId: string,
+    patch: Partial<Omit<AgentEvaluation, 'id' | 'annotationId' | 'createdAt'>>,
+  ) => void
+  deleteEvaluation: (annotationId: string, evaluationId: string) => void
+  /** Returns historical tags across all evaluations sorted by frequency desc.
+   *  Used by EvaluationPanel for autocomplete suggestions. */
+  allEvaluationTags: () => string[]
+
   visibleForDocument: (documentId: string) => AnnotationItem[]
   archivedForDocument: (documentId: string) => AnnotationItem[]
 }
@@ -107,6 +163,8 @@ export const useAnnotationStore = create<AnnotationState>()(
     (set, get) => ({
       items: {},
       byRun: {},
+      reviewStatusByAnnotation: {},
+      evaluationsByAnnotation: {},
 
       ingestRun: ({ runId, workflowId, documentId, agentName, conversationId, parsed }) => {
     const newItems: AnnotationItem[] = []
@@ -165,15 +223,48 @@ export const useAnnotationStore = create<AnnotationState>()(
         [id]: { ...item, status: 'archived' },
       },
     }))
+    // Best-effort audit log; ignore network failures so the UI action stays
+    // snappy and offline-friendly.
+    void operationApi
+      .record(item.documentId, {
+        type: 'accept_suggestion',
+        payload: {
+          annotation_id: item.id,
+          kind: item.kind,
+          workflow_id: item.workflowId,
+          agent_name: item.agentName,
+          range_start: item.range.from,
+          range_end: item.range.to,
+          target_text_excerpt: (item.targetText ?? '').slice(0, 200),
+        },
+      })
+      .catch(() => {})
   },
 
   remove: (id) => {
+    const item = get().items[id]
     set((state) => {
       if (!state.items[id]) return state
       return {
         items: { ...state.items, [id]: { ...state.items[id], status: 'deleted' } },
       }
     })
+    if (item && (item.kind === 'suggestion' || item.kind === 'annotation' || item.kind === 'risk')) {
+      void operationApi
+        .record(item.documentId, {
+          type: 'reject_suggestion',
+          payload: {
+            annotation_id: item.id,
+            kind: item.kind,
+            workflow_id: item.workflowId,
+            agent_name: item.agentName,
+            range_start: item.range.from,
+            range_end: item.range.to,
+            target_text_excerpt: (item.targetText ?? '').slice(0, 200),
+          },
+        })
+        .catch(() => {})
+    }
   },
 
   archive: (id) => {
@@ -246,6 +337,94 @@ export const useAnnotationStore = create<AnnotationState>()(
     })
   },
 
+  setReviewStatus: (annotationId, status) => {
+    set((state) => {
+      if (state.reviewStatusByAnnotation[annotationId] === status) return state
+      return {
+        reviewStatusByAnnotation: {
+          ...state.reviewStatusByAnnotation,
+          [annotationId]: status,
+        },
+      }
+    })
+  },
+
+  addEvaluation: (annotationId, draft) => {
+    const id = uuid()
+    const now = new Date().toISOString()
+    const evaluation: AgentEvaluation = {
+      ...draft,
+      tags: normalizeTagList(draft.tags),
+      id,
+      annotationId,
+      createdAt: now,
+      updatedAt: now,
+    }
+    set((state) => ({
+      evaluationsByAnnotation: {
+        ...state.evaluationsByAnnotation,
+        [annotationId]: [...(state.evaluationsByAnnotation[annotationId] ?? []), evaluation],
+      },
+    }))
+    return id
+  },
+
+  updateEvaluation: (annotationId, evaluationId, patch) => {
+    set((state) => {
+      const list = state.evaluationsByAnnotation[annotationId]
+      if (!list) return state
+      let changed = false
+      const next = list.map((e) => {
+        if (e.id !== evaluationId) return e
+        changed = true
+        const patched: AgentEvaluation = {
+          ...e,
+          ...patch,
+          tags: patch.tags ? normalizeTagList(patch.tags) : e.tags,
+          updatedAt: new Date().toISOString(),
+        }
+        return patched
+      })
+      if (!changed) return state
+      return {
+        evaluationsByAnnotation: {
+          ...state.evaluationsByAnnotation,
+          [annotationId]: next,
+        },
+      }
+    })
+  },
+
+  deleteEvaluation: (annotationId, evaluationId) => {
+    set((state) => {
+      const list = state.evaluationsByAnnotation[annotationId]
+      if (!list) return state
+      const next = list.filter((e) => e.id !== evaluationId)
+      if (next.length === list.length) return state
+      const nextMap = { ...state.evaluationsByAnnotation }
+      if (next.length === 0) {
+        delete nextMap[annotationId]
+      } else {
+        nextMap[annotationId] = next
+      }
+      return { evaluationsByAnnotation: nextMap }
+    })
+  },
+
+  allEvaluationTags: () => {
+    const counts = new Map<string, number>()
+    for (const list of Object.values(get().evaluationsByAnnotation)) {
+      for (const ev of list) {
+        for (const tag of ev.tags) {
+          counts.set(tag, (counts.get(tag) ?? 0) + 1)
+        }
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([t]) => t)
+  },
+
   visibleForDocument: (documentId) =>
     Object.values(get().items)
       .filter((it) => it.documentId === documentId && it.status !== 'deleted' && it.status !== 'archived' && it.status !== 'superseded')
@@ -259,10 +438,27 @@ export const useAnnotationStore = create<AnnotationState>()(
     {
       name: 'yuwan-annotations-v1',
       // Date fields need custom serialization for localStorage
+      version: 2,
       partialize: (state) => ({
         items: state.items,
         byRun: state.byRun,
+        reviewStatusByAnnotation: state.reviewStatusByAnnotation,
+        evaluationsByAnnotation: state.evaluationsByAnnotation,
       }),
+      // V3 Phase 4 added two new persisted maps. Old payloads (version < 2)
+      // don't carry them, so rehydrated state would have undefined entries
+      // and any selector reading `state.reviewStatusByAnnotation[id]` would
+      // crash. Backfill empty objects so the new selectors stay safe.
+      merge: (persisted, current) => {
+        const p = (persisted as Partial<AnnotationState>) ?? {}
+        return {
+          ...current,
+          items: p.items ?? {},
+          byRun: p.byRun ?? {},
+          reviewStatusByAnnotation: p.reviewStatusByAnnotation ?? {},
+          evaluationsByAnnotation: p.evaluationsByAnnotation ?? {},
+        }
+      },
     },
   ),
 )
@@ -350,4 +546,25 @@ function makeFromRisk(
 function truncate(s: string | undefined, n: number) {
   if (!s) return ''
   return s.length <= n ? s : `${s.slice(0, n)}…`
+}
+
+/**
+ * Normalize raw tag input from the user:
+ *   - strip a single leading '#'
+ *   - trim surrounding whitespace
+ *   - drop empties
+ *   - deduplicate case-insensitively, keeping the first-seen casing
+ *
+ * `#高价值` and `高价值` collapse to `高价值`; `#HighValue` and `highvalue`
+ * collapse to whichever was added first.
+ */
+export function normalizeTagList(tags: readonly string[]): string[] {
+  const seen = new Map<string, string>()
+  for (const raw of tags) {
+    const cleaned = raw.replace(/^#+/, '').trim()
+    if (!cleaned) continue
+    const key = cleaned.toLowerCase()
+    if (!seen.has(key)) seen.set(key, cleaned)
+  }
+  return Array.from(seen.values())
 }

@@ -273,6 +273,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         headers,
         body: JSON.stringify(body),
         signal: abortCtl.signal,
+        credentials: 'include',
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
@@ -351,6 +352,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         headers,
         body: JSON.stringify(body),
         signal: abortCtl.signal,
+        credentials: 'include',
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)

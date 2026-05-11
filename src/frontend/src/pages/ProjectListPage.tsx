@@ -19,6 +19,7 @@ import { ProjectCard } from './components/ProjectCard'
 import { ProjectTableRow } from './components/ProjectTableRow'
 import { ProjectFormDialog } from './components/ProjectFormDialog'
 import { DeleteProjectDialog } from './components/DeleteProjectDialog'
+import { UserMenu } from '../features/topbar/UserMenu'
 import './project-list.css'
 
 type DialogState =
@@ -127,6 +128,7 @@ export function ProjectListPage() {
           <button className="primary-btn" onClick={() => setDialog({ kind: 'create' })}>
             <Plus size={14} /> 新建项目
           </button>
+          <UserMenu />
         </div>
       </header>
 

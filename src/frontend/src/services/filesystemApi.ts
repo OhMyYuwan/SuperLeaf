@@ -131,6 +131,7 @@ export const filesystemApi = {
       method: 'POST',
       body: form,
       headers,
+      credentials: 'include',
     })
     if (!resp.ok) throw new Error(`upload ${resp.status}`)
     return resp.json()
@@ -156,5 +157,5 @@ export const filesystemApi = {
 
   fileUrl: (fileId: string) => `${BASE}/api/files/${encodeURIComponent(fileId)}`,
 
-  exportZipUrl: () => `${BASE}/api/project/export.zip`,
+  exportZipUrl: (projectId: string) => `${BASE}/api/projects/${projectId}/export.zip`,
 }

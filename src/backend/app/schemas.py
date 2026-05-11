@@ -174,6 +174,11 @@ class DocCreateIn(BaseModel):
 
 class DocUpdateIn(BaseModel):
     content: str
+    # Optional origin tag for the V3 history snapshot. Defaults to auto_save.
+    origin: str | None = Field(
+        default=None,
+        pattern="^(auto_save|accept_suggestion|manual|restore|ai_edit)$",
+    )
 
 
 class DocOut(BaseModel):
@@ -329,3 +334,128 @@ class MessageInjectIn(BaseModel):
     range_start: int | None = None
     range_end: int | None = None
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# User / auth (W-users)
+# ---------------------------------------------------------------------------
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    is_admin: bool
+    is_disabled: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class UserRegisterIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=128)
+
+
+class UserLoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserUpdateIn(BaseModel):
+    is_disabled: bool | None = None
+    is_admin: bool | None = None
+    display_name: str | None = Field(default=None, max_length=128)
+
+
+# ---------------------------------------------------------------------------
+# History & versioning (V3 Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class LabelOut(BaseModel):
+    id: str
+    version: int
+    text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LabelIn(BaseModel):
+    version: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=256)
+
+
+class VersionOut(BaseModel):
+    """List/detail view of a snapshot. `content` is only populated by the
+    single-version GET endpoint to keep the listing payload light.
+    """
+
+    id: str
+    version: int
+    blob_hash: str
+    created_at: datetime
+    origin: str
+    actor: str | None
+    byte_length: int
+    string_length: int | None
+    labels: list[LabelOut] = Field(default_factory=list)
+    content: str | None = None
+    binary: bool = False
+
+
+class DiffOut(BaseModel):
+    """Overleaf-shaped diff payload. `diff` is either a list of parts or
+    `{"binary": true}` when at least one side is non-text.
+    """
+
+    diff: list[dict] | dict
+
+
+# ---------------------------------------------------------------------------
+# Operation audit log (V3 Phase 3 task 3.3)
+# ---------------------------------------------------------------------------
+
+
+class OperationOut(BaseModel):
+    id: str
+    doc_id: str
+    type: str
+    payload: dict
+    actor: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OperationIn(BaseModel):
+    type: str = Field(
+        pattern="^(accept_suggestion|reject_suggestion|restore|label_add|label_remove)$"
+    )
+    payload: dict = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Agent usage statistics (V3 Phase 3 task 3.4)
+# ---------------------------------------------------------------------------
+
+
+class AgentStatOut(BaseModel):
+    workflow_id: str
+    workflow_name: str
+    runs: int
+    accepts: int
+    rejects: int
+    accept_rate: float | None
+    avg_latency_ms: float | None
+
+
+class ProviderStatsOut(BaseModel):
+    provider_id: str
+    agents: list[AgentStatOut]

@@ -27,9 +27,14 @@ from ..schemas import (
     ProjectTreeOut,
 )
 from ..services.project_fs_service import ProjectFsService
-from .deps import get_current_project
+from .deps import get_current_project, get_project_from_path
 
 router = APIRouter(tags=["filesystem"])
+
+# Path-scoped router for binary downloads (zip export, future raw asset URLs)
+# where the URL must self-contain the project id so plain <a download> works
+# without a JS fetch wrapper to inject X-Project-Id.
+projects_router = APIRouter(prefix="/api/projects", tags=["filesystem"])
 
 
 @router.get("/api/project/tree", response_model=ProjectTreeOut)
@@ -110,7 +115,13 @@ def update_doc(
     existing = svc.get_doc(doc_id)
     if existing is None or existing.project_id != project.id:
         raise HTTPException(404, "doc not found")
-    doc = svc.update_doc_content(doc_id, body.content)
+    origin = (getattr(body, "origin", None) or "auto_save")
+    doc = svc.update_doc_content(
+        doc_id,
+        body.content,
+        origin=origin,
+        actor=str(project.user_id) if project.user_id else None,
+    )
     if doc is None:
         raise HTTPException(404, "doc not found")
     return DocOut.model_validate(doc)
@@ -328,14 +339,15 @@ def convert_file_to_doc(
     return DocOut.model_validate(doc)
 
 
-@router.get("/api/project/export.zip")
+@projects_router.get("/{project_id}/export.zip")
 def export_zip(
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(get_project_from_path),
 ) -> Response:
     data = ProjectFsService(db, project).export_zip()
+    safe_name = (project.name or "project").replace('"', "").strip() or "project"
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=project.zip"},
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},
     )

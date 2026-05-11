@@ -16,6 +16,7 @@ from sqlalchemy.engine import Engine
 
 
 _PROJECT_SCOPED_TABLES = ("conversations", "workflow_definitions", "workflow_runs")
+_USER_SCOPED_TABLES = ("projects", "providers", "cached_workflows")
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
@@ -33,6 +34,7 @@ def run_migrations(engine: Engine) -> None:
     with engine.begin() as conn:
         bootstrap_pid = _ensure_bootstrap_project(conn)
         _add_project_id_columns(conn, bootstrap_pid)
+        _add_user_id_columns(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -44,13 +46,25 @@ def _ensure_bootstrap_project(conn) -> str:
     if row is None:
         pid = uuid4().hex
         now = datetime.utcnow()
-        conn.execute(
-            text(
-                "INSERT INTO projects (id, name, main_doc_id, compiler, created_at, updated_at) "
-                "VALUES (:id, :name, '', '', :now, :now)"
-            ),
-            {"id": pid, "name": "我的项目", "now": now},
-        )
+        # `user_id` column may or may not exist yet (added by a later migration
+        # step in this same transaction). The bootstrap project is left with
+        # an empty `user_id`; the first registered user picks it up.
+        if _column_exists(conn, "projects", "user_id"):
+            conn.execute(
+                text(
+                    "INSERT INTO projects (id, user_id, name, main_doc_id, compiler, created_at, updated_at) "
+                    "VALUES (:id, '', :name, '', '', :now, :now)"
+                ),
+                {"id": pid, "name": "我的项目", "now": now},
+            )
+        else:
+            conn.execute(
+                text(
+                    "INSERT INTO projects (id, name, main_doc_id, compiler, created_at, updated_at) "
+                    "VALUES (:id, :name, '', '', :now, :now)"
+                ),
+                {"id": pid, "name": "我的项目", "now": now},
+            )
         return pid
 
     pid = row[0]
@@ -91,4 +105,21 @@ def _add_project_id_columns(conn, fallback_pid: str) -> None:
         conn.execute(text(backfill_sql[tbl]), {"fallback": fallback_pid})
         conn.execute(
             text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_project_id ON {tbl}(project_id)")
+        )
+
+
+def _add_user_id_columns(conn) -> None:
+    """Add `user_id` to projects/providers/cached_workflows.
+
+    Rows are left with `user_id = ''`; the first user to register will pick
+    them up via `AuthService._backfill_existing_resources`. We do not backfill
+    here because there are no users at migration time.
+    """
+    for tbl in _USER_SCOPED_TABLES:
+        if not _column_exists(conn, tbl, "user_id"):
+            conn.execute(
+                text(f"ALTER TABLE {tbl} ADD COLUMN user_id VARCHAR(32) DEFAULT ''")
+            )
+        conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_user_id ON {tbl}(user_id)")
         )

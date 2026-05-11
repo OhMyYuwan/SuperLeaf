@@ -2,14 +2,12 @@
 
 Design notes:
 - `POST /api/compile` runs a fresh compile synchronously and caches the result.
-  Returns status + log tail + pdf_bytes; the PDF itself is streamed from
-  `GET /api/compile/pdf` to keep the JSON small.
-- `GET /api/compile/pdf` returns the cached PDF as application/pdf.
+- `GET /api/projects/{pid}/compile.pdf` returns the cached PDF. We scope it by
+  path (not header) so plain <a download>, <img src>, and share links work
+  without needing to inject X-Project-Id via fetch.
 - `GET /api/compile/log` returns the full log text.
-- `GET /api/compile/compilers` lists available system compilers (so the UI
-  can render a picker).
-- `GET/PUT /api/compile/settings` manages per-project compile settings
-  (main doc, preferred compiler).
+- `GET /api/compile/compilers` lists available system compilers.
+- `GET/PUT /api/compile/settings` manages per-project compile settings.
 """
 
 from __future__ import annotations
@@ -28,9 +26,13 @@ from ..schemas import (
     ProjectCompileSettingsOut,
 )
 from ..services.latex_compiler import get_compiler_service
-from .deps import get_current_project
+from .deps import get_current_project, get_project_from_path
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
+
+# Path-scoped router for binary artefacts that should be reachable via a
+# self-contained URL (downloads, <img src>, future share links).
+projects_router = APIRouter(prefix="/api/projects", tags=["compile"])
 
 
 @router.get("/compilers", response_model=CompilerInfoOut)
@@ -79,18 +81,6 @@ async def compile_project(
     )
 
 
-@router.get("/pdf")
-def get_compiled_pdf(
-    db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
-) -> Response:
-    svc = get_compiler_service()
-    cached = svc.get_cached(project.id)
-    if cached is None or cached.pdf is None:
-        raise HTTPException(404, "No compiled PDF yet. Call POST /api/compile first.")
-    return Response(content=cached.pdf, media_type="application/pdf")
-
-
 @router.get("/log", response_class=Response)
 def get_compile_log(
     db: Session = Depends(get_session),
@@ -101,6 +91,17 @@ def get_compile_log(
     if cached is None:
         raise HTTPException(404, "No compile log yet.")
     return Response(content=cached.log, media_type="text/plain; charset=utf-8")
+
+
+@projects_router.get("/{project_id}/compile.pdf")
+def get_compiled_pdf(
+    project: Project = Depends(get_project_from_path),
+) -> Response:
+    svc = get_compiler_service()
+    cached = svc.get_cached(project.id)
+    if cached is None or cached.pdf is None:
+        raise HTTPException(404, "No compiled PDF yet. Call POST /api/compile first.")
+    return Response(content=cached.pdf, media_type="application/pdf")
 
 
 @router.get("/settings", response_model=ProjectCompileSettingsOut)

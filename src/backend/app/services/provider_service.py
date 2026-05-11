@@ -25,18 +25,33 @@ class ProviderService:
 
     # --- CRUD --------------------------------------------------------------
 
-    def list_providers(self) -> list[Provider]:
-        return list(self.db.query(Provider).order_by(Provider.created_at.asc()).all())
+    def list_providers(self, *, user_id: str) -> list[Provider]:
+        return list(
+            self.db.query(Provider)
+            .filter(Provider.user_id == user_id)
+            .order_by(Provider.created_at.asc())
+            .all()
+        )
 
-    def get(self, provider_id: str) -> Provider | None:
-        return self.db.get(Provider, provider_id)
+    def get(self, provider_id: str, *, user_id: str | None = None) -> Provider | None:
+        p = self.db.get(Provider, provider_id)
+        if p is None:
+            return None
+        if user_id is not None and p.user_id != user_id:
+            return None
+        return p
 
-    def get_active(self) -> Provider | None:
-        return self.db.query(Provider).filter(Provider.is_active.is_(True)).first()
+    def get_active(self, *, user_id: str) -> Provider | None:
+        return (
+            self.db.query(Provider)
+            .filter(Provider.is_active.is_(True), Provider.user_id == user_id)
+            .first()
+        )
 
     def create(
         self,
         *,
+        user_id: str,
         name: str,
         kind: str,
         endpoint: str,
@@ -44,6 +59,7 @@ class ProviderService:
         activate: bool = False,
     ) -> Provider:
         p = Provider(
+            user_id=user_id,
             name=name,
             kind=kind,
             endpoint=self._normalize_endpoint(kind, endpoint),
@@ -52,7 +68,7 @@ class ProviderService:
         self.db.add(p)
         self.db.flush()
         if activate:
-            self._set_active(p.id)
+            self._set_active(p.id, user_id=user_id)
         self.db.commit()
         self.db.refresh(p)
         return p
@@ -61,11 +77,12 @@ class ProviderService:
         self,
         provider_id: str,
         *,
+        user_id: str,
         name: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
     ) -> Provider | None:
-        p = self.get(provider_id)
+        p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
         if name is not None and name != p.name:
@@ -88,31 +105,33 @@ class ProviderService:
         self.db.refresh(p)
         return p
 
-    def delete(self, provider_id: str) -> bool:
-        p = self.get(provider_id)
+    def delete(self, provider_id: str, *, user_id: str) -> bool:
+        p = self.get(provider_id, user_id=user_id)
         if p is None:
             return False
         self.db.delete(p)
         self.db.commit()
         return True
 
-    def activate(self, provider_id: str) -> Provider | None:
-        p = self.get(provider_id)
+    def activate(self, provider_id: str, *, user_id: str) -> Provider | None:
+        p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
-        self._set_active(provider_id)
+        self._set_active(provider_id, user_id=user_id)
         self.db.commit()
         self.db.refresh(p)
         return p
 
-    def _set_active(self, provider_id: str) -> None:
-        for p in self.db.query(Provider).all():
+    def _set_active(self, provider_id: str, *, user_id: str) -> None:
+        for p in (
+            self.db.query(Provider).filter(Provider.user_id == user_id).all()
+        ):
             p.is_active = p.id == provider_id
 
     # --- Probe + sync ------------------------------------------------------
 
-    async def probe(self, provider_id: str) -> Provider | None:
-        p = self.get(provider_id)
+    async def probe(self, provider_id: str, *, user_id: str) -> Provider | None:
+        p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
 
@@ -218,6 +237,7 @@ class ProviderService:
             external_id = str(entry["external_id"])
             cw = CachedWorkflow(
                 id=f"{provider.id}:{external_id}",
+                user_id=provider.user_id,
                 provider_id=provider.id,
                 external_id=external_id,
                 name=str(entry["name"]),

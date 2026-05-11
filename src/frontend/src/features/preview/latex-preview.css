@@ -68,6 +68,27 @@
 .latex-preview-zoom .small-btn:hover {
   background: #f1f5f9;
 }
+
+.latex-preview-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  background: white;
+  color: #334155;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.latex-preview-download:hover {
+  background: #f1f5f9;
+}
+.latex-preview-download.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
 .zoom-value {
   font-size: 11px;
   color: #475569;

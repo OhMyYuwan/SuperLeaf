@@ -893,6 +893,11 @@ class WorkflowOrchestrator:
             if not provider:
                 raise ValueError(f"Provider {cached_workflow.provider_id} not found")
 
+            # Defence in depth: a malformed graph could reference another user's
+            # CachedWorkflow id. Refuse rather than silently call out on their key.
+            if cached_workflow.user_id and provider.user_id and cached_workflow.user_id != provider.user_id:
+                raise ValueError(f"Agent {agent_id} belongs to a different user than its provider")
+
             # Build prompt with context
             prompt = self._build_agent_prompt(ctx, node)
 

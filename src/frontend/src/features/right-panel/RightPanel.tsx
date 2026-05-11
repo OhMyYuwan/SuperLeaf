@@ -13,6 +13,8 @@ import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
 import { RunHistoryTab } from './RunHistoryTab'
+import { HistoryTab } from '../history/HistoryTab'
+import '../history/history.css'
 import './right-panel.css'
 
 interface RightPanelProps {
@@ -61,7 +63,10 @@ export function RightPanel(props: RightPanelProps) {
             工作流
           </Tabs.Trigger> */}
           <Tabs.Trigger className="tab-trigger" value="history">
-            历史
+            运行
+          </Tabs.Trigger>
+          <Tabs.Trigger className="tab-trigger" value="versions">
+            版本
           </Tabs.Trigger>
         </Tabs.List>
 
@@ -112,6 +117,10 @@ export function RightPanel(props: RightPanelProps) {
             documentId={props.activeDocumentId}
             onJumpToRange={props.onJumpToRange}
           />
+        </Tabs.Content>
+
+        <Tabs.Content value="versions" className="tab-content">
+          <HistoryTab documentId={props.activeDocumentId} />
         </Tabs.Content>
       </Tabs.Root>
     </div>

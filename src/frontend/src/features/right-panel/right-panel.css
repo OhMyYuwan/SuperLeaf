@@ -215,10 +215,43 @@
   gap: 2px;
   font-size: 13px;
   color: #e5e7eb;
+  flex: 1;
+  min-width: 0;
 }
 .agent-info span {
   font-size: 11px;
   color: rgba(148, 163, 184, 0.8);
+}
+
+.agent-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.agent-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.08);
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.agent-stat-dim {
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.agent-stats-empty {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.55);
+  font-style: italic;
 }
 
 /* Workflow tab */
@@ -1395,7 +1428,27 @@
   white-space: pre-wrap;
 }
 
+.workflow-test-output.markdown {
+  white-space: normal;
+  font-family: inherit;
+}
+
 .workflow-test-output.error {
   border-color: rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+}
+
+/* V3 Phase 4 — per-agent quality row under AgentStatsRow. */
+.agent-quality-row {
+  margin-top: 2px;
+}
+.agent-stat.agent-stat-quality.positive {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.34);
+  color: #bbf7d0;
+}
+.agent-stat.agent-stat-quality.negative {
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.34);
   color: #fecaca;
 }

@@ -31,6 +31,7 @@ import 'react-pdf/dist/Page/TextLayer.css'
 // This is the correct way to point pdfjs at its worker in a bundled app.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useCompileStore } from '../../stores/compileStore'
+import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
 import { compileApi } from '../../services/backendApi'
 import './latex-preview.css'
@@ -38,11 +39,10 @@ import './latex-preview.css'
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 interface LatexPreviewProps {
-  documentContent: string
-  documentVersion: number
+  documentId: string
 }
 
-export function LatexPreview({ documentContent, documentVersion }: LatexPreviewProps) {
+export function LatexPreview({ documentId }: LatexPreviewProps) {
   const compilers = useCompileStore((s) => s.compilers)
   const settings = useCompileStore((s) => s.settings)
   const lastResult = useCompileStore((s) => s.lastResult)
@@ -56,6 +56,9 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
   const compile = useCompileStore((s) => s.compile)
   const loadFullLog = useCompileStore((s) => s.loadFullLog)
   const setAutoCompile = useCompileStore((s) => s.setAutoCompile)
+  const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
+  const saveStatus = useDocumentStore((s) => s.saveStatus[documentId] ?? 'idle')
+  const lastSavedAt = useDocumentStore((s) => s.lastSavedAt[documentId] ?? 0)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectName = useProjectStore((s) =>
     s.currentProjectId
@@ -68,6 +71,16 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
+  const lastAutoCompiledSavedAtRef = useRef(0)
+
+  const compileCurrentDocument = async () => {
+    await saveBackendDoc(documentId)
+    const docState = useDocumentStore.getState()
+    if (docState.saveStatus[documentId] !== 'saved') return
+    lastAutoCompiledSavedAtRef.current =
+      docState.lastSavedAt[documentId] ?? lastAutoCompiledSavedAtRef.current
+    await compile(documentId)
+  }
 
   // Load compilers + settings once.
   useEffect(() => {
@@ -75,19 +88,17 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
     loadSettings()
   }, [loadCompilers, loadSettings])
 
-  // Auto-compile on document changes (debounced).
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Auto-compile only after the open document has been saved. This prevents
+  // compile errors from creating retry loops and keeps latexmk off dirty text.
   useEffect(() => {
     if (!autoCompile) return
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      compile()
-    }, 2500)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentContent, documentVersion, autoCompile])
+    if (compiling) return
+    if (saveStatus !== 'saved') return
+    if (!lastSavedAt || lastSavedAt === lastAutoCompiledSavedAtRef.current) return
+
+    lastAutoCompiledSavedAtRef.current = lastSavedAt
+    void compile(documentId)
+  }, [autoCompile, compiling, saveStatus, lastSavedAt, documentId, compile])
 
   // Track container width for responsive PDF pages.
   useEffect(() => {
@@ -123,7 +134,7 @@ export function LatexPreview({ documentContent, documentVersion }: LatexPreviewP
       <div className="latex-preview-toolbar">
         <button
           className="primary-btn latex-compile-btn"
-          onClick={() => compile()}
+          onClick={() => void compileCurrentDocument()}
           disabled={compiling || compilersAvailable.length === 0}
           title="编译 (Cmd+Enter)"
         >

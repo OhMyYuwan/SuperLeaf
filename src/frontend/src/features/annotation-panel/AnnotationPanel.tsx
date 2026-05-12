@@ -470,7 +470,7 @@ function AnnotationCard({
         {isResolved && <span className="ann-resolved-chip">已处理</span>}
         <ReviewStatusToggle
           value={reviewStatus}
-          onChange={(next) => setReviewStatus(item.id, next)}
+          onChange={(next) => setReviewStatus(item.id, next, item.documentId)}
           disabled={isResolved}
           compact
         />

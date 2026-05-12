@@ -980,8 +980,16 @@ class WorkflowOrchestrator:
         - What inputs it's receiving from upstream nodes
         - Any referenced files (either via upstream input node or ctx fallback)
         - Any node-specific instructions (additional_prompt)
+        - REQ-0034: per-doc annotation review states + recent evaluations,
+          so Reviewer doesn't repeat dismissed/addressed feedback and Writer
+          can prioritise high-value `open` items.
         """
         parts = []
+
+        # === Annotation review state (REQ-0034 task 4.3) ===
+        review_block = self._build_annotation_review_block(ctx)
+        if review_block:
+            parts.append(review_block)
 
         # === Workflow context header ===
         additional_prompt = node.config.get("additional_prompt")
@@ -1039,6 +1047,69 @@ class WorkflowOrchestrator:
             parts.append(f"\n[Round {node.inputs['current_round']} of {ctx.workflow_run.max_rounds}]")
 
         return "\n".join(parts)
+
+    def _build_annotation_review_block(self, ctx: OrchestrationContext) -> str:
+        """Compact summary of this doc's annotation review state + recent
+        evaluations, for inclusion in the agent prompt (REQ-0034 task 4.3).
+
+        Pulls from annotation_review_states + annotation_evaluations via
+        evaluation_service. Only annotations that the user has touched —
+        either by setting a non-default review_status or by submitting an
+        evaluation — appear, so untouched annotations don't bloat prompts.
+
+        Returns the empty string when there's nothing to say.
+        """
+        try:
+            # Local import to keep orchestrator import-time cheap.
+            from . import evaluation_service
+            entries = evaluation_service.review_summary_for_doc(
+                ctx.db, ctx.document_id
+            )
+        except Exception:  # pragma: no cover — never break a workflow on this
+            return ""
+        if not entries:
+            return ""
+
+        lines: list[str] = [
+            "[ANNOTATION REVIEW STATE]",
+            "Per-annotation user feedback gathered so far on this document.",
+            (
+                "Rules: do NOT modify review_status (the user controls it). "
+                "For annotations marked `dismissed`, do not repeat the same "
+                "point — the user has rejected that line of feedback. For "
+                "`addressed`, the user considers it resolved; only revisit if "
+                "new information clearly invalidates the resolution. Prefer "
+                "focusing new suggestions on `open` annotations, especially "
+                "those previously tagged #高价值."
+            ),
+        ]
+        for entry in entries:
+            ann_id = entry["annotation_id"]
+            status = entry["review_status"]
+            evals = entry.get("evaluations", [])
+            if evals:
+                verdict_glyphs = "".join(
+                    "✅" if e["verdict"] == "positive" else "❎" for e in evals
+                )
+                # Top-N tags across these evaluations
+                tag_counts: dict[str, int] = {}
+                for e in evals:
+                    for tag in e.get("tags") or []:
+                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                top_tags = ", ".join(
+                    f"#{t}"
+                    for t, _ in sorted(
+                        tag_counts.items(), key=lambda kv: -kv[1]
+                    )[:3]
+                )
+                tail = f" — {verdict_glyphs}"
+                if top_tags:
+                    tail += f" ({top_tags})"
+            else:
+                tail = ""
+            lines.append(f"  - {ann_id}: {status}{tail}")
+        lines.append("[END ANNOTATION REVIEW STATE]\n")
+        return "\n".join(lines)
 
     def _merge_outputs(self, outputs: list[dict], strategy: str = "concat") -> dict:
         """Merge multiple agent outputs based on strategy."""

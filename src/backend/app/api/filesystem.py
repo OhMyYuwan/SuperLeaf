@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, Form
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, Form
 from fastapi.responses import Response
 
 from ..models import FileBlob
@@ -26,6 +26,7 @@ from ..schemas import (
     FolderOut,
     ProjectTreeOut,
 )
+from ..services.event_bus import bus
 from ..services.project_fs_service import ProjectFsService
 from .deps import get_current_project, get_project_from_path
 
@@ -110,6 +111,7 @@ def update_doc(
     body: DocUpdateIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     svc = ProjectFsService(db, project)
     existing = svc.get_doc(doc_id)
@@ -124,7 +126,14 @@ def update_doc(
     )
     if doc is None:
         raise HTTPException(404, "doc not found")
-    return DocOut.model_validate(doc)
+    out = DocOut.model_validate(doc)
+    bus.publish(
+        project.id,
+        "doc.updated",
+        {"doc_id": doc.id, "version": doc.version, "updated_at": out.updated_at.isoformat()},
+        origin_client_id=x_client_id,
+    )
+    return out
 
 
 # ---------------------------------------------------------------------------

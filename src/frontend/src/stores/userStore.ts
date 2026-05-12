@@ -15,6 +15,23 @@ import { create } from 'zustand'
 import { authApi, type LoginBody, type RegisterBody, type User } from '../services/authApi'
 import { BackendError, registerUnauthorizedHandler } from '../services/backendApi'
 import { resetUserScopedStores } from './_reset'
+import { setUserScopeId } from './_userScopedStorage'
+
+// After auth state changes, the per-user persist namespace must flip and the
+// stores need to re-read from the new localStorage key. We can't import the
+// stores here (they import from this module via _reset), so we do a lazy
+// dynamic import.
+async function applyUserScope(userId: string | null): Promise<void> {
+  setUserScopeId(userId)
+  const [{ useDocumentStore }, { useAnnotationStore }] = await Promise.all([
+    import('./documentStore'),
+    import('./annotationStore'),
+  ])
+  await Promise.all([
+    useDocumentStore.persist.rehydrate() ?? Promise.resolve(),
+    useAnnotationStore.persist.rehydrate() ?? Promise.resolve(),
+  ])
+}
 
 interface UserState {
   currentUser: User | null
@@ -41,6 +58,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const user = await authApi.me()
+      await applyUserScope(user.id)
       set({ currentUser: user, loading: false, loaded: true })
     } catch (e) {
       // 401 is the expected "not logged in" path — surface as null, not error.
@@ -59,12 +77,14 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   login: async (body) => {
     const user = await authApi.login(body)
+    await applyUserScope(user.id)
     set({ currentUser: user, loaded: true, error: null })
     return user
   },
 
   register: async (body) => {
     const user = await authApi.register(body)
+    await applyUserScope(user.id)
     set({ currentUser: user, loaded: true, error: null })
     return user
   },
@@ -77,6 +97,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     }
     set({ currentUser: null, loaded: true, error: null })
     await resetUserScopedStores()
+    await applyUserScope(null)
   },
 
   handleUnauthorized: () => {
@@ -84,7 +105,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     // we actually had a user.
     if (get().currentUser !== null) {
       set({ currentUser: null, loaded: true })
-      void resetUserScopedStores()
+      void resetUserScopedStores().then(() => applyUserScope(null))
     }
   },
 }))

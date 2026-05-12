@@ -112,7 +112,34 @@ export function buildHeaders(extra?: HeadersInit, scope: RequestScope = 'project
     const pid = readCurrentProjectId()
     if (pid) headers.set('X-Project-Id', pid)
   }
+  // Stable per-browser id so the SSE event stream can flag self-originated
+  // events and avoid double-applying optimistic mutations.
+  if (!headers.has('X-Client-Id')) {
+    headers.set('X-Client-Id', getClientId())
+  }
   return headers
+}
+
+const CLIENT_ID_KEY = 'yuwan-client-id'
+let cachedClientId: string | null = null
+
+export function getClientId(): string {
+  if (cachedClientId) return cachedClientId
+  if (typeof localStorage === 'undefined') {
+    cachedClientId = `tmp-${Math.random().toString(36).slice(2, 10)}`
+    return cachedClientId
+  }
+  const existing = localStorage.getItem(CLIENT_ID_KEY)
+  if (existing) {
+    cachedClientId = existing
+    return existing
+  }
+  const fresh = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+    ? crypto.randomUUID()
+    : `c-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`
+  localStorage.setItem(CLIENT_ID_KEY, fresh)
+  cachedClientId = fresh
+  return fresh
 }
 
 // Avoids `import { useProjectStore }` at module load (circular: projectStore

@@ -33,7 +33,7 @@ interface CompileState {
   rescanCompilers: () => Promise<void>
   loadSettings: () => Promise<void>
   updateSettings: (patch: Partial<CompileSettings>) => Promise<void>
-  compile: () => Promise<void>
+  compile: (mainDocId?: string | null) => Promise<void>
   loadFullLog: () => Promise<void>
   setAutoCompile: (enabled: boolean) => void
 }
@@ -86,14 +86,14 @@ export const useCompileStore = create<CompileState>()(
         }
       },
 
-      compile: async () => {
+      compile: async (mainDocId) => {
         if (get().compiling) return
         set({ compiling: true, loadError: null })
         try {
           const settings = get().settings
           const result = await compileApi.compile({
             compiler: settings?.compiler || undefined,
-            main_doc_id: settings?.main_doc_id || undefined,
+            main_doc_id: mainDocId || settings?.main_doc_id || undefined,
           })
           set((s) => ({
             lastResult: result,

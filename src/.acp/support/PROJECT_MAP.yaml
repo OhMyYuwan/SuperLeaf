@@ -121,7 +121,7 @@ modules:
   - id: backend-services
     path: backend/app/services
     kind: domain-services
-    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation service, project member service, version service.
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation service, project member service, version service, collab snapshot service.
     entry_files:
       - backend/app/services/__init__.py
       - backend/app/services/dify_client.py
@@ -137,6 +137,7 @@ modules:
       - backend/app/services/evaluation_service.py
       - backend/app/services/project_member_service.py
       - backend/app/services/project_service.py
+      - backend/app/services/collab_snapshot_service.py
     note: |
       `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
       multi-agent + loop runner; canonical baseline since REQ-0015.
@@ -149,6 +150,24 @@ modules:
       states with user_id scoping for privacy isolation.
       `annotation_service.py` persists annotation cards with user_id
       ownership — each collaborator only sees their own Agent outputs.
+      `collab_snapshot_service.py` periodically snapshots Yjs-managed
+      document text from collab-server into Doc.content + version history.
+
+  # ── Collab Server (Node.js Yjs WebSocket) ───────────────────────
+  - id: collab-server
+    path: ../src/collab-server
+    kind: service
+    description: |
+      Independent Node.js process providing Yjs CRDT-based real-time
+      collaborative editing via WebSocket. Uses y-protocols sync +
+      awareness, LevelDB persistence, and authenticates via FastAPI
+      /api/auth/verify. Listens on port 4444.
+    entry_files:
+      - ../src/collab-server/package.json
+      - ../src/collab-server/tsconfig.json
+      - ../src/collab-server/src/index.ts
+      - ../src/collab-server/src/ws-handler.ts
+      - ../src/collab-server/src/persistence.ts
 
   # ── Frontend application ─────────────────────────────────────────
   - id: frontend
@@ -192,7 +211,7 @@ modules:
   - id: frontend-stores
     path: frontend/src/stores
     kind: state
-    description: Zustand stores — covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, project, user, plus user-scoped storage and reset utilities.
+    description: Zustand stores — covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, project, user, collaboration, plus user-scoped storage and reset utilities.
     entry_files:
       - frontend/src/stores/documentStore.ts
       - frontend/src/stores/editorStore.ts
@@ -205,6 +224,7 @@ modules:
       - frontend/src/stores/viewStore.ts
       - frontend/src/stores/projectStore.ts
       - frontend/src/stores/userStore.ts
+      - frontend/src/stores/collaborationStore.ts
       - frontend/src/stores/_userScopedStorage.ts
       - frontend/src/stores/_reset.ts
       - frontend/src/stores/seedData.ts
@@ -212,7 +232,7 @@ modules:
   - id: frontend-services
     path: frontend/src/services
     kind: service-layer
-    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, operation API, project event stream (SSE client).
+    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, operation API, project event stream (SSE client), collaboration provider (Yjs WebSocket).
     entry_files:
       - frontend/src/services/backendApi.ts
       - frontend/src/services/filesystemApi.ts
@@ -226,6 +246,7 @@ modules:
       - frontend/src/services/annotationEvaluationApi.ts
       - frontend/src/services/operationApi.ts
       - frontend/src/services/projectEventStream.ts
+      - frontend/src/services/collaborationProvider.ts
 
   - id: frontend-tests
     path: frontend/src/__tests__
@@ -239,11 +260,12 @@ modules:
   - id: frontend-feature-latex-editor
     path: frontend/src/features/latex-editor
     kind: feature-module
-    description: Self-contained CodeMirror 6 LaTeX editor module + annotation decoration plugin.
+    description: Self-contained CodeMirror 6 LaTeX editor module + annotation decoration plugin + Yjs collaboration extensions.
     entry_files:
       - frontend/src/features/latex-editor/index.ts
       - frontend/src/features/latex-editor/LatexEditor.tsx
       - frontend/src/features/latex-editor/extensions.ts
+      - frontend/src/features/latex-editor/collaboration-extensions.ts
       - frontend/src/features/latex-editor/latex-language.ts
       - frontend/src/features/latex-editor/theme.ts
       - frontend/src/features/latex-editor/annotation-decorations.ts
@@ -353,13 +375,15 @@ modules:
   - id: frontend-feature-shared
     path: frontend/src/features/shared
     kind: feature-module
-    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher).
+    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher), CollaborationStatus (Yjs connection indicator + peer avatars).
     entry_files:
       - frontend/src/features/shared/MentionInput.tsx
       - frontend/src/features/shared/fileSizeGate.ts
       - frontend/src/features/shared/mention-input.css
       - frontend/src/features/shared/toast.tsx
       - frontend/src/features/shared/ProjectEventBridge.tsx
+      - frontend/src/features/shared/CollaborationStatus.tsx
+      - frontend/src/features/shared/collaboration-status.css
 
   - id: frontend-build-tooling
     path: frontend
@@ -449,6 +473,7 @@ capability_routes:
       - frontend-stores
       - frontend-services
       - frontend-feature-shared
+      - collab-server
     note: |
       Multi-user collaboration surface: ProjectMember model + service,
       role-based access control (owner/editor/viewer), project sharing API,
@@ -459,6 +484,28 @@ capability_routes:
       workflow definitions, runs, conversations, annotations, evaluations,
       and review states are isolated by user_id. Collaborators share the
       document but never see each other's Agent interactions.
+
+  real-time-editing:
+    primary_module: collab-server
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-feature-latex-editor
+      - frontend-stores
+      - frontend-services
+      - frontend-feature-shared
+    note: |
+      Yjs CRDT-based real-time collaborative editing (Phase 1).
+      Architecture: independent Node.js collab-server (:4444) running
+      y-protocols sync + awareness over WebSocket, with LevelDB persistence.
+      Frontend uses y-codemirror.next to bind Y.Text to CodeMirror 6.
+      Backend provides /api/auth/verify for WebSocket auth,
+      /api/auth/collab-token for frontend token retrieval,
+      /api/internal/docs/{id}/content for initial doc seeding,
+      and collab_snapshot_service for periodic text → DB snapshots.
+      Awareness protocol shows remote cursors + selections with user colors.
+      Annotation positions still tracked via mapRangeThrough (Phase 2 will
+      migrate to Y.RelativePosition).
 
   agent-privacy:
     primary_module: backend-api

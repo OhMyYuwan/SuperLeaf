@@ -34,6 +34,7 @@ auto_allow:
       - backend/app/models.py
       - backend/app/schemas.py
       - backend/app/main.py
+      - ../src/collab-server/src/*.ts
 
   # Pure additions (new feature folders / modules).
   - operation: create
@@ -78,7 +79,9 @@ require_confirmation:
       - backend/app/settings.py
       - backend/app/database.py
       - backend/app/secrets_vault.py
-    reason: Build and config files affect the entire frontend / backend surface.
+      - ../src/collab-server/package.json
+      - ../src/collab-server/tsconfig.json
+    reason: Build and config files affect the entire frontend / backend / collab surface.
 
   - operation: edit
     paths:

@@ -652,3 +652,40 @@ capabilities:
         bridge_when: Dep changes may require Docker image updates (V3 Phase 4).
         primary_paths:
           - backend/pyproject.toml
+
+  - id: real-time-editing
+    name: Real-Time Collaborative Editing
+    summary: |
+      Yjs CRDT-based real-time collaborative editing. Independent Node.js
+      collab-server provides WebSocket sync + awareness; frontend binds via
+      y-codemirror.next; backend provides auth verification and periodic
+      snapshot persistence.
+    slices:
+      - id: collab-server
+        summary: Node.js y-websocket server — Yjs sync protocol, awareness broadcast, LevelDB persistence, auth via FastAPI /api/auth/verify.
+        route_here_when: Work changes WebSocket handling, persistence strategy, or auth flow for collaborative editing.
+        bridge_when: Changes to auth contract require backend /api/auth updates.
+        primary_paths:
+          - ../src/collab-server/src/index.ts
+          - ../src/collab-server/src/ws-handler.ts
+          - ../src/collab-server/src/persistence.ts
+          - ../src/collab-server/package.json
+      - id: frontend-binding
+        summary: Yjs ↔ CodeMirror 6 binding — collaborationProvider (WebSocket lifecycle), collaborationStore (Zustand), collaboration-extensions (yCollab + UndoManager), CollaborationStatus UI.
+        route_here_when: Work changes how the editor connects to Yjs, how peers are displayed, or how collaboration mode is toggled.
+        bridge_when: Editor API changes — see latex-editor/shell.
+        primary_paths:
+          - frontend/src/services/collaborationProvider.ts
+          - frontend/src/stores/collaborationStore.ts
+          - frontend/src/features/latex-editor/collaboration-extensions.ts
+          - frontend/src/features/shared/CollaborationStatus.tsx
+          - frontend/src/features/shared/collaboration-status.css
+      - id: backend-support
+        summary: FastAPI endpoints + services supporting collab-server — token verification, collab-token echo, internal doc content fetch, periodic snapshot task.
+        route_here_when: Work changes how the backend supports the collab-server (auth, seeding, snapshots).
+        bridge_when: Snapshot strategy change affects version history — see backend-service/models.
+        primary_paths:
+          - backend/app/api/auth.py
+          - backend/app/api/filesystem.py
+          - backend/app/services/collab_snapshot_service.py
+          - backend/app/settings.py

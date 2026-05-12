@@ -1,0 +1,44 @@
+.err-boundary-card {
+  margin: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.err-boundary-title {
+  font-weight: 600;
+  color: #fca5a5;
+}
+
+.err-boundary-message {
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: rgba(254, 202, 202, 0.8);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  background: rgba(2, 6, 23, 0.45);
+  border-radius: 6px;
+}
+
+.err-boundary-reset {
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.err-boundary-reset:hover {
+  background: rgba(239, 68, 68, 0.25);
+}

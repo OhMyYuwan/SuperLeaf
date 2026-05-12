@@ -1,12 +1,32 @@
+# PROJECT MAP for YuwanLabWriter
+#
+# Structural map of the project rooted at src/. Update whenever a module is
+# added or removed; this file is the agent's structural index, not a wishlist.
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+
 project:
   name: YuwanLabWriter
   root: src
   source_of_truth: src
+  branch_strategy:
+    personal: YuwanZ
+    team: develop
+    public: main
+  privacy_rule: src/.acp/kernel/ and src/docs/ MUST stay out of git.
 
 modules:
+  # ── Governance layer ─────────────────────────────────────────────
+  - id: acp-version
+    path: .acp
+    kind: governance
+    description: ACP profile and version declaration.
+    entry_files:
+      - .acp/version.yaml
+
   - id: acp-kernel
     path: .acp/kernel
     kind: governance
+    description: Append-only Request / Plan / Change lineage.
     entry_files:
       - .acp/kernel/requests/
       - .acp/kernel/plans/
@@ -15,6 +35,7 @@ modules:
   - id: acp-support
     path: .acp/support
     kind: guidance
+    description: Routing, loading, and policy documents read at bootstrap.
     entry_files:
       - .acp/support/AGENT.md
       - .acp/support/PROJECT_MAP.yaml
@@ -24,12 +45,570 @@ modules:
   - id: acp-capability
     path: .acp/capability
     kind: semantic
+    description: Capability + slice definitions (semantic surface).
     entry_files:
       - .acp/capability/capabilities.yaml
 
+  # ── Planning docs ────────────────────────────────────────────────
+  - id: docs-planning
+    path: docs
+    kind: documentation
+    description: Product / architecture / milestone planning documents. Git-ignored.
+    entry_files:
+      - docs/v1_executive_plan.tex
+      - docs/v2_executive_plan.md
+      - docs/v2_executive_plan.tex
+      - docs/v2_1_amendment_dify.md
+      - docs/v3_executive_plan.md
+      - docs/architecture_data_flow.md
+      - docs/doubao_v1_optimized.tex
+      - docs/doubao.tex
+      - docs/figma.md
+
+  # ── Backend (FastAPI proxy + SQLite persistence) ─────────────────
+  - id: backend
+    path: backend
+    kind: service
+    description: FastAPI proxy to Dify / Nanobot + local SQLite persistence. uv-managed, Python 3.11+.
+    entry_files:
+      - backend/pyproject.toml
+      - backend/app/main.py
+
+  - id: backend-app-core
+    path: backend/app
+    kind: service-core
+    description: App entrypoint, settings, database, encrypted secrets vault.
+    entry_files:
+      - backend/app/__init__.py
+      - backend/app/main.py
+      - backend/app/settings.py
+      - backend/app/database.py
+      - backend/app/secrets_vault.py
+      - backend/app/models.py
+      - backend/app/schemas.py
+    note: |
+      `models.py` now declares tables: Provider, CachedWorkflow,
+      WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob,
+      Conversation, Message, Blob, DocumentVersion, DocumentLabel,
+      Operation, AnnotationEvaluation, AnnotationReviewState, Annotation,
+      ProjectMember, Notification.
+      User/Session tables handle auth; ProjectMember enables Overleaf-style
+      multi-user collaboration with role-based access (owner/editor/viewer).
+      Privacy isolation: WorkflowDefinition, WorkflowRun, Conversation,
+      Annotation, AnnotationEvaluation, AnnotationReviewState all carry
+      `user_id` — Agent assets are personal, not shared across collaborators.
+
+  - id: backend-api
+    path: backend/app/api
+    kind: api-routes
+    description: HTTP routes — health, auth, users, providers, projects (incl. members + online presence + SSE events), workflows, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
+    entry_files:
+      - backend/app/api/__init__.py
+      - backend/app/api/health.py
+      - backend/app/api/auth.py
+      - backend/app/api/users.py
+      - backend/app/api/providers.py
+      - backend/app/api/projects.py
+      - backend/app/api/workflows.py
+      - backend/app/api/filesystem.py
+      - backend/app/api/conversations.py
+      - backend/app/api/compile.py
+      - backend/app/api/versions.py
+      - backend/app/api/annotation_evaluations.py
+      - backend/app/api/notifications.py
+      - backend/app/api/deps.py
+
+  - id: backend-services
+    path: backend/app/services
+    kind: domain-services
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation service, project member service, version service, collab snapshot service.
+    entry_files:
+      - backend/app/services/__init__.py
+      - backend/app/services/dify_client.py
+      - backend/app/services/nanobot_client.py
+      - backend/app/services/provider_service.py
+      - backend/app/services/agent_orchestrator.py
+      - backend/app/services/project_fs_service.py
+      - backend/app/services/latex_compiler.py
+      - backend/app/services/attached_files.py
+      - backend/app/services/event_bus.py
+      - backend/app/services/auth_service.py
+      - backend/app/services/annotation_service.py
+      - backend/app/services/evaluation_service.py
+      - backend/app/services/project_member_service.py
+      - backend/app/services/project_service.py
+      - backend/app/services/collab_snapshot_service.py
+    note: |
+      `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
+      multi-agent + loop runner; canonical baseline since REQ-0015.
+      `event_bus.py` provides in-memory SSE fan-out with per-subscriber
+      asyncio.Queue and online-user presence tracking.
+      `project_member_service.py` handles multi-user collaboration:
+      add/remove members, role checks (owner/editor/viewer), shared
+      project listing.
+      `evaluation_service.py` manages annotation evaluations + review
+      states with user_id scoping for privacy isolation.
+      `annotation_service.py` persists annotation cards with user_id
+      ownership — each collaborator only sees their own Agent outputs.
+      `collab_snapshot_service.py` periodically snapshots Yjs-managed
+      document text from collab-server into Doc.content + version history.
+
+  # ── Collab Server (Node.js Yjs WebSocket) ───────────────────────
+  - id: collab-server
+    path: ../src/collab-server
+    kind: service
+    description: |
+      Independent Node.js process providing Yjs CRDT-based real-time
+      collaborative editing via WebSocket. Uses y-protocols sync +
+      awareness, LevelDB persistence, and authenticates via FastAPI
+      /api/auth/verify. Listens on port 4444.
+    entry_files:
+      - ../src/collab-server/package.json
+      - ../src/collab-server/tsconfig.json
+      - ../src/collab-server/src/index.ts
+      - ../src/collab-server/src/ws-handler.ts
+      - ../src/collab-server/src/persistence.ts
+
+  # ── Frontend application ─────────────────────────────────────────
+  - id: frontend
+    path: frontend
+    kind: application
+    description: Vite + React 19 + TypeScript writing IDE. Deployed locally via start.sh.
+    entry_files:
+      - frontend/package.json
+      - frontend/index.html
+      - frontend/vite.config.ts
+      - frontend/tsconfig.json
+
+  - id: frontend-app-shell
+    path: frontend/src
+    kind: application-shell
+    description: React entry, App.tsx workspace shell, top-level layout composition.
+    entry_files:
+      - frontend/src/main.tsx
+      - frontend/src/App.tsx
+      - frontend/src/App.css
+      - frontend/src/index.css
+
+  - id: frontend-types
+    path: frontend/src/types
+    kind: domain-model
+    description: TypeScript domain contracts for all 8 layers (Document → Editor → Agent → Workflow → Collaboration → History → UI → Actions).
+    entry_files:
+      - frontend/src/types/document.ts
+      - frontend/src/types/editor.ts
+      - frontend/src/types/agent.ts
+      - frontend/src/types/workflow.ts
+      - frontend/src/types/collaboration.ts
+      - frontend/src/types/history.ts
+      - frontend/src/types/ui.ts
+      - frontend/src/types/actions.ts
+    note: |
+      Runtime types for WorkflowDefinition / Provider / Message / etc
+      currently live in `services/backendApi.ts`. Unification with
+      `types/*` is a V3 Phase 2 task (B2).
+
+  - id: frontend-stores
+    path: frontend/src/stores
+    kind: state
+    description: Zustand stores — covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, project, user, collaboration, plus user-scoped storage and reset utilities.
+    entry_files:
+      - frontend/src/stores/documentStore.ts
+      - frontend/src/stores/editorStore.ts
+      - frontend/src/stores/settingsStore.ts
+      - frontend/src/stores/workflowStore.ts
+      - frontend/src/stores/annotationStore.ts
+      - frontend/src/stores/filesystemStore.ts
+      - frontend/src/stores/conversationStore.ts
+      - frontend/src/stores/compileStore.ts
+      - frontend/src/stores/viewStore.ts
+      - frontend/src/stores/projectStore.ts
+      - frontend/src/stores/userStore.ts
+      - frontend/src/stores/collaborationStore.ts
+      - frontend/src/stores/_userScopedStorage.ts
+      - frontend/src/stores/_reset.ts
+      - frontend/src/stores/seedData.ts
+
+  - id: frontend-services
+    path: frontend/src/services
+    kind: service-layer
+    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, operation API, project event stream (SSE client), collaboration provider (Yjs WebSocket).
+    entry_files:
+      - frontend/src/services/backendApi.ts
+      - frontend/src/services/filesystemApi.ts
+      - frontend/src/services/documentParser.ts
+      - frontend/src/services/selectionContext.ts
+      - frontend/src/services/outputParser.ts
+      - frontend/src/services/mentions.ts
+      - frontend/src/services/rangeTracker.ts
+      - frontend/src/services/authApi.ts
+      - frontend/src/services/projectsApi.ts
+      - frontend/src/services/annotationEvaluationApi.ts
+      - frontend/src/services/operationApi.ts
+      - frontend/src/services/projectEventStream.ts
+      - frontend/src/services/collaborationProvider.ts
+
+  - id: frontend-tests
+    path: frontend/src/__tests__
+    kind: tests
+    description: Vitest unit tests for parser, selection context, and output parser.
+    entry_files:
+      - frontend/src/__tests__/documentParser.test.ts
+      - frontend/src/__tests__/selectionContext.test.ts
+      - frontend/src/__tests__/outputParser.test.ts
+
+  - id: frontend-feature-latex-editor
+    path: frontend/src/features/latex-editor
+    kind: feature-module
+    description: Self-contained CodeMirror 6 LaTeX editor module + annotation decoration plugin + Yjs collaboration extensions.
+    entry_files:
+      - frontend/src/features/latex-editor/index.ts
+      - frontend/src/features/latex-editor/LatexEditor.tsx
+      - frontend/src/features/latex-editor/extensions.ts
+      - frontend/src/features/latex-editor/collaboration-extensions.ts
+      - frontend/src/features/latex-editor/latex-language.ts
+      - frontend/src/features/latex-editor/theme.ts
+      - frontend/src/features/latex-editor/annotation-decorations.ts
+
+  - id: frontend-feature-settings
+    path: frontend/src/features/settings
+    kind: feature-module
+    description: Provider registry UI + Project settings dialog (member management panel) — Radix Dialog for add/probe/activate/delete providers and invite/remove project collaborators.
+    entry_files:
+      - frontend/src/features/settings/index.ts
+      - frontend/src/features/settings/SettingsDialog.tsx
+      - frontend/src/features/settings/ProjectSettingsDialog.tsx
+      - frontend/src/features/settings/ProjectMembersPanel.tsx
+      - frontend/src/features/settings/settings.css
+
+  - id: frontend-feature-annotation-panel
+    path: frontend/src/features/annotation-panel
+    kind: feature-module
+    description: Annotation card panel — renders annotations / suggestions / risks / user-comments; hosts CommentComposer and continue composer; integrates with mention system for @-mention routing to agents / workflows / files.
+    entry_files:
+      - frontend/src/features/annotation-panel/index.ts
+      - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+      - frontend/src/features/annotation-panel/CommentComposer.tsx
+      - frontend/src/features/annotation-panel/annotation-panel.css
+
+  - id: frontend-feature-right-panel
+    path: frontend/src/features/right-panel
+    kind: feature-module
+    description: |
+      Right-side tabbed panel — Discussion, Team management, Workflow tab,
+      Workflow Definitions panel + canvas editor, Run history. Hosts the
+      workflow-canvas subsurface.
+    entry_files:
+      - frontend/src/features/right-panel/RightPanel.tsx
+      - frontend/src/features/right-panel/DiscussionTab.tsx
+      - frontend/src/features/right-panel/TeamTab.tsx
+      - frontend/src/features/right-panel/WorkflowTab.tsx
+      - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+      - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+      - frontend/src/features/right-panel/RunHistoryTab.tsx
+      - frontend/src/features/right-panel/discussion.css
+      - frontend/src/features/right-panel/right-panel.css
+
+  - id: frontend-feature-workflow-canvas
+    path: frontend/src/features/right-panel/workflow-canvas
+    kind: feature-module
+    description: Visual workflow canvas (react-flow / @xyflow/react) for building multi-agent workflows. Supports agent (atomic) + loop (container) nodes with arbitrary nesting. Includes test-run panel.
+    entry_files:
+      - frontend/src/features/right-panel/workflow-canvas/index.ts
+      - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+      - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+      - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+      - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+      - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+      - frontend/src/features/right-panel/workflow-canvas/health.ts
+      - frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
+
+  - id: frontend-feature-file-tree
+    path: frontend/src/features/file-tree
+    kind: feature-module
+    description: Left-column project tree + outline list (Overleaf-style). Reads from `filesystemStore`; supports rename / create / delete / drag-and-drop.
+    entry_files:
+      - frontend/src/features/file-tree/index.ts
+      - frontend/src/features/file-tree/FileTree.tsx
+      - frontend/src/features/file-tree/OutlineList.tsx
+      - frontend/src/features/file-tree/file-tree.css
+
+  - id: frontend-feature-preview
+    path: frontend/src/features/preview
+    kind: feature-module
+    description: Right-column preview renderers — LaTeX (PDF via latexmk + PDF.js) and Markdown (markdown-it + KaTeX).
+    entry_files:
+      - frontend/src/features/preview/index.ts
+      - frontend/src/features/preview/LatexPreview.tsx
+      - frontend/src/features/preview/MarkdownPreview.tsx
+      - frontend/src/features/preview/latex-preview.css
+      - frontend/src/features/preview/markdown-preview.css
+
+  - id: frontend-feature-topbar
+    path: frontend/src/features/topbar
+    kind: feature-module
+    description: Top bar — app title, ProviderBadge, view controls, NotificationBell (unread count + dropdown), PresenceIndicator (online collaborator avatars), UserMenu.
+    entry_files:
+      - frontend/src/features/topbar/index.ts
+      - frontend/src/features/topbar/Topbar.tsx
+      - frontend/src/features/topbar/ProviderBadge.tsx
+      - frontend/src/features/topbar/ViewControl.tsx
+      - frontend/src/features/topbar/UserMenu.tsx
+      - frontend/src/features/topbar/NotificationBell.tsx
+      - frontend/src/features/topbar/PresenceIndicator.tsx
+      - frontend/src/features/topbar/topbar.css
+      - frontend/src/features/topbar/notification-bell.css
+      - frontend/src/features/topbar/presence-indicator.css
+
+  - id: frontend-feature-workspace-center
+    path: frontend/src/features/workspace-center
+    kind: feature-module
+    description: Center workspace column composition — editor + toolbar + annotation column + preview column. Hosts the editor mount and integrates annotation decorations + selection sync.
+    entry_files:
+      - frontend/src/features/workspace-center/index.ts
+      - frontend/src/features/workspace-center/EditorColumn.tsx
+      - frontend/src/features/workspace-center/EditorToolbar.tsx
+      - frontend/src/features/workspace-center/AnnotationColumn.tsx
+      - frontend/src/features/workspace-center/PreviewColumn.tsx
+      - frontend/src/features/workspace-center/workspace-center.css
+
+  - id: frontend-feature-shared
+    path: frontend/src/features/shared
+    kind: feature-module
+    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher), CollaborationStatus (Yjs connection indicator + peer avatars).
+    entry_files:
+      - frontend/src/features/shared/MentionInput.tsx
+      - frontend/src/features/shared/fileSizeGate.ts
+      - frontend/src/features/shared/mention-input.css
+      - frontend/src/features/shared/toast.tsx
+      - frontend/src/features/shared/ProjectEventBridge.tsx
+      - frontend/src/features/shared/CollaborationStatus.tsx
+      - frontend/src/features/shared/collaboration-status.css
+
+  - id: frontend-build-tooling
+    path: frontend
+    kind: build-tooling
+    description: Vite, TypeScript, ESLint, Tailwind, PostCSS configuration for the frontend.
+    entry_files:
+      - frontend/vite.config.ts
+      - frontend/tsconfig.json
+      - frontend/tsconfig.app.json
+      - frontend/tsconfig.node.json
+      - frontend/eslint.config.js
+      - frontend/tailwind.config.js
+
+  - id: frontend-public
+    path: frontend/public
+    kind: static-assets
+    description: Static assets served as-is by Vite (favicon, icon sprite).
+    entry_files:
+      - frontend/public/favicon.svg
+      - frontend/public/icons.svg
+
+  # ── Repo-root tooling (outside src/) ─────────────────────────────
+  - id: repo-root
+    path: ../
+    kind: tooling
+    description: Repo-root tooling, metadata, and the Dify launcher wrapper.
+    entry_files:
+      - ../.gitignore
+      - ../start.sh
+      - ../scripts/dify.sh
+      - ../README.md
+      - ../README_EN.md
+      - ../AGENTS.md
+      - ../HANDBOOK.md
+
 capability_routes:
   project-foundation:
-    primary_module: acp-capability
+    primary_module: acp-support
     supporting_modules:
-      - acp-support
       - acp-kernel
+      - acp-capability
+      - acp-version
+      - docs-planning
+      - repo-root
+
+  frontend-workspace:
+    primary_module: frontend-app-shell
+    supporting_modules:
+      - frontend
+      - frontend-feature-topbar
+      - frontend-feature-workspace-center
+      - frontend-public
+
+  frontend-right-panel:
+    primary_module: frontend-feature-right-panel
+    supporting_modules:
+      - frontend-feature-workflow-canvas
+      - frontend-stores
+      - frontend-services
+
+  frontend-file-tree:
+    primary_module: frontend-feature-file-tree
+    supporting_modules:
+      - frontend-stores
+      - frontend-services
+
+  frontend-preview:
+    primary_module: frontend-feature-preview
+    supporting_modules:
+      - frontend-feature-workspace-center
+      - frontend-stores
+
+  frontend-topbar:
+    primary_module: frontend-feature-topbar
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-stores
+      - frontend-services
+
+  collaboration:
+    primary_module: backend-api
+    supporting_modules:
+      - backend-app-core
+      - backend-services
+      - frontend-feature-settings
+      - frontend-feature-topbar
+      - frontend-stores
+      - frontend-services
+      - frontend-feature-shared
+      - collab-server
+    note: |
+      Multi-user collaboration surface: ProjectMember model + service,
+      role-based access control (owner/editor/viewer), project sharing API,
+      in-app notifications (invite events), SSE-based online presence
+      tracking, PresenceIndicator avatars, NotificationBell dropdown.
+      Frontend ProjectEventBridge dispatches real-time events into stores.
+      Privacy principle: Agent/workflow assets are personal — each user's
+      workflow definitions, runs, conversations, annotations, evaluations,
+      and review states are isolated by user_id. Collaborators share the
+      document but never see each other's Agent interactions.
+
+  real-time-editing:
+    primary_module: collab-server
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-feature-latex-editor
+      - frontend-stores
+      - frontend-services
+      - frontend-feature-shared
+    note: |
+      Yjs CRDT-based real-time collaborative editing (Phase 1).
+      Architecture: independent Node.js collab-server (:4444) running
+      y-protocols sync + awareness over WebSocket, with LevelDB persistence.
+      Frontend uses y-codemirror.next to bind Y.Text to CodeMirror 6.
+      Backend provides /api/auth/verify for WebSocket auth,
+      /api/auth/collab-token for frontend token retrieval,
+      /api/internal/docs/{id}/content for initial doc seeding,
+      and collab_snapshot_service for periodic text → DB snapshots.
+      Awareness protocol shows remote cursors + selections with user colors.
+      Annotation positions still tracked via mapRangeThrough (Phase 2 will
+      migrate to Y.RelativePosition).
+
+  agent-privacy:
+    primary_module: backend-api
+    supporting_modules:
+      - backend-app-core
+      - backend-services
+      - frontend-feature-shared
+    note: |
+      Agent privacy isolation (principle: "Agent 和 workflow 属于个人隐私资产").
+      6 tables carry user_id: WorkflowDefinition, WorkflowRun, Conversation,
+      Annotation, AnnotationEvaluation, AnnotationReviewState.
+      All list/get/mutate endpoints filter by current user. Startup migration
+      backfills existing rows to project owner. SSE events include user_id;
+      ProjectEventBridge filters out events from other users.
+
+  frontend-workspace-center:
+    primary_module: frontend-feature-workspace-center
+    supporting_modules:
+      - frontend-feature-latex-editor
+      - frontend-feature-annotation-panel
+      - frontend-feature-preview
+
+  frontend-settings:
+    primary_module: frontend-feature-settings
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-stores
+      - frontend-services
+
+  frontend-annotations:
+    primary_module: frontend-feature-annotation-panel
+    supporting_modules:
+      - frontend-feature-latex-editor
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
+      - frontend-types
+
+  frontend-conversations:
+    primary_module: frontend-feature-right-panel
+    supporting_modules:
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
+
+  frontend-mention-system:
+    primary_module: frontend-feature-shared
+    supporting_modules:
+      - frontend-services
+      - frontend-feature-annotation-panel
+      - frontend-feature-right-panel
+
+  frontend-stores:
+    primary_module: frontend-stores
+    supporting_modules:
+      - frontend-services
+      - frontend-types
+
+  latex-editor:
+    primary_module: frontend-feature-latex-editor
+    supporting_modules:
+      - frontend-feature-workspace-center
+      - frontend-types
+
+  latex-compile:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-preview
+      - frontend-stores
+
+  domain-model:
+    primary_module: frontend-types
+    supporting_modules:
+      - frontend-app-shell
+      - frontend-feature-latex-editor
+      - frontend-stores
+
+  backend-service:
+    primary_module: backend-app-core
+    supporting_modules:
+      - backend
+      - backend-api
+      - backend-services
+
+  workflow-integration:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-settings
+      - frontend-stores
+      - repo-root
+
+  workflow-orchestration:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-workflow-canvas
+      - frontend-feature-right-panel
+      - frontend-stores
+
+  build-tooling:
+    primary_module: frontend-build-tooling
+    supporting_modules:
+      - frontend
+      - backend

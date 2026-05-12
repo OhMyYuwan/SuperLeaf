@@ -1,0 +1,680 @@
+/* Workflow canvas — palette / canvas / inspector. */
+
+.wf-canvas-root {
+  display: grid;
+  grid-template-columns: var(--wf-palette-width, 200px) 6px minmax(0, 1fr);
+  height: 560px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.wf-canvas-root.has-inspector {
+  grid-template-columns: var(--wf-palette-width, 200px) 6px minmax(0, 1fr) 280px;
+}
+
+.wf-canvas-wrapper {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 40%),
+    rgba(2, 6, 23, 0.55);
+}
+
+/* Palette ------------------------------------------------------------ */
+.wf-palette {
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 12px 10px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.wf-palette.compact {
+  padding: 12px 6px;
+}
+
+.wf-palette.compact .wf-palette-header {
+  text-align: center;
+  font-size: 10px;
+}
+
+.wf-palette-resizer {
+  cursor: col-resize;
+  background: rgba(148, 163, 184, 0.12);
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  transition: background 0.15s ease;
+}
+
+.wf-palette-resizer:hover {
+  background: rgba(249, 115, 22, 0.35);
+}
+
+.wf-palette-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.85);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.wf-palette-hint {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.7);
+  margin-bottom: 10px;
+}
+
+.wf-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  cursor: grab;
+  background: rgba(15, 23, 42, 0.55);
+  color: #e5e7eb;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.wf-palette.compact .wf-palette-item {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.wf-palette.compact .wf-palette-icon {
+  font-size: 20px;
+}
+
+.wf-palette-item:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.wf-palette-item:active {
+  cursor: grabbing;
+}
+
+.wf-palette-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.wf-palette-labels {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-palette-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e5e7eb;
+}
+
+.wf-palette-hint-sm {
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.7);
+  margin-top: 2px;
+}
+
+.wf-palette-footnote {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.22);
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.7);
+  line-height: 1.6;
+}
+
+.wf-footnote-line {
+  margin-bottom: 2px;
+}
+
+/* Nodes -------------------------------------------------------------- */
+.wf-node {
+  position: relative;
+  min-width: 160px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  color: #e5e7eb;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.wf-node.selected {
+  border-color: rgba(59, 130, 246, 0.7);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 10px 22px rgba(0, 0, 0, 0.35);
+}
+
+.wf-node.wf-run-running {
+  border-color: rgba(249, 115, 22, 0.85);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.24), 0 0 18px rgba(249, 115, 22, 0.22);
+}
+
+.wf-node.wf-run-completed {
+  border-color: rgba(34, 197, 94, 0.75);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18), 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.wf-node.wf-run-failed {
+  border-color: rgba(239, 68, 68, 0.85);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.22), 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.wf-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.wf-head-agent {
+  background: rgba(59, 130, 246, 0.28);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.45);
+}
+
+/* Input / output boundary nodes -------------------------------------- */
+.wf-node-input,
+.wf-node-output {
+  min-width: 150px;
+  background: rgba(15, 23, 42, 0.9) !important;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  overflow: visible;
+  font-size: 12px;
+  color: #e5e7eb;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.wf-node-input * {
+  background: transparent !important;
+}
+
+.wf-node-output * {
+  background: transparent !important;
+}
+
+.wf-boundary-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: #f97316 !important;
+  border: 2px solid #fed7aa !important;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.28), 0 0 12px rgba(249, 115, 22, 0.65);
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto;
+}
+
+.wf-node-input {
+  border-color: rgba(34, 197, 94, 0.5);
+}
+.wf-node-input.selected {
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.35), 0 10px 22px rgba(0, 0, 0, 0.35);
+}
+.wf-head-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(34, 197, 94, 0.22);
+  color: #bbf7d0;
+  border-bottom: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.wf-node-output {
+  border-color: rgba(168, 85, 247, 0.55);
+}
+.wf-node-output.selected {
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.35), 0 10px 22px rgba(0, 0, 0, 0.35);
+}
+.wf-head-output {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(168, 85, 247, 0.22);
+  color: #e9d5ff;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.45);
+}
+
+.wf-node-body {
+  padding: 8px 10px;
+  background: transparent;
+}
+
+.wf-node-label {
+  font-weight: 500;
+  color: #e5e7eb;
+  margin-bottom: 4px;
+}
+
+.wf-node-config {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.wf-node-config.missing {
+  color: #fca5a5;
+  font-style: italic;
+}
+
+/* Loop container ----------------------------------------------------- */
+/* Loop sits underneath Agents as a background frame. Header only — body
+   is transparent so Agents placed on top remain fully visible and clickable. */
+.wf-node-loop {
+  width: 100%;
+  height: 100%;
+  background: rgba(239, 68, 68, 0.04);
+  border: 1px dashed rgba(239, 68, 68, 0.45);
+  border-radius: 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+/* Header + handles must remain interactive so the Loop can be selected and connected. */
+.wf-node-loop .wf-loop-header,
+.wf-node-loop .react-flow__handle,
+.wf-node-loop .react-flow__resize-control {
+  pointer-events: auto;
+}
+
+.wf-node-loop.selected {
+  border-color: rgba(239, 68, 68, 0.85);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+}
+
+.wf-node-loop.has-unhealthy {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.wf-node-loop.has-unhealthy .wf-loop-header {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+  border-bottom-color: rgba(245, 158, 11, 0.45);
+}
+
+.wf-loop-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fecaca;
+  font-size: 11px;
+  font-weight: 600;
+  border-bottom: 1px dashed rgba(239, 68, 68, 0.4);
+  flex-shrink: 0;
+}
+
+.wf-loop-title {
+  flex: 1;
+}
+
+.wf-loop-rounds {
+  font-family: ui-monospace, monospace;
+  background: rgba(239, 68, 68, 0.2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+/* Inspector ---------------------------------------------------------- */
+.wf-inspector {
+  border-left: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 12px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.wf-inspector-empty {
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 12px;
+  padding-top: 40px;
+  text-align: center;
+}
+
+.wf-inspector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.wf-inspector-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.wf-inspector-actions button {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.wf-inspector .form-group {
+  margin-bottom: 12px;
+}
+
+.wf-inspector .form-group label {
+  display: block;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.wf-inspector .form-group input,
+.wf-inspector .form-group textarea,
+.wf-inspector .form-group select {
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 12px;
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 7px;
+  color: #e5e7eb;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.wf-inspector .form-group input:focus,
+.wf-inspector .form-group textarea:focus,
+.wf-inspector .form-group select:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.wf-inspector .form-group input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.form-hint-sm {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.75);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.form-label-inline {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 12px !important;
+  color: #e5e7eb !important;
+}
+
+.form-label-inline input[type='checkbox'] {
+  width: auto !important;
+  margin: 0;
+  accent-color: #3b82f6;
+}
+
+.form-readonly-list {
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  color: rgba(226, 232, 240, 0.85);
+}
+
+.form-readonly-list.empty {
+  font-style: italic;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.form-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-file-list li {
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
+
+.form-hint-warning {
+  color: #fbbf24;
+}
+
+.wf-inspector .form-group select.input-warning,
+.wf-inspector .form-group input.input-warning {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.wf-inspector .form-group select option {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.wf-inspector .form-group select option:disabled,
+.wf-inspector .form-group select option.option-disabled {
+  color: rgba(148, 163, 184, 0.55);
+  font-style: italic;
+}
+
+.wf-inspector .form-group select optgroup {
+  color: rgba(148, 163, 184, 0.75);
+  background: #0f172a;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+/* Disabled / broken node visual treatment */
+.wf-node.wf-node-disabled {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.wf-node.wf-node-disabled .wf-head-agent {
+  background: rgba(107, 114, 128, 0.35);
+  border-bottom-color: rgba(107, 114, 128, 0.5);
+}
+
+.wf-node-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.wf-node-badge.danger {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+}
+
+.wf-node-badge.loop-member {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  text-transform: none;
+  font-family: ui-monospace, monospace;
+}
+
+/* Agent visually tagged as Loop member — subtle red-tinted border */
+.wf-node.wf-node-in-loop {
+  border-color: rgba(239, 68, 68, 0.5);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.15), 0 8px 18px rgba(0, 0, 0, 0.25);
+}
+
+/* React Flow overrides — its default stylesheet is light-themed. ------ */
+.wf-canvas-wrapper .react-flow__node-input,
+.wf-canvas-wrapper .react-flow__node-output {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  box-shadow: none;
+}
+
+.wf-canvas-wrapper .react-flow__panel {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: #e5e7eb;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+}
+
+.wf-canvas-wrapper .react-flow__controls {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+}
+
+.wf-canvas-wrapper .react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  color: #e5e7eb;
+  width: 26px;
+  height: 26px;
+  transition: background 0.15s ease;
+}
+.wf-canvas-wrapper .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.wf-canvas-wrapper .react-flow__controls-button:hover {
+  background: rgba(59, 130, 246, 0.18);
+}
+.wf-canvas-wrapper .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.wf-canvas-wrapper .react-flow__minimap {
+  background: rgba(2, 6, 23, 0.85) !important;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.wf-canvas-wrapper .react-flow__minimap-mask {
+  fill: rgba(2, 6, 23, 0.6);
+}
+
+.wf-canvas-wrapper .react-flow__background {
+  background-color: transparent;
+}
+
+.wf-canvas-wrapper .react-flow__edge-path {
+  stroke: rgba(148, 163, 184, 0.55);
+  stroke-width: 1.5;
+}
+.wf-canvas-wrapper .react-flow__edge.selected .react-flow__edge-path,
+.wf-canvas-wrapper .react-flow__edge:focus .react-flow__edge-path {
+  stroke: #60a5fa;
+  stroke-width: 2;
+}
+.wf-canvas-wrapper .react-flow__edge.animated .react-flow__edge-path {
+  stroke: rgba(96, 165, 250, 0.9);
+}
+
+.wf-canvas-wrapper .react-flow__handle {
+  background: #60a5fa;
+  border: 2px solid rgba(2, 6, 23, 0.85);
+  width: 10px;
+  height: 10px;
+}
+
+.wf-canvas-wrapper .react-flow__attribution {
+  background: rgba(15, 23, 42, 0.6);
+  color: rgba(148, 163, 184, 0.8);
+  padding: 2px 6px;
+}
+
+.wf-canvas-wrapper .react-flow__attribution a {
+  color: rgba(148, 163, 184, 0.85);
+}
+
+/* Loop resizer handles ------------------------------------------------ */
+.wf-loop-resizer-line {
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  border-width: 2px !important;
+}
+
+.wf-loop-resizer-handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: rgba(59, 130, 246, 0.8) !important;
+  border: 1px solid rgba(59, 130, 246, 1) !important;
+  border-radius: 2px !important;
+}
+
+/* Loop handles — one visual dot per side. Each side has two stacked Handle
+   elements (one source, one target) at the exact same pixel; React Flow
+   auto-selects by drag direction. Membership is implied by direction:
+     - drag FROM Loop port → Agent : Loop is source → Agent is INTERNAL
+     - drag FROM Agent → Loop port : Loop is target → Agent is EXTERNAL
+
+   Left port  = external input + distribute to internal
+   Right port = aggregate from internal + emit to external
+
+   The "internal-direction" handles are declared with the OPPOSITE Position
+   so React Flow draws their edge tangent pointing INTO the Loop interior
+   (avoids the ugly outside-curve). CSS pins them back on top of their
+   sibling at the correct edge. */
+.wf-loop-handle {
+  width: 11px !important;
+  height: 11px !important;
+  background: #60a5fa !important;
+  border: 2px solid rgba(15, 23, 42, 0.9) !important;
+}
+
+.wf-loop-handle-in-source {
+  left: 0 !important;
+  right: auto !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+.wf-loop-handle-out-target {
+  left: auto !important;
+  right: 0 !important;
+  transform: translate(50%, -50%) !important;
+}
+
+/* Loop input/output virtual nodes were removed in favor of Loop's own handles.
+   Styles kept only for historical graph compatibility — unused in new graphs. */

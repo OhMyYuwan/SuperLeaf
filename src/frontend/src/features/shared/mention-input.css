@@ -1,0 +1,199 @@
+.mention-input-root {
+  position: relative;
+  width: 100%;
+}
+
+/* Stack wraps the mirror + the textarea so they overlay perfectly. */
+.mention-input-stack {
+  position: relative;
+  width: 100%;
+}
+
+.mention-input-textarea,
+.mention-input-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: var(--bg-input, transparent);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  padding: 6px 8px;
+  resize: vertical;
+  outline: none;
+  line-height: 1.5;
+}
+
+.mention-input-stack .mention-input-textarea {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  /* Make the textarea text invisible — the mirror behind shows the styled
+     copy, including colored mention spans. The caret stays visible because
+     it's drawn separately by the browser. */
+  color: transparent;
+  caret-color: #e5e7eb;
+}
+
+.mention-input-stack .mention-input-textarea::selection {
+  background: rgba(90, 143, 255, 0.35);
+  color: transparent;
+}
+
+.mention-input-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  color: #e5e7eb;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* Inline mention chips inside the mirror layer. */
+.mention-input-mirror .mention-tag {
+  display: inline;
+  padding: 0 3px;
+  margin: 0;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.32);
+  white-space: nowrap;
+}
+
+.mention-input-mirror .mention-tag-file {
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.mention-input-mirror .mention-tag-workflow {
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.mention-input-textarea:focus,
+.mention-input-text:focus {
+  border-color: var(--accent, #5a8fff);
+}
+
+.mention-input-textarea[disabled],
+.mention-input-text[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mention-menu {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  width: max-content;
+  min-width: 220px;
+  max-width: 420px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-elev, #1f1f1f);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  padding: 4px 0;
+}
+
+.mention-menu-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, rgba(255, 255, 255, 0.45));
+  padding: 6px 10px 2px;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: rgba(90, 143, 255, 0.18);
+}
+
+.mention-item-workflow:hover,
+.mention-item-workflow.active {
+  background: rgba(168, 85, 247, 0.2);
+}
+
+.mention-item-file:hover,
+.mention-item-file.active {
+  background: rgba(34, 197, 94, 0.18);
+}
+
+.mention-item.oversize {
+  opacity: 0.55;
+}
+
+.mention-icon {
+  flex: 0 0 16px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.mention-name {
+  flex: 0 1 auto;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-pin {
+  flex: 0 0 auto;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mention-path {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.4));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.mention-size-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(255, 180, 60, 0.18);
+  color: #ffc864;
+}
+
+.mention-size-badge.reject {
+  background: rgba(255, 80, 80, 0.18);
+  color: #ff8080;
+}

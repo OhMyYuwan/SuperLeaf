@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Project, WorkflowDefinition, WorkflowTestCase
+from ..models import Project, User, WorkflowDefinition, WorkflowTestCase
 from ..schemas import WorkflowTestCaseIn, WorkflowTestCaseOut
-from .deps import get_current_project
+from .deps import get_current_project, get_current_user
 
 router = APIRouter(
     prefix="/api/workflows/definitions/{definition_id}/test-cases",
@@ -24,10 +24,10 @@ router = APIRouter(
 
 
 def _require_definition(
-    db: Session, project: Project, definition_id: str
+    db: Session, project: Project, definition_id: str, user: User
 ) -> WorkflowDefinition:
     defn = db.get(WorkflowDefinition, definition_id)
-    if defn is None or defn.project_id != project.id:
+    if defn is None or defn.project_id != project.id or defn.user_id != user.id:
         raise HTTPException(404, "Workflow definition not found")
     return defn
 
@@ -37,8 +37,9 @@ def list_cases(
     definition_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> list[WorkflowTestCaseOut]:
-    _require_definition(db, project, definition_id)
+    _require_definition(db, project, definition_id, user)
     rows = (
         db.query(WorkflowTestCase)
         .filter(WorkflowTestCase.definition_id == definition_id)
@@ -54,8 +55,9 @@ def create_case(
     body: WorkflowTestCaseIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowTestCaseOut:
-    _require_definition(db, project, definition_id)
+    _require_definition(db, project, definition_id, user)
     case = WorkflowTestCase(
         definition_id=definition_id,
         name=body.name,
@@ -75,8 +77,9 @@ def update_case(
     body: WorkflowTestCaseIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowTestCaseOut:
-    _require_definition(db, project, definition_id)
+    _require_definition(db, project, definition_id, user)
     case = db.get(WorkflowTestCase, case_id)
     if case is None or case.definition_id != definition_id:
         raise HTTPException(404, "Test case not found")
@@ -94,8 +97,9 @@ def delete_case(
     case_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> None:
-    _require_definition(db, project, definition_id)
+    _require_definition(db, project, definition_id, user)
     case = db.get(WorkflowTestCase, case_id)
     if case is None or case.definition_id != definition_id:
         return None

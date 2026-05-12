@@ -511,6 +511,7 @@ class Annotation(Base):
     doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    is_global: Mapped[bool] = mapped_column(Boolean, default=False)
     kind: Mapped[str] = mapped_column(String(24))  # annotation | suggestion | risk | user-comment
     status: Mapped[str] = mapped_column(String(24), default="pending")
     range_from: Mapped[int] = mapped_column(Integer, default=0)

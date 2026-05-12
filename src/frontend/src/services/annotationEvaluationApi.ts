@@ -92,6 +92,8 @@ export interface AnnotationDto {
   id: string
   doc_id: string
   project_id: string
+  user_id: string
+  is_global: boolean
   kind: 'annotation' | 'suggestion' | 'risk' | 'user-comment'
   status: string
   range_from: number
@@ -142,6 +144,7 @@ export interface AnnotationPatchIn {
   range_to?: number
   content?: string
   thread?: AnnotationThreadMessageDto[]
+  publish?: boolean
 }
 
 const enc = encodeURIComponent

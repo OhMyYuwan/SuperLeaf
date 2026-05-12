@@ -15,10 +15,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Check, Columns3, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
+import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
+import { useUserStore } from '../../stores/userStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
 import { EvaluationPanel } from './EvaluationPanel'
@@ -314,8 +315,10 @@ function AnnotationCard({
   onHover?: (hovering: boolean) => void
   onCompare: () => void
 }) {
+  const currentUserId = useUserStore((s) => s.currentUser?.id ?? '')
   const accept = useAnnotationStore((s) => s.accept)
   const remove = useAnnotationStore((s) => s.remove)
+  const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
   const reviewStatus = useAnnotationStore(
     (s) => s.reviewStatusByAnnotation[item.id] ?? 'open',
@@ -440,14 +443,17 @@ function AnnotationCard({
 
   const isResolved = item.status === 'archived'
   const isUserComment = item.kind === 'user-comment'
+  // Ownership: the creator (item.userId) is the owner.
+  const isOwner = item.userId === currentUserId
+  const isPublished = item.isGlobal
   // Check if the agent is still active (not disabled and exists)
   const agent = agents.find((a) => a.id === item.workflowId)
   const agentActive = agent && !agent.is_disabled
-  const agentDisabled = agent && agent.is_disabled
-  const agentDeleted = !agent && !!item.workflowId
+  const agentDisabled = isOwner && agent && agent.is_disabled
+  const agentDeleted = isOwner && !agent && !!item.workflowId
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
-  const canFollowUp = isUserComment || (!!item.workflowId && agentActive)
+  const canFollowUp = isOwner && (isUserComment || (!!item.workflowId && agentActive))
 
   return (
     <div
@@ -518,7 +524,7 @@ function AnnotationCard({
         workflows={workflowCandidatesForCard}
       />
 
-      {hasAgentOutput(item) && (
+      {isOwner && hasAgentOutput(item) && (
         <EvaluationPanel annotationId={item.id} />
       )}
 
@@ -574,9 +580,20 @@ function AnnotationCard({
         >
           <Check size={14} />
         </button>
-        <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
-          <Trash2 size={14} />
-        </button>
+        {isOwner && (
+          <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
+            <Trash2 size={14} />
+          </button>
+        )}
+        {isOwner && item.workflowId && (
+          <button
+            className={`ann-btn publish ${isPublished ? 'active' : ''}`}
+            onClick={() => publish(item.id)}
+            title={isPublished ? '撤销全局发布（恢复为私有）' : '发布为全局批注（所有协作者可见）'}
+          >
+            <Globe size={14} />
+          </button>
+        )}
         {agentDisabled && (
           <button
             className="ann-btn enable"

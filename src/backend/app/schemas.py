@@ -585,12 +585,15 @@ class AnnotationPatchIn(BaseModel):
     range_to: int | None = Field(default=None, ge=0)
     content: str | None = None
     thread: list[AnnotationThreadMessageIn] | None = None
+    publish: bool | None = None
 
 
 class AnnotationOut(BaseModel):
     id: str
     doc_id: str
     project_id: str
+    user_id: str
+    is_global: bool
     kind: str
     status: str
     range_from: int

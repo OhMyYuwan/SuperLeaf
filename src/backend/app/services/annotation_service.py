@@ -17,13 +17,11 @@ from sqlalchemy.orm import Session
 from ..models import Annotation
 
 
-def list_by_doc(db: Session, doc_id: str) -> list[Annotation]:
-    return (
-        db.query(Annotation)
-        .filter(Annotation.doc_id == doc_id)
-        .order_by(Annotation.created_at.asc(), Annotation.id.asc())
-        .all()
-    )
+def list_by_doc(db: Session, doc_id: str, *, user_id: str = "") -> list[Annotation]:
+    q = db.query(Annotation).filter(Annotation.doc_id == doc_id)
+    if user_id:
+        q = q.filter(Annotation.user_id == user_id)
+    return q.order_by(Annotation.created_at.asc(), Annotation.id.asc()).all()
 
 
 def get(db: Session, annotation_id: str) -> Annotation | None:
@@ -36,6 +34,7 @@ def upsert(
     annotation_id: str,
     doc_id: str,
     project_id: str,
+    user_id: str = "",
     kind: str,
     status: str,
     range_from: int,
@@ -89,6 +88,7 @@ def upsert(
         id=annotation_id,
         doc_id=doc_id,
         project_id=project_id,
+        user_id=user_id,
         kind=kind,
         status=status,
         range_from=range_from,
@@ -149,6 +149,7 @@ def to_dict(row: Annotation) -> dict:
         "id": row.id,
         "doc_id": row.doc_id,
         "project_id": row.project_id,
+        "user_id": row.user_id,
         "kind": row.kind,
         "status": row.status,
         "range_from": row.range_from,

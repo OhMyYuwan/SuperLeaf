@@ -34,6 +34,7 @@ import { useFilesystemStore } from '../stores/filesystemStore'
 import { useViewStore } from '../stores/viewStore'
 import { useProjectStore } from '../stores/projectStore'
 import { resetProjectScopedStores } from '../stores/_reset'
+import { BackendError } from '../services/backendApi'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
@@ -118,6 +119,8 @@ export function WorkspacePage() {
   } | null>(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const projectReady = !!projectId && currentProjectId === projectId
 
   const handlePanelLayout = (sizes: number[]) => {
     let panelIndex = 0
@@ -161,28 +164,34 @@ export function WorkspacePage() {
   // opens or switches. server-wins overwrite of the local zustand persist
   // cache (REQ-0034).
   useEffect(() => {
+    if (!projectReady) return
     if (!activeDocumentId) return
     void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
-  }, [activeDocumentId])
+  }, [activeDocumentId, projectReady])
 
   // Document content is no longer persisted (servers is the source of truth,
   // see documentStore persist config). On mount / hard refresh, if we have a
   // persisted activeDocumentId but no in-memory copy, fetch it.
   useEffect(() => {
+    if (!projectReady) return
     if (!activeDocumentId) return
     if (documents[activeDocumentId]) return
     void loadBackendDoc(activeDocumentId).catch((err) => {
       console.error('[workspace] initial loadBackendDoc failed', err)
+      if (err instanceof BackendError && (err.status === 400 || err.status === 404)) {
+        useDocumentStore.setState({ activeDocumentId: null })
+      }
     })
     // documents intentionally excluded — we only want this on mount / activeId change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDocumentId])
+  }, [activeDocumentId, projectReady])
 
   // Poor-man's multi-device sync: when the tab regains focus or visibility,
   // re-hydrate the active doc + its annotations so changes made on another
   // device/browser show up. Overleaf does this via WebSocket reconnection
   // catch-up; we'll add real-time in phase 2.
   useEffect(() => {
+    if (!projectReady) return
     if (!activeDocumentId) return
     const refresh = () => {
       void refreshFromBackend(activeDocumentId)
@@ -197,7 +206,7 @@ export function WorkspacePage() {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [activeDocumentId, refreshFromBackend])
+  }, [activeDocumentId, projectReady, refreshFromBackend])
 
   // Bootstrap on project switch ---------------------------------------------
   useEffect(() => {

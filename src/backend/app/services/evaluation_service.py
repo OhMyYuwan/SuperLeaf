@@ -34,13 +34,11 @@ from ..models import AnnotationEvaluation, AnnotationReviewState, Operation
 # --------------------------------------------------------------------------
 
 
-def list_evaluations_by_doc(db: Session, doc_id: str) -> list[AnnotationEvaluation]:
-    return (
-        db.query(AnnotationEvaluation)
-        .filter(AnnotationEvaluation.doc_id == doc_id)
-        .order_by(AnnotationEvaluation.created_at.asc(), AnnotationEvaluation.id.asc())
-        .all()
-    )
+def list_evaluations_by_doc(db: Session, doc_id: str, *, user_id: str = "") -> list[AnnotationEvaluation]:
+    q = db.query(AnnotationEvaluation).filter(AnnotationEvaluation.doc_id == doc_id)
+    if user_id:
+        q = q.filter(AnnotationEvaluation.user_id == user_id)
+    return q.order_by(AnnotationEvaluation.created_at.asc(), AnnotationEvaluation.id.asc()).all()
 
 
 def list_evaluations_for_annotation(
@@ -72,12 +70,14 @@ def create_evaluation(
     adoption: str,
     training_candidate: bool,
     context: dict,
+    user_id: str = "",
 ) -> AnnotationEvaluation:
     enriched_context = enrich_context(db, annotation_id, context)
     row = AnnotationEvaluation(
         id=eid,
         annotation_id=annotation_id,
         doc_id=doc_id,
+        user_id=user_id,
         target_type=target_type,
         target_id=target_id,
         verdict=verdict,
@@ -136,12 +136,14 @@ def set_review_status(
     annotation_id: str,
     doc_id: str,
     status: str,
+    user_id: str = "",
 ) -> AnnotationReviewState:
     row = db.get(AnnotationReviewState, annotation_id)
     if row is None:
         row = AnnotationReviewState(
             annotation_id=annotation_id,
             doc_id=doc_id,
+            user_id=user_id,
             status=status,
         )
         db.add(row)
@@ -153,12 +155,11 @@ def set_review_status(
     return row
 
 
-def list_review_states_by_doc(db: Session, doc_id: str) -> list[AnnotationReviewState]:
-    return (
-        db.query(AnnotationReviewState)
-        .filter(AnnotationReviewState.doc_id == doc_id)
-        .all()
-    )
+def list_review_states_by_doc(db: Session, doc_id: str, *, user_id: str = "") -> list[AnnotationReviewState]:
+    q = db.query(AnnotationReviewState).filter(AnnotationReviewState.doc_id == doc_id)
+    if user_id:
+        q = q.filter(AnnotationReviewState.user_id == user_id)
+    return q.all()
 
 
 # --------------------------------------------------------------------------

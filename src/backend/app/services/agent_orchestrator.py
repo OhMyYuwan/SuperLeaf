@@ -74,6 +74,7 @@ class WorkflowOrchestrator:
         *,
         workflow_def_id: str,
         project_id: str,
+        user_id: str = "",
         document_id: str,
         target_text: str,
         range_start: int,
@@ -90,6 +91,7 @@ class WorkflowOrchestrator:
         # Create workflow run record
         workflow_run = WorkflowRun(
             project_id=project_id,
+            user_id=user_id,
             provider_id="",  # Will be set per agent
             workflow_id="",  # Not a single-agent run
             workflow_definition_id=workflow_def_id,

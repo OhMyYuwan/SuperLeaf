@@ -55,6 +55,7 @@ def list_runs(
     limit: int = 50,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> list[WorkflowRunOut]:
     """List recent workflow runs, newest first.
 
@@ -62,7 +63,10 @@ def list_runs(
     capped at 200 to avoid pulling the entire history into memory.
     """
     limit = max(1, min(limit, 200))
-    q = db.query(WorkflowRun).filter(WorkflowRun.project_id == project.id)
+    q = db.query(WorkflowRun).filter(
+        WorkflowRun.project_id == project.id,
+        WorkflowRun.user_id == user.id,
+    )
     if document_id:
         q = q.filter(WorkflowRun.document_id == document_id)
     if workflow_id:
@@ -76,9 +80,10 @@ def get_run(
     run_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowRunOut:
     run = db.get(WorkflowRun, run_id)
-    if run is None or run.project_id != project.id:
+    if run is None or run.project_id != project.id or run.user_id != user.id:
         raise HTTPException(404, "Run not found")
     return WorkflowRunOut.model_validate(run)
 
@@ -88,9 +93,10 @@ def delete_run(
     run_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> None:
     run = db.get(WorkflowRun, run_id)
-    if run is None or run.project_id != project.id:
+    if run is None or run.project_id != project.id or run.user_id != user.id:
         return None
     db.delete(run)
     db.commit()
@@ -162,6 +168,7 @@ async def run_workflow(
     body: RunBody,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ):
     """Proxy a provider run as an SSE stream.
 
@@ -170,16 +177,17 @@ async def run_workflow(
     `outputs.text` for the existing annotation parser.
     """
     cw = db.get(CachedWorkflow, workflow_id)
-    if cw is None or cw.user_id != project.user_id:
+    if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
 
     svc = ProviderService(db)
-    provider = svc.get(cw.provider_id, user_id=project.user_id)
+    provider = svc.get(cw.provider_id, user_id=user.id)
     if provider is None:
         raise HTTPException(404, "Provider for this workflow is gone")
 
     run = WorkflowRun(
         project_id=project.id,
+        user_id=user.id,
         provider_id=provider.id,
         workflow_id=workflow_id,
         document_id=body.document_id,
@@ -396,13 +404,15 @@ def _extract_outputs(events: list[dict], provider_kind: str, accumulated_text: l
 def list_workflow_definitions(
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> list[WorkflowDefinitionOut]:
-    """List all workflow definitions for the current project."""
+    """List all workflow definitions for the current user in this project."""
     rows = (
         db.query(WorkflowDefinition)
         .filter(
             WorkflowDefinition.is_active == True,
             WorkflowDefinition.project_id == project.id,
+            WorkflowDefinition.user_id == user.id,
         )
         .order_by(WorkflowDefinition.updated_at.desc())
         .all()
@@ -415,10 +425,11 @@ def get_workflow_definition(
     definition_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowDefinitionOut:
     """Get a specific workflow definition."""
     wf = db.get(WorkflowDefinition, definition_id)
-    if wf is None or wf.project_id != project.id:
+    if wf is None or wf.project_id != project.id or wf.user_id != user.id:
         raise HTTPException(404, "Workflow definition not found")
     return WorkflowDefinitionOut.model_validate(wf)
 
@@ -428,10 +439,12 @@ def create_workflow_definition(
     body: WorkflowDefinitionIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowDefinitionOut:
     """Create a new workflow definition."""
     wf = WorkflowDefinition(
         project_id=project.id,
+        user_id=user.id,
         name=body.name,
         description=body.description,
         execution_mode=body.execution_mode,
@@ -450,10 +463,11 @@ def update_workflow_definition(
     body: WorkflowDefinitionIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> WorkflowDefinitionOut:
     """Update a workflow definition."""
     wf = db.get(WorkflowDefinition, definition_id)
-    if wf is None or wf.project_id != project.id:
+    if wf is None or wf.project_id != project.id or wf.user_id != user.id:
         raise HTTPException(404, "Workflow definition not found")
 
     wf.name = body.name
@@ -474,10 +488,11 @@ def delete_workflow_definition(
     definition_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> None:
     """Delete (deactivate) a workflow definition."""
     wf = db.get(WorkflowDefinition, definition_id)
-    if wf is None or wf.project_id != project.id:
+    if wf is None or wf.project_id != project.id or wf.user_id != user.id:
         return None
     wf.is_active = False
     db.commit()
@@ -489,6 +504,7 @@ async def execute_workflow_definition(
     body: RunBody,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ):
     """Execute a workflow definition with orchestration.
 
@@ -501,7 +517,7 @@ async def execute_workflow_definition(
     Either failure yields 409 with a code the frontend can branch on.
     """
     wf = db.get(WorkflowDefinition, definition_id)
-    if wf is None or wf.project_id != project.id:
+    if wf is None or wf.project_id != project.id or wf.user_id != user.id:
         raise HTTPException(404, "Workflow definition not found")
 
     boundary_error = _check_boundary_nodes(wf)
@@ -530,6 +546,7 @@ async def execute_workflow_definition(
             async for event in orchestrator.execute_workflow(
                 workflow_def_id=definition_id,
                 project_id=project.id,
+                user_id=user.id,
                 document_id=body.document_id,
                 target_text=target_text,
                 range_start=body.range_start,

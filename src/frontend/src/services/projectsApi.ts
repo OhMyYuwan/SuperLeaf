@@ -10,11 +10,13 @@ import { http } from './backendApi'
 
 export interface ProjectSummary {
   id: string
+  user_id: string
   name: string
   main_doc_id: string
   compiler: string
   created_at: string
   updated_at: string
+  my_role: 'owner' | 'editor' | 'viewer'
 }
 
 export interface ProjectCreate {

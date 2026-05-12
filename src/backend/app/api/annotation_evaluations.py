@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Doc, Project
+from ..models import Doc, Project, User
 from ..schemas import (
     EvaluationIn,
     EvaluationOut,
@@ -28,7 +28,7 @@ from ..schemas import (
 )
 from ..services import annotation_service, evaluation_service
 from ..services.event_bus import bus
-from .deps import get_current_project
+from .deps import get_current_project, get_current_user
 
 
 router = APIRouter(prefix="/api/annotations", tags=["annotation-evaluations"])
@@ -69,9 +69,10 @@ def list_evaluations(
     doc_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[EvaluationOut]:
     _ensure_doc(db, project, doc_id)
-    rows = evaluation_service.list_evaluations_by_doc(db, doc_id)
+    rows = evaluation_service.list_evaluations_by_doc(db, doc_id, user_id=user.id)
     return [_to_out(r) for r in rows]
 
 
@@ -85,6 +86,7 @@ def create_evaluation(
     body: EvaluationIn,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> EvaluationOut:
     _ensure_doc(db, project, body.doc_id)
@@ -103,6 +105,7 @@ def create_evaluation(
         adoption=body.adoption,
         training_candidate=body.training_candidate,
         context=body.context,
+        user_id=user.id,
     )
     db.commit()
     out = _to_out(row)
@@ -125,10 +128,13 @@ def patch_evaluation(
     body: EvaluationPatchIn,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> EvaluationOut:
     row = evaluation_service.get_evaluation(db, evaluation_id)
     if row is None or row.annotation_id != annotation_id:
+        raise HTTPException(404, "evaluation not found")
+    if row.user_id and row.user_id != user.id:
         raise HTTPException(404, "evaluation not found")
     _ensure_doc(db, project, row.doc_id)
     row = evaluation_service.update_evaluation(
@@ -161,10 +167,13 @@ def delete_evaluation(
     evaluation_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> None:
     row = evaluation_service.get_evaluation(db, evaluation_id)
     if row is None or row.annotation_id != annotation_id:
+        raise HTTPException(404, "evaluation not found")
+    if row.user_id and row.user_id != user.id:
         raise HTTPException(404, "evaluation not found")
     _ensure_doc(db, project, row.doc_id)
     doc_id = row.doc_id
@@ -189,6 +198,7 @@ def patch_review_status(
     body: ReviewStatusIn,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> ReviewStateOut:
     _ensure_doc(db, project, body.doc_id)
@@ -197,6 +207,7 @@ def patch_review_status(
         annotation_id=annotation_id,
         doc_id=body.doc_id,
         status=body.status,
+        user_id=user.id,
     )
     db.commit()
     out = ReviewStateOut(
@@ -222,9 +233,10 @@ def list_review_states(
     doc_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[ReviewStateOut]:
     _ensure_doc(db, project, doc_id)
-    rows = evaluation_service.list_review_states_by_doc(db, doc_id)
+    rows = evaluation_service.list_review_states_by_doc(db, doc_id, user_id=user.id)
     return [
         ReviewStateOut(
             annotation_id=r.annotation_id,
@@ -272,9 +284,10 @@ def list_annotations(
     doc_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[AnnotationOut]:
     _ensure_doc(db, project, doc_id)
-    rows = annotation_service.list_by_doc(db, doc_id)
+    rows = annotation_service.list_by_doc(db, doc_id, user_id=user.id)
     return [_ann_to_out(r) for r in rows]
 
 
@@ -283,6 +296,7 @@ def create_annotation(
     body: AnnotationIn,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> AnnotationOut:
     _ensure_doc(db, project, body.doc_id)
@@ -291,6 +305,7 @@ def create_annotation(
         annotation_id=body.id,
         doc_id=body.doc_id,
         project_id=project.id,
+        user_id=user.id,
         kind=body.kind,
         status=body.status,
         range_from=body.range_from,
@@ -326,10 +341,13 @@ def patch_annotation(
     body: AnnotationPatchIn,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> AnnotationOut:
     row = annotation_service.get(db, annotation_id)
     if row is None:
+        raise HTTPException(404, "annotation not found")
+    if row.user_id and row.user_id != user.id:
         raise HTTPException(404, "annotation not found")
     _ensure_doc(db, project, row.doc_id)
     annotation_service.patch(
@@ -356,11 +374,14 @@ def delete_annotation(
     annotation_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> None:
     row = annotation_service.get(db, annotation_id)
     if row is None:
         return  # idempotent delete
+    if row.user_id and row.user_id != user.id:
+        return  # not yours
     _ensure_doc(db, project, row.doc_id)
     doc_id = row.doc_id
     annotation_service.delete(db, row)

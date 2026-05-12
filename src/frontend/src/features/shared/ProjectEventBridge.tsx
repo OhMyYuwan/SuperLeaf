@@ -11,6 +11,7 @@
 
 import { useEffect } from 'react'
 import { useProjectStore } from '../../stores/projectStore'
+import { useUserStore } from '../../stores/userStore'
 import {
   useAnnotationStore,
   type AgentEvaluation,
@@ -25,6 +26,7 @@ import { projectEventStream, type ProjectEvent } from '../../services/projectEve
 
 export function ProjectEventBridge() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const currentUserId = useUserStore((s) => s.currentUser?.id ?? '')
 
   useEffect(() => {
     if (!currentProjectId) {
@@ -33,7 +35,7 @@ export function ProjectEventBridge() {
     }
     projectEventStream.start(currentProjectId, (evt: ProjectEvent) => {
       try {
-        dispatch(evt)
+        dispatch(evt, currentUserId)
       } catch (err) {
         console.warn('[event-bridge] failed to apply event', evt.type, err)
       }
@@ -41,13 +43,22 @@ export function ProjectEventBridge() {
     return () => {
       projectEventStream.stop()
     }
-  }, [currentProjectId])
+  }, [currentProjectId, currentUserId])
 
   return null
 }
 
-function dispatch(evt: ProjectEvent): void {
+function dispatch(evt: ProjectEvent, currentUserId: string): void {
   const p = evt.payload as Record<string, unknown>
+
+  // Agent-private events: skip if the event belongs to another user
+  if (evt.type.startsWith('annotation.')) {
+    const evtUserId = String(
+      (p.annotation as Record<string, unknown>)?.user_id ?? p.user_id ?? ''
+    )
+    if (evtUserId && currentUserId && evtUserId !== currentUserId) return
+  }
+
   switch (evt.type) {
     case 'annotation.review_status.changed': {
       const aid = String(p.annotation_id ?? '')

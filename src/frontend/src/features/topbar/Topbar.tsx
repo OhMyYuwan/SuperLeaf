@@ -10,6 +10,8 @@ import { Link } from 'react-router-dom'
 import { ProviderBadge } from './ProviderBadge'
 import { ViewControl } from './ViewControl'
 import { UserMenu } from './UserMenu'
+import { NotificationBell } from './NotificationBell'
+import { PresenceIndicator } from './PresenceIndicator'
 import { useProjectStore } from '../../stores/projectStore'
 import './topbar.css'
 
@@ -48,6 +50,7 @@ export function Topbar({
         <div className="subtitle">LaTeX-first 本地科研写作工作台</div>
       </div>
       <div className="topbar-actions">
+        <PresenceIndicator />
         <ProviderBadge
           reachable={backendReachable}
           providerName={providerName}
@@ -61,6 +64,7 @@ export function Topbar({
         <button className="ghost-btn" onClick={onOpenSettings}>
           <Settings2 size={16} /> 设置
         </button>
+        <NotificationBell />
         <UserMenu />
       </div>
     </header>

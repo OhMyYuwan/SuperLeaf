@@ -1,8 +1,9 @@
 """Shared FastAPI dependencies.
 
 `get_current_user` resolves the session cookie to a User; `get_current_project`
-chains on top to enforce ownership. Cross-user project access returns 404
-(not 403) so users cannot probe whether a project id belongs to someone else.
+chains on top to enforce ownership or membership. Cross-user project access
+returns 404 (not 403) so users cannot probe whether a project id belongs to
+someone else.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..database import get_session
 from ..models import Project, User
 from ..services.auth_service import AuthService
+from ..services.project_member_service import ProjectMemberService
 
 
 SESSION_COOKIE_NAME = "ylw_session"
@@ -56,8 +58,11 @@ def get_current_project(
     if not x_project_id:
         raise HTTPException(400, "Missing X-Project-Id header")
     project = db.get(Project, x_project_id)
-    # Hide existence from non-owners by returning the same 404 shape.
-    if project is None or project.user_id != user.id:
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    # Allow access if user is owner or member
+    member_svc = ProjectMemberService(db)
+    if not member_svc.has_access(x_project_id, user.id):
         raise HTTPException(404, "Project not found")
     return project
 
@@ -68,6 +73,27 @@ def get_project_from_path(
     user: User = Depends(get_current_user),
 ) -> Project:
     project = db.get(Project, project_id)
-    if project is None or project.user_id != user.id:
+    if project is None:
         raise HTTPException(404, "Project not found")
+    # Allow access if user is owner or member
+    member_svc = ProjectMemberService(db)
+    if not member_svc.has_access(project_id, user.id):
+        raise HTTPException(404, "Project not found")
+    return project
+
+
+def require_write_access(
+    x_project_id: str | None = Header(default=None, alias="X-Project-Id"),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> Project:
+    """Like get_current_project but also checks that the user can write (not viewer)."""
+    if not x_project_id:
+        raise HTTPException(400, "Missing X-Project-Id header")
+    project = db.get(Project, x_project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    member_svc = ProjectMemberService(db)
+    if not member_svc.can_write(x_project_id, user.id):
+        raise HTTPException(403, "Read-only access")
     return project

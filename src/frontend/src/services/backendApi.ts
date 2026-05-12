@@ -543,3 +543,39 @@ export const conversationApi = {
       { method: 'POST', body: JSON.stringify(body) },
     ),
 }
+
+// ---------------------------------------------------------------------------
+// Project members (multi-user collaboration)
+// ---------------------------------------------------------------------------
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  user_email: string
+  user_display_name: string
+  role: 'editor' | 'viewer'
+  status: string
+  created_at: string
+}
+
+export interface ProjectMemberAddIn {
+  email: string
+  role?: 'editor' | 'viewer'
+}
+
+export const projectMemberApi = {
+  list: (projectId: string) =>
+    http<ProjectMember[]>(`/api/projects/${encodeURIComponent(projectId)}/members`, { scope: 'global' }),
+  add: (projectId: string, body: ProjectMemberAddIn) =>
+    http<ProjectMember>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      scope: 'global',
+    }),
+  remove: (projectId: string, userId: string) =>
+    http<void>(`/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+      scope: 'global',
+    }),
+}

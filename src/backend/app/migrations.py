@@ -44,6 +44,7 @@ def run_migrations(engine: Engine) -> None:
         _add_project_id_columns(conn, bootstrap_pid)
         _add_user_id_columns(conn)
         _add_user_id_to_private_assets(conn)
+        _add_is_global_to_annotations(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -179,3 +180,17 @@ def _add_user_id_to_private_assets(conn) -> None:
                 f") WHERE user_id = ''"
             )
         )
+
+
+def _add_is_global_to_annotations(conn) -> None:
+    """Add `is_global` boolean to annotations table.
+
+    Existing annotations without an agent (workflow_id='') are global;
+    those with an agent are private.
+    """
+    if not _column_exists(conn, "annotations", "is_global"):
+        conn.execute(text("ALTER TABLE annotations ADD COLUMN is_global BOOLEAN DEFAULT 0"))
+    # Backfill: annotations without workflow_id are global
+    conn.execute(
+        text("UPDATE annotations SET is_global = 1 WHERE workflow_id = '' AND agent_name = ''")
+    )

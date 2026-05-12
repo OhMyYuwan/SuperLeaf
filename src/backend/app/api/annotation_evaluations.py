@@ -300,12 +300,16 @@ def create_annotation(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> AnnotationOut:
     _ensure_doc(db, project, body.doc_id)
+    # No agent involved → global annotation (visible to all collaborators).
+    # Has workflow_id or agent_name → private to the requesting user.
+    is_global = not body.workflow_id and not body.agent_name
     row, created = annotation_service.upsert(
         db,
         annotation_id=body.id,
         doc_id=body.doc_id,
         project_id=project.id,
         user_id=user.id,
+        is_global=is_global,
         kind=body.kind,
         status=body.status,
         range_from=body.range_from,
@@ -358,6 +362,8 @@ def patch_annotation(
         range_to=body.range_to,
         content=body.content,
         thread=([m.model_dump(mode="json") for m in body.thread] if body.thread is not None else None),
+        publish=body.publish,
+        acting_user_id=user.id,
     )
     db.commit()
     bus.publish(

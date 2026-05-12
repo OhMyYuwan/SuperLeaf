@@ -36,6 +36,10 @@ import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
 import { BackendError } from '../services/backendApi'
 
+let _getUserId: (() => string) | null = null
+export function registerUserIdGetter(fn: () => string) { _getUserId = fn }
+function getCurrentUserId(): string { return _getUserId?.() ?? '' }
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -66,6 +70,8 @@ function itemFromDto(d: AnnotationDto): AnnotationItem {
   return {
     id: d.id,
     documentId: d.doc_id,
+    userId: d.user_id ?? '',
+    isGlobal: d.is_global ?? false,
     workflowId: d.workflow_id,
     agentName: d.agent_name,
     kind: d.kind,
@@ -186,6 +192,8 @@ export interface ThreadMessage {
 export interface AnnotationItem {
   id: string
   documentId: string
+  userId: string
+  isGlobal: boolean
   workflowId: string
   agentName: string
   kind: CardKind
@@ -244,6 +252,7 @@ interface AnnotationState {
   remove: (id: string) => void
   archive: (id: string) => void
   restore: (id: string) => void
+  publish: (id: string) => void
   applyDocumentChange: (documentId: string, changes: DocChange[]) => void
   appendThread: (id: string, message: Omit<ThreadMessage, 'id' | 'createdAt'>) => void
   setConversationId: (id: string, conversationId: string) => void
@@ -330,9 +339,12 @@ export const useAnnotationStore = create<AnnotationState>()(
 
   createUserComment: ({ documentId, range, targetText, content, mentionedAgentId, mentionedAgentName, attachedFiles }) => {
     const id = uuid()
+    const isGlobal = !mentionedAgentId
     const item: AnnotationItem = {
       id,
       documentId,
+      userId: getCurrentUserId(),
+      isGlobal,
       workflowId: mentionedAgentId ?? '',
       agentName: mentionedAgentName ?? '',
       kind: 'user-comment',
@@ -458,6 +470,23 @@ export const useAnnotationStore = create<AnnotationState>()(
         return { items: { ...state.items, [id]: { ...cur, status: prev.status } } }
       })
       showToast(`未能恢复批注：${errMsg(err)}`, { level: 'error' })
+    })
+  },
+
+  publish: (id) => {
+    const item = get().items[id]
+    if (!item) return
+    const isCurrentlyGlobal = item.isGlobal
+    // Optimistic toggle
+    set((state) => ({
+      items: { ...state.items, [id]: { ...state.items[id], isGlobal: !isCurrentlyGlobal } },
+    }))
+    void annotationEvaluationApi.patchAnnotation(id, { publish: !isCurrentlyGlobal }).catch((err) => {
+      // Rollback
+      set((state) => ({
+        items: { ...state.items, [id]: { ...state.items[id], isGlobal: isCurrentlyGlobal } },
+      }))
+      showToast(`未能${isCurrentlyGlobal ? '撤销发布' : '发布'}批注：${errMsg(err)}`, { level: 'error' })
     })
   },
 
@@ -879,6 +908,8 @@ function makeFromAnnotation(
   return {
     id: a.id,
     documentId,
+    userId: getCurrentUserId(),
+    isGlobal: false,
     workflowId,
     agentName,
     kind: 'annotation',
@@ -904,6 +935,8 @@ function makeFromSuggestion(
   return {
     id: s.id,
     documentId,
+    userId: getCurrentUserId(),
+    isGlobal: false,
     workflowId,
     agentName,
     kind: 'suggestion',
@@ -931,6 +964,8 @@ function makeFromRisk(
   return {
     id: r.id,
     documentId,
+    userId: getCurrentUserId(),
+    isGlobal: false,
     workflowId,
     agentName,
     kind: 'risk',

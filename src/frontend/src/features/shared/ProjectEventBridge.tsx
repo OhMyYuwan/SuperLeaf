@@ -51,12 +51,21 @@ export function ProjectEventBridge() {
 function dispatch(evt: ProjectEvent, currentUserId: string): void {
   const p = evt.payload as Record<string, unknown>
 
-  // Agent-private events: skip if the event belongs to another user
+  // Agent-private events: skip if the annotation is private and belongs to another user.
+  // Special case: if an annotation.updated event makes a previously-global annotation
+  // private (unpublished), we need to REMOVE it from the local store.
   if (evt.type.startsWith('annotation.')) {
-    const evtUserId = String(
-      (p.annotation as Record<string, unknown>)?.user_id ?? p.user_id ?? ''
-    )
-    if (evtUserId && currentUserId && evtUserId !== currentUserId) return
+    const ann = p.annotation as Record<string, unknown> | undefined
+    const evtIsGlobal = ann?.is_global ?? p.is_global ?? false
+    const evtUserId = String(ann?.user_id ?? p.user_id ?? '')
+    const isOtherUser = evtUserId && currentUserId && evtUserId !== currentUserId
+    if (!evtIsGlobal && isOtherUser) {
+      // If this is an update that made the annotation private, remove it locally
+      if (evt.type === 'annotation.updated' && ann?.id) {
+        useAnnotationStore.getState().applyRemoteAnnotationDelete(String(ann.id))
+      }
+      return
+    }
   }
 
   switch (evt.type) {
@@ -128,6 +137,8 @@ function annotationFromDto(d: AnnotationDto): AnnotationItem {
   return {
     id: d.id,
     documentId: d.doc_id,
+    userId: d.user_id ?? '',
+    isGlobal: d.is_global ?? false,
     workflowId: d.workflow_id,
     agentName: d.agent_name,
     kind: d.kind as CardKind,

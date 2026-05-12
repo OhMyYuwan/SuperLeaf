@@ -463,6 +463,20 @@
 .ann-btn.continue:hover:not(:disabled) {
   background: rgba(59, 130, 246, 0.32);
 }
+.ann-btn.publish {
+  background: rgba(156, 163, 175, 0.18);
+  color: #9ca3af;
+}
+.ann-btn.publish:hover:not(:disabled) {
+  background: rgba(156, 163, 175, 0.32);
+}
+.ann-btn.publish.active {
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+}
+.ann-btn.publish.active:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.36);
+}
 
 .ann-composer {
   margin-top: 10px;

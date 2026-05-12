@@ -115,3 +115,9 @@ export const useUserStore = create<UserState>((set, get) => ({
 registerUnauthorizedHandler(() => {
   useUserStore.getState().handleUnauthorized()
 })
+
+// Provide annotationStore a way to read the current user ID without
+// creating a circular static import (userStore dynamically imports annotationStore).
+import('./annotationStore').then(({ registerUserIdGetter }) => {
+  registerUserIdGetter(() => useUserStore.getState().currentUser?.id ?? '')
+})

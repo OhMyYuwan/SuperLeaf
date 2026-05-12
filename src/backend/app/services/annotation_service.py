@@ -12,15 +12,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterable
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models import Annotation
 
 
 def list_by_doc(db: Session, doc_id: str, *, user_id: str = "") -> list[Annotation]:
+    """Return global annotations (is_global=True) plus the given user's private ones."""
     q = db.query(Annotation).filter(Annotation.doc_id == doc_id)
     if user_id:
-        q = q.filter(Annotation.user_id == user_id)
+        q = q.filter(or_(Annotation.is_global == True, Annotation.user_id == user_id))  # noqa: E712
     return q.order_by(Annotation.created_at.asc(), Annotation.id.asc()).all()
 
 
@@ -35,6 +37,7 @@ def upsert(
     doc_id: str,
     project_id: str,
     user_id: str = "",
+    is_global: bool = False,
     kind: str,
     status: str,
     range_from: int,
@@ -89,6 +92,7 @@ def upsert(
         doc_id=doc_id,
         project_id=project_id,
         user_id=user_id,
+        is_global=is_global,
         kind=kind,
         status=status,
         range_from=range_from,
@@ -122,6 +126,8 @@ def patch(
     range_to: int | None = None,
     content: str | None = None,
     thread: list | None = None,
+    publish: bool | None = None,
+    acting_user_id: str = "",
 ) -> Annotation:
     if status is not None:
         row.status = status
@@ -133,6 +139,10 @@ def patch(
         row.content = content
     if thread is not None:
         row.thread = thread
+    if publish is True:
+        row.is_global = True
+    elif publish is False:
+        row.is_global = False
     row.updated_at = datetime.utcnow()
     db.flush()
     return row
@@ -150,6 +160,7 @@ def to_dict(row: Annotation) -> dict:
         "doc_id": row.doc_id,
         "project_id": row.project_id,
         "user_id": row.user_id,
+        "is_global": row.is_global,
         "kind": row.kind,
         "status": row.status,
         "range_from": row.range_from,

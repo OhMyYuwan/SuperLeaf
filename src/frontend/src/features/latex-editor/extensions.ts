@@ -44,12 +44,13 @@ export function languageFor(format: EditorFormat): Extension {
   }
 }
 
-export function baseExtensions(): Extension[] {
+export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[] {
+  const includeHistory = opts?.includeHistory ?? true
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
-    history(),
+    ...(includeHistory ? [history()] : []),
     foldGutter(),
     drawSelection(),
     indentOnInput(),
@@ -65,7 +66,7 @@ export function baseExtensions(): Extension[] {
       ...closeBracketsKeymap,
       ...defaultKeymap,
       ...searchKeymap,
-      ...historyKeymap,
+      ...(includeHistory ? historyKeymap : []),
       ...foldKeymap,
       ...completionKeymap,
       ...lintKeymap,

@@ -35,10 +35,12 @@ interface DocumentState {
   saveStatus: Record<string, SaveStatus>
   lastSavedAt: Record<string, number>
   saveError: Record<string, string | null>
+  collaborating: Record<string, boolean>
 
   setActive: (id: string) => void
   getActive: () => Document | null
   updateContent: (id: string, content: string) => void
+  setCollaborating: (id: string, flag: boolean) => void
   seed: (seeds: DocumentSeed[]) => void
 
   // A2: backend-backed file management
@@ -62,6 +64,7 @@ export const useDocumentStore = create<DocumentState>()(
       saveStatus: {},
       lastSavedAt: {},
       saveError: {},
+      collaborating: {},
 
       setActive: (id) => {
         if (get().documents[id]) {
@@ -93,6 +96,9 @@ export const useDocumentStore = create<DocumentState>()(
           }
         })
 
+        // In collaboration mode, Yjs handles persistence — skip auto-save.
+        if (get().collaborating[id]) return
+
         // Schedule debounced auto-save.
         const existingTimer = debounceTimers[id]
         if (existingTimer) clearTimeout(existingTimer)
@@ -100,6 +106,12 @@ export const useDocumentStore = create<DocumentState>()(
           debounceTimers[id] = undefined
           void get().saveBackendDoc(id)
         }, AUTO_SAVE_DEBOUNCE_MS)
+      },
+
+      setCollaborating: (id, flag) => {
+        set((state) => ({
+          collaborating: { ...state.collaborating, [id]: flag },
+        }))
       },
 
       seed: (seeds) => {

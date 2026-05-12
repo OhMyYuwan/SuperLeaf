@@ -35,8 +35,9 @@ primary_capabilities:
   - backend-service
   - workflow-integration
   - workflow-orchestration
+  - real-time-editing
   - build-tooling
-agent_hint: src/ is project root; never commit src/.acp/kernel or src/docs (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
+agent_hint: src/ is project root; never commit src/.acp/kernel or src/docs (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
 ```
 
 # YuwanLabWriter Agent Guide
@@ -123,7 +124,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
 
 ```
 .
-├── start.sh                                 (dev launcher: backend :8000 + frontend :5173)
+├── start.sh                                 (dev launcher: backend :8000 + collab :4444 + frontend :5173)
 ├── scripts/dify.sh                          (wraps reference/dify/docker/docker-compose.yaml)
 └── src/
     ├── .acp/                                (governance, git-ignored)
@@ -138,19 +139,27 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │   ├── v3_executive_plan.md             (V3 — finishing posture, 6-8 weeks)
     │   ├── architecture_data_flow.md        (8-layer data flow)
     │   └── figma.md / doubao*.tex / ...
+    ├── collab-server/                       (Node.js Yjs WebSocket server)
+    │   ├── package.json                     (yjs, y-protocols, y-leveldb, ws)
+    │   ├── tsconfig.json
+    │   └── src/
+    │       ├── index.ts                     (HTTP + WS server, auth gate)
+    │       ├── ws-handler.ts                (Yjs sync protocol + awareness)
+    │       └── persistence.ts               (LevelDB + seed from backend)
     ├── backend/                             (FastAPI + SQLite + Fernet)
     │   ├── pyproject.toml                   (uv-managed, Python 3.11+)
     │   └── app/
-    │       ├── main.py                      (FastAPI + CORS + router)
+    │       ├── main.py                      (FastAPI + CORS + lifespan + snapshot task)
     │       ├── settings.py / database.py / secrets_vault.py
     │       ├── models.py                    (7 tables)
     │       ├── schemas.py                   (Pydantic I/O)
     │       ├── api/
     │       │   ├── __init__.py              (router aggregator)
     │       │   ├── health.py
+    │       │   ├── auth.py                  (register/login/logout/me/verify/collab-token)
     │       │   ├── providers.py
     │       │   ├── workflows.py             (cached + runs + definitions + execute)
-    │       │   ├── filesystem.py            (project tree + upload)
+    │       │   ├── filesystem.py            (project tree + upload + internal doc content)
     │       │   ├── conversations.py         (SSE chat messages)
     │       │   └── compile.py               (latexmk wrapper)
     │       └── services/
@@ -160,7 +169,8 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
     │           ├── project_fs_service.py    (SQLite file tree)
     │           ├── latex_compiler.py        (latexmk subprocess)
-    │           └── attached_files.py        (@ file normalization)
+    │           ├── attached_files.py        (@ file normalization)
+    │           └── collab_snapshot_service.py (periodic Yjs → DB snapshots)
     └── frontend/
         ├── package.json / vite.config.ts / tsconfig*.json / ...
         └── src/
@@ -173,9 +183,10 @@ surface plus a multi-Agent review/polishing/workflow layer.
             │   ├── selectionContext.ts
             │   ├── outputParser.ts          (SSE → annotations)
             │   ├── mentions.ts              (@ parsing + attached files)
-            │   └── rangeTracker.ts          (present; wiring in V3 Phase 1)
+            │   ├── rangeTracker.ts          (annotation position mapping)
+            │   └── collaborationProvider.ts (Yjs WebSocket + awareness)
             ├── stores/
-            │   ├── documentStore.ts
+            │   ├── documentStore.ts         (+ collaborating flag)
             │   ├── editorStore.ts
             │   ├── settingsStore.ts
             │   ├── workflowStore.ts         (runs + definitions + SSE)
@@ -184,10 +195,11 @@ surface plus a multi-Agent review/polishing/workflow layer.
             │   ├── conversationStore.ts
             │   ├── compileStore.ts
             │   ├── viewStore.ts
+            │   ├── collaborationStore.ts    (Yjs provider lifecycle + peers)
             │   └── seedData.ts
             ├── types/                       (8-layer domain types)
             └── features/
-                ├── latex-editor/            (CM6 + annotation-decorations)
+                ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions)
                 ├── settings/                (SettingsDialog)
                 ├── topbar/                  (Topbar + ProviderBadge + ViewControl)
                 ├── file-tree/               (FileTree + OutlineList)
@@ -196,7 +208,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
                 ├── annotation-panel/        (AnnotationPanel + CommentComposer)
                 ├── right-panel/             (RightPanel + Discussion/Team/Workflow/Definitions/RunHistory tabs)
                 │   └── workflow-canvas/     (react-flow + palette + inspector)
-                └── shared/                  (MentionInput + fileSizeGate)
+                └── shared/                  (MentionInput + fileSizeGate + CollaborationStatus + ProjectEventBridge)
 ```
 
 Repo-root tooling: `start.sh`, `scripts/dify.sh`, `.gitignore`, `README(.md / _EN.md)`,
@@ -222,6 +234,7 @@ Repo-root tooling: `start.sh`, `scripts/dify.sh`, `.gitignore`, `README(.md / _E
 - **backend-service** — FastAPI + SQLite core.
 - **workflow-integration** — provider clients (Dify + Nanobot) + provider registry + single-agent run lifecycle.
 - **workflow-orchestration** — V2.2 self-hosted multi-agent orchestrator + definition API + visual canvas + templates. Canonical baseline.
+- **real-time-editing** — Yjs CRDT collaborative editing: collab-server (Node.js WebSocket + LevelDB), y-codemirror.next binding, awareness (remote cursors), periodic snapshot to DB.
 - **build-tooling** — Vite, TS, ESLint, Tailwind, PostCSS, pyproject.
 
 Each slice has `route_here_when` and `bridge_when` clauses in `capabilities.yaml`.

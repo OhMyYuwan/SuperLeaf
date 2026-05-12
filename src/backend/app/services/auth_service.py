@@ -20,7 +20,19 @@ from datetime import datetime, timedelta
 import bcrypt
 from sqlalchemy.orm import Session as DbSession
 
-from ..models import CachedWorkflow, Project, Provider, Session, User
+from ..models import (
+    Annotation,
+    AnnotationEvaluation,
+    AnnotationReviewState,
+    CachedWorkflow,
+    Conversation,
+    Project,
+    Provider,
+    Session,
+    User,
+    WorkflowDefinition,
+    WorkflowRun,
+)
 
 
 SESSION_LIFETIME = timedelta(days=14)
@@ -163,12 +175,15 @@ class AuthService:
         """Assign all unowned (user_id='') rows to this user.
 
         Runs exactly once, inside the register() transaction when the first
-        user is being created. Covers projects, providers, and cached
-        workflows. Downstream tables (docs, folders, conversations, workflow
-        definitions/runs, messages) inherit scoping through their project_id
-        column and do not need a direct user_id.
+        user is being created. Covers projects, providers, cached workflows,
+        and all Agent-private tables (workflow definitions/runs, conversations,
+        annotations, evaluations, review states).
         """
-        for model in (Project, Provider, CachedWorkflow):
+        for model in (
+            Project, Provider, CachedWorkflow,
+            WorkflowDefinition, WorkflowRun, Conversation,
+            Annotation, AnnotationEvaluation, AnnotationReviewState,
+        ):
             self.db.query(model).filter(model.user_id == "").update(
                 {"user_id": user_id}, synchronize_session=False
             )

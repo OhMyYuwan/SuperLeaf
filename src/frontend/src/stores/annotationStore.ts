@@ -34,6 +34,7 @@ import {
 import { uuid } from '../lib/uuid'
 import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
+import { BackendError } from '../services/backendApi'
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -749,6 +750,9 @@ export const useAnnotationStore = create<AnnotationState>()(
       ])
     } catch (err) {
       console.warn('[annotationStore] hydrateForDoc failed', err)
+      if (err instanceof BackendError && (err.status === 400 || err.status === 404)) {
+        return
+      }
       showToast('未能加载最新批注（离线或会话失效）', { level: 'warning' })
       return
     }

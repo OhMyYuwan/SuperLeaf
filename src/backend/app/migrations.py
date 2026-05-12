@@ -17,6 +17,14 @@ from sqlalchemy.engine import Engine
 
 _PROJECT_SCOPED_TABLES = ("conversations", "workflow_definitions", "workflow_runs")
 _USER_SCOPED_TABLES = ("projects", "providers", "cached_workflows")
+_PRIVATE_ASSET_TABLES = (
+    "workflow_definitions",
+    "workflow_runs",
+    "conversations",
+    "annotations",
+    "annotation_evaluations",
+    "annotation_review_states",
+)
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
@@ -35,6 +43,7 @@ def run_migrations(engine: Engine) -> None:
         bootstrap_pid = _ensure_bootstrap_project(conn)
         _add_project_id_columns(conn, bootstrap_pid)
         _add_user_id_columns(conn)
+        _add_user_id_to_private_assets(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -122,4 +131,51 @@ def _add_user_id_columns(conn) -> None:
             )
         conn.execute(
             text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_user_id ON {tbl}(user_id)")
+        )
+
+
+def _add_user_id_to_private_assets(conn) -> None:
+    """Add `user_id` to Agent-private tables and backfill from project owner.
+
+    Agent/workflow data is personal — each collaborator only sees their own.
+    Existing rows (created before multi-user) are assigned to the project owner.
+    """
+    _TABLES_WITH_PROJECT_ID = (
+        "workflow_definitions",
+        "workflow_runs",
+        "conversations",
+        "annotations",
+    )
+    _TABLES_WITH_DOC_ID_ONLY = (
+        "annotation_evaluations",
+        "annotation_review_states",
+    )
+
+    for tbl in _PRIVATE_ASSET_TABLES:
+        if not _column_exists(conn, tbl, "user_id"):
+            conn.execute(
+                text(f"ALTER TABLE {tbl} ADD COLUMN user_id VARCHAR(32) DEFAULT ''")
+            )
+        conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_user_id ON {tbl}(user_id)")
+        )
+
+    for tbl in _TABLES_WITH_PROJECT_ID:
+        conn.execute(
+            text(
+                f"UPDATE {tbl} SET user_id = ("
+                f"  SELECT p.user_id FROM projects p WHERE p.id = {tbl}.project_id"
+                f") WHERE user_id = '' AND project_id != ''"
+            )
+        )
+
+    for tbl in _TABLES_WITH_DOC_ID_ONLY:
+        conn.execute(
+            text(
+                f"UPDATE {tbl} SET user_id = ("
+                f"  SELECT p.user_id FROM projects p"
+                f"  JOIN docs d ON d.project_id = p.id"
+                f"  WHERE d.id = {tbl}.doc_id"
+                f") WHERE user_id = ''"
+            )
         )

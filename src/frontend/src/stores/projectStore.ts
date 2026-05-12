@@ -25,6 +25,7 @@ function readInitialViewMode(): 'table' | 'grid' {
 interface ProjectState {
   projects: ProjectSummary[]
   currentProjectId: string | null
+  currentProjectRole: 'owner' | 'editor' | 'viewer' | null
   viewMode: 'table' | 'grid'
   loading: boolean
   loaded: boolean
@@ -41,6 +42,7 @@ interface ProjectState {
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   currentProjectId: null,
+  currentProjectRole: null,
   viewMode: readInitialViewMode(),
   loading: false,
   loaded: false,
@@ -62,7 +64,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setCurrent: (id) => {
     if (get().currentProjectId === id) return
-    set({ currentProjectId: id })
+    const project = get().projects.find((p) => p.id === id)
+    set({ currentProjectId: id, currentProjectRole: project?.my_role ?? null })
   },
 
   create: async (name) => {

@@ -87,27 +87,41 @@ modules:
       - backend/app/models.py
       - backend/app/schemas.py
     note: |
-      `models.py` now declares 7 tables: Provider, CachedWorkflow,
+      `models.py` now declares tables: Provider, CachedWorkflow,
       WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob,
-      Conversation, Message.
+      Conversation, Message, Blob, DocumentVersion, DocumentLabel,
+      Operation, AnnotationEvaluation, AnnotationReviewState, Annotation,
+      ProjectMember, Notification.
+      User/Session tables handle auth; ProjectMember enables Overleaf-style
+      multi-user collaboration with role-based access (owner/editor/viewer).
+      Privacy isolation: WorkflowDefinition, WorkflowRun, Conversation,
+      Annotation, AnnotationEvaluation, AnnotationReviewState all carry
+      `user_id` — Agent assets are personal, not shared across collaborators.
 
   - id: backend-api
     path: backend/app/api
     kind: api-routes
-    description: HTTP routes — health, providers, workflows, filesystem, conversations, compile.
+    description: HTTP routes — health, auth, users, providers, projects (incl. members + online presence + SSE events), workflows, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
     entry_files:
       - backend/app/api/__init__.py
       - backend/app/api/health.py
+      - backend/app/api/auth.py
+      - backend/app/api/users.py
       - backend/app/api/providers.py
+      - backend/app/api/projects.py
       - backend/app/api/workflows.py
       - backend/app/api/filesystem.py
       - backend/app/api/conversations.py
       - backend/app/api/compile.py
+      - backend/app/api/versions.py
+      - backend/app/api/annotation_evaluations.py
+      - backend/app/api/notifications.py
+      - backend/app/api/deps.py
 
   - id: backend-services
     path: backend/app/services
     kind: domain-services
-    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer.
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation service, project member service, version service.
     entry_files:
       - backend/app/services/__init__.py
       - backend/app/services/dify_client.py
@@ -117,11 +131,24 @@ modules:
       - backend/app/services/project_fs_service.py
       - backend/app/services/latex_compiler.py
       - backend/app/services/attached_files.py
+      - backend/app/services/event_bus.py
+      - backend/app/services/auth_service.py
+      - backend/app/services/annotation_service.py
+      - backend/app/services/evaluation_service.py
+      - backend/app/services/project_member_service.py
+      - backend/app/services/project_service.py
     note: |
       `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
       multi-agent + loop runner; canonical baseline since REQ-0015.
-      Extension boundaries are documented in CHANGE_POLICY.yaml under
-      `high_risk.extend_self_hosted_orchestrator`.
+      `event_bus.py` provides in-memory SSE fan-out with per-subscriber
+      asyncio.Queue and online-user presence tracking.
+      `project_member_service.py` handles multi-user collaboration:
+      add/remove members, role checks (owner/editor/viewer), shared
+      project listing.
+      `evaluation_service.py` manages annotation evaluations + review
+      states with user_id scoping for privacy isolation.
+      `annotation_service.py` persists annotation cards with user_id
+      ownership — each collaborator only sees their own Agent outputs.
 
   # ── Frontend application ─────────────────────────────────────────
   - id: frontend
@@ -165,7 +192,7 @@ modules:
   - id: frontend-stores
     path: frontend/src/stores
     kind: state
-    description: Zustand stores — 10 stores covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, plus demo seed.
+    description: Zustand stores — covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, project, user, plus user-scoped storage and reset utilities.
     entry_files:
       - frontend/src/stores/documentStore.ts
       - frontend/src/stores/editorStore.ts
@@ -176,12 +203,16 @@ modules:
       - frontend/src/stores/conversationStore.ts
       - frontend/src/stores/compileStore.ts
       - frontend/src/stores/viewStore.ts
+      - frontend/src/stores/projectStore.ts
+      - frontend/src/stores/userStore.ts
+      - frontend/src/stores/_userScopedStorage.ts
+      - frontend/src/stores/_reset.ts
       - frontend/src/stores/seedData.ts
 
   - id: frontend-services
     path: frontend/src/services
     kind: service-layer
-    description: Frontend business logic — typed backend API client, parsers, selection context, output parser, mention system, range tracker, filesystem API.
+    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, operation API, project event stream (SSE client).
     entry_files:
       - frontend/src/services/backendApi.ts
       - frontend/src/services/filesystemApi.ts
@@ -190,6 +221,11 @@ modules:
       - frontend/src/services/outputParser.ts
       - frontend/src/services/mentions.ts
       - frontend/src/services/rangeTracker.ts
+      - frontend/src/services/authApi.ts
+      - frontend/src/services/projectsApi.ts
+      - frontend/src/services/annotationEvaluationApi.ts
+      - frontend/src/services/operationApi.ts
+      - frontend/src/services/projectEventStream.ts
 
   - id: frontend-tests
     path: frontend/src/__tests__
@@ -215,10 +251,12 @@ modules:
   - id: frontend-feature-settings
     path: frontend/src/features/settings
     kind: feature-module
-    description: Provider registry UI — Radix Dialog for add/probe/activate/delete.
+    description: Provider registry UI + Project settings dialog (member management panel) — Radix Dialog for add/probe/activate/delete providers and invite/remove project collaborators.
     entry_files:
       - frontend/src/features/settings/index.ts
       - frontend/src/features/settings/SettingsDialog.tsx
+      - frontend/src/features/settings/ProjectSettingsDialog.tsx
+      - frontend/src/features/settings/ProjectMembersPanel.tsx
       - frontend/src/features/settings/settings.css
 
   - id: frontend-feature-annotation-panel
@@ -287,13 +325,18 @@ modules:
   - id: frontend-feature-topbar
     path: frontend/src/features/topbar
     kind: feature-module
-    description: Top bar — app title, ProviderBadge, view controls (column toggles).
+    description: Top bar — app title, ProviderBadge, view controls, NotificationBell (unread count + dropdown), PresenceIndicator (online collaborator avatars), UserMenu.
     entry_files:
       - frontend/src/features/topbar/index.ts
       - frontend/src/features/topbar/Topbar.tsx
       - frontend/src/features/topbar/ProviderBadge.tsx
       - frontend/src/features/topbar/ViewControl.tsx
+      - frontend/src/features/topbar/UserMenu.tsx
+      - frontend/src/features/topbar/NotificationBell.tsx
+      - frontend/src/features/topbar/PresenceIndicator.tsx
       - frontend/src/features/topbar/topbar.css
+      - frontend/src/features/topbar/notification-bell.css
+      - frontend/src/features/topbar/presence-indicator.css
 
   - id: frontend-feature-workspace-center
     path: frontend/src/features/workspace-center
@@ -310,11 +353,13 @@ modules:
   - id: frontend-feature-shared
     path: frontend/src/features/shared
     kind: feature-module
-    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate. Used by AnnotationPanel CommentComposer / continue composer and DiscussionTab input.
+    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher).
     entry_files:
       - frontend/src/features/shared/MentionInput.tsx
       - frontend/src/features/shared/fileSizeGate.ts
       - frontend/src/features/shared/mention-input.css
+      - frontend/src/features/shared/toast.tsx
+      - frontend/src/features/shared/ProjectEventBridge.tsx
 
   - id: frontend-build-tooling
     path: frontend
@@ -392,6 +437,42 @@ capability_routes:
     supporting_modules:
       - frontend-app-shell
       - frontend-stores
+      - frontend-services
+
+  collaboration:
+    primary_module: backend-api
+    supporting_modules:
+      - backend-app-core
+      - backend-services
+      - frontend-feature-settings
+      - frontend-feature-topbar
+      - frontend-stores
+      - frontend-services
+      - frontend-feature-shared
+    note: |
+      Multi-user collaboration surface: ProjectMember model + service,
+      role-based access control (owner/editor/viewer), project sharing API,
+      in-app notifications (invite events), SSE-based online presence
+      tracking, PresenceIndicator avatars, NotificationBell dropdown.
+      Frontend ProjectEventBridge dispatches real-time events into stores.
+      Privacy principle: Agent/workflow assets are personal — each user's
+      workflow definitions, runs, conversations, annotations, evaluations,
+      and review states are isolated by user_id. Collaborators share the
+      document but never see each other's Agent interactions.
+
+  agent-privacy:
+    primary_module: backend-api
+    supporting_modules:
+      - backend-app-core
+      - backend-services
+      - frontend-feature-shared
+    note: |
+      Agent privacy isolation (principle: "Agent 和 workflow 属于个人隐私资产").
+      6 tables carry user_id: WorkflowDefinition, WorkflowRun, Conversation,
+      Annotation, AnnotationEvaluation, AnnotationReviewState.
+      All list/get/mutate endpoints filter by current user. Startup migration
+      backfills existing rows to project owner. SSE events include user_id;
+      ProjectEventBridge filters out events from other users.
 
   frontend-workspace-center:
     primary_module: frontend-feature-workspace-center

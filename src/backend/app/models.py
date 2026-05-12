@@ -126,6 +126,7 @@ class WorkflowDefinition(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     name: Mapped[str] = mapped_column(String(256))
     description: Mapped[str] = mapped_column(Text, default="")
     # 'parallel' | 'pipeline' | 'roundtable' | 'graph'
@@ -177,6 +178,7 @@ class WorkflowRun(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"))
     # For single-agent runs: references CachedWorkflow
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"))
@@ -217,6 +219,33 @@ class Project(Base):
     # LaTeX compile settings
     main_doc_id: Mapped[str] = mapped_column(String(32), default="")
     compiler: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class ProjectMember(Base):
+    """Multi-user project collaboration (Overleaf-style).
+
+    Allows multiple users to access the same project. The project owner
+    (Project.user_id) has full control; members have read-write access.
+    Future: add role field for granular permissions (viewer/editor/admin).
+    """
+
+    __tablename__ = "project_members"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_members_project_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # 'editor' | 'viewer' (future: 'admin')
+    role: Mapped[str] = mapped_column(String(16), default="editor")
+    # 'pending' | 'accepted' | 'declined' (future: invitation workflow)
+    status: Mapped[str] = mapped_column(String(16), default="accepted")
+    invited_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -286,6 +315,7 @@ class Conversation(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     document_id: Mapped[str] = mapped_column(String(64), index=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"), index=True)
     title: Mapped[str] = mapped_column(String(256), default="")
@@ -424,6 +454,7 @@ class AnnotationEvaluation(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # frontend uuid
     annotation_id: Mapped[str] = mapped_column(String(64), index=True)
     doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     target_type: Mapped[str] = mapped_column(String(32))
     target_id: Mapped[str] = mapped_column(String(128), default="")
     verdict: Mapped[str] = mapped_column(String(16))  # positive | negative
@@ -453,6 +484,7 @@ class AnnotationReviewState(Base):
 
     annotation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     status: Mapped[str] = mapped_column(String(16))  # open | considered | addressed | dismissed
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -478,6 +510,7 @@ class Annotation(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # frontend uuid
     doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     kind: Mapped[str] = mapped_column(String(24))  # annotation | suggestion | risk | user-comment
     status: Mapped[str] = mapped_column(String(24), default="pending")
     range_from: Mapped[int] = mapped_column(Integer, default=0)
@@ -502,3 +535,26 @@ class Annotation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+# ---------------------------------------------------------------------------
+# Notifications (multi-user collaboration)
+# ---------------------------------------------------------------------------
+
+
+class Notification(Base):
+    """In-app notification for collaboration events (invitations, etc.)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # 'project_invite' | 'project_joined' | 'mention' | 'system'
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(256))
+    body: Mapped[str] = mapped_column(Text, default="")
+    # Optional link target (e.g. project_id)
+    target_id: Mapped[str] = mapped_column(String(64), default="")
+    target_type: Mapped[str] = mapped_column(String(32), default="")
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

@@ -1,14 +1,15 @@
 import { Link } from 'react-router-dom'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, Settings, Trash2 } from 'lucide-react'
 import type { ProjectSummary } from '../../services/projectsApi'
 
 interface Props {
   project: ProjectSummary
   onRename: (p: ProjectSummary) => void
   onDelete: (p: ProjectSummary) => void
+  onSettings?: (p: ProjectSummary) => void
 }
 
-export function ProjectTableRow({ project, onRename, onDelete }: Props) {
+export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Props) {
   return (
     <tr className="project-row">
       <td>
@@ -19,6 +20,11 @@ export function ProjectTableRow({ project, onRename, onDelete }: Props) {
       <td className="project-row-meta">{formatDate(project.updated_at)}</td>
       <td className="project-row-meta">{formatDate(project.created_at)}</td>
       <td className="project-row-actions">
+        {onSettings && (
+          <button className="icon-btn" aria-label="设置" title="项目设置" onClick={() => onSettings(project)}>
+            <Settings size={14} />
+          </button>
+        )}
         <button className="icon-btn" aria-label="重命名" title="重命名" onClick={() => onRename(project)}>
           <Pencil size={14} />
         </button>

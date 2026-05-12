@@ -19,6 +19,8 @@ import { ProjectCard } from './components/ProjectCard'
 import { ProjectTableRow } from './components/ProjectTableRow'
 import { ProjectFormDialog } from './components/ProjectFormDialog'
 import { DeleteProjectDialog } from './components/DeleteProjectDialog'
+import { ProjectSettingsDialog } from '../features/settings/ProjectSettingsDialog'
+import { NotificationBell } from '../features/topbar/NotificationBell'
 import { UserMenu } from '../features/topbar/UserMenu'
 import './project-list.css'
 
@@ -27,6 +29,7 @@ type DialogState =
   | { kind: 'create' }
   | { kind: 'rename'; target: ProjectSummary }
   | { kind: 'delete'; target: ProjectSummary }
+  | { kind: 'settings'; target: ProjectSummary }
 
 export function ProjectListPage() {
   const navigate = useNavigate()
@@ -128,6 +131,7 @@ export function ProjectListPage() {
           <button className="primary-btn" onClick={() => setDialog({ kind: 'create' })}>
             <Plus size={14} /> 新建项目
           </button>
+          <NotificationBell />
           <UserMenu />
         </div>
       </header>
@@ -149,6 +153,7 @@ export function ProjectListPage() {
                 project={p}
                 onRename={(target) => setDialog({ kind: 'rename', target })}
                 onDelete={(target) => setDialog({ kind: 'delete', target })}
+                onSettings={(target) => setDialog({ kind: 'settings', target })}
               />
             ))}
           </div>
@@ -171,6 +176,7 @@ export function ProjectListPage() {
                   project={p}
                   onRename={(target) => setDialog({ kind: 'rename', target })}
                   onDelete={(target) => setDialog({ kind: 'delete', target })}
+                  onSettings={(target) => setDialog({ kind: 'settings', target })}
                 />
               ))}
             </tbody>
@@ -201,6 +207,11 @@ export function ProjectListPage() {
         busy={dialogBusy}
         error={dialogError}
         onConfirm={handleDelete}
+        onOpenChange={(o) => { if (!o) closeDialog() }}
+      />
+      <ProjectSettingsDialog
+        open={dialog.kind === 'settings'}
+        projectId={dialog.kind === 'settings' ? dialog.target.id : ''}
         onOpenChange={(o) => { if (!o) closeDialog() }}
       />
     </div>

@@ -9,6 +9,7 @@ from . import (
     conversations,
     filesystem,
     health,
+    notifications,
     projects,
     providers,
     users,
@@ -32,3 +33,4 @@ api_router.include_router(versions.router)
 api_router.include_router(annotation_evaluations.router)
 api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
+api_router.include_router(notifications.router)

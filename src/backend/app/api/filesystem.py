@@ -28,7 +28,7 @@ from ..schemas import (
 )
 from ..services.event_bus import bus
 from ..services.project_fs_service import ProjectFsService
-from .deps import get_current_project, get_project_from_path
+from .deps import get_current_project, get_project_from_path, require_write_access
 
 router = APIRouter(tags=["filesystem"])
 
@@ -64,7 +64,7 @@ def rename_project(
 def create_folder(
     body: FolderCreateIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
 ) -> FolderOut:
     svc = ProjectFsService(db, project)
     try:
@@ -78,7 +78,7 @@ def create_folder(
 def create_doc(
     body: DocCreateIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
 ) -> DocOut:
     svc = ProjectFsService(db, project)
     try:
@@ -110,7 +110,7 @@ def update_doc(
     doc_id: str,
     body: DocUpdateIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     svc = ProjectFsService(db, project)

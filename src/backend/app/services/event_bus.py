@@ -47,6 +47,8 @@ _MAX_QUEUE = 256
 @dataclass(eq=False)
 class _Subscriber:
     project_id: str
+    user_id: str = ""
+    user_display_name: str = ""
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=_MAX_QUEUE))
 
 
@@ -57,8 +59,8 @@ class ProjectEventBus:
         self._subs: dict[str, list[_Subscriber]] = {}
         self._lock = asyncio.Lock()
 
-    async def subscribe(self, project_id: str) -> _Subscriber:
-        sub = _Subscriber(project_id=project_id)
+    async def subscribe(self, project_id: str, user_id: str = "", user_display_name: str = "") -> _Subscriber:
+        sub = _Subscriber(project_id=project_id, user_id=user_id, user_display_name=user_display_name)
         async with self._lock:
             self._subs.setdefault(project_id, []).append(sub)
         return sub
@@ -110,6 +112,16 @@ class ProjectEventBus:
 
 # Module singleton. Tests can monkeypatch `bus.publish` if needed.
 bus = ProjectEventBus()
+
+
+def get_online_users(project_id: str) -> list[dict[str, str]]:
+    """Return deduplicated list of users currently subscribed to a project's SSE stream."""
+    bucket = bus._subs.get(project_id, [])
+    seen: dict[str, str] = {}
+    for sub in bucket:
+        if sub.user_id and sub.user_id not in seen:
+            seen[sub.user_id] = sub.user_display_name
+    return [{"user_id": uid, "display_name": name} for uid, name in seen.items()]
 
 
 # --- Request-scoped origin client id propagation ---------------------------

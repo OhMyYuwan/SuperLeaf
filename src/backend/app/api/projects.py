@@ -14,13 +14,26 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import Project, User
-from ..schemas import ProjectCreateIn, ProjectOut, ProjectUpdateIn
+from ..models import Notification, Project, User
+from ..schemas import (
+    ProjectCreateIn,
+    ProjectMemberAddIn,
+    ProjectMemberOut,
+    ProjectOut,
+    ProjectUpdateIn,
+)
 from ..services.event_bus import bus
+from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+def _project_out(p: Project, role: str) -> ProjectOut:
+    out = ProjectOut.model_validate(p)
+    out.my_role = role
+    return out
 
 
 @router.get("", response_model=list[ProjectOut])
@@ -29,7 +42,13 @@ def list_projects(
     db: Session = Depends(get_session),
 ) -> list[ProjectOut]:
     svc = ProjectService(db)
-    return [ProjectOut.model_validate(p) for p in svc.list(user_id=user.id)]
+    member_svc = ProjectMemberService(db)
+    owned = svc.list(user_id=user.id)
+    result = [_project_out(p, "owner") for p in owned]
+    shared = member_svc.list_shared_projects(user.id)
+    for project, member in shared:
+        result.append(_project_out(project, member.role))
+    return result
 
 
 @router.post("", response_model=ProjectOut, status_code=201)
@@ -92,6 +111,110 @@ def delete_project(
 
 
 # ---------------------------------------------------------------------------
+# Project members (multi-user collaboration)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberOut])
+def list_project_members(
+    project: Project = Depends(get_project_from_path),
+    db: Session = Depends(get_session),
+) -> list[ProjectMemberOut]:
+    """List all members of a project."""
+    svc = ProjectMemberService(db)
+    members = svc.list_members(project.id)
+    return [
+        ProjectMemberOut(
+            id=member.id,
+            project_id=member.project_id,
+            user_id=member.user_id,
+            user_email=user.email,
+            user_display_name=user.display_name or user.email,
+            role=member.role,
+            status=member.status,
+            created_at=member.created_at,
+        )
+        for member, user in members
+    ]
+
+
+@router.post("/{project_id}/members", response_model=ProjectMemberOut, status_code=201)
+def add_project_member(
+    project_id: str,
+    body: ProjectMemberAddIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProjectMemberOut:
+    """Add a member to a project. Only the project owner can add members."""
+    # Check if user is the project owner
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    if project.user_id != user.id:
+        raise HTTPException(403, "Only the project owner can add members")
+
+    svc = ProjectMemberService(db)
+    member = svc.add_member(project_id, body.email, body.role, user.id)
+    if member is None:
+        raise HTTPException(404, f"User with email {body.email} not found")
+
+    # Create notification for the invited user
+    notification = Notification(
+        user_id=member.user_id,
+        kind="project_invite",
+        title=f"你已被邀请加入项目「{project.name}」",
+        body=f"{user.display_name or user.email} 邀请你以{('编辑' if body.role == 'editor' else '查看')}权限加入项目。",
+        target_id=project_id,
+        target_type="project",
+    )
+    db.add(notification)
+    db.commit()
+
+    # Get user info for response
+    member_user = db.get(User, member.user_id)
+    return ProjectMemberOut(
+        id=member.id,
+        project_id=member.project_id,
+        user_id=member.user_id,
+        user_email=member_user.email,
+        user_display_name=member_user.display_name or member_user.email,
+        role=member.role,
+        status=member.status,
+        created_at=member.created_at,
+    )
+
+
+@router.delete("/{project_id}/members/{user_id}", status_code=204)
+def remove_project_member(
+    project_id: str,
+    user_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> None:
+    """Remove a member from a project. Only the project owner can remove members."""
+    # Check if user is the project owner
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    if project.user_id != user.id:
+        raise HTTPException(403, "Only the project owner can remove members")
+
+    svc = ProjectMemberService(db)
+    ok = svc.remove_member(project_id, user_id)
+    if not ok:
+        raise HTTPException(404, "Member not found")
+
+
+@router.get("/{project_id}/online")
+def get_online_users_endpoint(
+    project: Project = Depends(get_project_from_path),
+) -> list[dict]:
+    """Return list of users currently connected to this project's SSE stream."""
+    from ..services.event_bus import get_online_users
+    return get_online_users(project.id)
+
+
+# ---------------------------------------------------------------------------
 # Real-time events (REQ-0034 phase 2)
 # ---------------------------------------------------------------------------
 #
@@ -110,12 +233,11 @@ def delete_project(
 @router.get("/{project_id}/events")
 async def project_events(
     project: Project = Depends(get_project_from_path),
+    user: User = Depends(get_current_user),
 ) -> EventSourceResponse:
-    sub = await bus.subscribe(project.id)
+    sub = await bus.subscribe(project.id, user_id=user.id, user_display_name=user.display_name or user.email)
 
     async def event_gen():
-        # Greet so the client knows the stream is live (and so any sniffers
-        # see at least one event quickly).
         yield {
             "event": "ylw.hello",
             "data": json.dumps({"project_id": project.id}),
@@ -125,8 +247,6 @@ async def project_events(
                 try:
                     evt = await asyncio.wait_for(sub.queue.get(), timeout=25.0)
                 except asyncio.TimeoutError:
-                    # SSE comments (lines starting with `:`) keep the
-                    # connection alive without firing client handlers.
                     yield {"event": "ylw.heartbeat", "data": "{}"}
                     continue
                 yield {

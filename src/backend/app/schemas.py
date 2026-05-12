@@ -128,11 +128,13 @@ class WorkflowRunOut(BaseModel):
 
 class ProjectOut(BaseModel):
     id: str
+    user_id: str
     name: str
     main_doc_id: str
     compiler: str
     created_at: datetime
     updated_at: datetime
+    my_role: str = "owner"
 
     class Config:
         from_attributes = True
@@ -146,6 +148,25 @@ class ProjectUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     main_doc_id: str | None = None
     compiler: str | None = None
+
+
+class ProjectMemberAddIn(BaseModel):
+    email: str = Field(min_length=1, max_length=255)
+    role: str = Field(default="editor", pattern="^(editor|viewer)$")
+
+
+class ProjectMemberOut(BaseModel):
+    id: str
+    project_id: str
+    user_id: str
+    user_email: str
+    user_display_name: str
+    role: str
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class FolderCreateIn(BaseModel):
@@ -589,3 +610,23 @@ class AnnotationOut(BaseModel):
     attached_files: list
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Notifications (multi-user collaboration)
+# ---------------------------------------------------------------------------
+
+
+class NotificationOut(BaseModel):
+    id: str
+    user_id: str
+    kind: str
+    title: str
+    body: str
+    target_id: str
+    target_type: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

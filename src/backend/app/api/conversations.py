@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Conversation, Message, Project
+from ..models import CachedWorkflow, Conversation, Message, Project, User
 from ..schemas import (
     ConversationCreateIn,
     ConversationOut,
@@ -34,7 +34,7 @@ from ..services.attached_files import (
     normalize_attached_files,
     render_attached_files_block,
 )
-from .deps import get_current_project
+from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -60,8 +60,12 @@ def list_conversations(
     workflow_id: str | None = None,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> list[ConversationOut]:
-    q = db.query(Conversation).filter(Conversation.project_id == project.id)
+    q = db.query(Conversation).filter(
+        Conversation.project_id == project.id,
+        Conversation.user_id == user.id,
+    )
     if document_id:
         q = q.filter(Conversation.document_id == document_id)
     if workflow_id:
@@ -100,12 +104,14 @@ def create_conversation(
     body: ConversationCreateIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> ConversationOut:
     cw = db.get(CachedWorkflow, body.workflow_id)
     if cw is None:
         raise HTTPException(404, "Agent (workflow) not found")
     conv = Conversation(
         project_id=project.id,
+        user_id=user.id,
         document_id=body.document_id,
         workflow_id=body.workflow_id,
         title=body.title or cw.name,
@@ -121,9 +127,10 @@ def get_conversation(
     conversation_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> ConversationOut:
     c = db.get(Conversation, conversation_id)
-    if c is None or c.project_id != project.id:
+    if c is None or c.project_id != project.id or c.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
     return _to_out(c)
 
@@ -134,9 +141,10 @@ def update_conversation(
     body: ConversationUpdateIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> ConversationOut:
     c = db.get(Conversation, conversation_id)
-    if c is None or c.project_id != project.id:
+    if c is None or c.project_id != project.id or c.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
     if body.title is not None:
         c.title = body.title
@@ -151,9 +159,10 @@ def delete_conversation(
     conversation_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> None:
     c = db.get(Conversation, conversation_id)
-    if c is None or c.project_id != project.id:
+    if c is None or c.project_id != project.id or c.user_id != user.id:
         return None
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(c)
@@ -165,9 +174,10 @@ def list_messages(
     conversation_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> list[MessageOut]:
     c = db.get(Conversation, conversation_id)
-    if c is None or c.project_id != project.id:
+    if c is None or c.project_id != project.id or c.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
     rows = (
         db.query(Message)
@@ -184,6 +194,7 @@ async def send_message(
     body: MessageSendIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ):
     """Send a user message; stream the agent reply back via SSE.
 
@@ -194,14 +205,14 @@ async def send_message(
       - ylw.msg.failed    on error
     """
     conv = db.get(Conversation, conversation_id)
-    if conv is None or conv.project_id != project.id:
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
     cw = db.get(CachedWorkflow, conv.workflow_id)
-    if cw is None or cw.user_id != project.user_id:
+    if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Agent (workflow) gone")
 
     svc = ProviderService(db)
-    provider = svc.get(cw.provider_id, user_id=project.user_id)
+    provider = svc.get(cw.provider_id, user_id=user.id)
     if provider is None:
         raise HTTPException(404, "Provider for this agent is gone")
 
@@ -392,6 +403,7 @@ def inject_message(
     body: MessageInjectIn,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
 ) -> MessageOut:
     """Persist a pre-composed message without running the conversation's agent.
 
@@ -401,7 +413,7 @@ def inject_message(
     single, linear narrative.
     """
     conv = db.get(Conversation, conversation_id)
-    if conv is None or conv.project_id != project.id:
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
 
     msg = Message(

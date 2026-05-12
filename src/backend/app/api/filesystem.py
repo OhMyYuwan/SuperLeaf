@@ -28,7 +28,7 @@ from ..schemas import (
 )
 from ..services.event_bus import bus
 from ..services.project_fs_service import ProjectFsService
-from .deps import get_current_project, get_project_from_path, require_write_access
+from .deps import get_current_project, get_current_user, get_project_from_path, require_write_access
 
 router = APIRouter(tags=["filesystem"])
 
@@ -103,6 +103,28 @@ def get_doc(
     if doc is None or doc.project_id != project.id:
         raise HTTPException(404, "doc not found")
     return DocOut.model_validate(doc)
+
+
+@router.get("/api/internal/docs/{doc_id}/content")
+def get_doc_content_internal(
+    doc_id: str,
+    db: Session = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    """Internal endpoint for collab-server to fetch doc content.
+
+    Requires valid session but no X-Project-Id header. Checks project
+    membership via the doc's project_id.
+    """
+    from ..models import Doc
+    from ..services.project_member_service import ProjectMemberService
+
+    doc = db.get(Doc, doc_id)
+    if doc is None:
+        raise HTTPException(404, "doc not found")
+    if not ProjectMemberService(db).has_access(doc.project_id, user.id):
+        raise HTTPException(404, "doc not found")
+    return {"content": doc.content, "doc_id": doc.id, "project_id": doc.project_id}
 
 
 @router.put("/api/docs/{doc_id}", response_model=DocOut)

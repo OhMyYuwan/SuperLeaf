@@ -17,6 +17,7 @@ import {
   type DocChangeInfo,
   type SelectionInfo,
 } from '../latex-editor'
+import { useCollaborationStore } from '../../stores/collaborationStore'
 
 interface EditorColumnProps {
   doc: Document | null
@@ -81,32 +82,83 @@ export function EditorColumn({
       </div>
       <div className="latex-editor-host">
         {doc ? (
-          <LatexEditor
-            key={doc.id}
-            value={doc.content}
-            format={doc.format as EditorFormat}
+          <EditorWithCollab
+            doc={doc}
+            decorations={decorations}
+            activeAnnotationId={activeAnnotationId}
+            hoveredAnnotationId={hoveredAnnotationId}
+            scrollTo={scrollTo}
             onChange={onChange}
             onSelectionChange={handleSelectionChange}
             onDocChange={onDocChange}
-            decorations={decorations}
-            activeDecorationId={activeAnnotationId}
-            panelHoverId={hoveredAnnotationId ?? null}
             onDecorationClick={onDecorationClick}
-            scrollTo={scrollTo}
-            overlay={
-              toolbar && onAddComment ? (
-                <SelectionToolbar
-                  x={toolbar.x}
-                  y={toolbar.y}
-                  onAddComment={handleToolbarAddComment}
-                />
-              ) : null
-            }
+            toolbar={toolbar}
+            onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
         ) : (
           <div className="editor-empty">请选择一个文件</div>
         )}
       </div>
     </div>
+  )
+}
+
+function EditorWithCollab({
+  doc,
+  decorations,
+  activeAnnotationId,
+  hoveredAnnotationId,
+  scrollTo,
+  onChange,
+  onSelectionChange,
+  onDocChange,
+  onDecorationClick,
+  toolbar,
+  onAddComment,
+}: {
+  doc: Document
+  decorations: DecorationSpec[]
+  activeAnnotationId: string | null
+  hoveredAnnotationId?: string | null
+  scrollTo: { pos: number; seq: number } | null
+  onChange: (next: string) => void
+  onSelectionChange: (info: SelectionInfo) => void
+  onDocChange: (changes: DocChangeInfo[]) => void
+  onDecorationClick: (id: string) => void
+  toolbar: { x: number; y: number } | null
+  onAddComment?: () => void
+}) {
+  const provider = useCollaborationStore((s) => s.provider)
+  const status = useCollaborationStore((s) => s.status)
+  const currentDocId = useCollaborationStore((s) => s.currentDocId)
+
+  const isCollab = !!(provider && currentDocId === doc.id && status === 'synced')
+
+  return (
+    <LatexEditor
+      key={doc.id}
+      value={doc.content}
+      format={doc.format as EditorFormat}
+      onChange={onChange}
+      onSelectionChange={onSelectionChange}
+      onDocChange={onDocChange}
+      decorations={decorations}
+      activeDecorationId={activeAnnotationId}
+      panelHoverId={hoveredAnnotationId ?? null}
+      onDecorationClick={onDecorationClick}
+      scrollTo={scrollTo}
+      yText={isCollab ? provider!.yText : undefined}
+      awareness={isCollab ? provider!.awareness : undefined}
+      collaborating={isCollab}
+      overlay={
+        toolbar && onAddComment ? (
+          <SelectionToolbar
+            x={toolbar.x}
+            y={toolbar.y}
+            onAddComment={onAddComment}
+          />
+        ) : null
+      }
+    />
   )
 }

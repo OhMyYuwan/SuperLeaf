@@ -94,3 +94,37 @@ def logout(
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.get("/verify")
+def verify_token(
+    token: str,
+    db: Session = Depends(get_session),
+):
+    """Verify a session token (used by collab-server on WebSocket upgrade).
+
+    Returns {user_id, display_name} or 401.
+    """
+    sess = AuthService(db).get_session(token)
+    if sess is None:
+        raise HTTPException(401, "Invalid or expired token")
+    user = db.get(User, sess.user_id)
+    if user is None or user.is_disabled:
+        raise HTTPException(401, "User not found or disabled")
+    return {"user_id": user.id, "display_name": user.display_name}
+
+
+@router.get("/collab-token")
+def get_collab_token(
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """Return the session ID as a collab token for WebSocket auth.
+
+    The frontend can't read the HttpOnly cookie directly, so this endpoint
+    echoes it back. The collab-server then verifies it via /api/auth/verify.
+    """
+    sid = request.cookies.get(SESSION_COOKIE_NAME)
+    if not sid:
+        raise HTTPException(401, "No session")
+    return {"token": sid}

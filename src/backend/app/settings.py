@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # 32-byte key for provider-credential encryption. Generated on first run if absent.
     secrets_key_file: str = "secrets.key"
 
+    # Collaboration server (Node.js y-websocket)
+    collab_server_url: str = "http://localhost:4444"
+    collab_snapshot_interval_s: int = 30
+
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url

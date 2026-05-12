@@ -21,6 +21,7 @@ import {
   type ReviewStatus,
 } from '../../stores/annotationStore'
 import { useDocumentStore } from '../../stores/documentStore'
+import { useCollaborationStore } from '../../stores/collaborationStore'
 import type { AnnotationDto } from '../../services/annotationEvaluationApi'
 import { projectEventStream, type ProjectEvent } from '../../services/projectEventStream'
 
@@ -121,6 +122,9 @@ function dispatch(evt: ProjectEvent, currentUserId: string): void {
     case 'doc.updated': {
       const docId = String(p.doc_id ?? '')
       if (!docId) return
+      // In collaboration mode, Yjs handles document sync — skip REST refresh.
+      const collabDocId = useCollaborationStore.getState().currentDocId
+      if (collabDocId === docId) return
       // refreshFromBackend is dirty-aware: if the user is mid-edit it skips
       // and the next focus refresh picks it up. So this is safe to fire on
       // every server-side save.

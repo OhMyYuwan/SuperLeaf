@@ -59,3 +59,6 @@ env/
 *.tmp
 *.bak
 *~
+
+# Dev process logs
+logs/

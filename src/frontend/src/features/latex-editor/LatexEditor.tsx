@@ -21,6 +21,7 @@ import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import { collaborationExtensions } from './collaboration-extensions'
 import {
   annotationDecorationsExtension,
   flashAnnotationEffect,
@@ -28,6 +29,8 @@ import {
   setAnnotationsEffect,
   type DecorationSpec,
 } from './annotation-decorations'
+import type * as Y from 'yjs'
+import type { Awareness } from 'y-protocols/awareness'
 
 export interface DocChangeInfo {
   from: number
@@ -61,6 +64,10 @@ export interface LatexEditorProps {
   // Rendered inside the editor's positioned container, on top of the editor.
   // Used for floating UI like a selection toolbar.
   overlay?: React.ReactNode
+  // Yjs collaboration props — when provided, the editor enters collaborative mode.
+  yText?: Y.Text
+  awareness?: Awareness
+  collaborating?: boolean
 }
 
 export function LatexEditor({
@@ -76,6 +83,9 @@ export function LatexEditor({
   scrollTo,
   className,
   overlay,
+  yText,
+  awareness,
+  collaborating,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -104,10 +114,16 @@ export function LatexEditor({
   useEffect(() => {
     if (!containerRef.current) return
 
+    const isCollab = !!(collaborating && yText && awareness)
+
     const startState = EditorState.create({
-      doc: value,
+      // In collab mode, use Y.Text's current content as the initial doc.
+      // y-codemirror.next only observes future changes — it does NOT push
+      // existing Y.Text content into the editor on init.
+      doc: isCollab ? yText!.toString() : value,
       extensions: [
-        ...baseExtensions(),
+        ...baseExtensions({ includeHistory: !isCollab }),
+        ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
         languageCompartment.of(languageFor(format)),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
@@ -123,8 +139,6 @@ export function LatexEditor({
           if (update.selectionSet && onSelectionRef.current) {
             const sel = update.state.selection.main
             const text = update.state.sliceDoc(sel.from, sel.to)
-            // Compute screen coordinates for the right edge of the selection,
-            // then translate to coordinates relative to the editor container.
             let coords: { x: number; y: number } | null = null
             if (sel.from !== sel.to) {
               const view = update.view
@@ -159,11 +173,14 @@ export function LatexEditor({
       view.destroy()
       viewRef.current = null
     }
+    // Rebuild the editor when collaboration mode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [collaborating, yText, awareness])
 
   // Apply external value changes without rebuilding the editor.
+  // In collaboration mode, Yjs owns the document — skip external value sync.
   useEffect(() => {
+    if (collaborating) return
     const view = viewRef.current
     if (!view) return
     const current = view.state.doc.toString()
@@ -171,7 +188,7 @@ export function LatexEditor({
     view.dispatch({
       changes: { from: 0, to: current.length, insert: value },
     })
-  }, [value])
+  }, [value, collaborating])
 
   // Swap language when `format` changes.
   useEffect(() => {

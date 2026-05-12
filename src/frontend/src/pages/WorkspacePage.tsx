@@ -25,14 +25,17 @@ import {
 import { RightPanel } from '../features/right-panel'
 import { ErrorBoundary } from '../features/shared/ErrorBoundary'
 import { ProjectEventBridge } from '../features/shared/ProjectEventBridge'
+import { CollaborationStatus } from '../features/shared/CollaborationStatus'
 import { useDocumentStore } from '../stores/documentStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useWorkflowStore } from '../stores/workflowStore'
+import { useCollaborationStore } from '../stores/collaborationStore'
 import { useAnnotationStore } from '../stores/annotationStore'
 import { useFilesystemStore } from '../stores/filesystemStore'
 import { useViewStore } from '../stores/viewStore'
 import { useProjectStore } from '../stores/projectStore'
+import { useUserStore } from '../stores/userStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
@@ -168,6 +171,30 @@ export function WorkspacePage() {
     if (!activeDocumentId) return
     void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
   }, [activeDocumentId, projectReady])
+
+  // Collaboration: connect/disconnect Yjs when the active document changes.
+  const currentUser = useUserStore((s) => s.currentUser)
+  const collabConnect = useCollaborationStore((s) => s.connect)
+  const collabDisconnect = useCollaborationStore((s) => s.disconnect)
+  const setCollaborating = useDocumentStore((s) => s.setCollaborating)
+
+  useEffect(() => {
+    if (!projectReady || !activeDocumentId || !currentUser) {
+      collabDisconnect()
+      return
+    }
+    void collabConnect(activeDocumentId, {
+      id: currentUser.id,
+      name: currentUser.display_name ?? currentUser.email,
+    }).then(() => {
+      setCollaborating(activeDocumentId, true)
+    })
+    return () => {
+      setCollaborating(activeDocumentId, false)
+      collabDisconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDocumentId, projectReady, currentUser?.id])
 
   // Document content is no longer persisted (servers is the source of truth,
   // see documentStore persist config). On mount / hard refresh, if we have a
@@ -456,7 +483,10 @@ export function WorkspacePage() {
 
           <Panel defaultSize={50} minSize={36}>
             <div className="panel editor-panel">
-              <EditorToolbar doc={activeDoc} selection={activeSelection} />
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <EditorToolbar doc={activeDoc} selection={activeSelection} />
+                <CollaborationStatus />
+              </div>
               <PanelGroup orientation="horizontal" style={{ height: 'calc(100% - 48px)' }}>
                 {annotationColumnVisible && (
                   <>

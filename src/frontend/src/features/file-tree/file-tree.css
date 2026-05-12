@@ -245,6 +245,26 @@
   border-radius: 6px;
 }
 
+.tree-root-drop-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 6px;
+  padding: 6px 9px;
+  border: 1px dashed rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: rgba(148, 163, 184, 0.78);
+  background: rgba(15, 23, 42, 0.28);
+  font-size: 12px;
+  user-select: none;
+}
+
+.tree-folder-block.root.drag-over .tree-root-drop-target {
+  color: #bfdbfe;
+  border-color: rgba(59, 130, 246, 0.62);
+  background: rgba(59, 130, 246, 0.14);
+}
+
 .tree-folder-row[draggable='true'],
 .tree-doc-row[draggable='true'],
 .tree-file-row[draggable='true'] {

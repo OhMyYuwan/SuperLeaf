@@ -14,6 +14,8 @@ import { persist } from 'zustand/middleware'
 import type { Document, DocumentFormat } from '../types/document'
 import { createDocument, parseDocument } from '../services/documentParser'
 import { filesystemApi, type BackendDoc } from '../services/filesystemApi'
+import { createUserScopedStorage } from './_userScopedStorage'
+import { showToast } from '../features/shared/toast'
 
 const AUTO_SAVE_DEBOUNCE_MS = 1500
 
@@ -42,6 +44,10 @@ interface DocumentState {
   // A2: backend-backed file management
   upsertFromBackendDoc: (doc: BackendDoc) => void
   loadBackendDoc: (id: string) => Promise<void>
+  /** Re-fetch the doc from backend WITHOUT clobbering local unsaved edits.
+   *  Used by visibility/focus-driven multi-device catch-up. If the doc is
+   *  dirty or saving locally, this is a no-op so the user doesn't lose work. */
+  refreshFromBackend: (id: string) => Promise<void>
   saveBackendDoc: (id: string) => Promise<void>
   flushPendingSave: (id: string) => Promise<void>
 }
@@ -128,6 +134,28 @@ export const useDocumentStore = create<DocumentState>()(
         set({ activeDocumentId: id })
       },
 
+      refreshFromBackend: async (id) => {
+        const status = get().saveStatus[id]
+        // Never clobber unsaved local work. dirty = pending debounce; saving
+        // = request in flight; error = last save errored and content is
+        // still ahead of backend.
+        if (status === 'dirty' || status === 'saving' || status === 'error') {
+          return
+        }
+        try {
+          const doc = await filesystemApi.getDoc(id)
+          // Re-check after await — user may have started typing during the
+          // round-trip; if so, drop this stale response.
+          const after = get().saveStatus[id]
+          if (after === 'dirty' || after === 'saving') return
+          get().upsertFromBackendDoc(doc)
+        } catch (err) {
+          // Don't toast — this is a background refresh; failure is silent
+          // but logged so dev tools surface it. Next focus retries.
+          console.warn('[documentStore] refreshFromBackend failed', err)
+        }
+      },
+
       saveBackendDoc: async (id) => {
         const existing = get().documents[id]
         if (!existing) return
@@ -166,6 +194,7 @@ export const useDocumentStore = create<DocumentState>()(
             saveStatus: { ...state.saveStatus, [id]: 'error' },
             saveError: { ...state.saveError, [id]: msg },
           }))
+          showToast(`文档保存失败：${msg}`, { level: 'error' })
         }
       },
 
@@ -183,8 +212,13 @@ export const useDocumentStore = create<DocumentState>()(
     }),
     {
       name: 'yuwan-documents-v1',
+      storage: createUserScopedStorage(),
+      // Only persist the active doc id. Document content used to be persisted
+      // too, but it caused the editor to rehydrate stale text from the
+      // previous session while the backend version history (which always
+      // reads live) showed something newer. Servers is the source of truth
+      // for content; the editor reloads from `loadBackendDoc` on mount.
       partialize: (state) => ({
-        documents: state.documents,
         activeDocumentId: state.activeDocumentId,
       }),
     },

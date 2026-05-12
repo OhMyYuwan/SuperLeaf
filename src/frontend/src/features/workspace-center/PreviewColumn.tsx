@@ -41,7 +41,7 @@ export function PreviewColumn({ doc, previewFile }: PreviewColumnProps) {
           <Wand2 size={16} /> 预览
         </div>
         <div className="preview-box">
-          <LatexPreview documentContent={doc.content} documentVersion={doc.version} />
+          <LatexPreview documentId={doc.id} />
         </div>
       </div>
     )

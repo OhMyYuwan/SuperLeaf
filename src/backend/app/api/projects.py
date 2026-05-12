@@ -6,14 +6,19 @@ on projects owned by that user. Cross-user access returns 404.
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import User
+from ..models import Project, User
 from ..schemas import ProjectCreateIn, ProjectOut, ProjectUpdateIn
+from ..services.event_bus import bus
 from ..services.project_service import LastProjectError, ProjectService
-from .deps import get_current_user
+from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -84,3 +89,52 @@ def delete_project(
         raise HTTPException(409, str(e)) from e
     if not ok:
         raise HTTPException(404, "Project not found")
+
+
+# ---------------------------------------------------------------------------
+# Real-time events (REQ-0034 phase 2)
+# ---------------------------------------------------------------------------
+#
+# Long-lived SSE stream of per-project events. The client (one EventSource
+# per browser tab) subscribes after login and the projectStore sets a
+# currentProjectId. Events fire whenever any user with access to this
+# project mutates annotations, evaluations, review_status, or doc content.
+#
+# Heartbeat every 25s keeps proxies from idle-closing the connection.
+# Browser EventSource auto-reconnects on close; the client also passes
+# `Last-Event-ID` so we can (someday) replay missed events from a log. For
+# now we don't have a persistence ring — missed events are recovered via
+# the focus/visibility refresh path in WorkspacePage.
+
+
+@router.get("/{project_id}/events")
+async def project_events(
+    project: Project = Depends(get_project_from_path),
+) -> EventSourceResponse:
+    sub = await bus.subscribe(project.id)
+
+    async def event_gen():
+        # Greet so the client knows the stream is live (and so any sniffers
+        # see at least one event quickly).
+        yield {
+            "event": "ylw.hello",
+            "data": json.dumps({"project_id": project.id}),
+        }
+        try:
+            while True:
+                try:
+                    evt = await asyncio.wait_for(sub.queue.get(), timeout=25.0)
+                except asyncio.TimeoutError:
+                    # SSE comments (lines starting with `:`) keep the
+                    # connection alive without firing client handlers.
+                    yield {"event": "ylw.heartbeat", "data": "{}"}
+                    continue
+                yield {
+                    "id": evt["id"],
+                    "event": evt["type"],
+                    "data": json.dumps(evt),
+                }
+        finally:
+            await bus.unsubscribe(sub)
+
+    return EventSourceResponse(event_gen())

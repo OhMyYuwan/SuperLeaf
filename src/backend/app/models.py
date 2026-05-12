@@ -397,3 +397,108 @@ class Operation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, index=True
     )
+
+
+# ---------------------------------------------------------------------------
+# V3 Phase 4 — Annotation evaluation + review status
+#
+# Annotations themselves still live in the frontend zustand store (see
+# frontend/src/stores/annotationStore.ts). These two tables attach user
+# review + evaluation data by annotation_id *string* only — no foreign key,
+# since the author of the annotation string is the browser. Doc-scoped
+# indexes let us pull everything for a doc with one query each.
+# ---------------------------------------------------------------------------
+
+
+class AnnotationEvaluation(Base):
+    """User-authored ✅/❎ verdict on a specific Agent output.
+
+    Mirrors the AgentEvaluation interface in the frontend store one-for-one.
+    `context` carries captured provenance (document_hash, section,
+    surrounding_before/after, etc.); server-side enrichment may add
+    workflow_run_id / workflow_id pulled from the Operation audit log.
+    """
+
+    __tablename__ = "annotation_evaluations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # frontend uuid
+    annotation_id: Mapped[str] = mapped_column(String(64), index=True)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str] = mapped_column(String(128), default="")
+    verdict: Mapped[str] = mapped_column(String(16))  # positive | negative
+    reason: Mapped[str] = mapped_column(String(2048))
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    adoption: Mapped[str] = mapped_column(String(32), default="unknown")
+    training_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+    context: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class AnnotationReviewState(Base):
+    """User's handling state for an annotation (open / considered /
+    addressed / dismissed).
+
+    Kept separate from the frontend `AnnotationItem.status` (which tracks
+    archive/delete) because review state is orthogonal — you can have an
+    archived+dismissed or pending+considered combo.
+    """
+
+    __tablename__ = "annotation_review_states"
+
+    annotation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16))  # open | considered | addressed | dismissed
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class Annotation(Base):
+    """V3 phase 2.5 — annotation card persisted server-side.
+
+    Previously the cards (suggestion / annotation / risk / user-comment) lived
+    only in the frontend zustand store, which made cross-device and multi-
+    user collaboration impossible. The card is now stored here; only the
+    transient editor decoration state stays client-side.
+
+    `thread` is a JSON list of `{id, role, content, created_at, agent_id?,
+    agent_name?}`. Threads are append-only in practice; for now we replace
+    the whole list on every mutation rather than introducing a child table
+    until we need per-message permissions.
+    """
+
+    __tablename__ = "annotations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # frontend uuid
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))  # annotation | suggestion | risk | user-comment
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    range_from: Mapped[int] = mapped_column(Integer, default=0)
+    range_to: Mapped[int] = mapped_column(Integer, default=0)
+    target_text: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(16), default="medium")
+    workflow_id: Mapped[str] = mapped_column(String(128), default="")
+    agent_name: Mapped[str] = mapped_column(String(128), default="")
+    conversation_id: Mapped[str] = mapped_column(String(64), default="")
+    # Suggestion-specific
+    original: Mapped[str] = mapped_column(Text, default="")
+    proposed: Mapped[str] = mapped_column(Text, default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    # Risk-specific
+    risk_type: Mapped[str] = mapped_column(String(32), default="")
+    mitigation: Mapped[str] = mapped_column(Text, default="")
+    # JSON
+    thread: Mapped[list] = mapped_column(JSON, default=list)
+    attached_files: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

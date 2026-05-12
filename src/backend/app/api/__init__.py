@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from . import (
+    annotation_evaluations,
     auth,
     compile,
     conversations,
@@ -28,5 +29,6 @@ api_router.include_router(filesystem.router)
 api_router.include_router(filesystem.projects_router)
 api_router.include_router(conversations.router)
 api_router.include_router(versions.router)
+api_router.include_router(annotation_evaluations.router)
 api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)

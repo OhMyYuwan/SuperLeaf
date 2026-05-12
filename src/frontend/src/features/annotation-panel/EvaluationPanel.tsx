@@ -172,17 +172,21 @@ export function EvaluationPanel({
         trainingCandidate: effectiveTraining,
         context,
       })
-    } else {
-      addEvaluation(annotationId, {
-        targetType: defaultTargetType,
-        targetId: defaultTargetId ?? annotationId,
-        verdict,
-        reason: reason.trim(),
-        tags,
-        adoption,
-        trainingCandidate: effectiveTraining,
-        context,
-      })
+    } else if (annotationItem) {
+      addEvaluation(
+        annotationId,
+        {
+          targetType: defaultTargetType,
+          targetId: defaultTargetId ?? annotationId,
+          verdict,
+          reason: reason.trim(),
+          tags,
+          adoption,
+          trainingCandidate: effectiveTraining,
+          context,
+        },
+        annotationItem.documentId,
+      )
     }
     // Keep the panel expanded after save per plan doc §333; just reset the
     // form so the user can add another eval.

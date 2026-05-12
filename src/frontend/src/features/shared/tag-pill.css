@@ -1,0 +1,140 @@
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 999px;
+  border: 1px solid var(--tp-border, rgba(148, 163, 184, 0.32));
+  background: var(--tp-bg, rgba(148, 163, 184, 0.1));
+  color: var(--tp-fg, rgba(226, 232, 240, 0.92));
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.tag-pill.is-clickable {
+  cursor: pointer;
+}
+.tag-pill.is-clickable:hover {
+  border-color: var(--tp-border-hover, rgba(148, 163, 184, 0.55));
+  background: var(--tp-bg-hover, rgba(148, 163, 184, 0.18));
+}
+.tag-pill.is-active {
+  box-shadow: 0 0 0 1px var(--tp-glow, rgba(96, 165, 250, 0.55));
+  border-color: var(--tp-border-hover, rgba(148, 163, 184, 0.7));
+  background: var(--tp-bg-active, rgba(148, 163, 184, 0.24));
+}
+.tag-pill.is-compact {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.tag-pill-label {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.tag-pill-remove {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--tp-fg, rgba(226, 232, 240, 0.78));
+  opacity: 0.7;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+.tag-pill-remove:hover {
+  background: rgba(0, 0, 0, 0.25);
+  opacity: 1;
+}
+
+/* Hue palette — keep in sync with PALETTE in TagPill.tsx */
+
+.tag-pill-lime {
+  --tp-fg: #d9f99d;
+  --tp-bg: rgba(132, 204, 22, 0.16);
+  --tp-bg-hover: rgba(132, 204, 22, 0.26);
+  --tp-bg-active: rgba(132, 204, 22, 0.34);
+  --tp-border: rgba(132, 204, 22, 0.38);
+  --tp-border-hover: rgba(132, 204, 22, 0.62);
+  --tp-glow: rgba(132, 204, 22, 0.55);
+}
+
+.tag-pill-cyan {
+  --tp-fg: #a5f3fc;
+  --tp-bg: rgba(34, 211, 238, 0.14);
+  --tp-bg-hover: rgba(34, 211, 238, 0.24);
+  --tp-bg-active: rgba(34, 211, 238, 0.32);
+  --tp-border: rgba(34, 211, 238, 0.36);
+  --tp-border-hover: rgba(34, 211, 238, 0.6);
+  --tp-glow: rgba(34, 211, 238, 0.55);
+}
+
+.tag-pill-sky {
+  --tp-fg: #bae6fd;
+  --tp-bg: rgba(56, 189, 248, 0.14);
+  --tp-bg-hover: rgba(56, 189, 248, 0.24);
+  --tp-bg-active: rgba(56, 189, 248, 0.32);
+  --tp-border: rgba(56, 189, 248, 0.36);
+  --tp-border-hover: rgba(56, 189, 248, 0.6);
+  --tp-glow: rgba(56, 189, 248, 0.55);
+}
+
+.tag-pill-violet {
+  --tp-fg: #ddd6fe;
+  --tp-bg: rgba(139, 92, 246, 0.16);
+  --tp-bg-hover: rgba(139, 92, 246, 0.26);
+  --tp-bg-active: rgba(139, 92, 246, 0.34);
+  --tp-border: rgba(139, 92, 246, 0.38);
+  --tp-border-hover: rgba(139, 92, 246, 0.6);
+  --tp-glow: rgba(139, 92, 246, 0.55);
+}
+
+.tag-pill-pink {
+  --tp-fg: #fbcfe8;
+  --tp-bg: rgba(236, 72, 153, 0.14);
+  --tp-bg-hover: rgba(236, 72, 153, 0.24);
+  --tp-bg-active: rgba(236, 72, 153, 0.32);
+  --tp-border: rgba(236, 72, 153, 0.38);
+  --tp-border-hover: rgba(236, 72, 153, 0.6);
+  --tp-glow: rgba(236, 72, 153, 0.55);
+}
+
+.tag-pill-amber {
+  --tp-fg: #fde68a;
+  --tp-bg: rgba(245, 158, 11, 0.16);
+  --tp-bg-hover: rgba(245, 158, 11, 0.26);
+  --tp-bg-active: rgba(245, 158, 11, 0.34);
+  --tp-border: rgba(245, 158, 11, 0.4);
+  --tp-border-hover: rgba(245, 158, 11, 0.62);
+  --tp-glow: rgba(245, 158, 11, 0.55);
+}
+
+.tag-pill-emerald {
+  --tp-fg: #bbf7d0;
+  --tp-bg: rgba(16, 185, 129, 0.16);
+  --tp-bg-hover: rgba(16, 185, 129, 0.26);
+  --tp-bg-active: rgba(16, 185, 129, 0.34);
+  --tp-border: rgba(16, 185, 129, 0.38);
+  --tp-border-hover: rgba(16, 185, 129, 0.6);
+  --tp-glow: rgba(16, 185, 129, 0.55);
+}
+
+.tag-pill-rose {
+  --tp-fg: #fecaca;
+  --tp-bg: rgba(244, 63, 94, 0.14);
+  --tp-bg-hover: rgba(244, 63, 94, 0.24);
+  --tp-bg-active: rgba(244, 63, 94, 0.32);
+  --tp-border: rgba(244, 63, 94, 0.4);
+  --tp-border-hover: rgba(244, 63, 94, 0.62);
+  --tp-glow: rgba(244, 63, 94, 0.55);
+}

@@ -1,3 +1,11 @@
+# LOAD RULES for YuwanLabWriter
+#
+# Staged context loading. Bootstrap reads minimal_context first, then expands
+# only when the active task requires deeper context. forbidden_paths are
+# absolute boundaries; protected_paths require explicit confirmation before
+# modification.
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+
 bootstrap:
   entrypoint: .acp/version.yaml
   sequence:
@@ -12,25 +20,525 @@ loading:
   broad_scan: forbidden_by_default
   preferred_routing: capability_first
 
+minimal_context:
+  - .acp/version.yaml
+  - .acp/support/AGENT.md
+
 rules:
   forbidden_paths:
     - ../reference/
     - ../referenceold/
     - ../acp-protocol/
+    - ../.git/
+    - frontend/node_modules/
+    - frontend/dist/
+    - backend/.venv/
+    - backend/**/__pycache__/
+
   protected_paths:
     - .acp/version.yaml
     - .acp/support/LOAD_RULES.yaml
     - .acp/support/CHANGE_POLICY.yaml
     - .acp/capability/capabilities.yaml
-  initial_context:
-    - .acp/version.yaml
+    - .acp/support/PROJECT_MAP.yaml
     - .acp/support/AGENT.md
+    - frontend/package.json
+    - frontend/package-lock.json
+    - frontend/vite.config.ts
+    - frontend/tsconfig.json
+    - frontend/tsconfig.app.json
+    - frontend/tsconfig.node.json
+    - frontend/index.html
+    - backend/pyproject.toml
+    - backend/app/database.py
+    - backend/app/settings.py
+    - backend/app/secrets_vault.py
+    # V2.2 additions — orchestrator + multimodal bridge require boundary awareness.
+    - backend/app/services/agent_orchestrator.py
+    - backend/app/services/attached_files.py
+    - backend/app/services/nanobot_client.py
+    - ../.gitignore
+    - ../start.sh
+    - ../scripts/dify.sh
+
+  private_paths:
+    - .acp/kernel/
+    - docs/
+
   route_expansion:
     project-foundation:
-      start_with:
-        - .acp/support/PROJECT_MAP.yaml
-        - .acp/capability/capabilities.yaml
-      expand_when:
-        - planning requires module routing
-        - execution requires policy checks
-        - continuation requires kernel lineage
+      _root:
+        start_with:
+          - .acp/version.yaml
+          - .acp/support/AGENT.md
+          - .acp/support/PROJECT_MAP.yaml
+        expand_when:
+          - touching capabilities.yaml or change-policy
+          - resolving a kernel-binding question
+      planning-docs:
+        start_with:
+          - docs/v3_executive_plan.md
+          - docs/v2_executive_plan.md
+          - docs/architecture_data_flow.md
+        expand_when:
+          - revising plan implies architecture change
+          - consolidating older plan documents
+      dify-launcher:
+        start_with:
+          - ../scripts/dify.sh
+        expand_when:
+          - Dify-stack behavior or port mapping must change
+          - adding new Dify service profiles
+
+    frontend-workspace:
+      shell:
+        start_with:
+          - frontend/src/App.tsx
+          - frontend/src/App.css
+          - frontend/index.html
+        expand_when:
+          - layout change touches editor mounting or settings dialog
+          - shell needs new stores or bootstrap order change
+
+    frontend-topbar:
+      bar:
+        start_with:
+          - frontend/src/features/topbar/Topbar.tsx
+          - frontend/src/features/topbar/topbar.css
+        expand_when:
+          - new top-bar action or shortcut
+          - view-control behavior change
+      badge:
+        start_with:
+          - frontend/src/features/topbar/ProviderBadge.tsx
+        expand_when:
+          - badge must reflect additional signals (e.g. Dify quota, Nanobot queue)
+
+    frontend-workspace-center:
+      editor-column:
+        start_with:
+          - frontend/src/features/workspace-center/EditorColumn.tsx
+          - frontend/src/features/workspace-center/EditorToolbar.tsx
+        expand_when:
+          - editor mounting or toolbar UX change
+          - selection toolbar add-comment flow change
+      annotation-column:
+        start_with:
+          - frontend/src/features/workspace-center/AnnotationColumn.tsx
+        expand_when:
+          - AnnotationPanel integration change
+      preview-column:
+        start_with:
+          - frontend/src/features/workspace-center/PreviewColumn.tsx
+        expand_when:
+          - format-switch logic change
+
+    frontend-file-tree:
+      tree:
+        start_with:
+          - frontend/src/features/file-tree/FileTree.tsx
+          - frontend/src/stores/filesystemStore.ts
+        expand_when:
+          - CRUD / drag behavior change
+          - new tree node kinds
+      outline:
+        start_with:
+          - frontend/src/features/file-tree/OutlineList.tsx
+          - frontend/src/services/documentParser.ts
+        expand_when:
+          - outline extraction or scroll-sync change
+
+    frontend-preview:
+      latex:
+        start_with:
+          - frontend/src/features/preview/LatexPreview.tsx
+          - frontend/src/stores/compileStore.ts
+        expand_when:
+          - PDF rendering or compile trigger change
+      markdown:
+        start_with:
+          - frontend/src/features/preview/MarkdownPreview.tsx
+        expand_when:
+          - markdown plugin / math support change
+
+    frontend-settings:
+      dialog:
+        start_with:
+          - frontend/src/features/settings/SettingsDialog.tsx
+          - frontend/src/features/settings/settings.css
+        expand_when:
+          - adding new provider kinds or fields
+          - surfacing probe details or new status states
+
+    frontend-stores:
+      document:
+        start_with:
+          - frontend/src/stores/documentStore.ts
+        expand_when:
+          - persistence / backend sync integration change
+          - Document schema change requires migration
+      editor:
+        start_with:
+          - frontend/src/stores/editorStore.ts
+          - frontend/src/services/selectionContext.ts
+        expand_when:
+          - selection shape or multi-document focus change
+      settings:
+        start_with:
+          - frontend/src/stores/settingsStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - provider lifecycle or backend endpoint change
+      workflow:
+        start_with:
+          - frontend/src/stores/workflowStore.ts
+          - frontend/src/services/outputParser.ts
+        expand_when:
+          - new SSE event surface
+          - annotation ingestion logic change
+      annotation:
+        start_with:
+          - frontend/src/stores/annotationStore.ts
+        expand_when:
+          - card status machine change
+          - thread / user-comment semantics change
+      filesystem:
+        start_with:
+          - frontend/src/stores/filesystemStore.ts
+          - frontend/src/services/filesystemApi.ts
+        expand_when:
+          - tree schema or CRUD contract change
+      conversation:
+        start_with:
+          - frontend/src/stores/conversationStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - SSE message streaming shape change
+      compile:
+        start_with:
+          - frontend/src/stores/compileStore.ts
+        expand_when:
+          - compile contract or PDF url handling change
+      view:
+        start_with:
+          - frontend/src/stores/viewStore.ts
+        expand_when:
+          - layout persistence or responsive behavior change
+
+    frontend-annotations:
+      panel:
+        start_with:
+          - frontend/src/features/annotation-panel/AnnotationPanel.tsx
+          - frontend/src/features/annotation-panel/CommentComposer.tsx
+          - frontend/src/stores/annotationStore.ts
+        expand_when:
+          - card actions or composer behavior change
+          - continue-query flow change
+      decorations:
+        start_with:
+          - frontend/src/features/latex-editor/annotation-decorations.ts
+          - frontend/src/features/latex-editor/LatexEditor.tsx
+          - frontend/src/App.css
+        expand_when:
+          - decoration styles or click handling change
+          - new decoration kinds introduced
+
+    frontend-right-panel:
+      panel-shell:
+        start_with:
+          - frontend/src/features/right-panel/RightPanel.tsx
+          - frontend/src/features/right-panel/right-panel.css
+        expand_when:
+          - tab set or panel composition change
+      discussion:
+        start_with:
+          - frontend/src/features/right-panel/DiscussionTab.tsx
+          - frontend/src/stores/conversationStore.ts
+          - frontend/src/features/shared/MentionInput.tsx
+        expand_when:
+          - discussion UI or mention routing change
+      team:
+        start_with:
+          - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/stores/settingsStore.ts
+          - frontend/src/stores/workflowStore.ts
+        expand_when:
+          - team UX or provider CRUD shell change
+      workflow-tab:
+        start_with:
+          - frontend/src/features/right-panel/WorkflowTab.tsx
+          - frontend/src/stores/workflowStore.ts
+        expand_when:
+          - inline agent-workflow invocation change
+      workflow-definitions:
+        start_with:
+          - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+          - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+          - frontend/src/features/right-panel/workflow-canvas/
+        expand_when:
+          - definition CRUD, editor layout, or test-run UX change
+      run-history:
+        start_with:
+          - frontend/src/features/right-panel/RunHistoryTab.tsx
+        expand_when:
+          - history listing or replay UX change
+
+    frontend-feature-workflow-canvas:
+      canvas:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+        expand_when:
+          - canvas interactions or edge rule change
+      palette:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+        expand_when:
+          - available node type change (NOTE: new type = Request)
+      inspector:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+        expand_when:
+          - per-node config field change
+      nodes:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+        expand_when:
+          - node visual rendering change
+      graph-conversion:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+          - frontend/src/features/right-panel/workflow-canvas/health.ts
+        expand_when:
+          - graph persistence or validation change
+
+    frontend-conversations:
+      store:
+        start_with:
+          - frontend/src/stores/conversationStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - message send/stream/persist logic change
+      api:
+        start_with:
+          - backend/app/api/conversations.py
+          - backend/app/services/attached_files.py
+        expand_when:
+          - attached-files weaving or conversation persistence change
+
+    frontend-mention-system:
+      parser:
+        start_with:
+          - frontend/src/services/mentions.ts
+        expand_when:
+          - new candidate kind
+          - prompt assembly or file resolution change
+      input-component:
+        start_with:
+          - frontend/src/features/shared/MentionInput.tsx
+          - frontend/src/features/shared/fileSizeGate.ts
+          - frontend/src/features/shared/mention-input.css
+        expand_when:
+          - dropdown UX, overlay highlight, or size-gate threshold change
+      backend-contract:
+        start_with:
+          - backend/app/services/attached_files.py
+        expand_when:
+          - per-file cap, total budget, or rendered block format change
+
+    latex-editor:
+      shell:
+        start_with:
+          - frontend/src/features/latex-editor/LatexEditor.tsx
+          - frontend/src/features/latex-editor/index.ts
+        expand_when:
+          - public API change
+      extensions:
+        start_with:
+          - frontend/src/features/latex-editor/extensions.ts
+        expand_when:
+          - keymap or command change
+      language:
+        start_with:
+          - frontend/src/features/latex-editor/latex-language.ts
+        expand_when:
+          - migrating to Lezer LaTeX grammar
+      theme:
+        start_with:
+          - frontend/src/features/latex-editor/theme.ts
+        expand_when:
+          - workspace shell theme change
+      decorations:
+        start_with:
+          - frontend/src/features/latex-editor/annotation-decorations.ts
+        expand_when:
+          - decoration kind or rendering change
+
+    latex-compile:
+      backend:
+        start_with:
+          - backend/app/services/latex_compiler.py
+          - backend/app/api/compile.py
+        expand_when:
+          - compile flags, output format, or error extraction change
+      frontend:
+        start_with:
+          - frontend/src/features/preview/LatexPreview.tsx
+          - frontend/src/stores/compileStore.ts
+        expand_when:
+          - PDF rendering or compile triggering change
+
+    domain-model:
+      document:
+        start_with:
+          - frontend/src/types/document.ts
+        expand_when:
+          - editor or agent slices need new fields
+      editor:
+        start_with:
+          - frontend/src/types/editor.ts
+        expand_when:
+          - selection / context contract change
+      agent:
+        start_with:
+          - frontend/src/types/agent.ts
+        expand_when:
+          - agent I/O schema change
+          - new annotation or risk type
+      workflow:
+        start_with:
+          - frontend/src/types/workflow.ts
+        expand_when:
+          - new workflow node type
+          - execution-trace shape change
+      collaboration:
+        start_with:
+          - frontend/src/types/collaboration.ts
+        expand_when:
+          - new collaboration mode
+          - discussion schema change
+      history:
+        start_with:
+          - frontend/src/types/history.ts
+        expand_when:
+          - versioning or audit field change (V3 Phase 3)
+      ui:
+        start_with:
+          - frontend/src/types/ui.ts
+        expand_when:
+          - new panel view-model contract
+      actions:
+        start_with:
+          - frontend/src/types/actions.ts
+        expand_when:
+          - new user-action variant
+
+    backend-service:
+      app-entry:
+        start_with:
+          - backend/app/main.py
+          - backend/app/settings.py
+        expand_when:
+          - middleware or lifespan hook change
+      api-routes:
+        start_with:
+          - backend/app/api/__init__.py
+          - backend/app/api/workflows.py
+        expand_when:
+          - adding new routes or changing existing ones
+      services:
+        start_with:
+          - backend/app/services/provider_service.py
+          - backend/app/services/dify_client.py
+          - backend/app/services/nanobot_client.py
+        expand_when:
+          - provider client or registry invariant change
+      models:
+        start_with:
+          - backend/app/models.py
+          - backend/app/schemas.py
+        expand_when:
+          - new tables or I/O schemas
+      secrets:
+        start_with:
+          - backend/app/secrets_vault.py
+        expand_when:
+          - key rotation policy change
+
+    workflow-integration:
+      dify-client:
+        start_with:
+          - backend/app/services/dify_client.py
+        expand_when:
+          - Dify API version change
+          - new endpoint or event type
+      nanobot-client:
+        start_with:
+          - backend/app/services/nanobot_client.py
+        expand_when:
+          - Nanobot API change
+          - multimodal content-block shape change
+      provider-registry:
+        start_with:
+          - backend/app/services/provider_service.py
+          - frontend/src/stores/settingsStore.ts
+        expand_when:
+          - provider lifecycle change
+          - new provider kinds
+      workflow-run:
+        start_with:
+          - backend/app/api/workflows.py
+          - frontend/src/stores/workflowStore.ts
+          - frontend/src/services/outputParser.ts
+        expand_when:
+          - run trigger contract change
+          - annotation streaming contract change
+
+    workflow-orchestration:
+      orchestrator:
+        start_with:
+          - backend/app/services/agent_orchestrator.py
+        expand_when:
+          - bug fix or feature within agent + loop model
+          - NEW node type / run-loop change — escalate to Request
+      definition-api:
+        start_with:
+          - backend/app/api/workflows.py
+        expand_when:
+          - definition CRUD, validation, or execute endpoint change
+      canvas:
+        start_with:
+          - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+        expand_when:
+          - visual authoring change
+      templates:
+        start_with:
+          - frontend/src/features/right-panel/templates/
+        expand_when:
+          - adding or editing template JSON (Debate / Consensus etc)
+
+    build-tooling:
+      vite:
+        start_with:
+          - frontend/vite.config.ts
+        expand_when:
+          - adding a Vite plugin
+      typescript:
+        start_with:
+          - frontend/tsconfig.app.json
+        expand_when:
+          - shared paths or strictness change
+      lint-style:
+        start_with:
+          - frontend/eslint.config.js
+        expand_when:
+          - adding a lint plugin or Tailwind plugin
+      backend-pyproject:
+        start_with:
+          - backend/pyproject.toml
+        expand_when:
+          - adding Python deps or ruff rules
+
+  expansion_discipline:
+    must_justify: true
+    must_not_cross: forbidden_paths
+    prefer: read_protected_then_confirm_before_edit

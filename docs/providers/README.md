@@ -1,0 +1,46 @@
+# Provider 总览
+
+YuwanLabWriter 本身不调用大模型，所有智能行为都通过你注册的 **provider** 由外部服务承担。Provider 在设置里是一条记录：
+
+| 字段 | 含义 |
+|---|---|
+| 名称 | 你自己看的标识，如 `Local Nanobot` / `Cloud Dify` |
+| 类型 (`kind`) | 决定后端用哪种客户端去说话 |
+| Endpoint | 这个服务的 HTTP 根地址 |
+| API Key | 鉴权用，本地加密（Fernet）存在 `~/.yuwanlab/yuwanlab.db`，前端拿不到明文 |
+| 激活 | 同一时刻只能有一个 provider 是「激活」状态，workflow/批注都走它 |
+
+## 支持的类型
+
+| `kind` | 场景 | 文档 |
+|---|---|---|
+| `nanobot` | 本地或局域网内跑一个 / 多个 Nanobot agent，OpenAI 兼容 HTTP | [nanobot.md](./nanobot.md) |
+| `dify-local` | 用 `scripts/dify.sh` 在本机 docker-compose 起的 Dify | [dify.md](./dify.md) |
+| `dify-cloud` | Dify SaaS (api.dify.ai) | [dify.md](./dify.md) |
+| `claude-direct` | 直连 Anthropic API | [claude.md](./claude.md) |
+
+## 加一个 provider 的通用流程
+
+1. 启动后端（默认 `http://localhost:8000`）和前端（默认 `http://localhost:5173`）。
+2. 右上角点进 **Provider 设置**。
+3. **添加 Provider** → 选类型 → 填 endpoint 和 api key → 勾「保存后立即激活」。
+4. 保存后点 **测连**。状态变绿的同时后端会把可用的 workflow / model 缓存进本地 SQLite。
+5. 回到工作区，打开右侧 workflow 面板，应能看到这个 provider 下的条目。
+
+## 多 provider 并存
+
+- 允许同时保存多条 Dify / Nanobot / Claude 的 provider 记录。
+- 只有「激活」的那一条参与运行；切换时把另一条 **激活** 即可，不需要删旧的。
+- Nanobot 场景下，把多实例当成多个平级 agent 注册，每个 endpoint（不同端口或 LAN IP）就是一个 provider。
+
+## 存储与隐私
+
+- API key 以 Fernet 密钥加密落盘，密钥文件 `~/.yuwanlab/secrets.key`（模式 600）。
+- 前端从后端拿到的 provider 对象只有 `has_api_key: boolean`，没有明文。
+- 删除 provider 会一并清理它同步出来的 workflow 缓存和运行记录。
+
+## 调试建议
+
+- 测连失败时先看 **status detail** 栏的 HTTP 错误信息。
+- 本机防火墙 / 系统代理：后端的 httpx 客户端写了 `trust_env=False`，不会走系统代理；前端从浏览器走一般问题不大。
+- Nanobot 局域网场景请先在本机用 `127.0.0.1` 确认可用，再换成局域网 IP，把范围缩小。

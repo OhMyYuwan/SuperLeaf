@@ -1,0 +1,65 @@
+{
+  "name": "Debate · 双评审 + 仲裁",
+  "description": "两个评审 Agent 并行给意见，一个仲裁 Agent 给最终结论。导入后需要把每个节点的 Agent 替换为真实 Agent。",
+  "execution_mode": "graph",
+  "graph": {
+    "nodes": [
+      {
+        "id": "input",
+        "type": "input",
+        "label": "输入",
+        "config": {
+          "position": { "x": 60, "y": 160 }
+        }
+      },
+      {
+        "id": "reviewer_a",
+        "type": "agent",
+        "label": "评审 A",
+        "config": {
+          "agentId": "__PICK_AGENT__",
+          "position": { "x": 320, "y": 60 },
+          "promptHint": "以严格审稿人视角，列出本段的 3 个主要问题和 1 个优点。"
+        }
+      },
+      {
+        "id": "reviewer_b",
+        "type": "agent",
+        "label": "评审 B",
+        "config": {
+          "agentId": "__PICK_AGENT__",
+          "position": { "x": 320, "y": 260 },
+          "promptHint": "以读者视角，列出你困惑的 2 处地方，并猜测作者本意。"
+        }
+      },
+      {
+        "id": "arbiter",
+        "type": "agent",
+        "label": "仲裁",
+        "config": {
+          "agentId": "__PICK_AGENT__",
+          "position": { "x": 620, "y": 160 },
+          "promptHint": "结合两位评审的意见，给出最终的修改建议（不超过 150 字）。"
+        }
+      },
+      {
+        "id": "output",
+        "type": "output",
+        "label": "输出",
+        "config": {
+          "position": { "x": 880, "y": 160 }
+        }
+      }
+    ],
+    "edges": [
+      { "source": "input", "target": "reviewer_a" },
+      { "source": "input", "target": "reviewer_b" },
+      { "source": "reviewer_a", "target": "arbiter" },
+      { "source": "reviewer_b", "target": "arbiter" },
+      { "source": "arbiter", "target": "output" }
+    ]
+  },
+  "config": {
+    "merge_strategy": "concat"
+  }
+}

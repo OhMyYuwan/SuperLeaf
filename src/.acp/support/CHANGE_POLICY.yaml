@@ -1,21 +1,221 @@
+# CHANGE POLICY for YuwanLabWriter
+#
+# Concrete authorization rules for mutation work.
+# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh — orchestrator,
+# multi-provider, mention system, file-tree, conversations, compile surfaces).
+#
+# Resolution order: forbidden > high_risk > require_confirmation > auto_allow.
+
 auto_allow:
-  - create_request_plan_change_objects
-  - update_open_kernel_objects
-  - read_support_and_capability_files
+  # Routine kernel writes — expected during normal Request flow.
+  - operation: create_or_update_kernel_object
+    paths:
+      - .acp/kernel/requests/REQ-*.yaml
+      - .acp/kernel/plans/PLN-*.md
+      - .acp/kernel/changes/CHG-*.yaml
+
+  # Routine code work in feature areas.
+  - operation: edit
+    paths:
+      - frontend/src/App.tsx
+      - frontend/src/App.css
+      - frontend/src/index.css
+      - frontend/src/main.tsx
+      - frontend/src/features/**/*.ts
+      - frontend/src/features/**/*.tsx
+      - frontend/src/features/**/*.css
+      - frontend/src/features/**/*.json   # workflow templates (debate / consensus)
+      - frontend/src/stores/*.ts
+      - frontend/src/services/*.ts
+      - frontend/src/types/*.ts
+      - frontend/src/__tests__/*.ts
+      - backend/app/api/*.py
+      - backend/app/services/*.py
+      - backend/app/models.py
+      - backend/app/schemas.py
+      - backend/app/main.py
+      - ../src/collab-server/src/*.ts
+
+  # Pure additions (new feature folders / modules).
+  - operation: create
+    paths:
+      - frontend/src/features/**/*
+      - frontend/src/stores/*.ts
+      - frontend/src/services/*.ts
+      - frontend/src/__tests__/*.ts
+      - backend/app/api/*.py
+      - backend/app/services/*.py
+
+  # Adding new planning docs.
+  - operation: create
+    paths:
+      - docs/*.tex
+      - docs/*.md
 
 require_confirmation:
-  - edit_.acp/version.yaml
-  - edit_.acp/support/LOAD_RULES.yaml
-  - edit_.acp/support/CHANGE_POLICY.yaml
-  - edit_.acp/capability/capabilities.yaml
-  - touch_protected_paths
+  # Editing protected support / governance files.
+  - operation: edit
+    paths:
+      - .acp/support/AGENT.md
+      - .acp/support/PROJECT_MAP.yaml
+      - .acp/support/LOAD_RULES.yaml
+      - .acp/support/CHANGE_POLICY.yaml
+      - .acp/capability/capabilities.yaml
+      - .acp/version.yaml
+    reason: Support and capability files steer routing for every future Request.
+
+  - operation: edit
+    paths:
+      - frontend/package.json
+      - frontend/package-lock.json
+      - frontend/vite.config.ts
+      - frontend/tsconfig.json
+      - frontend/tsconfig.app.json
+      - frontend/tsconfig.node.json
+      - frontend/index.html
+      - frontend/eslint.config.js
+      - frontend/tailwind.config.js
+      - backend/pyproject.toml
+      - backend/app/settings.py
+      - backend/app/database.py
+      - backend/app/secrets_vault.py
+      - ../src/collab-server/package.json
+      - ../src/collab-server/tsconfig.json
+    reason: Build and config files affect the entire frontend / backend / collab surface.
+
+  - operation: edit
+    paths:
+      - ../.gitignore
+      - ../start.sh
+      - ../scripts/dify.sh
+      - ../README.md
+      - ../README_EN.md
+      - ../AGENTS.md
+      - ../HANDBOOK.md
+    reason: Repo-root tooling affects the whole project.
+
+  - operation: edit_cross_slice
+    description: Edits that span more than one slice in capabilities.yaml.
+    reason: Broadens authority boundary; should be planned as an explicit cross-surface Request.
+
+  - operation: install_dependency
+    description: Adds an entry to frontend/package.json or backend/pyproject.toml dependencies.
+    reason: Affects build output, security surface, and onboarding.
 
 forbidden:
-  - rewrite_kernel_history
-  - delete_kernel_objects
-  - treat_reference_as_project_source
+  # Reference projects and the ACP protocol package are read-only context.
+  - operation: any
+    paths:
+      - ../reference/
+      - ../referenceold/
+      - ../acp-protocol/
+    reason: External / vendored content. Read for inspiration only.
+
+  # Kernel history is append-only.
+  - operation: rewrite_kernel_history
+    description: Editing or deleting an existing REQ / PLN / CHG record after creation.
+    reason: ACP requires append-only kernel lineage; corrections happen via supersession or new Change.
+
+  # Privacy boundary.
+  - operation: stage_for_commit
+    paths:
+      - .acp/kernel/
+      - docs/
+    reason: User mandate — these directories must never enter git, even via amendment.
+
+  # Avoid destructive shortcuts.
+  - operation: bypass_safety
+    description: Using --no-verify, force-push, or --hard reset to silence checks rather than fix root causes.
+
+  # Treat reference code as project source.
+  - operation: import_or_call
+    paths:
+      - ../reference/**/*
+    reason: Reference projects are not on our import path or in our build graph.
+
+  # (Removed in REQ-0026): the historical `implement_self_hosted_workflow_engine`
+  # ban from V2.1 has been superseded by V2.2 (REQ-0015). The canonical
+  # baseline orchestrator now lives at backend/app/services/agent_orchestrator.py
+  # and the active acknowledgement / boundary is in `high_risk` below.
 
 high_risk:
-  - change_acp_version
-  - change_profile_enablement
-  - expand_scope_beyond_src_project_root
+  # ACP profile / version changes invalidate all prior bootstrap assumptions.
+  - operation: edit
+    paths:
+      - .acp/version.yaml
+    reason: Profile or ACP version change re-routes every future bootstrap.
+
+  # Major dependency upgrades.
+  - operation: upgrade_major
+    description: Bumping React, Vite, TypeScript, CodeMirror, FastAPI, SQLAlchemy, Pydantic, or Dify major versions.
+    reason: Cross-cutting impact on shell, editor module, backend, and/or Dify client compatibility.
+
+  # Replacing the LaTeX language source.
+  - operation: replace_latex_grammar
+    description: Switching from @codemirror/legacy-modes/mode/stex to a Lezer-based parser.
+    reason: Adds a build step and changes the highlighting / autocomplete pipeline.
+
+  # Exposing the editor selection or document state to the Agent runtime.
+  - operation: editor_to_runtime_bridge
+    description: Wiring the editor module to a backend or Dify runtime that mutates the document.
+    reason: Crosses editor / runtime boundary; security and consistency concerns.
+
+  # Branch / promotion operations.
+  - operation: promote_branch
+    description: Merging YuwanZ → develop, or develop → main, or pushing to a remote.
+    reason: Visible to others; must reflect a clean Change set.
+
+  # Rotating the secrets key.
+  - operation: rotate_secrets_key
+    description: Regenerating ~/.yuwanlab/secrets.key or changing the encryption scheme.
+    reason: Invalidates all stored provider API keys; users must re-enter them.
+
+  # Altering Dify bootstrap.
+  - operation: edit
+    paths:
+      - ../scripts/dify.sh
+    reason: Dify launcher is the only sanctioned path to start the agentic backend; regressions block the whole stack.
+
+  # Extending the self-hosted orchestrator (V2.2 acknowledgement).
+  - operation: extend_self_hosted_orchestrator
+    paths:
+      - backend/app/services/agent_orchestrator.py
+      - backend/app/services/attached_files.py
+    description: |
+      `agent_orchestrator.py` is the canonical baseline added in REQ-0015
+      and extended through REQ-0023. Routine extension is acceptable but
+      must respect the boundary below.
+    boundary: |
+      Acceptable in this category:
+        - bug fixes
+        - new SSE event fields
+        - changes within the existing agent + loop node model
+      Requires its own Request (NOT this category):
+        - introducing a NEW node type (e.g. debate, consensus, condition,
+          merge) as engine-level concept rather than template
+        - swapping the run loop or scheduling strategy
+        - persisting runtime state outside the existing tables
+        - introducing a DSL or external execution backend
+    reason: |
+      The orchestrator now drives multi-agent coordination across Dify
+      and Nanobot providers. Changes ripple through workflow-canvas,
+      DiscussionTab, and AnnotationPanel; a structural change here is
+      effectively a project pivot.
+
+  # Touching the Nanobot multimodal / attached-files contract.
+  - operation: edit
+    paths:
+      - backend/app/services/nanobot_client.py
+      - backend/app/services/attached_files.py
+    reason: |
+      These define how user-supplied files (text + image) reach the LLM.
+      Changes here have security and cost implications (byte caps,
+      truncation, multimodal payload shape).
+
+# Decision tree:
+#  1. forbidden → refuse
+#  2. high_risk → warn + explicit confirmation
+#  3. require_confirmation → ask before planning
+#  4. auto_allow → proceed
+#  5. otherwise → require_confirmation (default)
+default: require_confirmation

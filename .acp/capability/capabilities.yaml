@@ -19,7 +19,7 @@ capabilities:
     summary: ACP governance, planning documents, repository tooling, and cross-cutting project scaffolding that does not belong to one feature.
     slices:
       - id: _root
-        summary: ACP kernel, support, and capability files; .gitignore; start.sh; root README and AGENTS files.
+        summary: ACP kernel, support, and capability files; .gitignore; start.sh; root README.
         route_here_when: Work changes ACP records, branch policy, repo-level tooling, ignore rules, or root-level docs.
         bridge_when: A governance change forces a code change in frontend / backend / scripts — open a separate Request.
         primary_paths:
@@ -30,7 +30,6 @@ capabilities:
           - ../.gitignore
           - ../start.sh
           - ../README.md
-          - ../AGENTS.md
       - id: planning-docs
         summary: Planning documents under src/docs/ (v1 / v2 / v3 executive plans, architecture data flow, amendments).
         route_here_when: Work authors or revises product/architecture/plan documents.

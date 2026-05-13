@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "acp-v1-0-0": {
+      "source": "OhMyYuwan/ProtoCodeBase.Skill",
+      "sourceType": "github",
+      "skillPath": "skills/acp-v1-0-0/SKILL.md",
+      "computedHash": "447496a3268e1ee031c7aa721d1cb347a999cc3d7fd15f22635aa7afa351e24f"
+    }
+  }
+}

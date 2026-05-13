@@ -100,6 +100,26 @@ YuwanLabWriter/
 - **通知系统**: SSE 事件流推送项目更新
 - **隐私隔离**: Agent 工作流和批注属于个人，不与协作者共享
 
+## 👨‍💻 开发贡献
+
+本项目采用三层分支策略：**个人分支 → develop → main**
+
+```bash
+# 1. 在个人分支开发
+git checkout -b your-name
+# 进行开发...
+
+# 2. 合并到 develop 测试
+git checkout develop
+git merge your-name
+
+# 3. 测试通过后合并到 main
+git checkout main
+git merge develop
+```
+
+详细的开发流程、代码规范和提交指南请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 📄 许可证
 
 本项目采用 [Apache License 2.0](LICENSE) 开源协议。

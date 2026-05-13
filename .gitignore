@@ -36,8 +36,8 @@ pnpm-debug.log*
 acp-protocol/
 
 # ACP kernel and docs (contain user privacy data)
-src/.acp/kernel/
-src/docs/
+.acp/kernel/
+services/docs/
 
 # Python
 __pycache__/
@@ -59,6 +59,9 @@ env/
 *.tmp
 *.bak
 *~
+*.backend/
 
 # Dev process logs
 logs/
+scripts/
+

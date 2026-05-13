@@ -6,9 +6,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND_DIR="$ROOT_DIR/src/frontend"
-BACKEND_DIR="$ROOT_DIR/src/backend"
-COLLAB_DIR="$ROOT_DIR/src/collab-server"
+FRONTEND_DIR="$ROOT_DIR/services/frontend"
+BACKEND_DIR="$ROOT_DIR/services/backend"
+COLLAB_DIR="$ROOT_DIR/services/collab-server"
 LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="$LOG_DIR/pids"
 

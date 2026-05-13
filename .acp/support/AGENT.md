@@ -8,8 +8,8 @@ profiles:
   kernel: required
   capability: enabled
   support: enabled
-active_request_id: REQ-0026
-last_completed_request_id: REQ-0025
+active_request_id: null
+last_completed_request_id: REQ-0038
 entry_order:
   - .acp/support/AGENT.md
   - .acp/support/PROJECT_MAP.yaml
@@ -211,8 +211,14 @@ surface plus a multi-Agent review/polishing/workflow layer.
                 └── shared/                  (MentionInput + fileSizeGate + CollaborationStatus + ProjectEventBridge)
 ```
 
-Repo-root tooling: `start.sh`, `scripts/dify.sh`, `.gitignore`, `README(.md / _EN.md)`,
-`AGENTS.md`, `HANDBOOK.md`. External context under `reference/` is forbidden.
+Repo-root tooling: `start.sh`, `.gitignore`, `README.md`.
+External context under `reference/` is forbidden. ACP protocol is provided via the
+`acp-v1-0-0` skill (installed at `.agents/skills/acp-v1-0-0/`), not bundled in repo.
+
+Services are organized under `services/`:
+- `services/frontend/` - React 19 + Vite + TypeScript
+- `services/backend/` - FastAPI + SQLite
+- `services/collab-server/` - Node.js + Yjs WebSocket
 
 ## Capabilities
 
@@ -261,7 +267,8 @@ Use them to pick the smallest sufficient authority boundary.
 - **REQ-0019..0023 (closed)**: Workflow canvas hardening — input/output boundary artifacts, editor ergonomics + test-run panel, node healthcheck, per-node I/O inspection, loop entry/exit + round feedback semantics.
 - **REQ-0024 (closed)**: @-mention system — files + workflows + agents, multimodal Nanobot bridge, attached-files normalizer, overlay highlight input, current-doc pinning, user-comment editor decoration.
 - **REQ-0025 (closed)**: V3 executive plan — finishing posture, 4 phases over 6-8 weeks, snapshot history with 20-cap + 10-min cooldown, debate/consensus as templates.
-- **REQ-0026 (active)**: V2.2 governance refresh — this document plus PROJECT_MAP, capabilities, LOAD_RULES, CHANGE_POLICY.
+- **REQ-0026 (closed)**: V2.2 governance refresh — this document plus PROJECT_MAP, capabilities, LOAD_RULES, CHANGE_POLICY.
+- **REQ-0027..0038 (closed)**: Collaboration/auth hardening, panel ergonomics, Agent Markdown rendering, LaTeX compile reliability (current file selection, missing-graphic placeholders, relative paths, BibTeX), file-tree root moves, stale project-context request fixes, and this Chinese README / project-map refresh.
 
 Track full lineage in `.acp/kernel/changes/`. Every CHG-NNNN names its commit SHA (or `local-only` for kernel-only / docs-only Changes).
 

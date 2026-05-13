@@ -5,7 +5,14 @@
   <img src="assets/github-header-banner.png" alt="YuwanLabWriter Banner" width="100%">
 </div>
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+<div align="center">
+  <a href="LICENSE">
+    <img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg">
+  </a>
+  <a href="https://github.com/OhMyYuwan/ProtoCodeBase.Skill/tree/main/skills">
+    <img alt="ProtoCodeBase ACP 1.0.0" src="https://img.shields.io/static/v1?label=ProtoCodeBase&message=ACP%20%C2%B7%201.0.0&color=0F766E&labelColor=111827">
+  </a>
+</div>
 
 YuwanLabWriter 是一个本地部署的 LaTeX/Markdown 协作编辑器，集成了 AI 工作流系统和实时多人协作功能。
 
@@ -119,6 +126,16 @@ git merge develop
 ```
 
 详细的开发流程、代码规范和提交指南请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 🧭 开发协议
+
+本项目开发协议使用 ProtoCodeBase 的 ACP 1.0.0 协议。持续开发时，可以安装对应的 ACP 项目 skill：
+
+```bash
+npx skills add https://github.com/OhMyYuwan/ProtoCodeBase.Skill.git --skill acp-v1-0-0
+```
+
+协议与 skill 说明见 [ProtoCodeBase.Skill](https://github.com/OhMyYuwan/ProtoCodeBase.Skill/tree/main/skills)。
 
 ## 📄 许可证
 

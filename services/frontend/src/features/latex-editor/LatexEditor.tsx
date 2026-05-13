@@ -43,8 +43,8 @@ export interface SelectionInfo {
   to: number
   text: string
   // Coordinates of the selection's end (anchor on right side of last char)
-  // relative to the editor's content container. Useful for positioning
-  // floating toolbars.
+  // relative to the editor root overlay. Useful for positioning floating
+  // toolbars.
   coords: { x: number; y: number } | null
 }
 
@@ -143,11 +143,11 @@ export function LatexEditor({
             if (sel.from !== sel.to) {
               const view = update.view
               const screenCoords = view.coordsAtPos(sel.to)
-              const rect = view.scrollDOM.getBoundingClientRect()
+              const rootRect = view.dom.parentElement?.getBoundingClientRect()
               if (screenCoords) {
                 coords = {
-                  x: screenCoords.right - rect.left + view.scrollDOM.scrollLeft,
-                  y: screenCoords.top - rect.top + view.scrollDOM.scrollTop,
+                  x: screenCoords.right - (rootRect?.left ?? 0),
+                  y: screenCoords.top - (rootRect?.top ?? 0),
                 }
               }
             }

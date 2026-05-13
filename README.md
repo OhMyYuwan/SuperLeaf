@@ -61,7 +61,7 @@ cd YuwanLabWriter
 3. 配置 Provider（Nanobot / Dify / Claude API）
 4. 选中文字 → 运行 workflow → 查看批注
 
-详细教程见 [文档站点](https://yuwanz.github.io/YuwanLabWriter/)
+详细教程见 [文档站点](https://ohmyyuwan.github.io/YuwanLabWriter/)
 
 ## 📚 文档
 

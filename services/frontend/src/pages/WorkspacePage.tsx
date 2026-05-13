@@ -38,6 +38,7 @@ import { useProjectStore } from '../stores/projectStore'
 import { useUserStore } from '../stores/userStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
+import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
@@ -114,7 +115,7 @@ export function WorkspacePage() {
   // UI-only state -----------------------------------------------------------
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null)
-  const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; seq: number } | null>(null)
+  const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; to?: number; seq: number } | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
   const [pendingComment, setPendingComment] = useState<{
     range: { from: number; to: number }
@@ -405,6 +406,12 @@ export function WorkspacePage() {
     setActiveAnnotationId((prev) => (prev === id ? null : id))
   }
 
+  const handlePreviewSourceJump = (jump: SourceJump) => {
+    if (!activeDocumentId) return
+    const to = jump.selectText ? jump.pos + jump.selectText.length : undefined
+    setEditorScrollTo({ pos: jump.pos, to, seq: Date.now() })
+  }
+
   const openTeamManagement = () => {
     useViewStore.getState().setVisibility({ rightPanel: true })
     setRightTab('agents')
@@ -539,7 +546,11 @@ export function WorkspacePage() {
                 {previewColumnVisible && (
                   <Panel defaultSize={38} minSize={20}>
                     <ErrorBoundary label="预览">
-                      <PreviewColumn doc={activeDoc} previewFile={activePreviewFile} />
+                      <PreviewColumn
+                        doc={activeDoc}
+                        previewFile={activePreviewFile}
+                        onSourceJump={handlePreviewSourceJump}
+                      />
                     </ErrorBoundary>
                   </Panel>
                 )}

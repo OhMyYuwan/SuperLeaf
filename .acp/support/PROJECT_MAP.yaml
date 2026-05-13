@@ -2,17 +2,17 @@
 #
 # Structural map of the project rooted at src/. Update whenever a module is
 # added or removed; this file is the agent's structural index, not a wishlist.
-# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+# Refreshed 2026-05-12 for REQ-0038 (project documentation refresh).
 
 project:
   name: YuwanLabWriter
-  root: src
-  source_of_truth: src
+  root: .
+  source_of_truth: services
   branch_strategy:
     personal: YuwanZ
     team: develop
     public: main
-  privacy_rule: src/.acp/kernel/ and src/docs/ MUST stay out of git.
+  privacy_rule: .acp/kernel/ and src/docs/ MUST stay out of git.
 
 modules:
   # ── Governance layer ─────────────────────────────────────────────
@@ -101,7 +101,7 @@ modules:
   - id: backend-api
     path: backend/app/api
     kind: api-routes
-    description: HTTP routes — health, auth, users, providers, projects (incl. members + online presence + SSE events), workflows, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
+    description: HTTP routes — health, auth, users, providers, projects (incl. members + online presence + SSE events), workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
     entry_files:
       - backend/app/api/__init__.py
       - backend/app/api/health.py
@@ -110,6 +110,7 @@ modules:
       - backend/app/api/providers.py
       - backend/app/api/projects.py
       - backend/app/api/workflows.py
+      - backend/app/api/workflow_test_cases.py
       - backend/app/api/filesystem.py
       - backend/app/api/conversations.py
       - backend/app/api/compile.py
@@ -121,7 +122,7 @@ modules:
   - id: backend-services
     path: backend/app/services
     kind: domain-services
-    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation service, project member service, version service, collab snapshot service.
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation/evaluation service, project member service, user/stat/version/operation services, diff service, collab snapshot service.
     entry_files:
       - backend/app/services/__init__.py
       - backend/app/services/dify_client.py
@@ -137,6 +138,11 @@ modules:
       - backend/app/services/evaluation_service.py
       - backend/app/services/project_member_service.py
       - backend/app/services/project_service.py
+      - backend/app/services/user_service.py
+      - backend/app/services/stats_service.py
+      - backend/app/services/version_service.py
+      - backend/app/services/operation_service.py
+      - backend/app/services/diff_service.py
       - backend/app/services/collab_snapshot_service.py
     note: |
       `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
@@ -187,8 +193,14 @@ modules:
     entry_files:
       - frontend/src/main.tsx
       - frontend/src/App.tsx
+      - frontend/src/router.tsx
+      - frontend/src/router/ProtectedRoute.tsx
       - frontend/src/App.css
       - frontend/src/index.css
+      - frontend/src/pages/LoginPage.tsx
+      - frontend/src/pages/RegisterPage.tsx
+      - frontend/src/pages/ProjectListPage.tsx
+      - frontend/src/pages/WorkspacePage.tsx
 
   - id: frontend-types
     path: frontend/src/types
@@ -222,6 +234,7 @@ modules:
       - frontend/src/stores/conversationStore.ts
       - frontend/src/stores/compileStore.ts
       - frontend/src/stores/viewStore.ts
+      - frontend/src/stores/historyStore.ts
       - frontend/src/stores/projectStore.ts
       - frontend/src/stores/userStore.ts
       - frontend/src/stores/collaborationStore.ts
@@ -232,7 +245,7 @@ modules:
   - id: frontend-services
     path: frontend/src/services
     kind: service-layer
-    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, operation API, project event stream (SSE client), collaboration provider (Yjs WebSocket).
+    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, agent quality/evaluation context, operation/stats/version APIs, project event stream (SSE client), collaboration provider (Yjs WebSocket).
     entry_files:
       - frontend/src/services/backendApi.ts
       - frontend/src/services/filesystemApi.ts
@@ -244,7 +257,11 @@ modules:
       - frontend/src/services/authApi.ts
       - frontend/src/services/projectsApi.ts
       - frontend/src/services/annotationEvaluationApi.ts
+      - frontend/src/services/agentQuality.ts
+      - frontend/src/services/evaluationContext.ts
       - frontend/src/services/operationApi.ts
+      - frontend/src/services/statsApi.ts
+      - frontend/src/services/versionApi.ts
       - frontend/src/services/projectEventStream.ts
       - frontend/src/services/collaborationProvider.ts
 
@@ -289,6 +306,8 @@ modules:
       - frontend/src/features/annotation-panel/index.ts
       - frontend/src/features/annotation-panel/AnnotationPanel.tsx
       - frontend/src/features/annotation-panel/CommentComposer.tsx
+      - frontend/src/features/annotation-panel/EvaluationPanel.tsx
+      - frontend/src/features/annotation-panel/ReviewStatusToggle.tsx
       - frontend/src/features/annotation-panel/annotation-panel.css
 
   - id: frontend-feature-right-panel
@@ -344,6 +363,18 @@ modules:
       - frontend/src/features/preview/latex-preview.css
       - frontend/src/features/preview/markdown-preview.css
 
+  - id: frontend-feature-history
+    path: frontend/src/features/history
+    kind: feature-module
+    description: Version history and operation timeline UI — document snapshots, diff modal, operation highlights, and history styling.
+    entry_files:
+      - frontend/src/features/history/HistoryTab.tsx
+      - frontend/src/features/history/OperationsView.tsx
+      - frontend/src/features/history/DiffModal.tsx
+      - frontend/src/features/history/highlights-extension.ts
+      - frontend/src/features/history/highlights-from-diff.ts
+      - frontend/src/features/history/history.css
+
   - id: frontend-feature-topbar
     path: frontend/src/features/topbar
     kind: feature-module
@@ -377,6 +408,10 @@ modules:
     kind: feature-module
     description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher), CollaborationStatus (Yjs connection indicator + peer avatars).
     entry_files:
+      - frontend/src/features/shared/AgentMarkdown.tsx
+      - frontend/src/features/shared/agent-markdown.css
+      - frontend/src/features/shared/TagPill.tsx
+      - frontend/src/features/shared/tag-pill.css
       - frontend/src/features/shared/MentionInput.tsx
       - frontend/src/features/shared/fileSizeGate.ts
       - frontend/src/features/shared/mention-input.css
@@ -415,9 +450,6 @@ modules:
       - ../start.sh
       - ../scripts/dify.sh
       - ../README.md
-      - ../README_EN.md
-      - ../AGENTS.md
-      - ../HANDBOOK.md
 
 capability_routes:
   project-foundation:

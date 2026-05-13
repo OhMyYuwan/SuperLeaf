@@ -17,34 +17,34 @@ auto_allow:
   # Routine code work in feature areas.
   - operation: edit
     paths:
-      - frontend/src/App.tsx
-      - frontend/src/App.css
-      - frontend/src/index.css
-      - frontend/src/main.tsx
-      - frontend/src/features/**/*.ts
-      - frontend/src/features/**/*.tsx
-      - frontend/src/features/**/*.css
-      - frontend/src/features/**/*.json   # workflow templates (debate / consensus)
-      - frontend/src/stores/*.ts
-      - frontend/src/services/*.ts
-      - frontend/src/types/*.ts
-      - frontend/src/__tests__/*.ts
-      - backend/app/api/*.py
-      - backend/app/services/*.py
-      - backend/app/models.py
-      - backend/app/schemas.py
-      - backend/app/main.py
-      - ../src/collab-server/src/*.ts
+      - services/frontend/src/App.tsx
+      - services/frontend/src/App.css
+      - services/frontend/src/index.css
+      - services/frontend/src/main.tsx
+      - services/frontend/src/features/**/*.ts
+      - services/frontend/src/features/**/*.tsx
+      - services/frontend/src/features/**/*.css
+      - services/frontend/src/features/**/*.json   # workflow templates (debate / consensus)
+      - services/frontend/src/stores/*.ts
+      - services/frontend/src/services/*.ts
+      - services/frontend/src/types/*.ts
+      - services/frontend/src/__tests__/*.ts
+      - services/backend/app/api/*.py
+      - services/backend/app/services/*.py
+      - services/backend/app/models.py
+      - services/backend/app/schemas.py
+      - services/backend/app/main.py
+      - services/collab-server/src/*.ts
 
   # Pure additions (new feature folders / modules).
   - operation: create
     paths:
-      - frontend/src/features/**/*
-      - frontend/src/stores/*.ts
-      - frontend/src/services/*.ts
-      - frontend/src/__tests__/*.ts
-      - backend/app/api/*.py
-      - backend/app/services/*.py
+      - services/frontend/src/features/**/*
+      - services/frontend/src/stores/*.ts
+      - services/frontend/src/services/*.ts
+      - services/frontend/src/__tests__/*.ts
+      - services/backend/app/api/*.py
+      - services/backend/app/services/*.py
 
   # Adding new planning docs.
   - operation: create
@@ -66,32 +66,28 @@ require_confirmation:
 
   - operation: edit
     paths:
-      - frontend/package.json
-      - frontend/package-lock.json
-      - frontend/vite.config.ts
-      - frontend/tsconfig.json
-      - frontend/tsconfig.app.json
-      - frontend/tsconfig.node.json
-      - frontend/index.html
-      - frontend/eslint.config.js
-      - frontend/tailwind.config.js
-      - backend/pyproject.toml
-      - backend/app/settings.py
-      - backend/app/database.py
-      - backend/app/secrets_vault.py
-      - ../src/collab-server/package.json
-      - ../src/collab-server/tsconfig.json
+      - services/frontend/package.json
+      - services/frontend/package-lock.json
+      - services/frontend/vite.config.ts
+      - services/frontend/tsconfig.json
+      - services/frontend/tsconfig.app.json
+      - services/frontend/tsconfig.node.json
+      - services/frontend/index.html
+      - services/frontend/eslint.config.js
+      - services/frontend/tailwind.config.js
+      - services/backend/pyproject.toml
+      - services/backend/app/settings.py
+      - services/backend/app/database.py
+      - services/backend/app/secrets_vault.py
+      - services/collab-server/package.json
+      - services/collab-server/tsconfig.json
     reason: Build and config files affect the entire frontend / backend / collab surface.
 
   - operation: edit
     paths:
-      - ../.gitignore
-      - ../start.sh
-      - ../scripts/dify.sh
-      - ../README.md
-      - ../README_EN.md
-      - ../AGENTS.md
-      - ../HANDBOOK.md
+      - .gitignore
+      - start.sh
+      - README.md
     reason: Repo-root tooling affects the whole project.
 
   - operation: edit_cross_slice
@@ -103,12 +99,11 @@ require_confirmation:
     reason: Affects build output, security surface, and onboarding.
 
 forbidden:
-  # Reference projects and the ACP protocol package are read-only context.
+  # Reference projects are read-only context.
   - operation: any
     paths:
       - ../reference/
       - ../referenceold/
-      - ../acp-protocol/
     reason: External / vendored content. Read for inspiration only.
 
   # Kernel history is append-only.

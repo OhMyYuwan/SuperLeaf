@@ -38,6 +38,8 @@ interface DocumentState {
   collaborating: Record<string, boolean>
 
   setActive: (id: string) => void
+  clearActive: () => void
+  removeDocument: (id: string) => void
   getActive: () => Document | null
   updateContent: (id: string, content: string) => void
   setCollaborating: (id: string, flag: boolean) => void
@@ -70,6 +72,33 @@ export const useDocumentStore = create<DocumentState>()(
         if (get().documents[id]) {
           set({ activeDocumentId: id })
         }
+      },
+
+      clearActive: () => {
+        set({ activeDocumentId: null })
+      },
+
+      removeDocument: (id) => {
+        const pending = debounceTimers[id]
+        if (pending) {
+          clearTimeout(pending)
+          debounceTimers[id] = undefined
+        }
+        set((state) => {
+          const { [id]: _doc, ...documents } = state.documents
+          const { [id]: _status, ...saveStatus } = state.saveStatus
+          const { [id]: _savedAt, ...lastSavedAt } = state.lastSavedAt
+          const { [id]: _saveError, ...saveError } = state.saveError
+          const { [id]: _collab, ...collaborating } = state.collaborating
+          return {
+            documents,
+            saveStatus,
+            lastSavedAt,
+            saveError,
+            collaborating,
+            activeDocumentId: state.activeDocumentId === id ? null : state.activeDocumentId,
+          }
+        })
       },
 
       getActive: () => {

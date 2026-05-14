@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import { Topbar } from '../features/topbar'
+import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { FileTree, OutlineList } from '../features/file-tree'
 import {
   EditorToolbar,
@@ -123,6 +124,7 @@ export function WorkspacePage() {
   } | null>(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
 
@@ -241,15 +243,13 @@ export function WorkspacePage() {
     if (!projectId) return
     const projectStore = useProjectStore.getState()
     const previousProjectId = projectStore.currentProjectId
+    const switchingProject = previousProjectId !== projectId
+    if (switchingProject) {
+      resetProjectScopedStores()
+    }
     projectStore.setCurrent(projectId)
     if (!projectStore.loaded && !projectStore.loading) {
       projectStore.load()
-    }
-    // Only drop caches when we're actually switching to a different project.
-    // A hard refresh re-mounts WorkspacePage with the same projectId; clearing
-    // here would wipe persisted annotations / evaluations for no reason.
-    if (previousProjectId && previousProjectId !== projectId) {
-      resetProjectScopedStores()
     }
     loadTree()
     loadProviders()
@@ -425,8 +425,10 @@ export function WorkspacePage() {
         providerName={activeProvider?.name ?? null}
         providerStatus={activeProvider?.status ?? null}
         onOpenSettings={openTeamManagement}
+        onOpenPersonalPanel={() => setPersonalPanelOpen(true)}
         onSave={handleSave}
       />
+      <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
 
       <main className="workspace">
         <PanelGroup

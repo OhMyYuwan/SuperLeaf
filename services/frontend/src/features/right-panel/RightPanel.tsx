@@ -5,7 +5,7 @@
  * other component needs to know about it.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
 import type { CachedWorkflow, Provider, WorkflowDefinition, WorkflowDefinitionDraft } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
@@ -13,8 +13,11 @@ import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
 import { RunHistoryTab } from './RunHistoryTab'
+import { ProjectArchiveTab } from './ProjectArchiveTab'
 import { HistoryTab } from '../history/HistoryTab'
+import { useProjectStore } from '../../stores/projectStore'
 import '../history/history.css'
+import './project-archive.css'
 import './right-panel.css'
 
 interface RightPanelProps {
@@ -45,8 +48,17 @@ interface RightPanelProps {
 
 export function RightPanel(props: RightPanelProps) {
   const [internalTab, setInternalTab] = useState('discussion')
+  const [versionSubtab, setVersionSubtab] = useState<'archive' | 'document'>('archive')
+  const currentProjectRole = useProjectStore((s) => s.currentProjectRole)
+  const canManageArchive = currentProjectRole === 'owner'
   const selectedTab = props.selectedTab ?? internalTab
   const onTabChange = props.onTabChange ?? setInternalTab
+
+  useEffect(() => {
+    if (!canManageArchive && versionSubtab === 'archive') {
+      setVersionSubtab('document')
+    }
+  }, [canManageArchive, versionSubtab])
 
   return (
     <div className="panel right-panel">
@@ -120,7 +132,29 @@ export function RightPanel(props: RightPanelProps) {
         </Tabs.Content>
 
         <Tabs.Content value="versions" className="tab-content">
-          <HistoryTab documentId={props.activeDocumentId} />
+          <div className="tab-content-wrapper">
+            <div className="history-subnav">
+              {canManageArchive && (
+                <button
+                  className={`history-subnav-btn ${versionSubtab === 'archive' ? 'is-active' : ''}`}
+                  onClick={() => setVersionSubtab('archive')}
+                >
+                  项目归档
+                </button>
+              )}
+              <button
+                className={`history-subnav-btn ${versionSubtab === 'document' ? 'is-active' : ''}`}
+                onClick={() => setVersionSubtab('document')}
+              >
+                文档历史
+              </button>
+            </div>
+            {versionSubtab === 'archive' ? (
+              <ProjectArchiveTab />
+            ) : (
+              <HistoryTab documentId={props.activeDocumentId} embedded />
+            )}
+          </div>
         </Tabs.Content>
       </Tabs.Root>
     </div>

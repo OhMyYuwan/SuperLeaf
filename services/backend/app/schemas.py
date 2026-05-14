@@ -144,6 +144,12 @@ class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
 
 
+class GitHubProjectImportIn(BaseModel):
+    repo_url: str = Field(min_length=1, max_length=512)
+    branch: str | None = Field(default=None, max_length=128)
+    name: str | None = Field(default=None, max_length=128)
+
+
 class ProjectUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     main_doc_id: str | None = None
@@ -167,6 +173,128 @@ class ProjectMemberOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ProjectArchiveBindingIn(BaseModel):
+    github_repo_url: str = Field(default="", max_length=512)
+    github_owner: str = Field(default="", max_length=128)
+    github_repo: str = Field(default="", max_length=128)
+    github_branch: str = Field(default="yuwanlab-archive", min_length=1, max_length=128)
+    github_path: str = Field(default="", max_length=512)
+    github_private_required: bool = False
+
+
+class ProjectArchiveBindingOut(BaseModel):
+    project_id: str
+    local_repo_path: str
+    github_account_id: str = ""
+    github_repo_url: str = ""
+    github_owner: str
+    github_repo: str
+    github_branch: str
+    github_path: str
+    github_private_required: bool
+    github_bound_at: datetime | None
+    last_local_commit_sha: str
+    last_pushed_commit_sha: str
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectArchiveSnapshotIn(BaseModel):
+    message: str | None = Field(default=None, max_length=512)
+
+
+class ProjectArchiveSnapshotOut(BaseModel):
+    id: str
+    project_id: str
+    commit_sha: str
+    message: str
+    doc_count: int
+    file_count: int
+    byte_count: int
+    pushed_to_github: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectArchiveStatusOut(BaseModel):
+    binding: ProjectArchiveBindingOut
+    snapshots: list[ProjectArchiveSnapshotOut] = Field(default_factory=list)
+    local_dirty: bool = False
+    remote_configured: bool = False
+
+
+class GitHubAccountOut(BaseModel):
+    connected: bool
+    login: str = ""
+    name: str = ""
+    avatar_url: str = ""
+    scope: str = ""
+    updated_at: datetime | None = None
+
+
+class GitHubTokenConnectIn(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+
+class GitHubOAuthStartOut(BaseModel):
+    authorize_url: str
+
+
+class GitHubDeviceStartIn(BaseModel):
+    client_id: str | None = Field(default=None, max_length=128)
+    scope: str = Field(default="repo", max_length=512)
+
+
+class GitHubDeviceStartOut(BaseModel):
+    device_code: str
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str = ""
+    expires_in: int
+    interval: int
+
+
+class GitHubDevicePollIn(BaseModel):
+    client_id: str | None = Field(default=None, max_length=128)
+    device_code: str = Field(min_length=1, max_length=512)
+
+
+class GitHubDevicePollOut(BaseModel):
+    status: str
+    error: str = ""
+    interval: int | None = None
+    account: GitHubAccountOut | None = None
+
+
+class GitHubImportIn(BaseModel):
+    repo_url: str = Field(min_length=1, max_length=512)
+    branch: str | None = Field(default=None, max_length=128)
+
+
+class GitHubImportOut(BaseModel):
+    project_id: str
+    repo_url: str
+    branch: str
+    doc_count: int
+    file_count: int
+    byte_count: int
+
+
+class GitHubPushIn(BaseModel):
+    message: str | None = Field(default=None, max_length=512)
+
+
+class GitHubPushOut(BaseModel):
+    project_id: str
+    repo_url: str
+    branch: str
+    commit_sha: str
+    pushed: bool
 
 
 class FolderCreateIn(BaseModel):

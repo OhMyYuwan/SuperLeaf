@@ -84,13 +84,15 @@ export class CollaborationProvider {
   }
 
   getPeers(): PeerInfo[] {
-    const peers: PeerInfo[] = []
+    const peersByUserId = new Map<string, PeerInfo>()
     this.awareness.getStates().forEach((state, clientId) => {
       if (clientId === this.doc.clientID) return
       const user = state.user as PeerInfo | undefined
-      if (user) peers.push(user)
+      if (user?.id && !peersByUserId.has(user.id)) {
+        peersByUserId.set(user.id, user)
+      }
     })
-    return peers
+    return Array.from(peersByUserId.values())
   }
 
   destroy(): void {

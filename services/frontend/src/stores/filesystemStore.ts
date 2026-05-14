@@ -6,7 +6,8 @@
  */
 
 import { create } from 'zustand'
-import { filesystemApi, type ProjectTree, type TreeFile } from '../services/filesystemApi'
+import { filesystemApi, type ProjectTree, type TreeFile, type TreeFolder } from '../services/filesystemApi'
+import { useDocumentStore } from './documentStore'
 
 export interface ActivePreviewFile {
   id: string
@@ -125,7 +126,25 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
   },
 
   deleteEntity: async (entityType, entityId) => {
+    const tree = get().tree
+    const activeDocumentId = useDocumentStore.getState().activeDocumentId
+    const activePreviewFileId = get().activePreviewFile?.id ?? null
+    const clearsActiveDoc = activeDocumentId
+      ? entityDeletesDoc(tree, entityType, entityId, activeDocumentId)
+      : false
+    const clearsActivePreview = activePreviewFileId
+      ? entityDeletesFile(tree, entityType, entityId, activePreviewFileId)
+      : false
+
     await filesystemApi.deleteEntity(entityType, entityId)
+
+    if (clearsActiveDoc && activeDocumentId) {
+      useDocumentStore.getState().removeDocument(activeDocumentId)
+    }
+    if (clearsActivePreview) {
+      set({ activePreviewFile: null })
+    }
+
     await get().loadTree()
   },
 
@@ -202,3 +221,46 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
     return doc.id
   },
 }))
+
+function entityDeletesDoc(
+  tree: ProjectTree | null,
+  entityType: 'folder' | 'doc' | 'file',
+  entityId: string,
+  docId: string,
+): boolean {
+  if (entityType === 'doc') return entityId === docId
+  if (entityType !== 'folder' || !tree) return false
+  const folder = findFolder(tree.root, entityId)
+  return folder ? folderContainsDoc(folder, docId) : false
+}
+
+function entityDeletesFile(
+  tree: ProjectTree | null,
+  entityType: 'folder' | 'doc' | 'file',
+  entityId: string,
+  fileId: string,
+): boolean {
+  if (entityType === 'file') return entityId === fileId
+  if (entityType !== 'folder' || !tree) return false
+  const folder = findFolder(tree.root, entityId)
+  return folder ? folderContainsFile(folder, fileId) : false
+}
+
+function findFolder(folder: TreeFolder, folderId: string): TreeFolder | null {
+  if (folder.id === folderId) return folder
+  for (const child of folder.folders) {
+    const found = findFolder(child, folderId)
+    if (found) return found
+  }
+  return null
+}
+
+function folderContainsDoc(folder: TreeFolder, docId: string): boolean {
+  if (folder.docs.some((doc) => doc.id === docId)) return true
+  return folder.folders.some((child) => folderContainsDoc(child, docId))
+}
+
+function folderContainsFile(folder: TreeFolder, fileId: string): boolean {
+  if (folder.files.some((file) => file.id === fileId)) return true
+  return folder.folders.some((child) => folderContainsFile(child, fileId))
+}

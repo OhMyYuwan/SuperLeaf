@@ -70,9 +70,19 @@ cd YuwanLabWriter
 - [编辑器功能](docs/editor/)
 - [实时协作](docs/collaboration/)
 - [工作流系统](docs/workflows/)
+- [批注训练数据与 CSV Skill](docs/annotation-training-data.md)
 - [Provider 配置](docs/providers/)
 - [架构总览](docs/architecture/overview.md)
 - [故障排查](docs/troubleshooting/)
+- [TODO / Roadmap](docs/TODO.md)
+
+YuwanLabWriter 会记录并保留与 Agent 交互产生的批注、建议、风险提示、用户评价、采用情况和训练数据标记。数据导出与清洗说明见 [批注训练数据教程](docs/annotation-training-data.md)，项目内 Skill 位于 `docs/skills/annotation-training-csv/`。
+
+训练数据 CSV Skill 可用 npm tooling 下载：
+
+```bash
+npm exec --yes degit OhMyYuwan/YuwanLabWriter/docs/skills/annotation-training-csv ./annotation-training-csv
+```
 
 ## 🏗️ 架构
 

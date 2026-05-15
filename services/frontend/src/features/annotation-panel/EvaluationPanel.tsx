@@ -252,7 +252,7 @@ export function EvaluationPanel({
                     )}
                     <div className="eval-row-meta">
                       {adoptionLabel(ev.adoption)} · {relativeTime(ev.updatedAt)}
-                      {ev.trainingCandidate ? ' · 训练候选' : ''}
+                      {ev.trainingCandidate ? ' · 已加入训练数据集' : ''}
                     </div>
                   </div>
                   <div className="eval-row-actions">
@@ -427,9 +427,9 @@ export function EvaluationPanel({
                 }
                 onChange={(e) => setTrainingCandidate(e.target.checked)}
               />
-              <span>训练候选</span>
+              <span>加入训练数据集</span>
               <span className="eval-training-hint">
-                用于后续 prompt tuning / preference dataset
+                导出训练数据时可按此标记过滤
               </span>
             </label>
 

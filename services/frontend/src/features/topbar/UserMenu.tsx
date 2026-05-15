@@ -9,10 +9,14 @@
 
 import { useNavigate } from 'react-router-dom'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { LogOut, ShieldCheck } from 'lucide-react'
+import { LogOut, ShieldCheck, UserRound } from 'lucide-react'
 import { useUserStore } from '../../stores/userStore'
 
-export function UserMenu() {
+interface UserMenuProps {
+  onOpenPersonalPanel?: () => void
+}
+
+export function UserMenu({ onOpenPersonalPanel }: UserMenuProps) {
   const navigate = useNavigate()
   const currentUser = useUserStore((s) => s.currentUser)
   const logout = useUserStore((s) => s.logout)
@@ -57,6 +61,14 @@ export function UserMenu() {
             <div className="user-menu-email">{currentUser.email}</div>
           </div>
           <DropdownMenu.Separator className="user-menu-sep" />
+          {onOpenPersonalPanel && (
+            <DropdownMenu.Item
+              className="user-menu-item"
+              onSelect={onOpenPersonalPanel}
+            >
+              <UserRound size={14} /> 个人面板
+            </DropdownMenu.Item>
+          )}
           <DropdownMenu.Item
             className="user-menu-item"
             onSelect={() => void handleLogout()}

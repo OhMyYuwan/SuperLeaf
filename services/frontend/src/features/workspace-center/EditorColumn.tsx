@@ -24,7 +24,7 @@ interface EditorColumnProps {
   decorations: DecorationSpec[]
   activeAnnotationId: string | null
   hoveredAnnotationId?: string | null
-  scrollTo: { pos: number; seq: number } | null
+  scrollTo: { pos: number; to?: number; seq: number } | null
   onChange: (next: string) => void
   onSelectionChange: (info: { from: number; to: number; text: string }) => void
   onDocChange: (changes: DocChangeInfo[]) => void
@@ -120,7 +120,7 @@ function EditorWithCollab({
   decorations: DecorationSpec[]
   activeAnnotationId: string | null
   hoveredAnnotationId?: string | null
-  scrollTo: { pos: number; seq: number } | null
+  scrollTo: { pos: number; to?: number; seq: number } | null
   onChange: (next: string) => void
   onSelectionChange: (info: SelectionInfo) => void
   onDocChange: (changes: DocChangeInfo[]) => void

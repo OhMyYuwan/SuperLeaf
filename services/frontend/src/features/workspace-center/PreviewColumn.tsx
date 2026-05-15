@@ -13,13 +13,15 @@ import { Wand2 } from 'lucide-react'
 import type { Document } from '../../types/document'
 import type { ActivePreviewFile } from '../../stores/filesystemStore'
 import { MarkdownPreview, LatexPreview } from '../preview'
+import type { SourceJump } from '../../services/previewSourceMap'
 
 interface PreviewColumnProps {
   doc: Document | null
   previewFile?: ActivePreviewFile | null
+  onSourceJump?: (jump: SourceJump) => void
 }
 
-export function PreviewColumn({ doc, previewFile }: PreviewColumnProps) {
+export function PreviewColumn({ doc, previewFile, onSourceJump }: PreviewColumnProps) {
   if (previewFile) {
     return (
       <div className="editor-column preview-column">
@@ -41,7 +43,7 @@ export function PreviewColumn({ doc, previewFile }: PreviewColumnProps) {
           <Wand2 size={16} /> 预览
         </div>
         <div className="preview-box">
-          <LatexPreview documentId={doc.id} />
+          <LatexPreview documentId={doc.id} source={doc.content} onSourceJump={onSourceJump} />
         </div>
       </div>
     )
@@ -54,7 +56,7 @@ export function PreviewColumn({ doc, previewFile }: PreviewColumnProps) {
       </div>
       <div className="preview-box">
         <ScrollArea.Root className="scroll-root">
-          <ScrollArea.Viewport className="scroll-viewport">{renderBody(doc)}</ScrollArea.Viewport>
+          <ScrollArea.Viewport className="scroll-viewport">{renderBody(doc, onSourceJump)}</ScrollArea.Viewport>
           <ScrollArea.Scrollbar className="scrollbar" orientation="vertical">
             <ScrollArea.Thumb className="thumb" />
           </ScrollArea.Scrollbar>
@@ -64,12 +66,12 @@ export function PreviewColumn({ doc, previewFile }: PreviewColumnProps) {
   )
 }
 
-function renderBody(doc: Document | null) {
+function renderBody(doc: Document | null, onSourceJump?: (jump: SourceJump) => void) {
   if (!doc) {
     return <div className="preview-paper empty-preview">请选择一个文件</div>
   }
   if (doc.format === 'md') {
-    return <MarkdownPreview source={doc.content} />
+    return <MarkdownPreview source={doc.content} onSourceJump={onSourceJump} />
   }
   return (
     <div className="preview-paper">

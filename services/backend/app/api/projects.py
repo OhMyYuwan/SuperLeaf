@@ -16,6 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 from ..database import get_session
 from ..models import Notification, Project, User
 from ..schemas import (
+    GitHubProjectImportIn,
     ProjectCreateIn,
     ProjectMemberAddIn,
     ProjectMemberOut,
@@ -23,6 +24,7 @@ from ..schemas import (
     ProjectUpdateIn,
 )
 from ..services.event_bus import bus
+from ..services.github_service import GitHubError, GitHubService, parse_repo_url
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
 from .deps import get_current_user, get_project_from_path
@@ -60,6 +62,27 @@ def create_project(
     svc = ProjectService(db)
     p = svc.create(user_id=user.id, name=body.name)
     return ProjectOut.model_validate(p)
+
+
+@router.post("/import/github", response_model=ProjectOut, status_code=201)
+def import_github_project(
+    body: GitHubProjectImportIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProjectOut:
+    svc = ProjectService(db)
+    try:
+        repo_ref = parse_repo_url(body.repo_url)
+        name = (body.name or repo_ref.repo).strip()
+        project = svc.create(user_id=user.id, name=name)
+        GitHubService(db, user).import_repo_into_project(
+            project,
+            repo_url=body.repo_url,
+            branch=body.branch,
+        )
+    except GitHubError as e:
+        raise HTTPException(400, str(e)) from e
+    return ProjectOut.model_validate(project)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)

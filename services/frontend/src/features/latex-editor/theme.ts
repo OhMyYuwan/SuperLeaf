@@ -55,6 +55,10 @@ const overleafDarkTheme = EditorView.theme(
     '.cm-activeLine': {
       backgroundColor: '#44475a40',
     },
+    '&.source-jump-flash .cm-activeLine': {
+      backgroundColor: 'rgba(96, 165, 250, 0.28)',
+      transition: 'background-color 180ms ease',
+    },
     '.cm-activeLineGutter': {
       backgroundColor: '#44475a40',
     },

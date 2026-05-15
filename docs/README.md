@@ -13,6 +13,7 @@
   - [Dify](./providers/dify.md) — 待补充
   - [Claude API 直连](./providers/claude.md) — 待补充
 - [工作流](./workflows/) — 待补充
+- [批注训练数据](./annotation-training-data.md) — 交互数据保留、训练数据导出、CSV Skill
 - [编辑器](./editor/) — 待补充
 - [故障排查](./troubleshooting/) — 待补充
 

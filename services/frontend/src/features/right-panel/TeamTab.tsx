@@ -19,6 +19,7 @@ import {
   Trash2,
   Ban,
   CheckCircle,
+  Download,
 } from 'lucide-react'
 import type {
   CachedWorkflow,
@@ -35,6 +36,8 @@ import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useAnnotationStore } from '../../stores/annotationStore'
+import { useProjectStore } from '../../stores/projectStore'
+import { trainingExportApi } from '../../services/trainingExportApi'
 import { WorkflowDefinitionsPanel } from './WorkflowDefinitionsPanel'
 
 interface TeamTabProps {
@@ -83,10 +86,14 @@ export function TeamTab({
   const providers = useSettingsStore((s) => s.providers)
   const error = useSettingsStore((s) => s.error)
   const backendReachable = useSettingsStore((s) => s.backendReachable)
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
 
   const [subTab, setSubTab] = useState<SubTab>('agents')
   const [showForm, setShowForm] = useState(false)
   const [showDisabledModal, setShowDisabledModal] = useState(false)
+  const [onlyTrainingCandidates, setOnlyTrainingCandidates] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loaded) load()
@@ -103,6 +110,21 @@ export function TeamTab({
 
   const activeCount = workflows.filter((w) => !w.is_disabled).length
   const disabledCount = workflows.filter((w) => w.is_disabled).length
+
+  const handleTrainingExport = async () => {
+    if (!currentProjectId || exporting) return
+    setExporting(true)
+    setExportError(null)
+    try {
+      await trainingExportApi.download(currentProjectId, {
+        onlyTrainingCandidates,
+      })
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : '导出训练数据失败')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="tab-content-wrapper">
@@ -144,6 +166,33 @@ export function TeamTab({
           <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
 
           {workflowError && <div className="tab-error">{workflowError}</div>}
+
+          <section className="agent-export-panel">
+            <div>
+              <h3>批注训练数据</h3>
+              <p>
+                导出当前项目中可见的批注评价样本，用于 LLM wiki 构建。导出包只包含批注所在行内容，但仍可能包含敏感文本。
+              </p>
+              <label className="agent-export-toggle">
+                <input
+                  type="checkbox"
+                  checked={onlyTrainingCandidates}
+                  onChange={(event) => setOnlyTrainingCandidates(event.target.checked)}
+                />
+                仅导出已标记为训练数据的数据
+              </label>
+              {exportError && <div className="tab-error">{exportError}</div>}
+            </div>
+            <button
+              className="small-btn"
+              onClick={() => void handleTrainingExport()}
+              disabled={!currentProjectId || exporting}
+              title="下载批注训练数据 ZIP"
+            >
+              {exporting ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+              {exporting ? '导出中' : '导出 ZIP'}
+            </button>
+          </section>
 
           {loaded && providers.length === 0 && !showForm && (
             <div className="tab-empty">

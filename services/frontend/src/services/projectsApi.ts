@@ -23,6 +23,12 @@ export interface ProjectCreate {
   name: string
 }
 
+export interface GitHubProjectImport {
+  repo_url: string
+  branch?: string
+  name?: string
+}
+
 export interface ProjectUpdate {
   name?: string
   main_doc_id?: string
@@ -37,6 +43,16 @@ export const projectsApi = {
     http<ProjectSummary>('/api/projects', {
       method: 'POST',
       body: JSON.stringify(body),
+      scope: 'global',
+    }),
+  importGithub: (body: GitHubProjectImport) =>
+    http<ProjectSummary>('/api/projects/import/github', {
+      method: 'POST',
+      body: JSON.stringify({
+        repo_url: body.repo_url,
+        branch: body.branch || null,
+        name: body.name || null,
+      }),
       scope: 'global',
     }),
   update: (id: string, body: ProjectUpdate) =>

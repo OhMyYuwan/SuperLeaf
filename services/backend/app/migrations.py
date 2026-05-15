@@ -45,6 +45,7 @@ def run_migrations(engine: Engine) -> None:
         _add_user_id_columns(conn)
         _add_user_id_to_private_assets(conn)
         _add_is_global_to_annotations(conn)
+        _add_project_archive_github_columns(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -194,3 +195,14 @@ def _add_is_global_to_annotations(conn) -> None:
     conn.execute(
         text("UPDATE annotations SET is_global = 1 WHERE workflow_id = '' AND agent_name = ''")
     )
+
+
+def _add_project_archive_github_columns(conn) -> None:
+    if not _column_exists(conn, "project_archive_bindings", "github_account_id"):
+        conn.execute(
+            text("ALTER TABLE project_archive_bindings ADD COLUMN github_account_id VARCHAR(32) DEFAULT ''")
+        )
+    if not _column_exists(conn, "project_archive_bindings", "github_repo_url"):
+        conn.execute(
+            text("ALTER TABLE project_archive_bindings ADD COLUMN github_repo_url VARCHAR(512) DEFAULT ''")
+        )

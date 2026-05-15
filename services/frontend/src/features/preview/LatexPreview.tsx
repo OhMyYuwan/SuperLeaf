@@ -12,7 +12,7 @@
  *   - Full-log toggle
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import {
   Loader2,
@@ -34,15 +34,21 @@ import { useCompileStore } from '../../stores/compileStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
 import { compileApi } from '../../services/backendApi'
+import {
+  sourceJumpFromPreviewText,
+  type SourceJump,
+} from '../../services/previewSourceMap'
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 interface LatexPreviewProps {
   documentId: string
+  source: string
+  onSourceJump?: (jump: SourceJump) => void
 }
 
-export function LatexPreview({ documentId }: LatexPreviewProps) {
+export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewProps) {
   const compilers = useCompileStore((s) => s.compilers)
   const settings = useCompileStore((s) => s.settings)
   const lastResult = useCompileStore((s) => s.lastResult)
@@ -71,7 +77,11 @@ export function LatexPreview({ documentId }: LatexPreviewProps) {
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
+  const pdfScrollRef = useRef<HTMLDivElement>(null)
   const lastAutoCompiledSavedAtRef = useRef(0)
+  const lastPdfVersionRef = useRef(pdfVersion)
+  const pdfScrollTopRef = useRef(0)
+  const pendingPdfScrollRestoreRef = useRef<number | null>(null)
 
   const compileCurrentDocument = async () => {
     await saveBackendDoc(documentId)
@@ -115,11 +125,52 @@ export function LatexPreview({ documentId }: LatexPreviewProps) {
     updateSettings({ compiler })
   }
 
+  const handlePdfDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    const textElement = target.closest<HTMLElement>('.react-pdf__Page__textContent span')
+    const jump = sourceJumpFromPreviewText(source, textElement?.textContent)
+    if (jump) onSourceJump?.(jump)
+  }
+
   const pdfUrl = useMemo(() => {
     if (pdfVersion <= 0 || !currentProjectId) return ''
     // Append pdfVersion as cache-buster so fresh compiles are not served stale.
     return `${compileApi.pdfUrl(currentProjectId)}?v=${pdfVersion}`
   }, [pdfVersion, currentProjectId])
+
+  const pdfFile = useMemo(() => {
+    if (!pdfUrl) return null
+    // Keep this object stable across editor-state rerenders. react-pdf treats
+    // a new `file` object as a new document and resets scroll to page one.
+    return { url: pdfUrl, withCredentials: true } as const
+  }, [pdfUrl])
+
+  useEffect(() => {
+    if (pdfVersion > 0 && lastPdfVersionRef.current > 0 && pdfVersion !== lastPdfVersionRef.current) {
+      pendingPdfScrollRestoreRef.current = pdfScrollTopRef.current
+    }
+    lastPdfVersionRef.current = pdfVersion
+  }, [pdfVersion])
+
+  const restorePdfScrollSoon = () => {
+    const target = pendingPdfScrollRestoreRef.current
+    if (target == null) return
+
+    let attempts = 0
+    const restore = () => {
+      const scroller = pdfScrollRef.current
+      if (!scroller) return
+      scroller.scrollTop = Math.min(target, Math.max(0, scroller.scrollHeight - scroller.clientHeight))
+      attempts += 1
+      if (attempts < 12) {
+        window.setTimeout(restore, 80)
+      } else {
+        pendingPdfScrollRestoreRef.current = null
+      }
+    }
+    window.requestAnimationFrame(restore)
+  }
 
   const downloadName = useMemo(() => {
     const base = (projectName || 'document').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'document'
@@ -256,17 +307,28 @@ export function LatexPreview({ documentId }: LatexPreviewProps) {
         </div>
       )}
 
-      <div className="latex-preview-pdf">
+      <div
+        className="latex-preview-pdf"
+        ref={pdfScrollRef}
+        onScroll={(event) => {
+          pdfScrollTopRef.current = event.currentTarget.scrollTop
+        }}
+        onDoubleClick={handlePdfDoubleClick}
+        title="双击 PDF 文本跳转到源码"
+      >
         {!pdfUrl && !compiling && (
           <div className="latex-preview-empty">
             <p>尚未编译。点击"编译"按钮生成 PDF。</p>
           </div>
         )}
-        {pdfUrl && (
+        {pdfFile && (
           <Document
             key={pdfVersion}
-            file={{ url: pdfUrl, withCredentials: true } as { url: string }}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+            file={pdfFile}
+            onLoadSuccess={({ numPages }) => {
+              setNumPages(numPages)
+              restorePdfScrollSoon()
+            }}
             onLoadError={(err) => console.error('PDF load error', err)}
             loading={<div className="latex-preview-empty">加载 PDF…</div>}
           >
@@ -275,9 +337,10 @@ export function LatexPreview({ documentId }: LatexPreviewProps) {
                 key={i}
                 pageNumber={i + 1}
                 width={pageWidth * zoom}
-                renderTextLayer={false}
+                renderTextLayer
                 renderAnnotationLayer={false}
                 className="latex-pdf-page"
+                onRenderSuccess={restorePdfScrollSoon}
               />
             ))}
           </Document>

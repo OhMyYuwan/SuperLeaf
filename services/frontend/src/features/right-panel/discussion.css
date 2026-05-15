@@ -186,6 +186,13 @@
   background: rgba(15, 23, 42, 0.5);
   border: 1px solid rgba(148, 163, 184, 0.18);
   flex-shrink: 0;
+  position: relative;
+}
+
+.message-input-row .discussion-mention-input {
+  flex: 1 1 240px;
+  min-width: 0;
+  width: auto;
 }
 .message-input-row input {
   flex: 1;

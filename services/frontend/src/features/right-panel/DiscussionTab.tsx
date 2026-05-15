@@ -426,6 +426,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
                   disabled={isStreaming}
                   rows={2}
+                  className="discussion-mention-input"
+                  menuPlacement="composer-panel"
                   onCandidatePicked={(c) =>
                     c.kind === 'file' ? confirmLargeFileAttachment(c) : true
                   }

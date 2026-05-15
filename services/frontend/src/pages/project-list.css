@@ -77,6 +77,26 @@
   cursor: not-allowed;
 }
 
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.14);
+  color: #e5e7eb;
+  transition: background 0.15s ease;
+}
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.24);
+}
+.secondary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .danger-btn {
   display: inline-flex;
   align-items: center;
@@ -288,6 +308,12 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+.project-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 /* Project dialogs — own overlay/content classes because settings.css only

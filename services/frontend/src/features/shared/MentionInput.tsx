@@ -56,6 +56,8 @@ interface MentionInputProps {
   onCandidatePicked?: (candidate: MentionCandidate) => boolean | Promise<boolean>
   /** Submit on plain Enter (multiline still allows Shift+Enter for newlines). */
   onSubmit?: () => void
+  /** Where the mention candidate menu should open relative to the input. */
+  menuPlacement?: 'bottom' | 'top' | 'composer-panel'
 }
 
 interface MentionMenuState {
@@ -81,6 +83,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       className,
       onCandidatePicked,
       onSubmit,
+      menuPlacement = 'bottom',
     } = props
 
     const taRef = useRef<HTMLTextAreaElement>(null)
@@ -303,7 +306,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           />
         )}
         {showMenu && (
-          <div className="mention-menu">
+          <div className={`mention-menu mention-menu-${menuPlacement}`}>
             {filteredAgents.length > 0 && (
               <>
                 <div className="mention-menu-section-label">Agents</div>

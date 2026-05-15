@@ -75,21 +75,7 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
     const room = await getOrCreateRoom(docId, token)
     const { doc, awareness } = room
 
-    const clientId = doc.clientID
     room.conns.set(ws, new Set())
-
-    // Set awareness state for this user.
-    const COLORS = [
-      '#30bced', '#6eeb83', '#ffbc42', '#ecd444',
-      '#ee6352', '#9ac2c9', '#8acb88', '#1be7ff',
-    ]
-    const colorIdx = Math.abs(hashCode(user.id)) % COLORS.length
-    awareness.setLocalStateField('user', {
-      id: user.id,
-      name: user.name,
-      color: COLORS[colorIdx],
-      colorLight: COLORS[colorIdx] + '40',
-    })
 
     // Send sync step 1.
     const syncEncoder = encoding.createEncoder()
@@ -129,9 +115,16 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
           break
         }
         case MSG_AWARENESS: {
+          const update = decoding.readVarUint8Array(decoder)
+          const connClients = room.conns.get(ws)
+          if (connClients) {
+            for (const changedClient of readAwarenessClientIds(update)) {
+              connClients.add(changedClient)
+            }
+          }
           awarenessProtocol.applyAwarenessUpdate(
             awareness,
-            decoding.readVarUint8Array(decoder),
+            update,
             ws,
           )
           break
@@ -140,8 +133,12 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
     })
 
     ws.on('close', () => {
+      const connClients = room.conns.get(ws)
       room.conns.delete(ws)
-      awarenessProtocol.removeAwarenessStates(awareness, [clientId], null)
+      const removeClientIds = connClients ? Array.from(connClients) : []
+      if (removeClientIds.length > 0) {
+        awarenessProtocol.removeAwarenessStates(awareness, removeClientIds, null)
+      }
 
       // If no more connections, clean up after a delay.
       if (room.conns.size === 0) {
@@ -157,10 +154,14 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
   })()
 }
 
-function hashCode(str: string): number {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
+function readAwarenessClientIds(update: Uint8Array): number[] {
+  const decoder = decoding.createDecoder(update)
+  const count = decoding.readVarUint(decoder)
+  const clientIds: number[] = []
+  for (let i = 0; i < count; i++) {
+    clientIds.push(decoding.readVarUint(decoder))
+    decoding.readVarUint(decoder) // clock
+    decoding.readVarString(decoder) // JSON state
   }
-  return hash
+  return clientIds
 }

@@ -11,15 +11,17 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LayoutGrid, List, Plus } from 'lucide-react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Download, LayoutGrid, List, Plus, UserRound, X } from 'lucide-react'
 import { useProjectStore } from '../stores/projectStore'
 import type { ProjectSummary } from '../services/projectsApi'
-import { BackendError } from '../services/backendApi'
+import { BackendError, githubApi, type GitHubAccountStatus } from '../services/backendApi'
 import { ProjectCard } from './components/ProjectCard'
 import { ProjectTableRow } from './components/ProjectTableRow'
 import { ProjectFormDialog } from './components/ProjectFormDialog'
 import { DeleteProjectDialog } from './components/DeleteProjectDialog'
 import { ProjectSettingsDialog } from '../features/settings/ProjectSettingsDialog'
+import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { NotificationBell } from '../features/topbar/NotificationBell'
 import { UserMenu } from '../features/topbar/UserMenu'
 import './project-list.css'
@@ -27,6 +29,7 @@ import './project-list.css'
 type DialogState =
   | { kind: 'closed' }
   | { kind: 'create' }
+  | { kind: 'import-github' }
   | { kind: 'rename'; target: ProjectSummary }
   | { kind: 'delete'; target: ProjectSummary }
   | { kind: 'settings'; target: ProjectSummary }
@@ -39,6 +42,7 @@ export function ProjectListPage() {
   const error = useProjectStore((s) => s.error)
   const load = useProjectStore((s) => s.load)
   const create = useProjectStore((s) => s.create)
+  const importGithub = useProjectStore((s) => s.importGithub)
   const rename = useProjectStore((s) => s.rename)
   const remove = useProjectStore((s) => s.remove)
   const viewMode = useProjectStore((s) => s.viewMode)
@@ -47,10 +51,20 @@ export function ProjectListPage() {
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
+  const [github, setGithub] = useState<GitHubAccountStatus | null>(null)
+  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
 
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    githubApi.account().then(setGithub).catch(() => setGithub(null))
+  }, [])
+
+  const refreshGithubAccount = () => {
+    githubApi.account().then(setGithub).catch(() => setGithub(null))
+  }
 
   const closeDialog = () => {
     setDialog({ kind: 'closed' })
@@ -63,6 +77,24 @@ export function ProjectListPage() {
     setDialogError(null)
     try {
       const created = await create(name)
+      closeDialog()
+      navigate(`/projects/${created.id}`)
+    } catch (e) {
+      setDialogError(extractMessage(e))
+    } finally {
+      setDialogBusy(false)
+    }
+  }
+
+  const handleGithubImport = async (body: { repoUrl: string; branch?: string; name?: string }) => {
+    setDialogBusy(true)
+    setDialogError(null)
+    try {
+      const created = await importGithub({
+        repo_url: body.repoUrl,
+        branch: body.branch,
+        name: body.name,
+      })
       closeDialog()
       navigate(`/projects/${created.id}`)
     } catch (e) {
@@ -131,8 +163,23 @@ export function ProjectListPage() {
           <button className="primary-btn" onClick={() => setDialog({ kind: 'create' })}>
             <Plus size={14} /> 新建项目
           </button>
+          <button
+            className="secondary-btn"
+            onClick={() => setDialog({ kind: 'import-github' })}
+            disabled={!github?.connected}
+            title={github?.connected ? '从 GitHub 仓库导入为新项目' : '请先在个人设置连接 GitHub 账户'}
+          >
+            <Download size={14} /> GitHub 导入
+          </button>
+          <button
+            className="secondary-btn"
+            onClick={() => setPersonalPanelOpen(true)}
+            title="打开个人面板，连接 GitHub 账户"
+          >
+            <UserRound size={14} /> 个人面板
+          </button>
           <NotificationBell />
-          <UserMenu />
+          <UserMenu onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
         </div>
       </header>
 
@@ -192,6 +239,13 @@ export function ProjectListPage() {
         onSubmit={handleCreate}
         onOpenChange={(o) => { if (!o) closeDialog() }}
       />
+      <GitHubImportDialog
+        open={dialog.kind === 'import-github'}
+        busy={dialogBusy}
+        error={dialogError}
+        onSubmit={handleGithubImport}
+        onOpenChange={(o) => { if (!o) closeDialog() }}
+      />
       <ProjectFormDialog
         open={dialog.kind === 'rename'}
         mode="rename"
@@ -214,7 +268,129 @@ export function ProjectListPage() {
         projectId={dialog.kind === 'settings' ? dialog.target.id : ''}
         onOpenChange={(o) => { if (!o) closeDialog() }}
       />
+      <SettingsDialog
+        open={personalPanelOpen}
+        onOpenChange={(open) => {
+          setPersonalPanelOpen(open)
+          if (!open) refreshGithubAccount()
+        }}
+      />
     </div>
+  )
+}
+
+function GitHubImportDialog({
+  open,
+  busy,
+  error,
+  onSubmit,
+  onOpenChange,
+}: {
+  open: boolean
+  busy?: boolean
+  error?: string | null
+  onSubmit: (body: { repoUrl: string; branch?: string; name?: string }) => void | Promise<void>
+  onOpenChange: (open: boolean) => void
+}) {
+  const [repoUrl, setRepoUrl] = useState('')
+  const [branch, setBranch] = useState('')
+  const [name, setName] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setRepoUrl('')
+      setBranch('')
+      setName('')
+    }
+  }, [open])
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!repoUrl.trim() || busy) return
+    void onSubmit({
+      repoUrl: repoUrl.trim(),
+      branch: branch.trim() || undefined,
+      name: name.trim() || undefined,
+    })
+  }
+
+  return (
+    <ProjectFormDialogShell
+      open={open}
+      title="从 GitHub 导入"
+      onOpenChange={onOpenChange}
+    >
+      <form onSubmit={handleSubmit} className="project-form">
+        <label className="project-form-label">
+          GitHub 仓库链接
+          <input
+            autoFocus
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="https://github.com/owner/repo"
+            className="project-form-input"
+          />
+        </label>
+        <div className="project-form-grid">
+          <label className="project-form-label">
+            Branch
+            <input
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              placeholder="留空使用默认分支"
+              className="project-form-input"
+            />
+          </label>
+          <label className="project-form-label">
+            项目名称
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="留空使用仓库名"
+              className="project-form-input"
+            />
+          </label>
+        </div>
+        {error && <div className="project-form-error">{error}</div>}
+        <div className="project-form-actions">
+          <button type="button" className="ghost-btn" onClick={() => onOpenChange(false)} disabled={busy}>
+            取消
+          </button>
+          <button type="submit" className="primary-btn" disabled={busy || !repoUrl.trim()}>
+            {busy ? '导入中…' : '导入为新项目'}
+          </button>
+        </div>
+      </form>
+    </ProjectFormDialogShell>
+  )
+}
+
+function ProjectFormDialogShell({
+  open,
+  title,
+  children,
+  onOpenChange,
+}: {
+  open: boolean
+  title: string
+  children: React.ReactNode
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="project-dialog-overlay" />
+        <Dialog.Content className="project-dialog-content">
+          <div className="project-dialog-header">
+            <Dialog.Title className="project-dialog-title">{title}</Dialog.Title>
+            <Dialog.Close asChild>
+              <button className="icon-btn" aria-label="关闭"><X size={18} /></button>
+            </Dialog.Close>
+          </div>
+          {children}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 

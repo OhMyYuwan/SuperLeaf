@@ -8,9 +8,9 @@
 
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, CircleAlert, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import type { Provider, ProviderDraft } from '../../services/backendApi'
-import { BACKEND_BASE, getLocalServiceUrl } from '../../services/backendApi'
+import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft } from '../../services/backendApi'
+import { BACKEND_BASE, getLocalServiceUrl, githubApi } from '../../services/backendApi'
 import { useSettingsStore } from '../../stores/settingsStore'
 import './settings.css'
 
@@ -41,9 +41,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <Dialog.Content className="settings-dialog">
           <div className="settings-header">
             <div>
-              <Dialog.Title className="settings-title">Provider 设置</Dialog.Title>
+              <Dialog.Title className="settings-title">个人面板</Dialog.Title>
               <Dialog.Description className="settings-subtitle">
-                配置后端连接的 LLM / Workflow provider。API Key 将加密存储于本地 SQLite。
+                登录 GitHub 账号，也可以配置当前用户的本地 provider。密钥会加密存储于本地 SQLite。
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -56,6 +56,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
 
           <div className="settings-body">
+            <GitHubAccountSettings />
+
+            <div className="settings-section-title">Provider</div>
+
             {loaded && providers.length === 0 && !showForm && (
               <div className="empty-providers">
                 还没有配置 provider。点击下方按钮添加第一个。
@@ -79,6 +83,194 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function GitHubAccountSettings() {
+  const configuredGithubClientId = (import.meta.env.VITE_GITHUB_CLIENT_ID as string | undefined) ?? ''
+  const [account, setAccount] = useState<GitHubAccountStatus | null>(null)
+  const [clientId, setClientId] = useState(configuredGithubClientId)
+  const [deviceAuth, setDeviceAuth] = useState<GitHubDeviceStart | null>(null)
+  const [devicePolling, setDevicePolling] = useState(false)
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadAccount = async () => {
+    setError(null)
+    try {
+      setAccount(await githubApi.account())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载 GitHub 账户失败')
+    }
+  }
+
+  useEffect(() => {
+    void loadAccount()
+  }, [])
+
+  useEffect(() => {
+    if (!deviceAuth) return
+    let cancelled = false
+    const startedAt = Date.now()
+    let timer: number | undefined
+
+    const poll = (delaySeconds: number) => {
+      timer = window.setTimeout(async () => {
+        if (cancelled) return
+        if (Date.now() - startedAt > deviceAuth.expires_in * 1000) {
+          setDevicePolling(false)
+          setDeviceAuth(null)
+          setError('GitHub 验证码已过期，请重新发起验证。')
+          return
+        }
+        setDevicePolling(true)
+        try {
+          const result = await githubApi.pollDevice(
+            deviceAuth.device_code,
+            clientId.trim() || undefined,
+          )
+          if (cancelled) return
+          if (result.status === 'connected' && result.account) {
+            setAccount(result.account)
+            setDeviceAuth(null)
+            setMessage(`GitHub 已连接 @${result.account.login}。`)
+          } else if (result.status === 'slow_down') {
+            setMessage('GitHub 要求放慢检查频率，继续等待授权。')
+            poll(result.interval ?? delaySeconds + 5)
+          } else if (result.status === 'failed') {
+            setDeviceAuth(null)
+            setError(result.error || 'GitHub 设备授权失败')
+          } else {
+            setMessage('正在等待 GitHub 授权完成。')
+            poll(delaySeconds)
+          }
+        } catch (err) {
+          if (!cancelled) setError(err instanceof Error ? err.message : '检查 GitHub 授权失败')
+        } finally {
+          if (!cancelled) setDevicePolling(false)
+        }
+      }, Math.max(delaySeconds, 5) * 1000)
+    }
+
+    poll(deviceAuth.interval)
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [deviceAuth, clientId])
+
+  const startDeviceAuth = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await githubApi.startDevice(clientId.trim() || undefined)
+      setDeviceAuth(result)
+      setMessage(`请在 GitHub 输入验证码 ${result.user_code}，授权完成后这里会自动连接。`)
+      const url = result.verification_uri_complete || result.verification_uri
+      if (url) window.open(url, 'yuwanlab-github-device', 'width=720,height=760')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '启动 GitHub 验证失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const connectToken = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await githubApi.connectToken(token)
+      setAccount(next)
+      setToken('')
+      setMessage(`GitHub 已连接 @${next.login}。`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '连接 GitHub token 失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disconnect = async () => {
+    if (!confirm('断开 GitHub 账户？项目归档仍会保留，但上传/私有下载需要重新授权。')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await githubApi.disconnect()
+      setAccount({ connected: false, login: '', name: '', avatar_url: '', scope: '', updated_at: null })
+      setMessage('GitHub 账户已断开。')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '断开 GitHub 账户失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <div>
+          <h3><GitBranch size={14} /> GitHub 账户</h3>
+          <p>授权绑定到当前 YuwanLabWriter 用户，直到 GitHub 权限失效或你主动断开。</p>
+        </div>
+        {account?.connected ? (
+          <button className="ghost-btn small danger" onClick={() => void disconnect()} disabled={busy}>
+            断开
+          </button>
+        ) : (
+          <button className="ghost-btn small" onClick={() => void startDeviceAuth()} disabled={busy || devicePolling}>
+            {devicePolling ? <Loader2 size={12} className="spin" /> : <KeyRound size={12} />}
+            GitHub 验证
+          </button>
+        )}
+      </div>
+
+      <div className="github-account-card">
+        <span>{account?.connected ? `已连接 @${account.login}` : '未连接 GitHub'}</span>
+        {account?.scope && <code>{account.scope}</code>}
+      </div>
+
+      {!configuredGithubClientId && !account?.connected && (
+        <label className="settings-inline-field">
+          <span>OAuth App Client ID</span>
+          <input
+            value={clientId}
+            onChange={(event) => setClientId(event.target.value)}
+            placeholder="GitHub OAuth App Client ID"
+            disabled={busy || devicePolling}
+          />
+        </label>
+      )}
+
+      {deviceAuth && (
+        <div className="github-device-card">
+          <span>GitHub 验证码</span>
+          <strong>{deviceAuth.user_code}</strong>
+          <a href={deviceAuth.verification_uri_complete || deviceAuth.verification_uri} target="_blank" rel="noreferrer">
+            打开 GitHub 验证
+          </a>
+        </div>
+      )}
+
+      {!account?.connected && (
+        <div className="settings-token-row">
+          <input
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="或粘贴 fine-grained token / PAT"
+            type="password"
+            disabled={busy}
+          />
+          <button className="ghost-btn small" onClick={() => void connectToken()} disabled={busy || !token.trim()}>
+            连接
+          </button>
+        </div>
+      )}
+
+      {message && <div className="settings-success">{message}</div>}
+      {error && <div className="form-error">{error}</div>}
+    </section>
   )
 }
 

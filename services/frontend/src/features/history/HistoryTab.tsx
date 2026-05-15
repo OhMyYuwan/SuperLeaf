@@ -23,6 +23,7 @@ import { OperationsView } from './OperationsView'
 
 interface HistoryTabProps {
   documentId: string | null
+  embedded?: boolean
 }
 
 const ORIGIN_LABEL: Record<VersionMeta['origin'], string> = {
@@ -41,7 +42,7 @@ const ORIGIN_CLASS: Record<VersionMeta['origin'], string> = {
   ai_edit: 'origin-ai',
 }
 
-export function HistoryTab({ documentId }: HistoryTabProps) {
+export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
   const versionsMap = useHistoryStore((s) => s.versions)
   const loadingMap = useHistoryStore((s) => s.loading)
   const errorMap = useHistoryStore((s) => s.error)
@@ -150,14 +151,14 @@ export function HistoryTab({ documentId }: HistoryTabProps) {
 
   if (!documentId) {
     return (
-      <div className="tab-content-wrapper">
+      <div className={embedded ? "history-embedded" : "tab-content-wrapper"}>
         <div className="tab-empty">请先打开一个文档。</div>
       </div>
     )
   }
 
   return (
-    <div className="tab-content-wrapper">
+    <div className={embedded ? "history-embedded" : "tab-content-wrapper"}>
       <div className="history-subnav">
         <button
           className={`history-subnav-btn ${subView === 'versions' ? 'is-active' : ''}`}

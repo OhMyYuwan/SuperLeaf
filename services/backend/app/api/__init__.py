@@ -4,10 +4,12 @@ from fastapi import APIRouter
 
 from . import (
     annotation_evaluations,
+    archives,
     auth,
     compile,
     conversations,
     filesystem,
+    github,
     health,
     notifications,
     projects,
@@ -28,9 +30,11 @@ api_router.include_router(workflows.router)
 api_router.include_router(workflow_test_cases.router)
 api_router.include_router(filesystem.router)
 api_router.include_router(filesystem.projects_router)
+api_router.include_router(github.router)
 api_router.include_router(conversations.router)
 api_router.include_router(versions.router)
 api_router.include_router(annotation_evaluations.router)
+api_router.include_router(archives.router)
 api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
 api_router.include_router(notifications.router)

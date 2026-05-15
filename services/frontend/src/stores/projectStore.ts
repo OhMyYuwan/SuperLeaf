@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand'
-import { projectsApi, type ProjectSummary } from '../services/projectsApi'
+import { projectsApi, type GitHubProjectImport, type ProjectSummary } from '../services/projectsApi'
 import { registerProjectIdReader } from '../services/backendApi'
 
 const VIEW_MODE_KEY = 'yuwanlab.projectListViewMode'
@@ -34,6 +34,7 @@ interface ProjectState {
   load: () => Promise<void>
   setCurrent: (id: string | null) => void
   create: (name: string) => Promise<ProjectSummary>
+  importGithub: (body: GitHubProjectImport) => Promise<ProjectSummary>
   rename: (id: string, name: string) => Promise<void>
   remove: (id: string) => Promise<void>
   setViewMode: (mode: 'table' | 'grid') => void
@@ -52,7 +53,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const projects = await projectsApi.list()
-      set({ projects, loading: false, loaded: true })
+      const currentProjectId = get().currentProjectId
+      const current = currentProjectId
+        ? projects.find((project) => project.id === currentProjectId)
+        : null
+      set({
+        projects,
+        currentProjectRole: currentProjectId ? current?.my_role ?? null : null,
+        loading: false,
+        loaded: true,
+      })
     } catch (e) {
       set({
         loading: false,
@@ -70,6 +80,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   create: async (name) => {
     const created = await projectsApi.create({ name })
+    set((s) => ({ projects: [created, ...s.projects] }))
+    return created
+  },
+
+  importGithub: async (body) => {
+    const created = await projectsApi.importGithub(body)
     set((s) => ({ projects: [created, ...s.projects] }))
     return created
   },

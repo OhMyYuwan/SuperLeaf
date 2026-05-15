@@ -55,6 +55,44 @@ class Session(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
 
 
+class GitHubAccount(Base):
+    """User-scoped GitHub authorization.
+
+    Tokens are encrypted with the same local Fernet vault as provider API keys.
+    The app stores one connected GitHub account per user for now; repository
+    selection stays per project archive binding.
+    """
+
+    __tablename__ = "github_accounts"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_github_accounts_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    github_user_id: Mapped[str] = mapped_column(String(64), default="")
+    login: Mapped[str] = mapped_column(String(128), default="")
+    name: Mapped[str] = mapped_column(String(256), default="")
+    avatar_url: Mapped[str] = mapped_column(String(512), default="")
+    token_type: Mapped[str] = mapped_column(String(32), default="bearer")
+    scope: Mapped[str] = mapped_column(String(512), default="")
+    access_token_enc: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class GitHubOAuthState(Base):
+    """Short-lived OAuth CSRF state row."""
+
+    __tablename__ = "github_oauth_states"
+
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Providers + cached workflows (per-user)
 # ---------------------------------------------------------------------------
@@ -250,6 +288,56 @@ class ProjectMember(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class ProjectArchiveBinding(Base):
+    """Project-level archive settings.
+
+    Local Git is the first-class archive store. GitHub metadata is deliberately
+    a binding target, not a live collaboration source: future push/import flows
+    can use it without changing the local snapshot model.
+    """
+
+    __tablename__ = "project_archive_bindings"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_project_archive_bindings_project"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    local_repo_path: Mapped[str] = mapped_column(String(1024), default="")
+    github_account_id: Mapped[str] = mapped_column(String(32), default="")
+    github_repo_url: Mapped[str] = mapped_column(String(512), default="")
+    github_owner: Mapped[str] = mapped_column(String(128), default="")
+    github_repo: Mapped[str] = mapped_column(String(128), default="")
+    github_branch: Mapped[str] = mapped_column(String(128), default="yuwanlab-archive")
+    github_path: Mapped[str] = mapped_column(String(512), default="")
+    github_private_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    github_bound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_local_commit_sha: Mapped[str] = mapped_column(String(64), default="")
+    last_pushed_commit_sha: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class ProjectArchiveSnapshot(Base):
+    """One project-level snapshot commit in the local archive repo."""
+
+    __tablename__ = "project_archive_snapshots"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    commit_sha: Mapped[str] = mapped_column(String(64), index=True)
+    message: Mapped[str] = mapped_column(String(512), default="")
+    doc_count: Mapped[int] = mapped_column(Integer, default=0)
+    file_count: Mapped[int] = mapped_column(Integer, default=0)
+    byte_count: Mapped[int] = mapped_column(Integer, default=0)
+    pushed_to_github: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Folder(Base):

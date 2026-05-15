@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
+import mimetypes
 
 from sqlalchemy.orm import Session
 
@@ -313,6 +315,87 @@ class ProjectFsService:
         self.db.refresh(f)
         return f
 
+    # --------------------------------------------------------- import directory
+
+    def replace_from_directory(self, root: Path) -> tuple[int, int, int]:
+        """Replace this project's tree with files from a local directory."""
+        if not root.exists() or not root.is_dir():
+            raise ValueError("import root not found")
+
+        self.db.query(Doc).filter(Doc.project_id == self.project.id).delete(
+            synchronize_session=False
+        )
+        self.db.query(FileBlob).filter(FileBlob.project_id == self.project.id).delete(
+            synchronize_session=False
+        )
+        self.db.query(Folder).filter(Folder.project_id == self.project.id).delete(
+            synchronize_session=False
+        )
+        self.db.flush()
+
+        folder_cache: dict[Path, Folder | None] = {Path("."): None}
+
+        def ensure_folder(rel_dir: Path) -> Folder | None:
+            if rel_dir in folder_cache:
+                return folder_cache[rel_dir]
+            parent = ensure_folder(rel_dir.parent)
+            folder = Folder(
+                project_id=self.project.id,
+                parent_folder_id=parent.id if parent else None,
+                name=rel_dir.name,
+            )
+            self.db.add(folder)
+            self.db.flush()
+            folder_cache[rel_dir] = folder
+            return folder
+
+        doc_count = 0
+        file_count = 0
+        byte_count = 0
+        for file_path in sorted(root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(root)
+            if ".git" in rel.parts:
+                continue
+            payload = file_path.read_bytes()
+            byte_count += len(payload)
+            parent = ensure_folder(rel.parent)
+            suffix = file_path.suffix.lower()
+            if suffix in {".tex", ".md", ".txt"}:
+                try:
+                    content = payload.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = payload.decode("utf-8", errors="replace")
+                self.db.add(
+                    Doc(
+                        project_id=self.project.id,
+                        folder_id=parent.id if parent else None,
+                        name=rel.name,
+                        format=_doc_format(suffix),
+                        content=content,
+                        version=1,
+                    )
+                )
+                doc_count += 1
+            else:
+                mime_type = mimetypes.guess_type(rel.name)[0] or "application/octet-stream"
+                self.db.add(
+                    FileBlob(
+                        project_id=self.project.id,
+                        folder_id=parent.id if parent else None,
+                        name=rel.name,
+                        mime_type=mime_type,
+                        size_bytes=len(payload),
+                        blob=payload,
+                    )
+                )
+                file_count += 1
+
+        self.project.updated_at = datetime.utcnow()
+        self.db.commit()
+        return doc_count, file_count, byte_count
+
     # --------------------------------------------------------- export zip
 
     def export_zip(self) -> bytes:
@@ -354,3 +437,11 @@ class ProjectFsService:
                 zf.writestr(path, f.blob or b"")
 
         return buf.getvalue()
+
+
+def _doc_format(suffix: str) -> str:
+    if suffix == ".md":
+        return "md"
+    if suffix == ".txt":
+        return "txt"
+    return "tex"

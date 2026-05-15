@@ -20,6 +20,7 @@ interface TopbarProps {
   providerName: string | null
   providerStatus: string | null
   onOpenSettings: () => void
+  onOpenPersonalPanel?: () => void
   onSave?: () => void
 }
 
@@ -28,6 +29,7 @@ export function Topbar({
   providerName,
   providerStatus,
   onOpenSettings,
+  onOpenPersonalPanel,
   onSave,
 }: TopbarProps) {
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
@@ -65,7 +67,7 @@ export function Topbar({
           <Settings2 size={16} /> 设置
         </button>
         <NotificationBell />
-        <UserMenu />
+        <UserMenu onOpenPersonalPanel={onOpenPersonalPanel} />
       </div>
     </header>
   )

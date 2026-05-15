@@ -15,12 +15,18 @@ import MarkdownIt from 'markdown-it'
 // markdown-it-katex 2.x ships CJS with no bundled types.
 // @ts-expect-error — no types
 import mdKatex from 'markdown-it-katex'
+import {
+  sourceJumpFromMarkdownElement,
+  stampMarkdownSourceLines,
+  type SourceJump,
+} from '../../services/previewSourceMap'
 import 'katex/dist/katex.min.css'
 import './markdown-preview.css'
 
 interface MarkdownPreviewProps {
   source: string
   className?: string
+  onSourceJump?: (jump: SourceJump) => void
 }
 
 const md = new MarkdownIt({
@@ -34,11 +40,20 @@ const md = new MarkdownIt({
     errorColor: '#fca5a5',
   })
 
-export function MarkdownPreview({ source, className }: MarkdownPreviewProps) {
-  const html = useMemo(() => md.render(source ?? ''), [source])
+export function MarkdownPreview({ source, className, onSourceJump }: MarkdownPreviewProps) {
+  const html = useMemo(() => {
+    const tokens = md.parse(source ?? '', {})
+    stampMarkdownSourceLines(tokens)
+    return md.renderer.render(tokens, md.options, {})
+  }, [source])
+
   return (
     <div
       className={`md-preview ${className ?? ''}`}
+      onDoubleClick={(event) => {
+        const jump = sourceJumpFromMarkdownElement(source, event.target)
+        if (jump) onSourceJump?.(jump)
+      }}
       // safe: html is produced by markdown-it with html=false
       dangerouslySetInnerHTML={{ __html: html }}
     />

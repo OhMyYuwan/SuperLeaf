@@ -15,7 +15,7 @@
  * click to focus a panel card; `activeDecorationId` highlights the focused one.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState, Compartment } from '@codemirror/state'
 import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -43,8 +43,8 @@ export interface SelectionInfo {
   to: number
   text: string
   // Coordinates of the selection's end (anchor on right side of last char)
-  // relative to the editor's content container. Useful for positioning
-  // floating toolbars.
+  // relative to the editor root overlay. Useful for positioning floating
+  // toolbars.
   coords: { x: number; y: number } | null
 }
 
@@ -59,7 +59,7 @@ export interface LatexEditorProps {
   /** When set, the matching decoration flashes (used for panel hover preview). */
   panelHoverId?: string | null
   onDecorationClick?: (id: string) => void
-  scrollTo?: { pos: number; seq: number } | null
+  scrollTo?: { pos: number; to?: number; seq: number } | null
   className?: string
   // Rendered inside the editor's positioned container, on top of the editor.
   // Used for floating UI like a selection toolbar.
@@ -94,6 +94,7 @@ export function LatexEditor({
   const onDocChangeRef = useRef(onDocChange)
   const onDecorationClickRef = useRef(onDecorationClick)
   const languageCompartment = useMemo(() => new Compartment(), [])
+  const [sourceJumpFlash, setSourceJumpFlash] = useState(false)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -143,11 +144,11 @@ export function LatexEditor({
             if (sel.from !== sel.to) {
               const view = update.view
               const screenCoords = view.coordsAtPos(sel.to)
-              const rect = view.scrollDOM.getBoundingClientRect()
+              const rootRect = view.dom.parentElement?.getBoundingClientRect()
               if (screenCoords) {
                 coords = {
-                  x: screenCoords.right - rect.left + view.scrollDOM.scrollLeft,
-                  y: screenCoords.top - rect.top + view.scrollDOM.scrollTop,
+                  x: screenCoords.right - (rootRect?.left ?? 0),
+                  y: screenCoords.top - (rootRect?.top ?? 0),
                 }
               }
             }
@@ -233,15 +234,29 @@ export function LatexEditor({
     if (!view || scrollTo == null) return
     const docLen = view.state.doc.length
     const pos = Math.max(0, Math.min(scrollTo.pos, docLen))
+    const to = Math.max(pos, Math.min(scrollTo.to ?? pos, docLen))
     view.dispatch({
-      selection: { anchor: pos },
+      selection: { anchor: pos, head: to },
       effects: EditorView.scrollIntoView(pos, { y: 'center' }),
     })
     view.focus()
+    view.dom.classList.add('source-jump-flash')
+    setSourceJumpFlash(true)
+    const timer = window.setTimeout(() => {
+      view.dom.classList.remove('source-jump-flash')
+      setSourceJumpFlash(false)
+    }, 900)
+    return () => {
+      view.dom.classList.remove('source-jump-flash')
+      window.clearTimeout(timer)
+    }
   }, [scrollTo])
 
   return (
-    <div className={`latex-editor-root ${className ?? ''}`} style={{ position: 'relative' }}>
+    <div
+      className={`latex-editor-root ${sourceJumpFlash ? 'source-jump-flash' : ''} ${className ?? ''}`}
+      style={{ position: 'relative' }}
+    >
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       {overlay}
     </div>

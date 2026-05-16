@@ -13,7 +13,7 @@
  * without the UX collapsing between them (the plan doc §333 requires this).
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Pencil, Trash2, X } from 'lucide-react'
 import {
   useAnnotationStore,
@@ -76,6 +76,8 @@ interface EvaluationPanelProps {
   defaultTargetType?: AgentEvaluation['targetType']
   /** Hide the editor form; only show the saved evaluation list. */
   readOnly?: boolean
+  /** Whether the parent annotation card is currently focused. */
+  active?: boolean
 }
 
 export function EvaluationPanel({
@@ -83,6 +85,7 @@ export function EvaluationPanel({
   defaultTargetId,
   defaultTargetType = 'agent_output',
   readOnly = false,
+  active = true,
 }: EvaluationPanelProps) {
   const evaluations = useAnnotationStore(
     (s) => s.evaluationsByAnnotation[annotationId] ?? EMPTY_EVALUATIONS,
@@ -92,6 +95,7 @@ export function EvaluationPanel({
   const updateEvaluation = useAnnotationStore((s) => s.updateEvaluation)
   const deleteEvaluation = useAnnotationStore((s) => s.deleteEvaluation)
   const allTags = useAnnotationStore((s) => s.allEvaluationTags)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const historicalTags = useMemo(() => {
     const baseSet = new Set(BASE_TAGS.map((t) => t.label.toLowerCase()))
@@ -116,6 +120,29 @@ export function EvaluationPanel({
     setTrainingCandidate(null)
     setCustomTagInput('')
   }
+
+  useEffect(() => {
+    if (active) return
+    setExpanded(false)
+    resetForm()
+  }, [active])
+
+  useEffect(() => {
+    if (!expanded) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const panel = panelRef.current
+      const target = event.target
+      if (!panel || !(target instanceof Node)) return
+      const card = panel.closest('.ann-card')
+      if (card?.contains(target)) return
+      setExpanded(false)
+      resetForm()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true)
+  }, [expanded])
 
   const loadEvaluationIntoForm = (ev: AgentEvaluation) => {
     setEditingId(ev.id)
@@ -196,7 +223,7 @@ export function EvaluationPanel({
   const latest = evaluations[evaluations.length - 1]
 
   return (
-    <div className="eval-panel" onClick={(e) => e.stopPropagation()}>
+    <div ref={panelRef} className="eval-panel" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
         className="eval-panel-header"

@@ -23,7 +23,6 @@ import { useUserStore } from '../../stores/userStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
 import { EvaluationPanel } from './EvaluationPanel'
-import { ReviewStatusToggle } from './ReviewStatusToggle'
 import {
   parseMentions,
   segmentText,
@@ -320,10 +319,6 @@ function AnnotationCard({
   const remove = useAnnotationStore((s) => s.remove)
   const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
-  const reviewStatus = useAnnotationStore(
-    (s) => s.reviewStatusByAnnotation[item.id] ?? 'open',
-  )
-  const setReviewStatus = useAnnotationStore((s) => s.setReviewStatus)
   const runWorkflow = useWorkflowStore((s) => s.run)
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -474,12 +469,6 @@ function AnnotationCard({
         </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
         {isResolved && <span className="ann-resolved-chip">已处理</span>}
-        <ReviewStatusToggle
-          value={reviewStatus}
-          onChange={(next) => setReviewStatus(item.id, next, item.documentId)}
-          disabled={isResolved}
-          compact
-        />
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
@@ -500,14 +489,6 @@ function AnnotationCard({
         </div>
       )}
 
-      {item.content && (
-        <div className="ann-body">
-          {isUserComment
-            ? renderWithMentions(item.content, agents, fileCandidatesForCard, workflowCandidatesForCard)
-            : <AgentMarkdown source={item.content} />}
-        </div>
-      )}
-
       {item.kind === 'suggestion' && item.proposed && (
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
@@ -518,14 +499,13 @@ function AnnotationCard({
 
       <Thread
         messages={item.thread}
-        isUserCommentCard={isUserComment}
         agents={agents}
         files={fileCandidatesForCard}
         workflows={workflowCandidatesForCard}
       />
 
       {isOwner && hasAgentOutput(item) && (
-        <EvaluationPanel annotationId={item.id} />
+        <EvaluationPanel annotationId={item.id} active={isActive} />
       )}
 
       {agentDisabled && (
@@ -630,37 +610,64 @@ function AnnotationCard({
 
 function Thread({
   messages,
-  isUserCommentCard,
   agents,
   files,
   workflows,
 }: {
   messages: AnnotationItem['thread']
-  isUserCommentCard: boolean
   agents: CachedWorkflow[]
   files: readonly FileCandidate[]
   workflows: readonly WorkflowCandidate[]
 }) {
-  // User-comment cards: thread starts with the user message, so show all.
-  // Agent cards: thread[0] is the agent's initial output already rendered in
-  // the card body, so skip it.
-  const visible = isUserCommentCard ? messages : messages.slice(1)
+  const visible = messages
   if (visible.length === 0) return null
   return (
     <ul className="ann-thread">
       {visible.map((m) => (
-        <li key={m.id} className={`ann-thread-msg ${m.role}`}>
-          <span className="ann-thread-role">
-            {m.role === 'user' ? '我' : m.agentName ?? 'Agent'}
-          </span>
-          <div className="ann-thread-content">
-            {m.role === 'user'
-              ? renderWithMentions(m.content, agents, files, workflows)
-              : <AgentMarkdown source={m.content} />}
-          </div>
-        </li>
+        <ThreadMessage
+          key={m.id}
+          message={m}
+          agents={agents}
+          files={files}
+          workflows={workflows}
+        />
       ))}
     </ul>
+  )
+}
+
+function ThreadMessage({
+  message,
+  agents,
+  files,
+  workflows,
+}: {
+  message: AnnotationItem['thread'][number]
+  agents: CachedWorkflow[]
+  files: readonly FileCandidate[]
+  workflows: readonly WorkflowCandidate[]
+}) {
+  const leading = message.role === 'user'
+    ? splitLeadingMentionPrefix(message.content, agents, files, workflows)
+    : null
+  const body = leading?.body ?? message.content
+
+  return (
+    <li className={`ann-thread-msg ${message.role}`}>
+      <span className="ann-thread-role">
+        {message.role === 'user' ? '我：' : `${message.agentName ?? 'Agent'}：`}
+        {leading?.prefix.length ? (
+          <span className="ann-thread-role-mentions">{leading.prefix}</span>
+        ) : null}
+      </span>
+      {body && (
+        <div className="ann-thread-content">
+          {message.role === 'user'
+            ? renderWithMentions(body, agents, files, workflows)
+            : <AgentMarkdown source={body} />}
+        </div>
+      )}
+    </li>
   )
 }
 
@@ -692,6 +699,36 @@ function renderWithMentions(
   })
 }
 
+function splitLeadingMentionPrefix(
+  text: string,
+  agents: CachedWorkflow[],
+  files: readonly FileCandidate[],
+  workflows: readonly WorkflowCandidate[],
+): { prefix: React.ReactNode[]; body: string } {
+  const agentCandidates: AgentCandidate[] = agents.map((a) => ({ kind: 'agent', id: a.id, name: a.name }))
+  const candidates: MentionCandidate[] = [...agentCandidates, ...workflows, ...files]
+  const mentions = parseMentions(text, candidates).sort((a, b) => a.start - b.start)
+  let cursor = 0
+  let lastMentionEnd = 0
+
+  for (const mention of mentions) {
+    const gap = text.slice(cursor, mention.start)
+    if (gap.trim().length > 0) break
+    cursor = mention.end
+    lastMentionEnd = mention.end
+  }
+
+  if (lastMentionEnd === 0) {
+    return { prefix: [], body: text }
+  }
+
+  const prefixText = text.slice(0, lastMentionEnd).trim()
+  return {
+    prefix: renderWithMentions(prefixText, agents, files, workflows),
+    body: text.slice(lastMentionEnd).trimStart(),
+  }
+}
+
 function iconFor(item: AnnotationItem) {
   if (item.kind === 'suggestion') return <Wand2 size={14} />
   if (item.kind === 'risk') return <AlertTriangle size={14} />
@@ -711,9 +748,6 @@ function hasAgentOutput(item: AnnotationItem): boolean {
 function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWorkflow[] }) {
   const restore = useAnnotationStore((s) => s.restore)
   const remove = useAnnotationStore((s) => s.remove)
-  const reviewStatus = useAnnotationStore(
-    (s) => s.reviewStatusByAnnotation[item.id] ?? 'open',
-  )
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
   const isUserComment = item.kind === 'user-comment'
@@ -743,7 +777,6 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         </span>
         <span className="ann-kind-chip">{labelFor(item.kind)}</span>
         <span className="ann-resolved-chip">已归档</span>
-        <ReviewStatusToggle value={reviewStatus} onChange={() => {}} disabled compact />
       </div>
 
       {item.targetText && <blockquote className="ann-quote">{ellipsis(item.targetText, 120)}</blockquote>}
@@ -764,14 +797,6 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         </div>
       )}
 
-      {item.content && (
-        <div className="ann-body">
-          {isUserComment
-            ? renderWithMentions(item.content, agents, fileCandidatesForArchived, workflowCandidatesForArchived)
-            : <AgentMarkdown source={item.content} />}
-        </div>
-      )}
-
       {item.kind === 'suggestion' && item.proposed && (
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
@@ -782,7 +807,6 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
 
       <Thread
         messages={item.thread}
-        isUserCommentCard={isUserComment}
         agents={agents}
         files={fileCandidatesForArchived}
         workflows={workflowCandidatesForArchived}
@@ -861,7 +885,7 @@ function ComparisonModal({
                 <ul className="ann-thread">
                   {it.thread.slice(1).map((m) => (
                     <li key={m.id} className={`ann-thread-msg ${m.role}`}>
-                      <span className="ann-thread-role">{m.role === 'user' ? '我' : m.agentName ?? 'Agent'}</span>
+                      <span className="ann-thread-role">{m.role === 'user' ? '我：' : `${m.agentName ?? 'Agent'}：`}</span>
                       <div className="ann-thread-content">
                         {m.role === 'user'
                           ? m.content

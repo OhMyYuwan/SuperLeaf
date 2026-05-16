@@ -390,25 +390,58 @@
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
+  max-height: min(420px, calc(100vh - 260px));
+  overflow-y: auto;
+  scrollbar-color: rgba(148, 163, 184, 0.62) transparent;
+  scrollbar-width: thin;
+}
+.ann-thread::-webkit-scrollbar {
+  width: 8px;
+}
+.ann-thread::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ann-thread::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.58);
+  border-radius: 999px;
+}
+.ann-thread::-webkit-scrollbar-thumb:hover {
+  background: rgba(203, 213, 225, 0.72);
 }
 .ann-thread-msg {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.18);
+}
+.ann-thread-msg:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 .ann-thread-role {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
   font-weight: 600;
   color: rgba(148, 163, 184, 0.85);
-  flex-shrink: 0;
-  min-width: 38px;
+  line-height: 1.35;
 }
 .ann-thread-msg.user .ann-thread-role {
   color: #93c5fd;
 }
+.ann-thread-role-mentions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
 .ann-thread-content {
-  flex: 1;
   min-width: 0;
   color: rgba(226, 232, 240, 0.92);
   white-space: pre-wrap;
+  line-height: 1.55;
 }
 .ann-thread-content .agent-md,
 .ann-body .agent-md,

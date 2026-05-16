@@ -438,6 +438,10 @@
 
 /* Run history tab */
 
+.run-history-wrapper {
+  overflow: hidden;
+}
+
 .run-filter-label {
   display: inline-flex;
   align-items: center;
@@ -453,14 +457,18 @@
 }
 
 .run-history-list {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-top: 8px;
+  padding-right: 2px;
   overflow-y: auto;
 }
 
 .run-history-item {
+  flex: 0 0 auto;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.5);
@@ -832,6 +840,211 @@
 .ghost-btn.small:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Automation tab */
+.automation-tab {
+  gap: 12px;
+}
+
+.automation-tab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.automation-tab-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.automation-tab-header p {
+  margin: 4px 0 0;
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.automation-status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 78px;
+  gap: 8px;
+}
+
+.automation-status-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.automation-status-grid span,
+.automation-control-grid span,
+.automation-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 11px;
+}
+
+.automation-status-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(226, 232, 240, 0.95);
+  font-size: 13px;
+}
+
+.automation-session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.48);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.automation-session-card > div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.automation-session-card span {
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 11px;
+}
+
+.automation-session-card code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #bfdbfe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.automation-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 112px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.automation-control-grid label,
+.automation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.automation-control-grid select,
+.automation-field input,
+.automation-field textarea {
+  width: 100%;
+  min-width: 0;
+  background: rgba(2, 6, 23, 0.66);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.automation-control-grid select:focus,
+.automation-field input:focus,
+.automation-field textarea:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.automation-field textarea {
+  min-height: 94px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.automation-field.narrow {
+  max-width: 220px;
+}
+
+.automation-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.automation-progress-head {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(203, 213, 225, 0.84);
+  font-size: 11px;
+}
+
+.automation-progress-track {
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.automation-progress-track > div {
+  height: 100%;
+  border-radius: inherit;
+  background: #3b82f6;
+  transition: width 160ms ease;
+}
+
+.automation-message,
+.automation-error {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.automation-message {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.automation-error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.24);
+}
+
+.automation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.automation-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(148, 163, 184, 0.76);
+  font-size: 11px;
 }
 
 /* Team tab sub-tab switcher (Agent / 工作流) */

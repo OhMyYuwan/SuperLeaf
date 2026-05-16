@@ -96,7 +96,7 @@ interface WorkflowState {
   maxRounds: Record<string, number>
 
   load: () => Promise<void>
-  run: (workflowId: string, body: RunRequest, opts?: { threadCardId?: string; autoIngestToAnnotations?: boolean }) => Promise<void>
+  run: (workflowId: string, body: RunRequest, opts?: RunWorkflowOpts) => Promise<void>
   loadHistory: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   deleteRun: (runId: string) => Promise<void>
   disableWorkflow: (workflowId: string) => Promise<void>
@@ -108,6 +108,20 @@ interface WorkflowState {
   updateDefinition: (id: string, draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition>
   deleteDefinition: (id: string) => Promise<void>
   executeDefinition: (definitionId: string, body: RunRequest, opts?: ExecuteDefinitionOpts) => Promise<void>
+}
+
+export interface FinishedPayload {
+  run_id: string
+  outputs: unknown
+  conversation_id?: string
+  mode?: string
+}
+
+export interface RunWorkflowOpts {
+  threadCardId?: string
+  autoIngestToAnnotations?: boolean
+  onCompleted?: (payload: FinishedPayload) => void
+  onFailed?: (error: string) => void
 }
 
 /** Optional callbacks for workflow definition execution. */
@@ -384,7 +398,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             // eslint-disable-next-line no-console
             console.log('[sse]', parsed.kind, parsed.payload)
             pushEvent(set, workflowId, parsed)
-            handleTerminalEvent(parsed, inflight, wf?.name ?? workflowId)
+            handleTerminalEvent(parsed, inflight, wf?.name ?? workflowId, opts)
           }
           boundary = findEventBoundary(buf)
         }
@@ -399,6 +413,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         payload: { error: msg },
         at: Date.now(),
       })
+      opts?.onFailed?.(msg)
     } finally {
       clearTimeout(firstByteTimer)
       set((s) => ({ running: { ...s.running, [workflowId]: false } }))
@@ -454,14 +469,12 @@ function pushEvent(
   }))
 }
 
-interface FinishedPayload {
-  run_id: string
-  outputs: unknown
-  conversation_id?: string
-  mode?: string
-}
-
-function handleTerminalEvent(evt: RunEvent, inflight: InFlight, agentName: string) {
+function handleTerminalEvent(
+  evt: RunEvent,
+  inflight: InFlight,
+  agentName: string,
+  opts?: RunWorkflowOpts,
+) {
   if (evt.kind === 'ylw.run.finished') {
     const payload = evt.payload as FinishedPayload
     const parsed = parseDifyOutputs(payload.outputs, {
@@ -479,6 +492,7 @@ function handleTerminalEvent(evt: RunEvent, inflight: InFlight, agentName: strin
     })
 
     const ann = useAnnotationStore.getState()
+    opts?.onCompleted?.(payload)
 
     if (inflight.threadCardId) {
       // Continue mode: append the answer to the existing card's thread.
@@ -510,6 +524,8 @@ function handleTerminalEvent(evt: RunEvent, inflight: InFlight, agentName: strin
   if (evt.kind === 'ylw.run.failed') {
     // eslint-disable-next-line no-console
     console.error('[workflow.failed]', evt.payload)
+    const payload = evt.payload as { error?: string } | string
+    opts?.onFailed?.(typeof payload === 'string' ? payload : payload.error ?? 'Agent run failed')
   }
 }
 

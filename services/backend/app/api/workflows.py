@@ -231,6 +231,8 @@ async def run_workflow(
                 from ..services.nanobot_client import NanobotClient
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
+                if not conversation_id:
+                    conversation_id = f"ylw-{run.id}"
                 prompt = _nanobot_prompt(body, attached_files)
                 if image_attachments:
                     user_content: list[dict[str, Any]] | str = [
@@ -245,6 +247,7 @@ async def run_workflow(
                 async for evt in client.run_streaming(
                     model=cw.external_id,
                     messages=[{"role": "user", "content": user_content}],
+                    session_id=conversation_id,
                 ):
                     raw_events.append(evt)
                     if not external_run_id:

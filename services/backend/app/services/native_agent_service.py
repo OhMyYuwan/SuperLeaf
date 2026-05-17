@@ -12,8 +12,9 @@ import re
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import NativeAgent, NativeAgentCredential, Provider, Skill, User
+from ..models import GitHubAccount, NativeAgent, NativeAgentCredential, Provider, Skill, SkillHidden
 from ..secrets_vault import encrypt
+from .skill_content_crypto import encrypt_skill_content
 
 
 SYSTEM_SKILLS = [
@@ -138,26 +139,30 @@ class NativeAgentService:
     # --- skills ----------------------------------------------------------
 
     def list_skills(self, *, user_id: str) -> list[Skill]:
-        self._ensure_system_skills()
-        return (
+        rows = (
             self.db.query(Skill)
             .filter(
                 or_(
-                    Skill.visibility == "system",
                     Skill.visibility == "public",
                     Skill.owner_user_id == user_id,
                 )
             )
+            .filter(Skill.source != "bundled")
             .order_by(Skill.visibility.asc(), Skill.updated_at.desc())
             .all()
         )
+        hidden = self._hidden_skill_keys(user_id=user_id)
+        return [row for row in rows if _skill_key(row) not in hidden]
 
     def get_skill(self, skill_id: str, *, user_id: str) -> Skill | None:
-        self._ensure_system_skills()
         row = self.db.get(Skill, skill_id)
         if row is None:
             return None
-        if row.visibility in ("system", "public") or row.owner_user_id == user_id:
+        if row.source == "bundled":
+            return None
+        if _skill_key(row) in self._hidden_skill_keys(user_id=user_id):
+            return None
+        if row.visibility == "public" or row.owner_user_id == user_id:
             return row
         return None
 
@@ -166,15 +171,29 @@ class NativeAgentService:
         *,
         user_id: str,
         name: str,
+        folder_name: str = "",
+        entry_filename: str = "SKILL.md",
         description: str,
         content: str,
         tags: list[str],
     ) -> Skill:
+        if entry_filename != "SKILL.md":
+            raise ValueError("只能上传精确命名的 SKILL.md")
+        skill_name = _clean_name(folder_name or name or _skill_name_from_content(content))
+        public_name = self._public_name(user_id=user_id, skill_name=skill_name)
+        existing = (
+            self.db.query(Skill)
+            .filter(Skill.owner_user_id == user_id, Skill.public_name == public_name)
+            .first()
+        )
+        if existing is not None:
+            raise ValueError("Skill 已存在，请使用修改功能更新")
         row = Skill(
             owner_user_id=user_id,
-            name=_clean_name(name),
+            name=skill_name,
+            public_name=public_name,
             description=description.strip(),
-            content=content,
+            content=encrypt_skill_content(content),
             visibility="private",
             source="upload",
             tags=_clean_tags(tags),
@@ -195,16 +214,15 @@ class NativeAgentService:
         tags: list[str] | None = None,
     ) -> Skill | None:
         row = self.db.get(Skill, skill_id)
-        if row is None or row.owner_user_id != user_id or row.source == "bundled":
+        if row is None or not self.can_edit_skill(row, user_id=user_id):
             return None
         if name is not None:
             row.name = _clean_name(name)
-            if row.visibility == "public":
-                row.public_name = self._public_name(user_id=user_id, skill_name=row.name)
+            row.public_name = self._public_name(user_id=user_id, skill_name=row.name)
         if description is not None:
             row.description = description.strip()
         if content is not None:
-            row.content = content
+            row.content = encrypt_skill_content(content)
         if tags is not None:
             row.tags = _clean_tags(tags)
         row.version += 1
@@ -215,7 +233,7 @@ class NativeAgentService:
 
     def publish_skill(self, skill_id: str, *, user_id: str) -> Skill | None:
         row = self.db.get(Skill, skill_id)
-        if row is None or row.owner_user_id != user_id or row.source == "bundled":
+        if row is None or not self.can_edit_skill(row, user_id=user_id):
             return None
         public_name = self._public_name(user_id=user_id, skill_name=row.name)
         existing = (
@@ -235,10 +253,9 @@ class NativeAgentService:
 
     def unpublish_skill(self, skill_id: str, *, user_id: str) -> Skill | None:
         row = self.db.get(Skill, skill_id)
-        if row is None or row.owner_user_id != user_id or row.source == "bundled":
+        if row is None or not self.can_edit_skill(row, user_id=user_id):
             return None
         row.visibility = "private"
-        row.public_name = ""
         row.published_at = None
         row.updated_at = datetime.utcnow()
         self.db.commit()
@@ -247,11 +264,41 @@ class NativeAgentService:
 
     def delete_skill(self, skill_id: str, *, user_id: str) -> bool:
         row = self.db.get(Skill, skill_id)
-        if row is None or row.owner_user_id != user_id or row.source == "bundled":
+        if row is None:
             return False
-        self.db.delete(row)
+        if row.owner_user_id == user_id and row.source != "bundled":
+            self.db.delete(row)
+        else:
+            self._hide_skill(row, user_id=user_id)
         self.db.commit()
         return True
+
+    def can_edit_skill(self, row: Skill, *, user_id: str) -> bool:
+        if row.source == "bundled" or row.owner_user_id != user_id:
+            return False
+        login = self._github_login_optional(user_id=user_id)
+        if not login:
+            return False
+        author = _skill_author(row)
+        return author.lower() == login.lower()
+
+    def _hidden_skill_keys(self, *, user_id: str) -> set[str]:
+        return {
+            key
+            for (key,) in self.db.query(SkillHidden.skill_key)
+            .filter(SkillHidden.user_id == user_id)
+            .all()
+        }
+
+    def _hide_skill(self, row: Skill, *, user_id: str) -> None:
+        key = _skill_key(row)
+        exists = (
+            self.db.query(SkillHidden)
+            .filter(SkillHidden.user_id == user_id, SkillHidden.skill_key == key)
+            .first()
+        )
+        if exists is None:
+            self.db.add(SkillHidden(user_id=user_id, skill_key=key))
 
     # --- project-scoped native agents -----------------------------------
 
@@ -357,9 +404,25 @@ class NativeAgentService:
                 raise ValueError(f"skill not available: {sid}")
 
     def _public_name(self, *, user_id: str, skill_name: str) -> str:
-        user = self.db.get(User, user_id)
-        username = getattr(user, "display_name", "") or getattr(user, "email", "") or user_id
-        return f"{_slug(username)}@{_slug(skill_name)}"
+        username = self._github_login(user_id=user_id)
+        return f"{username}@{_slug(skill_name)}"
+
+    def _github_login(self, *, user_id: str) -> str:
+        login = self._github_login_optional(user_id=user_id)
+        if not login:
+            raise ValueError("请先连接 GitHub 账号，再上传私有 Skill")
+        return login
+
+    def _github_login_optional(self, *, user_id: str) -> str:
+        account = (
+            self.db.query(GitHubAccount)
+            .filter(GitHubAccount.user_id == user_id)
+            .first()
+        )
+        login = str(getattr(account, "login", "") if account is not None else "").strip()
+        if not login or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", login):
+            return ""
+        return login
 
     def _ensure_system_skills(self) -> None:
         existing = {
@@ -379,7 +442,7 @@ class NativeAgentService:
                     name=item["name"],
                     public_name=item["name"],
                     description=item["description"],
-                    content=item["content"],
+                    content=encrypt_skill_content(item["content"]),
                     visibility="system",
                     source="bundled",
                     version=1,
@@ -397,6 +460,32 @@ def _clean_name(value: str) -> str:
     if not cleaned:
         raise ValueError("name required")
     return cleaned
+
+
+def _skill_name_from_content(content: str) -> str:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+        if stripped.lower().startswith("name:"):
+            return stripped.split(":", 1)[1].strip()
+    return "SKILL"
+
+
+def _skill_author(row: Skill) -> str:
+    if row.source == "marketplace":
+        for tag in row.tags or []:
+            text = str(tag)
+            if text.startswith("ylw:catalog-author="):
+                return text.split("=", 1)[1].strip()
+    public_name = str(row.public_name or "")
+    if "@" in public_name:
+        return public_name.split("@", 1)[0].strip()
+    return ""
+
+
+def _skill_key(row: Skill) -> str:
+    return str(row.public_name or row.id or row.name)
 
 
 def _clean_tags(tags: list[str]) -> list[str]:

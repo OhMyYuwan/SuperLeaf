@@ -90,9 +90,30 @@ export async function http<T>(path: string, init?: HttpInit): Promise<T> {
   if (resp.status === 204) return undefined as T
   const text = await resp.text()
   if (!resp.ok) {
-    throw new BackendError(resp.status, text || resp.statusText)
+    throw new BackendError(resp.status, parseErrorDetail(text) || resp.statusText)
   }
   return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+function parseErrorDetail(text: string): string {
+  if (!text) return ''
+  try {
+    const payload = JSON.parse(text) as { detail?: unknown }
+    if (typeof payload.detail === 'string') return payload.detail
+    if (Array.isArray(payload.detail)) {
+      return payload.detail
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (item && typeof item === 'object' && 'msg' in item) return String((item as { msg: unknown }).msg)
+          return ''
+        })
+        .filter(Boolean)
+        .join('; ')
+    }
+  } catch {
+    return text
+  }
+  return text
 }
 
 export type RequestScope = 'project' | 'global'
@@ -252,8 +273,41 @@ export interface Skill {
   published_at: string | null
 }
 
+export interface SkillMarketplaceEntry {
+  id: string
+  name: string
+  display_name: string
+  version: string
+  author_github: string
+  description: string
+  tags: string[]
+  license: string
+  path: string
+  entry: string
+  skill_url: string
+  entry_url: string
+  readme_url: string
+  checksum_sha256: string
+  installed: boolean
+  installed_skill_id: string | null
+  installed_version: string
+  update_available: boolean
+}
+
+export interface SkillMarketplace {
+  catalog_url: string
+  skills: SkillMarketplaceEntry[]
+}
+
+export interface SkillMarketplaceInstallResult {
+  skill: Skill
+  marketplace_entry: SkillMarketplaceEntry
+}
+
 export interface SkillDraft {
   name: string
+  folder_name?: string
+  entry_filename?: string
   description?: string
   content: string
   tags?: string[]
@@ -346,6 +400,21 @@ export const nativeAgentApi = {
       }),
     remove: (id: string) =>
       http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  marketplace: {
+    list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),
+    install: (id: string) =>
+      http<SkillMarketplaceInstallResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/install`, {
+        method: 'POST',
+      }),
+    update: (id: string) =>
+      http<SkillMarketplaceInstallResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/update`, {
+        method: 'POST',
+      }),
+    uninstall: (id: string) =>
+      http<void>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/uninstall`, {
+        method: 'DELETE',
+      }),
   },
   agents: {
     list: (providerId?: string) => {

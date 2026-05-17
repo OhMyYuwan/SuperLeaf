@@ -235,6 +235,20 @@ class Skill(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SkillHidden(Base):
+    """Per-user removal from the local Skill library without deleting source."""
+
+    __tablename__ = "skill_hidden"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_key", name="uq_skill_hidden_user_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    skill_key: Mapped[str] = mapped_column(String(256), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class NativeAgent(Base):
     """Project-scoped backend-run Agent configuration."""
 

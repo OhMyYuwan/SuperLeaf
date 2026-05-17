@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30
 
+    # Static Skill marketplace catalog. The default reads the official GitHub
+    # repository main branch directly; GitHub Pages is optional for browsing.
+    # Override with YLW_SKILL_MARKETPLACE_URL for local previews or private deployments.
+    skill_marketplace_url: str = "https://raw.githubusercontent.com/OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json"
+
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url

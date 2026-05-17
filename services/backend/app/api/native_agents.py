@@ -7,7 +7,7 @@ left for a follow-up request.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ..database import get_session
 from ..models import NativeAgent, NativeAgentCredential, Project, Skill, User
@@ -19,10 +19,19 @@ from ..schemas import (
     NativeAgentOut,
     NativeAgentPatch,
     SkillIn,
+    SkillMarketplaceEntryOut,
+    SkillMarketplaceInstallOut,
+    SkillMarketplaceOut,
     SkillOut,
     SkillPatch,
 )
 from ..services.native_agent_service import NativeAgentService
+from ..services.skill_marketplace_service import (
+    MarketplaceEntry,
+    SkillMarketplaceError,
+    SkillMarketplaceService,
+)
+from ..services.skill_content_crypto import decrypt_skill_content
 from .deps import get_current_project, get_current_user, require_write_access
 
 
@@ -48,12 +57,18 @@ def _credential_out(row: NativeAgentCredential) -> NativeAgentCredentialOut:
 
 def _skill_out(row: Skill, user_id: str) -> SkillOut:
     out = SkillOut.model_validate(row, from_attributes=True)
-    out.can_edit = row.owner_user_id == user_id and row.source != "bundled"
+    session = object_session(row)
+    out.can_edit = bool(session) and NativeAgentService(session).can_edit_skill(row, user_id=user_id)
+    out.content = decrypt_skill_content(row.content)
     return out
 
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
     return NativeAgentOut.model_validate(row, from_attributes=True)
+
+
+def _marketplace_entry_out(entry: MarketplaceEntry) -> SkillMarketplaceEntryOut:
+    return SkillMarketplaceEntryOut(**entry.__dict__)
 
 
 @router.get("/credentials", response_model=list[NativeAgentCredentialOut])
@@ -141,6 +156,8 @@ def create_skill(
         row = NativeAgentService(db).create_skill(
             user_id=user.id,
             name=body.name,
+            folder_name=body.folder_name,
+            entry_filename=body.entry_filename,
             description=body.description,
             content=body.content,
             tags=body.tags,
@@ -207,6 +224,57 @@ def delete_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+
+
+@router.get("/skill-marketplace", response_model=SkillMarketplaceOut)
+def list_skill_marketplace(
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillMarketplaceOut:
+    svc = SkillMarketplaceService(db)
+    try:
+        entries = svc.list_entries(user_id=user.id)
+    except SkillMarketplaceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return SkillMarketplaceOut(
+        catalog_url=svc.catalog_url,
+        skills=[_marketplace_entry_out(entry) for entry in entries],
+    )
+
+
+@router.post("/skill-marketplace/{skill_id}/install", response_model=SkillMarketplaceInstallOut)
+def install_marketplace_skill(
+    skill_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillMarketplaceInstallOut:
+    svc = SkillMarketplaceService(db)
+    try:
+        row, entry = svc.install(skill_id, user_id=user.id)
+    except SkillMarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return SkillMarketplaceInstallOut(
+        skill=_skill_out(row, user.id),
+        marketplace_entry=_marketplace_entry_out(entry),
+    )
+
+
+@router.post("/skill-marketplace/{skill_id}/update", response_model=SkillMarketplaceInstallOut)
+def update_marketplace_skill(
+    skill_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillMarketplaceInstallOut:
+    return install_marketplace_skill(skill_id, db=db, user=user)
+
+
+@router.delete("/skill-marketplace/{skill_id}/uninstall", status_code=204)
+def uninstall_marketplace_skill(
+    skill_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> None:
+    SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
 
 
 @router.get("/agents", response_model=list[NativeAgentOut])

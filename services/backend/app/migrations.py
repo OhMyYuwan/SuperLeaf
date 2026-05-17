@@ -14,6 +14,8 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from .services.skill_content_crypto import encrypt_skill_content
+
 
 _PROJECT_SCOPED_TABLES = ("conversations", "workflow_definitions", "workflow_runs")
 _USER_SCOPED_TABLES = ("projects", "providers", "cached_workflows")
@@ -55,6 +57,7 @@ def run_migrations(engine: Engine) -> None:
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
         _rebuild_native_agents_table(conn)
+        _encrypt_plaintext_skill_content(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -332,3 +335,17 @@ def _rebuild_native_agents_table(conn) -> None:
     conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_native_agents_provider_id ON native_agents(provider_id)")
     )
+
+
+def _encrypt_plaintext_skill_content(conn) -> None:
+    """Encrypt legacy plaintext Skill content in place."""
+    if not _table_exists(conn, "skills") or not _column_exists(conn, "skills", "content"):
+        return
+    rows = conn.execute(
+        text("SELECT id, content FROM skills WHERE content != '' AND content NOT LIKE 'fernet:%'")
+    ).all()
+    for row in rows:
+        conn.execute(
+            text("UPDATE skills SET content = :content WHERE id = :id"),
+            {"id": row[0], "content": encrypt_skill_content(row[1] or "")},
+        )

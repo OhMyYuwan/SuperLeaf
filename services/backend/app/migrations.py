@@ -14,6 +14,8 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from .services.skill_content_crypto import encrypt_skill_content
+
 
 _PROJECT_SCOPED_TABLES = ("conversations", "workflow_definitions", "workflow_runs")
 _USER_SCOPED_TABLES = ("projects", "providers", "cached_workflows")
@@ -32,6 +34,14 @@ def _column_exists(conn, table: str, column: str) -> bool:
     return any(r[1] == column for r in rows)
 
 
+def _table_exists(conn, table: str) -> bool:
+    row = conn.execute(
+        text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name"),
+        {"name": table},
+    ).first()
+    return row is not None
+
+
 def run_migrations(engine: Engine) -> None:
     """Run all pending migrations. Safe to call on every startup."""
     # Only SQLite needs the manual PRAGMA gating; other dialects should adopt
@@ -46,6 +56,8 @@ def run_migrations(engine: Engine) -> None:
         _add_user_id_to_private_assets(conn)
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
+        _rebuild_native_agents_table(conn)
+        _encrypt_plaintext_skill_content(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -205,4 +217,135 @@ def _add_project_archive_github_columns(conn) -> None:
     if not _column_exists(conn, "project_archive_bindings", "github_repo_url"):
         conn.execute(
             text("ALTER TABLE project_archive_bindings ADD COLUMN github_repo_url VARCHAR(512) DEFAULT ''")
+        )
+
+
+def _rebuild_native_agents_table(conn) -> None:
+    """Normalize `native_agents` to the SQLAlchemy model-managed schema.
+
+    REQ-0071 first created a credential-based table with `created_by_user_id`
+    and `credential_id`. Later native Providers made the model project-scoped
+    through `owner_user_id` and `provider_id`. SQLite cannot drop NOT NULL
+    columns in-place, so rebuild once when the legacy columns are present.
+    """
+    if not _table_exists(conn, "native_agents"):
+        return
+
+    columns = {
+        row[1]
+        for row in conn.execute(text("PRAGMA table_info(native_agents)")).all()
+    }
+    needs_rebuild = "created_by_user_id" in columns or "credential_id" in columns
+    if not needs_rebuild:
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_native_agents_project_id ON native_agents(project_id)")
+        )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_native_agents_owner_user_id ON native_agents(owner_user_id)")
+        )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_native_agents_provider_id ON native_agents(provider_id)")
+        )
+        return
+
+    owner_expr = (
+        "COALESCE(NULLIF(owner_user_id, ''), NULLIF(created_by_user_id, ''), '')"
+        if "owner_user_id" in columns and "created_by_user_id" in columns
+        else "COALESCE(NULLIF(owner_user_id, ''), '')"
+        if "owner_user_id" in columns
+        else "COALESCE(NULLIF(created_by_user_id, ''), '')"
+    )
+    provider_expr = (
+        "COALESCE(NULLIF(provider_id, ''), '')" if "provider_id" in columns else "''"
+    )
+
+    conn.execute(text("DROP TABLE IF EXISTS native_agents__new"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE native_agents__new (
+                id VARCHAR(32) NOT NULL,
+                project_id VARCHAR(32) NOT NULL,
+                owner_user_id VARCHAR(32) NOT NULL,
+                provider_id VARCHAR(32) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                description TEXT NOT NULL,
+                model VARCHAR(128) NOT NULL,
+                instructions TEXT NOT NULL,
+                skill_ids JSON NOT NULL,
+                output_contract VARCHAR(32) NOT NULL,
+                runtime_config JSON NOT NULL,
+                is_enabled BOOLEAN NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                FOREIGN KEY(project_id) REFERENCES projects (id),
+                FOREIGN KEY(owner_user_id) REFERENCES users (id),
+                FOREIGN KEY(provider_id) REFERENCES providers (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            f"""
+            INSERT INTO native_agents__new (
+                id,
+                project_id,
+                owner_user_id,
+                provider_id,
+                name,
+                description,
+                model,
+                instructions,
+                skill_ids,
+                output_contract,
+                runtime_config,
+                is_enabled,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                COALESCE(NULLIF(project_id, ''), ''),
+                {owner_expr},
+                {provider_expr},
+                name,
+                COALESCE(description, ''),
+                COALESCE(model, ''),
+                COALESCE(instructions, ''),
+                COALESCE(skill_ids, '[]'),
+                COALESCE(NULLIF(output_contract, ''), 'annotation'),
+                COALESCE(runtime_config, '{{}}'),
+                COALESCE(is_enabled, 1),
+                created_at,
+                updated_at
+            FROM native_agents
+            """
+        )
+    )
+    conn.execute(text("DROP TABLE native_agents"))
+    conn.execute(text("ALTER TABLE native_agents__new RENAME TO native_agents"))
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_native_agents_project_id ON native_agents(project_id)")
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_native_agents_owner_user_id ON native_agents(owner_user_id)")
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_native_agents_provider_id ON native_agents(provider_id)")
+    )
+
+
+def _encrypt_plaintext_skill_content(conn) -> None:
+    """Encrypt legacy plaintext Skill content in place."""
+    if not _table_exists(conn, "skills") or not _column_exists(conn, "skills", "content"):
+        return
+    rows = conn.execute(
+        text("SELECT id, content FROM skills WHERE content != '' AND content NOT LIKE 'fernet:%'")
+    ).all()
+    for row in rows:
+        conn.execute(
+            text("UPDATE skills SET content = :content WHERE id = :id"),
+            {"id": row[0], "content": encrypt_skill_content(row[1] or "")},
         )

@@ -87,6 +87,10 @@ Project
 
 ### Agent 相关（按 user_id 隔离）
 
+- **Provider**：外部或原生 AI 服务配置；稳定字段保存身份、归属和 endpoint，可变探测结果保存在 `meta`
+- **CachedWorkflow**：外部 provider 同步出的可运行 Agent / workflow 投影
+- **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider
+- **Skill**：原生 Agent 可引用的系统、私有或公开 Skill
 - **WorkflowDefinition**：用户自定义的多节点工作流
 - **WorkflowRun**：工作流运行记录
 - **Annotation**：批注卡片（锚定到文档位置）
@@ -97,8 +101,11 @@ Project
 ### 系统
 
 - **User / Session**：用户认证
-- **Provider / CachedWorkflow**：外部 AI 服务配置
 - **Notification**：站内通知
+
+### Provider / Agent 配置边界
+
+Provider 和原生 Agent 的日常变化不应推动 schema 变化。新增 provider、同步模型、修改 endpoint/API key、创建 Agent、切换 Agent 模型、调整指令或运行参数都应作为普通数据写入处理。稳定且需要查询、索引、权限判断或外键约束的字段进入表结构；厂商特有配置、模型列表、探测状态和运行参数放入 `Provider.meta` 或 `NativeAgent.runtime_config`。
 
 ## 技术栈
 

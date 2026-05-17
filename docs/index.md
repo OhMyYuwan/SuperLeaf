@@ -23,6 +23,7 @@ nav_order: 1
 
 ### 工作流系统
 - [工作流与批注](workflows/) - Workflow 定义、Agent 节点、批注生命周期
+- [批注训练数据](annotation-training-data.md) - 交互数据保留、训练数据导出、CSV Skill
 
 ### Provider 配置
 - [Provider 总览](providers/) - Nanobot、Dify、Claude API 配置指南

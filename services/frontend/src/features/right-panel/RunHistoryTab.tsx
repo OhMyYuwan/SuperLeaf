@@ -70,7 +70,7 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
   }
 
   return (
-    <div className="tab-content-wrapper">
+    <div className="tab-content-wrapper run-history-wrapper">
       <div className="tab-header-row">
         <span>运行历史：{runHistory.length} 条</span>
         <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>

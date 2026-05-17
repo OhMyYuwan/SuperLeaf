@@ -21,9 +21,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import CachedWorkflow, Provider, WorkflowDefinition, WorkflowRun
+from ..models import WorkflowDefinition, WorkflowRun
+from ..secrets_vault import decrypt
+from .agent_registry_service import AgentRegistryService
 from .dify_client import DifyClient
 from .nanobot_client import NanobotClient
+from .native_agent_runner import NativeAgentRunner, NativeAgentRuntimeConfig, NativeRunPayload
 from .provider_service import ProviderService
 
 
@@ -68,6 +71,7 @@ class WorkflowOrchestrator:
     def __init__(self, db: Session):
         self.db = db
         self.provider_service = ProviderService(db)
+        self.agent_registry = AgentRegistryService(db)
 
     async def execute_workflow(
         self,
@@ -885,25 +889,41 @@ class WorkflowOrchestrator:
             if not agent_id:
                 raise ValueError(f"Node {node_id} missing agentId")
 
-            # Load cached workflow (agent)
-            cached_workflow = self.db.get(CachedWorkflow, agent_id)
-            if not cached_workflow:
-                raise ValueError(f"Agent {agent_id} not found")
-
-            # Load provider
-            provider = self.db.get(Provider, cached_workflow.provider_id)
-            if not provider:
-                raise ValueError(f"Provider {cached_workflow.provider_id} not found")
-
-            # Defence in depth: a malformed graph could reference another user's
-            # CachedWorkflow id. Refuse rather than silently call out on their key.
-            if cached_workflow.user_id and provider.user_id and cached_workflow.user_id != provider.user_id:
-                raise ValueError(f"Agent {agent_id} belongs to a different user than its provider")
+            resolved = self.agent_registry.resolve(
+                agent_id,
+                user_id=ctx.workflow_def.user_id,
+                project_id=ctx.workflow_def.project_id,
+                require_enabled=True,
+            )
+            if resolved is None:
+                raise ValueError(f"Agent {agent_id} not found or disabled")
 
             # Build prompt with context
             prompt = self._build_agent_prompt(ctx, node)
 
+            if resolved.source == "native":
+                output = await self._execute_native_agent_node(ctx, node, agent_id, prompt, resolved)
+                node.outputs = output
+                node.status = "completed"
+                node.finished_at = datetime.utcnow()
+                ctx.workflow_run.trace.append({
+                    "node_id": node_id,
+                    "agent_id": agent_id,
+                    "agent_source": "native",
+                    "started_at": node.started_at.isoformat(),
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "completed",
+                    "input": node.inputs,
+                    "output": output,
+                })
+                self.db.commit()
+                return output
+
             # Execute agent based on provider type
+            provider = resolved.provider
+            cached_workflow = resolved.cached_workflow
+            if cached_workflow is None:
+                raise ValueError(f"External agent {agent_id} not found")
             client = self.provider_service.make_client(provider)
 
             if provider.kind.startswith("dify"):
@@ -973,6 +993,67 @@ class WorkflowOrchestrator:
             })
             self.db.commit()
             raise
+
+    async def _execute_native_agent_node(
+        self,
+        ctx: OrchestrationContext,
+        node: NodeContext,
+        agent_id: str,
+        prompt: str,
+        resolved,
+    ) -> dict:
+        native_agent = resolved.native_agent
+        provider = resolved.provider
+        if native_agent is None:
+            raise ValueError(f"Native agent {agent_id} not found")
+        skills = self.agent_registry.skill_blocks_for_native_agent(
+            native_agent,
+            user_id=ctx.workflow_def.user_id,
+        )
+        runner = NativeAgentRunner(
+            NativeAgentRuntimeConfig(
+                agent_id=native_agent.id,
+                agent_name=native_agent.name,
+                provider_endpoint=provider.endpoint,
+                api_key=decrypt(provider.api_key_enc),
+                model=native_agent.model,
+                instructions=native_agent.instructions,
+                skills=skills,
+                temperature=float((native_agent.runtime_config or {}).get("temperature", 0.2)),
+                max_tokens=int((native_agent.runtime_config or {}).get("max_tokens", 4000)),
+            )
+        )
+        accumulated_text: list[str] = []
+        raw_events: list[dict] = []
+        payload = NativeRunPayload(
+            document_id=ctx.document_id,
+            range_start=ctx.target_range.get("from", 0),
+            range_end=ctx.target_range.get("to", 0),
+            inputs={
+                "target_text": ctx.target_text,
+                "instruction": prompt,
+            },
+            query=prompt,
+            conversation_id=f"ylw-workflow-{ctx.workflow_run.id}-{node.node_id}",
+            context_files=list(ctx.context_files or []),
+        )
+        async for evt in runner.stream(payload):
+            data = evt.get("data") or {}
+            if evt.get("event") == "native.agent.raw" and isinstance(data, dict):
+                raw_events.append(data)
+            if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    accumulated_text.append(delta)
+        text = "".join(accumulated_text).strip()
+        return {
+            "text": text,
+            "agent_id": agent_id,
+            "agent_source": "native",
+            "model": native_agent.model,
+            "native_agent_id": native_agent.id,
+            "raw": raw_events[-10:],
+        }
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:
         """Build prompt for agent with context from previous outputs.

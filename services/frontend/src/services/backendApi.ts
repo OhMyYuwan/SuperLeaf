@@ -46,7 +46,7 @@ export function getLocalServiceUrl(port: number): string {
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string
@@ -71,6 +71,12 @@ export interface ProviderUpdate {
   api_key?: string
 }
 
+export interface ProviderModel {
+  id: string
+  name: string
+  description: string
+}
+
 export async function http<T>(path: string, init?: HttpInit): Promise<T> {
   const headers = buildHeaders(init?.headers, init?.scope ?? 'project')
   const resp = await fetch(`${BASE}${path}`, {
@@ -84,9 +90,30 @@ export async function http<T>(path: string, init?: HttpInit): Promise<T> {
   if (resp.status === 204) return undefined as T
   const text = await resp.text()
   if (!resp.ok) {
-    throw new BackendError(resp.status, text || resp.statusText)
+    throw new BackendError(resp.status, parseErrorDetail(text) || resp.statusText)
   }
   return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+function parseErrorDetail(text: string): string {
+  if (!text) return ''
+  try {
+    const payload = JSON.parse(text) as { detail?: unknown }
+    if (typeof payload.detail === 'string') return payload.detail
+    if (Array.isArray(payload.detail)) {
+      return payload.detail
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (item && typeof item === 'object' && 'msg' in item) return String((item as { msg: unknown }).msg)
+          return ''
+        })
+        .filter(Boolean)
+        .join('; ')
+    }
+  } catch {
+    return text
+  }
+  return text
 }
 
 export type RequestScope = 'project' | 'global'
@@ -194,6 +221,219 @@ export const providerApi = {
     http<Provider>(`/api/providers/${id}/activate`, { method: 'POST' }),
   probe: (id: string) =>
     http<Provider>(`/api/providers/${id}/probe`, { method: 'POST' }),
+  listModels: (id: string) =>
+    http<ProviderModel[]>(`/api/providers/${id}/models`),
+}
+
+export interface NativeAgentCredential {
+  id: string
+  user_id: string
+  name: string
+  base_url: string
+  runtime_kind: string
+  default_model: string
+  status: 'unknown' | 'ok' | 'error' | string
+  status_detail: string
+  meta: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  has_api_key: boolean
+}
+
+export interface NativeAgentCredentialDraft {
+  name: string
+  base_url: string
+  api_key: string
+  runtime_kind?: string
+  default_model: string
+}
+
+export interface NativeAgentCredentialPatch {
+  name?: string
+  base_url?: string
+  api_key?: string
+  runtime_kind?: string
+  default_model?: string
+}
+
+export interface Skill {
+  id: string
+  owner_user_id: string
+  name: string
+  public_name: string
+  description: string
+  content: string
+  visibility: 'system' | 'private' | 'public' | string
+  source: 'bundled' | 'upload' | string
+  version: number
+  tags: string[]
+  can_edit: boolean
+  created_at: string
+  updated_at: string
+  published_at: string | null
+}
+
+export interface SkillMarketplaceEntry {
+  id: string
+  name: string
+  display_name: string
+  version: string
+  author_github: string
+  description: string
+  tags: string[]
+  license: string
+  path: string
+  entry: string
+  skill_url: string
+  entry_url: string
+  readme_url: string
+  checksum_sha256: string
+  installed: boolean
+  installed_skill_id: string | null
+  installed_version: string
+  update_available: boolean
+}
+
+export interface SkillMarketplace {
+  catalog_url: string
+  skills: SkillMarketplaceEntry[]
+}
+
+export interface SkillMarketplaceInstallResult {
+  skill: Skill
+  marketplace_entry: SkillMarketplaceEntry
+}
+
+export interface SkillDraft {
+  name: string
+  folder_name?: string
+  entry_filename?: string
+  description?: string
+  content: string
+  tags?: string[]
+}
+
+export interface SkillPatch {
+  name?: string
+  description?: string
+  content?: string
+  tags?: string[]
+}
+
+export interface NativeAgent {
+  id: string
+  project_id: string
+  owner_user_id: string
+  provider_id: string
+  name: string
+  description: string
+  model: string
+  instructions: string
+  skill_ids: string[]
+  output_contract: 'annotation' | 'plan' | 'workflow' | 'freeform' | string
+  runtime_config: Record<string, unknown>
+  is_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface NativeAgentDraft {
+  name: string
+  description?: string
+  provider_id: string
+  model: string
+  instructions: string
+  skill_ids?: string[]
+  output_contract?: NativeAgent['output_contract']
+  runtime_config?: Record<string, unknown>
+  is_enabled?: boolean
+}
+
+export interface NativeAgentPatch {
+  name?: string
+  description?: string
+  provider_id?: string
+  model?: string
+  instructions?: string
+  skill_ids?: string[]
+  output_contract?: NativeAgent['output_contract']
+  runtime_config?: Record<string, unknown>
+  is_enabled?: boolean
+}
+
+export const nativeAgentApi = {
+  credentials: {
+    list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
+    create: (draft: NativeAgentCredentialDraft) =>
+      http<NativeAgentCredential>('/api/native-agent/credentials', {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      }),
+    update: (id: string, patch: NativeAgentCredentialPatch) =>
+      http<NativeAgentCredential>(`/api/native-agent/credentials/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    probe: (id: string) =>
+      http<NativeAgentCredential>(`/api/native-agent/credentials/${encodeURIComponent(id)}/probe`, {
+        method: 'POST',
+      }),
+  },
+  skills: {
+    list: () => http<Skill[]>('/api/native-agent/skills'),
+    create: (draft: SkillDraft) =>
+      http<Skill>('/api/native-agent/skills', { method: 'POST', body: JSON.stringify(draft) }),
+    update: (id: string, patch: SkillPatch) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    publish: (id: string) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}/publish`, {
+        method: 'POST',
+      }),
+    unpublish: (id: string) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}/unpublish`, {
+        method: 'POST',
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  marketplace: {
+    list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),
+    install: (id: string) =>
+      http<SkillMarketplaceInstallResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/install`, {
+        method: 'POST',
+      }),
+    update: (id: string) =>
+      http<SkillMarketplaceInstallResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/update`, {
+        method: 'POST',
+      }),
+    uninstall: (id: string) =>
+      http<void>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/uninstall`, {
+        method: 'DELETE',
+      }),
+  },
+  agents: {
+    list: (providerId?: string) => {
+      const qs = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''
+      return http<NativeAgent[]>(`/api/native-agent/agents${qs}`)
+    },
+    create: (draft: NativeAgentDraft) =>
+      http<NativeAgent>('/api/native-agent/agents', {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      }),
+    update: (id: string, patch: NativeAgentPatch) =>
+      http<NativeAgent>(`/api/native-agent/agents/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
 }
 
 export interface CachedWorkflow {

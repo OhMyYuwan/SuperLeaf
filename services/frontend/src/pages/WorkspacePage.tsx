@@ -84,8 +84,6 @@ export function WorkspacePage() {
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
   const activeProvider = useSettingsStore((s) => s.providers.find((p) => p.is_active) ?? null)
-  const backendReachable = useSettingsStore((s) => s.backendReachable)
-
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const workflowError = useWorkflowStore((s) => s.error)
@@ -316,11 +314,6 @@ export function WorkspacePage() {
     if (!previewColumn) setVisibility({ previewColumn: true })
   }
 
-  const handleSave = async () => {
-    if (!activeDocumentId) return
-    await saveBackendDoc(activeDocumentId)
-  }
-
   const handleRunWorkflow = (workflowId: string, instruction: string) => {
     if (!activeDocumentId) {
       alert('请先选择一个文件')
@@ -412,21 +405,11 @@ export function WorkspacePage() {
     setEditorScrollTo({ pos: jump.pos, to, seq: Date.now() })
   }
 
-  const openTeamManagement = () => {
-    useViewStore.getState().setVisibility({ rightPanel: true })
-    setRightTab('agents')
-  }
-
   return (
     <div className="app-shell">
       <ProjectEventBridge />
       <Topbar
-        backendReachable={backendReachable}
-        providerName={activeProvider?.name ?? null}
-        providerStatus={activeProvider?.status ?? null}
-        onOpenSettings={openTeamManagement}
         onOpenPersonalPanel={() => setPersonalPanelOpen(true)}
-        onSave={handleSave}
       />
       <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
 

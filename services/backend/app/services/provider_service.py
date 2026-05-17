@@ -135,6 +135,33 @@ class ProviderService:
         if p is None:
             return None
 
+        if p.kind == "native":
+            try:
+                models = await self._list_openai_models(p)
+                p.status = "ok"
+                p.status_detail = f"原生 Agent Provider 配置完整 · {len(models)} 个模型"
+                p.meta = {
+                    **(p.meta or {}),
+                    "kind": "native",
+                    "model_count": len(models),
+                    "model_ids": [m.id for m in models],
+                    "models": [
+                        {"id": m.id, "name": m.name, "description": m.description}
+                        for m in models
+                    ],
+                    "models_scanned_at": datetime.utcnow().isoformat(),
+                }
+            except NanobotError as e:
+                p.status = "error"
+                p.status_detail = f"HTTP {e.status}: {e.detail or '(empty body)'}"[:512]
+            except Exception as e:  # network errors etc.
+                p.status = "error"
+                p.status_detail = f"{type(e).__name__}: {e}"[:512] or f"{type(e).__name__}: (no message)"
+            p.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(p)
+            return p
+
         client = self._make_client(p)
         try:
             if p.kind == "nanobot":
@@ -211,7 +238,42 @@ class ProviderService:
         self.db.refresh(p)
         return p
 
+    async def list_models(self, provider_id: str, *, user_id: str) -> list[dict[str, str]] | None:
+        p = self.get(provider_id, user_id=user_id)
+        if p is None:
+            return None
+        if p.kind not in ("native", "nanobot"):
+            return []
+        models = await self._list_openai_models(p)
+        p.meta = {
+            **(p.meta or {}),
+            "model_count": len(models),
+            "model_ids": [m.id for m in models],
+            "models": [
+                {"id": m.id, "name": m.name, "description": m.description}
+                for m in models
+            ],
+            "models_scanned_at": datetime.utcnow().isoformat(),
+        }
+        p.status = "ok"
+        p.status_detail = f"已扫描 {len(models)} 个模型"
+        p.updated_at = datetime.utcnow()
+        self.db.commit()
+        return [
+            {
+                "id": model.id,
+                "name": model.name,
+                "description": model.description,
+            }
+            for model in models
+        ]
+
     # --- Helpers ------------------------------------------------------------
+
+    async def _list_openai_models(self, provider: Provider) -> list:
+        api_key = decrypt(provider.api_key_enc)
+        client = NanobotClient(endpoint=provider.endpoint, api_key=api_key, timeout=20.0)
+        return await client.list_models()
 
     def make_client(self, provider: Provider) -> DifyClient | NanobotClient:
         return self._make_client(provider)
@@ -219,6 +281,8 @@ class ProviderService:
     def _make_client(self, provider: Provider) -> DifyClient | NanobotClient:
         endpoint = self._normalize_endpoint(provider.kind, provider.endpoint)
         api_key = decrypt(provider.api_key_enc)
+        if provider.kind == "native":
+            raise ValueError("native provider does not use external workflow probe")
         if provider.kind == "nanobot":
             return NanobotClient(endpoint=endpoint, api_key=api_key)
         return DifyClient(endpoint=endpoint, api_key=api_key)

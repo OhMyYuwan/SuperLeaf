@@ -1,8 +1,8 @@
 # PROJECT MAP for YuwanLabWriter
 #
-# Structural map of the project rooted at src/. Update whenever a module is
+# Structural map of the repository rooted at `services/`. Update whenever a module is
 # added or removed; this file is the agent's structural index, not a wishlist.
-# Refreshed 2026-05-12 for REQ-0038 (project documentation refresh).
+# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
 
 project:
   name: YuwanLabWriter
@@ -12,7 +12,7 @@ project:
     personal: YuwanZ
     team: develop
     public: main
-  privacy_rule: .acp/kernel/ and src/docs/ MUST stay out of git.
+  privacy_rule: .acp/kernel/ MUST stay out of git. Public user docs live in docs/.
 
 modules:
   # ── Governance layer ─────────────────────────────────────────────
@@ -101,14 +101,17 @@ modules:
   - id: backend-api
     path: backend/app/api
     kind: api-routes
-    description: HTTP routes — health, auth, users, providers, projects (incl. members + online presence + SSE events), workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
+    description: HTTP routes — health, auth, users, providers, native Agent credentials/skills/agents/marketplace, projects (incl. members + online presence + SSE events), GitHub/archive, workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
     entry_files:
       - backend/app/api/__init__.py
       - backend/app/api/health.py
       - backend/app/api/auth.py
       - backend/app/api/users.py
       - backend/app/api/providers.py
+      - backend/app/api/native_agents.py
       - backend/app/api/projects.py
+      - backend/app/api/github.py
+      - backend/app/api/archives.py
       - backend/app/api/workflows.py
       - backend/app/api/workflow_test_cases.py
       - backend/app/api/filesystem.py
@@ -122,20 +125,28 @@ modules:
   - id: backend-services
     path: backend/app/services
     kind: domain-services
-    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, project filesystem service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation/evaluation service, project member service, user/stat/version/operation services, diff service, collab snapshot service.
+    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, native Agent registry/runtime, Skill Marketplace + encrypted Skill content services, project filesystem/archive service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation/evaluation/training-export service, project member service, GitHub service, user/stat/version/operation services, diff service, collab snapshot service.
     entry_files:
       - backend/app/services/__init__.py
       - backend/app/services/dify_client.py
       - backend/app/services/nanobot_client.py
       - backend/app/services/provider_service.py
+      - backend/app/services/agent_registry_service.py
       - backend/app/services/agent_orchestrator.py
+      - backend/app/services/native_agent_runner.py
+      - backend/app/services/native_agent_service.py
+      - backend/app/services/skill_content_crypto.py
+      - backend/app/services/skill_marketplace_service.py
       - backend/app/services/project_fs_service.py
+      - backend/app/services/project_archive_service.py
       - backend/app/services/latex_compiler.py
       - backend/app/services/attached_files.py
+      - backend/app/services/github_service.py
       - backend/app/services/event_bus.py
       - backend/app/services/auth_service.py
       - backend/app/services/annotation_service.py
       - backend/app/services/evaluation_service.py
+      - backend/app/services/annotation_training_export_service.py
       - backend/app/services/project_member_service.py
       - backend/app/services/project_service.py
       - backend/app/services/user_service.py
@@ -147,6 +158,12 @@ modules:
     note: |
       `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
       multi-agent + loop runner; canonical baseline since REQ-0015.
+      `native_agent_service.py`, `native_agent_runner.py`, and
+      `agent_registry_service.py` implement backend-managed native Agents
+      that bind to Provider models and can read only user-assigned Skills.
+      `skill_marketplace_service.py` reads the official Skill catalog from
+      the configured marketplace URL; `skill_content_crypto.py` encrypts local
+      Skill content at rest.
       `event_bus.py` provides in-memory SSE fan-out with per-subscriber
       asyncio.Queue and online-user presence tracking.
       `project_member_service.py` handles multi-user collaboration:
@@ -223,11 +240,13 @@ modules:
   - id: frontend-stores
     path: frontend/src/stores
     kind: state
-    description: Zustand stores — covering document, editor, settings, workflow, annotation, filesystem, conversation, compile, view, project, user, collaboration, plus user-scoped storage and reset utilities.
+    description: Zustand stores — covering document, editor, settings, native Agent/Skill management, automation, workflow, annotation, filesystem, conversation, compile, view, project, user, collaboration, plus user-scoped storage and reset utilities.
     entry_files:
       - frontend/src/stores/documentStore.ts
       - frontend/src/stores/editorStore.ts
       - frontend/src/stores/settingsStore.ts
+      - frontend/src/stores/nativeAgentStore.ts
+      - frontend/src/stores/automationStore.ts
       - frontend/src/stores/workflowStore.ts
       - frontend/src/stores/annotationStore.ts
       - frontend/src/stores/filesystemStore.ts
@@ -245,7 +264,7 @@ modules:
   - id: frontend-services
     path: frontend/src/services
     kind: service-layer
-    description: Frontend business logic — typed backend API client (incl. projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, annotation/evaluation API, agent quality/evaluation context, operation/stats/version APIs, project event stream (SSE client), collaboration provider (Yjs WebSocket).
+    description: Frontend business logic — typed backend API client (incl. nativeAgentApi, githubApi, projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, training export API, annotation/evaluation API, agent quality/evaluation context, operation/stats/version APIs, project event stream (SSE client), collaboration provider (Yjs WebSocket).
     entry_files:
       - frontend/src/services/backendApi.ts
       - frontend/src/services/filesystemApi.ts
@@ -256,6 +275,7 @@ modules:
       - frontend/src/services/rangeTracker.ts
       - frontend/src/services/authApi.ts
       - frontend/src/services/projectsApi.ts
+      - frontend/src/services/trainingExportApi.ts
       - frontend/src/services/annotationEvaluationApi.ts
       - frontend/src/services/agentQuality.ts
       - frontend/src/services/evaluationContext.ts
@@ -314,18 +334,24 @@ modules:
     path: frontend/src/features/right-panel
     kind: feature-module
     description: |
-      Right-side tabbed panel — Discussion, Team management, Workflow tab,
-      Workflow Definitions panel + canvas editor, Run history. Hosts the
-      workflow-canvas subsurface.
+      Right-side tabbed panel — Discussion, Team management (Agent / Skill /
+      Workflow subtabs), Automation, Run history, and Versions (project archive
+      + document history). Hosts the workflow-canvas and Skill management
+      subsurfaces.
     entry_files:
       - frontend/src/features/right-panel/RightPanel.tsx
       - frontend/src/features/right-panel/DiscussionTab.tsx
       - frontend/src/features/right-panel/TeamTab.tsx
+      - frontend/src/features/right-panel/AutomationTab.tsx
+      - frontend/src/features/right-panel/ProjectArchiveTab.tsx
       - frontend/src/features/right-panel/WorkflowTab.tsx
       - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
       - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
       - frontend/src/features/right-panel/RunHistoryTab.tsx
+      - frontend/src/features/right-panel/templates/debate.json
+      - frontend/src/features/right-panel/templates/consensus.json
       - frontend/src/features/right-panel/discussion.css
+      - frontend/src/features/right-panel/project-archive.css
       - frontend/src/features/right-panel/right-panel.css
 
   - id: frontend-feature-workflow-canvas
@@ -378,11 +404,10 @@ modules:
   - id: frontend-feature-topbar
     path: frontend/src/features/topbar
     kind: feature-module
-    description: Top bar — app title, ProviderBadge, view controls, NotificationBell (unread count + dropdown), PresenceIndicator (online collaborator avatars), UserMenu.
+    description: Top bar — app title, view controls, NotificationBell (unread count + dropdown), PresenceIndicator (online collaborator avatars), UserMenu.
     entry_files:
       - frontend/src/features/topbar/index.ts
       - frontend/src/features/topbar/Topbar.tsx
-      - frontend/src/features/topbar/ProviderBadge.tsx
       - frontend/src/features/topbar/ViewControl.tsx
       - frontend/src/features/topbar/UserMenu.tsx
       - frontend/src/features/topbar/NotificationBell.tsx
@@ -475,6 +500,22 @@ capability_routes:
       - frontend-feature-workflow-canvas
       - frontend-stores
       - frontend-services
+
+  native-agent-skills:
+    primary_module: backend-api
+    supporting_modules:
+      - backend-services
+      - backend-app-core
+      - frontend-feature-right-panel
+      - frontend-stores
+      - frontend-services
+    note: |
+      Backend-managed native Agent and Skill surface. Routes live in
+      backend/app/api/native_agents.py; services handle encrypted native
+      credentials, Skill content encryption, marketplace sync, local library
+      visibility/share state, and runtime AgentSkill loading. Frontend entry is
+      TeamTab's Agent / Skill subtabs, backed by nativeAgentStore and
+      nativeAgentApi in backendApi.ts.
 
   frontend-file-tree:
     primary_module: frontend-feature-file-tree

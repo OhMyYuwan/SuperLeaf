@@ -115,8 +115,7 @@ forbidden:
   - operation: stage_for_commit
     paths:
       - .acp/kernel/
-      - docs/
-    reason: User mandate — these directories must never enter git, even via amendment.
+    reason: User mandate — ACP kernel history is private and must never enter git, even via amendment.
 
   # Avoid destructive shortcuts.
   - operation: bypass_safety

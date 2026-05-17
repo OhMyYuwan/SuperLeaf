@@ -3,7 +3,7 @@
 # Each capability is a semantic surface, not a directory. Slices are the
 # narrowest authority boundaries; routing fields below are the contract that
 # keeps future Requests on rails.
-# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
 #
 # Alias notes for historical kernel records:
 #   * `frontend-workspace/agent-panel` in REQ-0001..0013 refers to the
@@ -31,16 +31,14 @@ capabilities:
           - ../start.sh
           - ../README.md
       - id: planning-docs
-        summary: Planning documents under src/docs/ (v1 / v2 / v3 executive plans, architecture data flow, amendments).
+        summary: Public user docs and architecture notes under docs/.
         route_here_when: Work authors or revises product/architecture/plan documents.
         bridge_when: A plan implies code work — record a separate Request for the code change.
         primary_paths:
-          - docs/v1_executive_plan.tex
-          - docs/v2_executive_plan.md
-          - docs/v2_executive_plan.tex
-          - docs/v2_1_amendment_dify.md
-          - docs/v3_executive_plan.md
-          - docs/architecture_data_flow.md
+          - docs/README.md
+          - docs/architecture/overview.md
+          - docs/providers/
+          - docs/workflows/
       - id: dify-launcher
         summary: Wrapper script around Dify's official docker-compose stack under reference/dify/docker/.
         route_here_when: Work adjusts how we bring Dify up/down, .env initialization, or port mapping.
@@ -65,7 +63,7 @@ capabilities:
 
   - id: frontend-topbar
     name: Frontend Topbar
-    summary: Top bar with app title, ProviderBadge (backend status + active provider), view controls for column toggles.
+    summary: Top bar with app title, view controls for column toggles, notifications, presence, and user menu.
     slices:
       - id: bar
         summary: Topbar + its buttons. Triggers SettingsDialog open, view-store column toggles.
@@ -74,13 +72,9 @@ capabilities:
         primary_paths:
           - frontend/src/features/topbar/Topbar.tsx
           - frontend/src/features/topbar/ViewControl.tsx
-          - frontend/src/features/topbar/topbar.css
-      - id: badge
-        summary: ProviderBadge component reflecting backend reachability + active provider status (Dify / Nanobot / offline).
-        route_here_when: Work changes the badge's tones, tooltip, or click target.
-        bridge_when: Additional status signals require new backend fields.
-        primary_paths:
-          - frontend/src/features/topbar/ProviderBadge.tsx
+          - frontend/src/features/topbar/NotificationBell.tsx
+          - frontend/src/features/topbar/PresenceIndicator.tsx
+          - frontend/src/features/topbar/UserMenu.tsx
           - frontend/src/features/topbar/topbar.css
 
   - id: frontend-workspace-center
@@ -172,17 +166,20 @@ capabilities:
     name: Frontend Right Panel
     summary: |
       Right-side tabbed panel. Tabs: Discussion (doc-scoped chats with agents),
-      Team (provider + agent management), Workflow (cached agent list + inline
-      run history), Workflow Definitions (custom multi-agent workflows with
-      canvas), Run History (SSE trace of past runs).
+      Team (Provider / native Agent / Skill / Workflow management),
+      Automation, Run History, and Versions (project archive + document
+      history). Workflow Definitions and Skill management now live inside Team
+      subtabs.
       (Alias: `frontend-workspace/agent-panel` from REQ-0001..0013.)
     slices:
       - id: panel-shell
-        summary: RightPanel component — tab switching, header layout.
+        summary: RightPanel component — tab switching, header layout, Automation tab, and Versions subnav.
         route_here_when: Work changes tab set or panel composition.
         bridge_when: New tab requires its own slice here + its own store.
         primary_paths:
           - frontend/src/features/right-panel/RightPanel.tsx
+          - frontend/src/features/right-panel/AutomationTab.tsx
+          - frontend/src/features/right-panel/ProjectArchiveTab.tsx
           - frontend/src/features/right-panel/right-panel.css
       - id: discussion
         summary: DiscussionTab — chat-style conversations per (document × agent). Supports @-mention of agents / workflows / files; auto-attaches selection context; SSE streaming.
@@ -192,11 +189,13 @@ capabilities:
           - frontend/src/features/right-panel/DiscussionTab.tsx
           - frontend/src/features/right-panel/discussion.css
       - id: team
-        summary: TeamTab — provider CRUD entry point; agent cards per provider; enable/disable; chat-with-agent entry into Discussion.
-        route_here_when: Work changes team-management UI, agent listings, or provider sync UX.
-        bridge_when: Provider schema changes — see workflow-integration/provider-registry.
+        summary: TeamTab — provider CRUD, native Agent CRUD, AgentSkill assignment, local Skill library, Skill Marketplace search/install, and Workflow Definition management.
+        route_here_when: Work changes team-management UI, native Agent/Skill listings, Skill Market UX, or provider sync UX.
+        bridge_when: Native Agent / Skill backend contract changes — see native-agent-skills.
         primary_paths:
           - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
       - id: workflow-tab
         summary: WorkflowTab — cached agent-workflow listing + per-agent run history, invoked from editor selection.
         route_here_when: Work changes how agent workflows are displayed or invoked inline.
@@ -204,7 +203,7 @@ capabilities:
         primary_paths:
           - frontend/src/features/right-panel/WorkflowTab.tsx
       - id: workflow-definitions
-        summary: WorkflowDefinitionsPanel + WorkflowDefinitionEditor — CRUD for user-authored multi-agent workflows; embeds workflow-canvas for visual editing; test-run panel.
+        summary: WorkflowDefinitionsPanel + WorkflowDefinitionEditor — CRUD for user-authored multi-agent workflows inside Team; embeds workflow-canvas for visual editing; test-run panel.
         route_here_when: Work changes definition CRUD, editor layout, or test-run inspection UI.
         bridge_when: Graph schema or test-run event shape change — see workflow-orchestration.
         primary_paths:
@@ -318,7 +317,7 @@ capabilities:
 
   - id: frontend-stores
     name: Frontend State Layer
-    summary: Zustand stores that hold single source of truth on the client — 10 stores.
+    summary: Zustand stores that hold single source of truth on the client, including project/user state, workflows, native Agents/Skills, automation, collaboration, history, and UI view state.
     slices:
       - id: document
         summary: documentStore — documents map, active id, content updates re-parse structure.
@@ -340,6 +339,20 @@ capabilities:
         primary_paths:
           - frontend/src/stores/settingsStore.ts
           - frontend/src/services/backendApi.ts
+      - id: native-agent
+        summary: nativeAgentStore — native Agent credentials, Skills, Skill Marketplace state, and native Agent CRUD backed by /api/native-agent.
+        route_here_when: Work changes native Agent/Skill client state, marketplace error handling, install/update/delete semantics, or AgentSkill assignment.
+        bridge_when: Backend contract changes route through native-agent-skills.
+        primary_paths:
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
+      - id: automation
+        summary: automationStore — recurring automation definitions and UI state for the Automation tab.
+        route_here_when: Work changes automation list/create/update/delete state or polling behavior.
+        bridge_when: Backend automation contract changes require backend-service/api-routes.
+        primary_paths:
+          - frontend/src/stores/automationStore.ts
+          - frontend/src/features/right-panel/AutomationTab.tsx
       - id: workflow
         summary: workflowStore — cached workflows + workflow definitions CRUD; run (single-agent) + executeDefinition (multi-agent); SSE event consumption; annotation ingestion via outputParser.
         route_here_when: Work changes how runs are dispatched, events parsed, or outputs ingested.
@@ -492,7 +505,7 @@ capabilities:
 
   - id: backend-service
     name: Backend Service (FastAPI)
-    summary: FastAPI service with SQLite persistence. Proxies Dify + Nanobot providers; runs self-hosted multi-agent orchestrator; owns project filesystem, conversations, LaTeX compile.
+    summary: FastAPI service with SQLite persistence. Proxies Dify + Nanobot providers; runs self-hosted multi-agent orchestrator; owns native Agent/Skill APIs, project filesystem/archive, conversations, LaTeX compile.
     slices:
       - id: app-entry
         summary: FastAPI entrypoint, settings, CORS, router aggregation.
@@ -503,32 +516,49 @@ capabilities:
           - backend/app/settings.py
           - backend/app/__init__.py
       - id: api-routes
-        summary: HTTP routes — health, providers, workflows (+runs, definitions, definition-execute), filesystem (tree + upload), conversations (+messages SSE), compile.
+        summary: HTTP routes — health, auth/users, providers, native-agent, projects, GitHub/archive, workflows (+runs, definitions, definition-execute), workflow test cases, filesystem (tree + upload), conversations (+messages SSE), compile, versions, annotations/evaluations, notifications.
         route_here_when: Work adds, changes, or retires API routes.
         bridge_when: New routes need new services, models, or schemas.
         primary_paths:
           - backend/app/api/__init__.py
           - backend/app/api/health.py
+          - backend/app/api/auth.py
+          - backend/app/api/users.py
           - backend/app/api/providers.py
+          - backend/app/api/native_agents.py
+          - backend/app/api/projects.py
+          - backend/app/api/github.py
+          - backend/app/api/archives.py
           - backend/app/api/workflows.py
+          - backend/app/api/workflow_test_cases.py
           - backend/app/api/filesystem.py
           - backend/app/api/conversations.py
           - backend/app/api/compile.py
+          - backend/app/api/versions.py
+          - backend/app/api/annotation_evaluations.py
+          - backend/app/api/notifications.py
       - id: services
-        summary: Domain services — DifyClient, NanobotClient, ProviderService, AgentOrchestrator, ProjectFsService, LatexCompiler, AttachedFiles normalizer.
-        route_here_when: Work changes provider client behavior, orchestration, filesystem service, compile wrapper, or attached-files shape.
+        summary: Domain services — DifyClient, NanobotClient, ProviderService, AgentOrchestrator, native Agent/Skill services, GitHub/archive services, ProjectFsService, LatexCompiler, AttachedFiles normalizer.
+        route_here_when: Work changes provider client behavior, native Agent/Skill behavior, orchestration, filesystem/archive service, compile wrapper, or attached-files shape.
         bridge_when: Cross-cutting changes — see workflow-orchestration / workflow-integration / frontend-mention-system.
         primary_paths:
           - backend/app/services/__init__.py
           - backend/app/services/dify_client.py
           - backend/app/services/nanobot_client.py
           - backend/app/services/provider_service.py
+          - backend/app/services/agent_registry_service.py
           - backend/app/services/agent_orchestrator.py
+          - backend/app/services/native_agent_service.py
+          - backend/app/services/native_agent_runner.py
+          - backend/app/services/skill_content_crypto.py
+          - backend/app/services/skill_marketplace_service.py
+          - backend/app/services/github_service.py
+          - backend/app/services/project_archive_service.py
           - backend/app/services/project_fs_service.py
           - backend/app/services/latex_compiler.py
           - backend/app/services/attached_files.py
       - id: models
-        summary: SQLAlchemy ORM + Pydantic I/O schemas. Tables — Provider, CachedWorkflow, WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob, Conversation, Message.
+        summary: SQLAlchemy ORM + Pydantic I/O schemas. Tables include Provider, NativeAgentCredential, Skill, SkillHidden, NativeAgent, CachedWorkflow, WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob, GitHubAccount, project archives, Conversation, Message, annotations/evaluations, and collaboration/history tables.
         route_here_when: Work adds new tables or changes existing columns.
         bridge_when: Schema migration needed — future alembic setup.
         primary_paths:
@@ -541,6 +571,43 @@ capabilities:
         bridge_when: Rotation invalidates all provider keys — flagged in CHANGE_POLICY.
         primary_paths:
           - backend/app/secrets_vault.py
+
+  - id: native-agent-skills
+    name: Native Agent & Skills
+    summary: |
+      Backend-managed native Agents and Skills. Owns encrypted native Agent
+      credentials, native Agent CRUD/runtime, local Skill library, Skill
+      Marketplace sync/install, Skill content encryption, share visibility, and
+      AgentSkill assignment.
+    slices:
+      - id: backend-routes
+        summary: /api/native-agent routes for credentials, skills, agents, and Skill Marketplace install/update/uninstall.
+        route_here_when: Work changes native Agent or Skill HTTP contracts, permission checks, marketplace endpoints, or response shape.
+        bridge_when: Frontend state or TeamTab UX must be updated with backend contract changes.
+        primary_paths:
+          - backend/app/api/native_agents.py
+          - backend/app/schemas.py
+      - id: backend-services
+        summary: NativeAgentService + runner/registry + Skill crypto/marketplace services.
+        route_here_when: Work changes encrypted credential handling, local Skill storage, visibility/share/delete semantics, marketplace sync, or runtime Skill loading.
+        bridge_when: Provider model changes route through workflow-integration/provider-registry.
+        primary_paths:
+          - backend/app/services/native_agent_service.py
+          - backend/app/services/native_agent_runner.py
+          - backend/app/services/agent_registry_service.py
+          - backend/app/services/skill_content_crypto.py
+          - backend/app/services/skill_marketplace_service.py
+          - backend/app/models.py
+          - backend/app/settings.py
+      - id: frontend-management
+        summary: TeamTab Agent and Skill subtabs — AgentSkill capsules, local Skill library, Skill Market search/install, private upload, share/update/unshare flows.
+        route_here_when: Work changes the native Agent form, Skill management panel, marketplace search/install UX, local library rows, or sharing dialog.
+        bridge_when: Backend contract changes route through backend-routes first.
+        primary_paths:
+          - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/features/right-panel/right-panel.css
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
 
   - id: workflow-integration
     name: Workflow Integration (Providers)
@@ -563,7 +630,7 @@ capabilities:
         primary_paths:
           - backend/app/services/nanobot_client.py
       - id: provider-registry
-        summary: Provider model + service + CRUD API; ProviderBadge state machine on frontend.
+        summary: Provider model + service + CRUD API; Settings/Team provider management on frontend.
         route_here_when: Work changes provider lifecycle — registration, probing, activation, rotation.
         bridge_when: New provider kinds require backend services AND frontend form branches.
         primary_paths:

@@ -4,7 +4,7 @@
 # only when the active task requires deeper context. forbidden_paths are
 # absolute boundaries; protected_paths require explicit confirmation before
 # modification.
-# Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh).
+# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -62,7 +62,6 @@ rules:
 
   private_paths:
     - .acp/kernel/
-    - docs/
 
   route_expansion:
     project-foundation:
@@ -76,12 +75,13 @@ rules:
           - resolving a kernel-binding question
       planning-docs:
         start_with:
-          - docs/v3_executive_plan.md
-          - docs/v2_executive_plan.md
-          - docs/architecture_data_flow.md
+          - docs/README.md
+          - docs/architecture/overview.md
+          - docs/providers/README.md
+          - docs/TODO.md
         expand_when:
           - revising plan implies architecture change
-          - consolidating older plan documents
+          - updating public docs or GitHub Pages navigation
       dify-launcher:
         start_with:
           - ../scripts/dify.sh
@@ -103,15 +103,13 @@ rules:
       bar:
         start_with:
           - frontend/src/features/topbar/Topbar.tsx
+          - frontend/src/features/topbar/ViewControl.tsx
+          - frontend/src/features/topbar/NotificationBell.tsx
+          - frontend/src/features/topbar/PresenceIndicator.tsx
           - frontend/src/features/topbar/topbar.css
         expand_when:
           - new top-bar action or shortcut
           - view-control behavior change
-      badge:
-        start_with:
-          - frontend/src/features/topbar/ProviderBadge.tsx
-        expand_when:
-          - badge must reflect additional signals (e.g. Dify quota, Nanobot queue)
 
     frontend-workspace-center:
       editor-column:
@@ -188,6 +186,19 @@ rules:
           - frontend/src/services/backendApi.ts
         expand_when:
           - provider lifecycle or backend endpoint change
+      native-agent:
+        start_with:
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - native Agent or Skill client-state lifecycle change
+          - Skill Marketplace sync/install/delete/share behavior change
+      automation:
+        start_with:
+          - frontend/src/stores/automationStore.ts
+          - frontend/src/features/right-panel/AutomationTab.tsx
+        expand_when:
+          - automation state or schedule UI change
       workflow:
         start_with:
           - frontend/src/stores/workflowStore.ts
@@ -260,9 +271,17 @@ rules:
         start_with:
           - frontend/src/features/right-panel/TeamTab.tsx
           - frontend/src/stores/settingsStore.ts
+          - frontend/src/stores/nativeAgentStore.ts
           - frontend/src/stores/workflowStore.ts
+          - frontend/src/services/backendApi.ts
         expand_when:
-          - team UX or provider CRUD shell change
+          - team UX, provider CRUD shell, native Agent, or Skill management change
+      automation:
+        start_with:
+          - frontend/src/features/right-panel/AutomationTab.tsx
+          - frontend/src/stores/automationStore.ts
+        expand_when:
+          - automation CRUD or schedule display change
       workflow-tab:
         start_with:
           - frontend/src/features/right-panel/WorkflowTab.tsx
@@ -442,15 +461,18 @@ rules:
         start_with:
           - backend/app/api/__init__.py
           - backend/app/api/workflows.py
+          - backend/app/api/native_agents.py
         expand_when:
           - adding new routes or changing existing ones
       services:
         start_with:
           - backend/app/services/provider_service.py
+          - backend/app/services/native_agent_service.py
+          - backend/app/services/skill_marketplace_service.py
           - backend/app/services/dify_client.py
           - backend/app/services/nanobot_client.py
         expand_when:
-          - provider client or registry invariant change
+          - provider client, native Agent/Skill, or registry invariant change
       models:
         start_with:
           - backend/app/models.py
@@ -491,6 +513,34 @@ rules:
         expand_when:
           - run trigger contract change
           - annotation streaming contract change
+
+    native-agent-skills:
+      backend-routes:
+        start_with:
+          - backend/app/api/native_agents.py
+          - backend/app/schemas.py
+        expand_when:
+          - native Agent credential, Skill, Agent, or marketplace endpoint change
+      backend-services:
+        start_with:
+          - backend/app/services/native_agent_service.py
+          - backend/app/services/native_agent_runner.py
+          - backend/app/services/agent_registry_service.py
+          - backend/app/services/skill_content_crypto.py
+          - backend/app/services/skill_marketplace_service.py
+          - backend/app/models.py
+        expand_when:
+          - encrypted native credential storage change
+          - Skill content encryption or marketplace sync change
+          - Agent runtime Skill loading change
+      frontend-management:
+        start_with:
+          - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/features/right-panel/right-panel.css
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - AgentSkill picker, Skill library, Skill Market, or sharing dialog change
 
     workflow-orchestration:
       orchestrator:

@@ -1,0 +1,139 @@
+.site-title {
+  letter-spacing: 0;
+  font-weight: 750;
+}
+
+.main-content h1 {
+  letter-spacing: 0;
+}
+
+.ylw-hero {
+  margin: 1rem 0 1.5rem;
+  padding: 2rem;
+  border: 1px solid #d7e2ee;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.13), rgba(34, 197, 94, 0.09)),
+    #ffffff;
+}
+
+.ylw-hero h1 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.ylw-hero p {
+  max-width: 48rem;
+  margin-bottom: 1rem;
+  color: #475569;
+  font-size: 1.05rem;
+}
+
+.ylw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.ylw-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.ylw-card {
+  display: block;
+  padding: 1rem;
+  border: 1px solid #d7e2ee;
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+  background: #ffffff;
+  box-shadow: 0 10px 28px -24px rgba(15, 23, 42, 0.55);
+}
+
+.ylw-card:hover {
+  border-color: #38bdf8;
+  text-decoration: none;
+}
+
+.ylw-card strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #0f172a;
+}
+
+.ylw-card span {
+  color: #64748b;
+  font-size: 0.92rem;
+}
+
+.ylw-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1.25rem;
+}
+
+.ylw-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  color: #0f172a;
+  background: #e0f2fe;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.ylw-steps {
+  counter-reset: ylw-step;
+  display: grid;
+  gap: 0.8rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ylw-steps > li {
+  counter-increment: ylw-step;
+  position: relative;
+  padding: 0.9rem 1rem 0.9rem 3rem;
+  border: 1px solid #d7e2ee;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.ylw-steps > li::before {
+  content: counter(ylw-step);
+  position: absolute;
+  top: 0.9rem;
+  left: 1rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #0284c7;
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.35rem;
+  text-align: center;
+}
+
+.ylw-command {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.ylw-command code {
+  color: #e2e8f0;
+}
+
+.ylw-table-compact table {
+  font-size: 0.92rem;
+}

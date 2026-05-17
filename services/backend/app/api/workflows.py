@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Project, User, WorkflowDefinition, WorkflowRun
+from ..models import CachedWorkflow, NativeAgent, Project, Provider, User, WorkflowDefinition, WorkflowRun
 from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
 from ..services.agent_orchestrator import WorkflowOrchestrator
+from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
 from ..services.attached_files import (
     collect_image_attachments,
     normalize_attached_files,
@@ -22,7 +23,13 @@ from ..services.attached_files import (
 )
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
+from ..services.native_agent_runner import (
+    NativeAgentRunner,
+    NativeAgentRuntimeConfig,
+    NativeRunPayload,
+)
 from ..services.provider_service import ProviderService
+from ..secrets_vault import decrypt
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -30,6 +37,7 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 @router.get("", response_model=list[CachedWorkflowOut])
 def list_workflows(
+    project: Project = Depends(get_current_project),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> list[CachedWorkflowOut]:
@@ -37,7 +45,6 @@ def list_workflows(
 
     Filters out orphan workflows (provider was deleted but CASCADE didn't fire yet).
     """
-    from ..models import Provider
     rows = (
         db.query(CachedWorkflow)
         .join(Provider, CachedWorkflow.provider_id == Provider.id)
@@ -45,7 +52,20 @@ def list_workflows(
         .order_by(CachedWorkflow.last_synced_at.desc())
         .all()
     )
-    return [CachedWorkflowOut.model_validate(r) for r in rows]
+    native_rows = (
+        db.query(NativeAgent)
+        .join(Provider, NativeAgent.provider_id == Provider.id)
+        .filter(
+            NativeAgent.project_id == project.id,
+            NativeAgent.owner_user_id == user.id,
+            Provider.kind == "native",
+        )
+        .order_by(NativeAgent.updated_at.desc())
+        .all()
+    )
+    out = [CachedWorkflowOut.model_validate(r) for r in rows]
+    out.extend(_native_agent_projection(row) for row in native_rows)
+    return out
 
 
 @router.get("/runs", response_model=list[WorkflowRunOut])
@@ -105,10 +125,25 @@ def delete_run(
 @router.post("/{workflow_id}/disable", response_model=CachedWorkflowOut)
 def disable_workflow(
     workflow_id: str,
+    project: Project = Depends(get_current_project),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> CachedWorkflowOut:
     """Disable an agent (hide from @mention, prevent follow-up)."""
+    if workflow_id.startswith(NATIVE_WORKFLOW_PREFIX):
+        resolved = AgentRegistryService(db).resolve(
+            workflow_id,
+            project_id=project.id,
+            user_id=user.id,
+            require_enabled=False,
+        )
+        if resolved is None or resolved.native_agent is None:
+            raise HTTPException(404, "Workflow not found")
+        agent = resolved.native_agent
+        agent.is_enabled = False
+        db.commit()
+        db.refresh(agent)
+        return _native_agent_projection(agent)
     cw = db.get(CachedWorkflow, workflow_id)
     if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
@@ -121,10 +156,25 @@ def disable_workflow(
 @router.post("/{workflow_id}/enable", response_model=CachedWorkflowOut)
 def enable_workflow(
     workflow_id: str,
+    project: Project = Depends(get_current_project),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> CachedWorkflowOut:
     """Enable (reactivate) a disabled agent."""
+    if workflow_id.startswith(NATIVE_WORKFLOW_PREFIX):
+        resolved = AgentRegistryService(db).resolve(
+            workflow_id,
+            project_id=project.id,
+            user_id=user.id,
+            require_enabled=False,
+        )
+        if resolved is None or resolved.native_agent is None:
+            raise HTTPException(404, "Workflow not found")
+        agent = resolved.native_agent
+        agent.is_enabled = True
+        db.commit()
+        db.refresh(agent)
+        return _native_agent_projection(agent)
     cw = db.get(CachedWorkflow, workflow_id)
     if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
@@ -176,6 +226,27 @@ async def run_workflow(
     SSE events which we forward under a `nanobot` event name, then collapse into
     `outputs.text` for the existing annotation parser.
     """
+    if workflow_id.startswith(NATIVE_WORKFLOW_PREFIX):
+        resolved = AgentRegistryService(db).resolve(
+            workflow_id,
+            project_id=project.id,
+            user_id=user.id,
+            require_enabled=True,
+        )
+        if resolved is None or resolved.native_agent is None:
+            raise HTTPException(404, "Workflow not found")
+        agent = resolved.native_agent
+        provider = resolved.provider
+        return _run_native_agent(
+            agent=agent,
+            provider=provider,
+            workflow_id=workflow_id,
+            body=body,
+            db=db,
+            project=project,
+            user=user,
+        )
+
     cw = db.get(CachedWorkflow, workflow_id)
     if cw is None or cw.user_id != user.id:
         raise HTTPException(404, "Workflow not found")
@@ -231,6 +302,8 @@ async def run_workflow(
                 from ..services.nanobot_client import NanobotClient
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
+                if not conversation_id:
+                    conversation_id = f"ylw-{run.id}"
                 prompt = _nanobot_prompt(body, attached_files)
                 if image_attachments:
                     user_content: list[dict[str, Any]] | str = [
@@ -245,6 +318,7 @@ async def run_workflow(
                 async for evt in client.run_streaming(
                     model=cw.external_id,
                     messages=[{"role": "user", "content": user_content}],
+                    session_id=conversation_id,
                 ):
                     raw_events.append(evt)
                     if not external_run_id:
@@ -395,6 +469,138 @@ def _extract_outputs(events: list[dict], provider_kind: str, accumulated_text: l
     return {"text": "".join(text_parts), "outputs": structured, "message_id": message_id}
 
 
+def _native_agent_projection(agent: NativeAgent) -> CachedWorkflowOut:
+    return CachedWorkflowOut(
+        id=f"{NATIVE_WORKFLOW_PREFIX}{agent.id}",
+        provider_id=agent.provider_id,
+        external_id=agent.model,
+        name=agent.name,
+        description=agent.description,
+        kind="native-agent",
+        tags=["native", agent.output_contract],
+        last_synced_at=agent.updated_at,
+        is_disabled=not agent.is_enabled,
+    )
+
+
+def _run_native_agent(
+    *,
+    agent: NativeAgent,
+    provider: Provider,
+    workflow_id: str,
+    body: RunBody,
+    db: Session,
+    project: Project,
+    user: User,
+):
+    run = WorkflowRun(
+        project_id=project.id,
+        user_id=user.id,
+        provider_id=provider.id,
+        workflow_id=workflow_id,
+        document_id=body.document_id,
+        range_start=body.range_start,
+        range_end=body.range_end,
+        status="running",
+        trace=[
+            {
+                "kind": "native-agent",
+                "agent_id": agent.id,
+                "provider_id": provider.id,
+                "model": agent.model,
+                "skill_ids": list(agent.skill_ids or []),
+            }
+        ],
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    async def event_gen():
+        yield {
+            "event": "ylw.run.started",
+            "data": json.dumps(
+                {
+                    "run_id": run.id,
+                    "workflow_id": workflow_id,
+                    "mode": "native-agent",
+                    "parent_run_id": body.parent_run_id,
+                }
+            ),
+        }
+
+        accumulated_text: list[str] = []
+        raw_events: list[dict] = []
+        try:
+            attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+            if attached_files:
+                body.inputs["attached_files"] = attached_files
+            skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+            runner = NativeAgentRunner(
+                NativeAgentRuntimeConfig(
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                    provider_endpoint=provider.endpoint,
+                    api_key=decrypt(provider.api_key_enc),
+                    model=agent.model,
+                    instructions=agent.instructions,
+                    skills=skills,
+                    temperature=float((agent.runtime_config or {}).get("temperature", 0.2)),
+                    max_tokens=int((agent.runtime_config or {}).get("max_tokens", 4000)),
+                )
+            )
+            payload = NativeRunPayload(
+                document_id=body.document_id,
+                range_start=body.range_start,
+                range_end=body.range_end,
+                inputs=dict(body.inputs or {}),
+                query=body.query,
+                conversation_id=body.conversation_id or f"ylw-native-{run.id}",
+                context_files=[ref.model_dump() for ref in body.context_files],
+            )
+            async for evt in runner.stream(payload):
+                data = evt.get("data") or {}
+                if evt.get("event") == "native.agent.raw" and isinstance(data, dict):
+                    raw_events.append(data)
+                if evt.get("event") == "native.agent.output.delta":
+                    delta = data.get("delta") if isinstance(data, dict) else ""
+                    if isinstance(delta, str):
+                        accumulated_text.append(delta)
+                yield {"event": str(evt.get("event")), "data": json.dumps(data)}
+        except Exception as exc:  # noqa: BLE001
+            run.status = "failed"
+            run.error = f"{type(exc).__name__}: {exc}"[:512]
+            run.finished_at = datetime.utcnow()
+            db.commit()
+            yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
+            return
+
+        text = "".join(accumulated_text).strip()
+        outputs = {
+            "text": text,
+            "outputs": {"text": text},
+            "model": agent.model,
+            "native_agent_id": agent.id,
+            "raw": raw_events[-20:],
+        }
+        run.status = "completed"
+        run.outputs = outputs
+        run.finished_at = datetime.utcnow()
+        db.commit()
+
+        yield {
+            "event": "ylw.run.finished",
+            "data": json.dumps(
+                {
+                    "run_id": run.id,
+                    "outputs": outputs,
+                    "conversation_id": body.conversation_id or f"ylw-native-{run.id}",
+                    "mode": "native-agent",
+                }
+            ),
+        }
+
+    return EventSourceResponse(event_gen())
 # ---------------------------------------------------------------------------
 # Workflow Definition Management
 # ---------------------------------------------------------------------------
@@ -524,7 +730,7 @@ async def execute_workflow_definition(
     if boundary_error:
         raise HTTPException(status_code=409, detail=boundary_error)
 
-    issues = _collect_unhealthy_agents(wf, db)
+    issues = _collect_unhealthy_agents(wf, db, project_id=project.id, user_id=user.id)
     if issues:
         raise HTTPException(
             status_code=409,
@@ -588,6 +794,9 @@ def _check_boundary_nodes(wf: WorkflowDefinition) -> dict | None:
 def _collect_unhealthy_agents(
     wf: WorkflowDefinition,
     db: Session,
+    *,
+    project_id: str,
+    user_id: str,
 ) -> list[dict]:
     """Return a list of {node_id, agent_id, reason} for every agent node whose
     referenced CachedWorkflow is unconfigured, missing, or disabled.
@@ -595,6 +804,7 @@ def _collect_unhealthy_agents(
     """
     nodes = (wf.graph or {}).get("nodes", []) or []
     issues: list[dict] = []
+    registry = AgentRegistryService(db)
     for n in nodes:
         if n.get("type") != "agent":
             continue
@@ -607,15 +817,24 @@ def _collect_unhealthy_agents(
                 "reason": "unconfigured",
             })
             continue
-        cw = db.get(CachedWorkflow, agent_id)
-        if cw is None:
+        resolved = registry.resolve(
+            agent_id,
+            project_id=project_id,
+            user_id=user_id,
+            require_enabled=False,
+        )
+        if resolved is None:
             issues.append({
                 "node_id": n.get("id"),
                 "agent_id": agent_id,
                 "reason": "missing",
             })
             continue
-        if cw.is_disabled:
+        if resolved.source == "external":
+            disabled = bool(resolved.cached_workflow and resolved.cached_workflow.is_disabled)
+        else:
+            disabled = bool(resolved.native_agent and not resolved.native_agent.is_enabled)
+        if disabled:
             issues.append({
                 "node_id": n.get("id"),
                 "agent_id": agent_id,

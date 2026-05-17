@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorState, Compartment } from '@codemirror/state'
 import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { baseExtensions, languageFor } from './extensions'
+import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
 import { collaborationExtensions } from './collaboration-extensions'
 import {
@@ -94,6 +94,7 @@ export function LatexEditor({
   const onDocChangeRef = useRef(onDocChange)
   const onDecorationClickRef = useRef(onDecorationClick)
   const languageCompartment = useMemo(() => new Compartment(), [])
+  const shortcutsCompartment = useMemo(() => new Compartment(), [])
   const [sourceJumpFlash, setSourceJumpFlash] = useState(false)
 
   useEffect(() => {
@@ -126,6 +127,7 @@ export function LatexEditor({
         ...baseExtensions({ includeHistory: !isCollab }),
         ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
         languageCompartment.of(languageFor(format)),
+        shortcutsCompartment.of(shortcutKeymapFor(format)),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
         }),
@@ -196,9 +198,12 @@ export function LatexEditor({
     const view = viewRef.current
     if (!view) return
     view.dispatch({
-      effects: languageCompartment.reconfigure(languageFor(format)),
+      effects: [
+        languageCompartment.reconfigure(languageFor(format)),
+        shortcutsCompartment.reconfigure(shortcutKeymapFor(format)),
+      ],
     })
-  }, [format, languageCompartment])
+  }, [format, languageCompartment, shortcutsCompartment])
 
   // Push decoration specs into the editor.
   useEffect(() => {

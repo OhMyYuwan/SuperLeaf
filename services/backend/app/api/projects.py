@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -24,6 +24,7 @@ from ..schemas import (
     ProjectUpdateIn,
 )
 from ..services.event_bus import bus
+from ..services.annotation_training_export_service import build_annotation_training_export_zip
 from ..services.github_service import GitHubError, GitHubService, parse_repo_url
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
@@ -131,6 +132,29 @@ def delete_project(
         raise HTTPException(409, str(e)) from e
     if not ok:
         raise HTTPException(404, "Project not found")
+
+
+@router.get("/{project_id}/annotation-training-export")
+def export_annotation_training_data(
+    project: Project = Depends(get_project_from_path),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+    only_training_candidates: bool = Query(default=False),
+) -> Response:
+    """Download annotation evaluation samples for external wiki/skill building."""
+    zip_bytes = build_annotation_training_export_zip(
+        db,
+        project=project,
+        user=user,
+        only_training_candidates=only_training_candidates,
+    )
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in project.name).strip("-")
+    filename = f"{safe_name or 'project'}-annotation-training-export.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

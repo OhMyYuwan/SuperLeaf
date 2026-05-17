@@ -19,6 +19,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+type SettingsTab = 'account' | 'providers'
+
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const load = useSettingsStore((s) => s.load)
   const loaded = useSettingsStore((s) => s.loaded)
@@ -33,6 +35,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   }, [open, loaded, load])
 
   const [showForm, setShowForm] = useState(false)
+  const [activeTab, setActiveTab] = useState<SettingsTab>('account')
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -55,30 +58,54 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
 
+          <div className="settings-tabs" role="tablist" aria-label="个人面板设置">
+            <button
+              className={activeTab === 'account' ? 'active' : ''}
+              onClick={() => setActiveTab('account')}
+              role="tab"
+              aria-selected={activeTab === 'account'}
+            >
+              账户
+            </button>
+            <button
+              className={activeTab === 'providers' ? 'active' : ''}
+              onClick={() => setActiveTab('providers')}
+              role="tab"
+              aria-selected={activeTab === 'providers'}
+            >
+              Provider
+            </button>
+          </div>
+
           <div className="settings-body">
-            <GitHubAccountSettings />
+            {activeTab === 'account' && <GitHubAccountSettings />}
 
-            <div className="settings-section-title">Provider</div>
+            {activeTab === 'providers' && (
+              <>
+                <div className="settings-section-title">Provider</div>
 
-            {loaded && providers.length === 0 && !showForm && (
-              <div className="empty-providers">
-                还没有配置 provider。点击下方按钮添加第一个。
-              </div>
+                {loaded && providers.length === 0 && !showForm && (
+                  <div className="empty-providers">
+                    还没有配置 provider。点击下方按钮添加第一个。
+                  </div>
+                )}
+
+                <ul className="provider-list">
+                  {providers.map((p) => (
+                    <ProviderRow key={p.id} provider={p} />
+                  ))}
+                </ul>
+
+                {showForm ? (
+                  <ProviderForm onClose={() => setShowForm(false)} />
+                ) : (
+                  <button className="primary-btn" onClick={() => setShowForm(true)}>
+                    <Plus size={14} /> 添加 Provider
+                  </button>
+                )}
+              </>
             )}
 
-            <ul className="provider-list">
-              {providers.map((p) => (
-                <ProviderRow key={p.id} provider={p} />
-              ))}
-            </ul>
-
-            {showForm ? (
-              <ProviderForm onClose={() => setShowForm(false)} />
-            ) : (
-              <button className="primary-btn" onClick={() => setShowForm(true)}>
-                <Plus size={14} /> 添加 Provider
-              </button>
-            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

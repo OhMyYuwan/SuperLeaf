@@ -182,6 +182,96 @@ class WorkflowDefinition(Base):
     )
 
 
+class NativeAgentCredential(Base):
+    """Encrypted credential for backend-run native Agents.
+
+    Credentials are user-private even when the Agent configuration itself is
+    project-scoped. This keeps base URLs/API keys tied to the person who
+    configured them while allowing a project Agent to be imported/exported
+    later without leaking secrets.
+    """
+
+    __tablename__ = "native_agent_credentials"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    name: Mapped[str] = mapped_column(String(128))
+    base_url: Mapped[str] = mapped_column(String(512))
+    api_key_enc: Mapped[str] = mapped_column(Text, default="")
+    runtime_kind: Mapped[str] = mapped_column(String(64), default="openai-agents-sdk")
+    default_model: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="unknown")
+    status_detail: Mapped[str] = mapped_column(Text, default="")
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class Skill(Base):
+    """Skill registry entry for native Agents.
+
+    Uploaded Skills default to private ownership. Public Skills are named by
+    the backend as `username@skill_name` and are readable by all project users.
+    """
+
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    name: Mapped[str] = mapped_column(String(128))
+    public_name: Mapped[str] = mapped_column(String(256), default="", index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    visibility: Mapped[str] = mapped_column(String(16), default="private")
+    source: Mapped[str] = mapped_column(String(16), default="upload")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SkillHidden(Base):
+    """Per-user removal from the local Skill library without deleting source."""
+
+    __tablename__ = "skill_hidden"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_key", name="uq_skill_hidden_user_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    skill_key: Mapped[str] = mapped_column(String(256), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NativeAgent(Base):
+    """Project-scoped backend-run Agent configuration."""
+
+    __tablename__ = "native_agents"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), index=True, default="")
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    skill_ids: Mapped[list] = mapped_column(JSON, default=list)
+    output_contract: Mapped[str] = mapped_column(String(32), default="annotation")
+    runtime_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class WorkflowTestCase(Base):
     """Reusable test fixture for a WorkflowDefinition.
 

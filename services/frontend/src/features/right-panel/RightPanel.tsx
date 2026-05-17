@@ -14,6 +14,7 @@ import { DiscussionTab } from './DiscussionTab'
 import { TeamTab } from './TeamTab'
 import { RunHistoryTab } from './RunHistoryTab'
 import { ProjectArchiveTab } from './ProjectArchiveTab'
+import { AutomationTab } from './AutomationTab'
 import { HistoryTab } from '../history/HistoryTab'
 import { useProjectStore } from '../../stores/projectStore'
 import '../history/history.css'
@@ -70,6 +71,9 @@ export function RightPanel(props: RightPanelProps) {
           <Tabs.Trigger className="tab-trigger" value="agents">
             团队管理
           </Tabs.Trigger>
+          <Tabs.Trigger className="tab-trigger" value="automation">
+            自动化
+          </Tabs.Trigger>
           {/* 工作流 tab 已集成到团队管理的子标签中 */}
           {/* <Tabs.Trigger className="tab-trigger" value="workflow">
             工作流
@@ -110,6 +114,10 @@ export function RightPanel(props: RightPanelProps) {
             onUpdateDefinition={props.onUpdateDefinition}
             onDeleteDefinition={props.onDeleteDefinition}
           />
+        </Tabs.Content>
+
+        <Tabs.Content value="automation" className="tab-content">
+          <AutomationTab />
         </Tabs.Content>
 
         {/* 工作流 tab 已集成到团队管理的子标签中 */}

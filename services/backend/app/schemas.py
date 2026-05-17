@@ -120,7 +120,9 @@ class NativeAgentCredentialOut(BaseModel):
 
 
 class SkillIn(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
+    name: str = Field(default="", max_length=128)
+    folder_name: str = Field(default="", max_length=128)
+    entry_filename: str = Field(default="SKILL.md", max_length=64)
     description: str = ""
     content: str = Field(min_length=1, max_length=60000)
     tags: list[str] = Field(default_factory=list)
@@ -151,6 +153,37 @@ class SkillOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SkillMarketplaceEntryOut(BaseModel):
+    id: str
+    name: str
+    display_name: str
+    version: str
+    author_github: str
+    description: str
+    tags: list[str]
+    license: str
+    path: str
+    entry: str
+    skill_url: str
+    entry_url: str
+    readme_url: str = ""
+    checksum_sha256: str
+    installed: bool = False
+    installed_skill_id: str | None = None
+    installed_version: str = ""
+    update_available: bool = False
+
+
+class SkillMarketplaceOut(BaseModel):
+    catalog_url: str
+    skills: list[SkillMarketplaceEntryOut]
+
+
+class SkillMarketplaceInstallOut(BaseModel):
+    skill: SkillOut
+    marketplace_entry: SkillMarketplaceEntryOut
 
 
 class NativeAgentIn(BaseModel):

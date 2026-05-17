@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CachedWorkflow, NativeAgent, Provider, Skill
 from .native_agent_runner import NativeSkillBlock
+from .skill_content_crypto import decrypt_skill_content
 
 
 NATIVE_WORKFLOW_PREFIX = "native:"
@@ -64,7 +65,7 @@ class AgentRegistryService:
                     name=skill.public_name or skill.name,
                     version=skill.version,
                     source=skill.source,
-                    content=skill.content,
+                    content=decrypt_skill_content(skill.content),
                 )
             )
         return out

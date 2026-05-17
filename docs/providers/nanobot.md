@@ -1,3 +1,9 @@
+---
+title: Nanobot Provider
+parent: Provider 总览
+nav_order: 2
+---
+
 # Nanobot Provider 配置指南
 
 这一页教你从零把 Nanobot 接成 YuwanLabWriter 的 provider。适合两种场景：
@@ -212,4 +218,3 @@ nanobot serve --config ~/.nanobot-b/config.json
 - 多实例部署：`reference/nanobot/docs/multiple-instances.md`
 - YuwanLabWriter 后端客户端实现：[nanobot_client.py](../../src/backend/app/services/nanobot_client.py)
 - YuwanLabWriter provider 同步逻辑：[provider_service.py](../../src/backend/app/services/provider_service.py)
-

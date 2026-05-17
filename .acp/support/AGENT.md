@@ -2,7 +2,7 @@
 role: quick_entry
 project:
   name: YuwanLabWriter
-  description: Local-Web LaTeX-first research writing IDE with multi-Agent review (self-hosted orchestrator over Dify / Nanobot providers)
+  description: Local-Web LaTeX-first research writing IDE with backend-managed native Agents, Skill Marketplace, and multi-Agent review over Dify / Nanobot providers
 acp_version: "1.0.0"
 profiles:
   kernel: required
@@ -29,6 +29,7 @@ primary_capabilities:
   - frontend-mention-system
   - frontend-settings
   - frontend-stores
+  - native-agent-skills
   - latex-editor
   - latex-compile
   - domain-model
@@ -37,7 +38,7 @@ primary_capabilities:
   - workflow-orchestration
   - real-time-editing
   - build-tooling
-agent_hint: src/ is project root; never commit src/.acp/kernel or src/docs (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
+agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill support routes through backend/app/api/native_agents.py, nativeAgentStore, and TeamTab's Skill panel. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
 ```
 
 # YuwanLabWriter Agent Guide
@@ -78,19 +79,22 @@ surface plus a multi-Agent review/polishing/workflow layer.
   DiscussionTab with file / workflow / agent candidates + multimodal
   Nanobot bridge.
 
-**Current scope (post REQ-0024, planned V3 in docs/v3_executive_plan.md):**
+**Current scope (post native Agent / Skill support):**
 
-- **Frontend**: Vite + React 19 + TS + Zustand (10 stores), four-pane Overleaf
-  layout. Modules: topbar, file-tree, workspace-center (editor + toolbar +
+- **Frontend**: Vite + React 19 + TS + Zustand, four-pane Overleaf layout.
+  Modules: topbar, file-tree, workspace-center (editor + toolbar +
   annotation column + preview column), annotation-panel, right-panel
-  (Discussion / Team / Workflow / Definitions / Run History), workflow-canvas
-  (react-flow), shared (MentionInput + fileSizeGate), settings, latex-editor,
-  preview (latex + markdown).
-- **Backend**: FastAPI + SQLAlchemy + SQLite, Fernet-encrypted providers,
-  7 tables (Provider, CachedWorkflow, WorkflowRun, WorkflowDefinition,
-  Project/Folder/Doc/FileBlob, Conversation, Message). Routes: health,
-  providers, workflows (+runs, definitions, definition-execute), filesystem
-  (tree + upload), conversations (+SSE messages), compile.
+  (Discussion / Team management with Agent-Skill-Workflow subtabs /
+  Automation / Run History / Versions), workflow-canvas (react-flow), shared
+  (MentionInput + fileSizeGate), settings, latex-editor, preview (latex +
+  markdown).
+- **Backend**: FastAPI + SQLAlchemy + SQLite, Fernet-encrypted provider keys,
+  native Agent credentials, GitHub tokens, and encrypted Skill content.
+  Routes: health, auth/users, providers, native-agent credentials/skills/
+  agents/Skill Marketplace, workflows (+runs, definitions,
+  definition-execute), workflow test cases, filesystem, GitHub, project
+  archives, conversations (+SSE messages), compile, versions, annotations,
+  notifications.
 - **Providers**: Dify (workflow + chat-message APIs with SSE) and Nanobot
   (OpenAI Chat Completions-style with session_id + multimodal content blocks).
 - **Self-hosted orchestrator**: agent + loop nodes, arbitrary nesting,
@@ -103,6 +107,11 @@ surface plus a multi-Agent review/polishing/workflow layer.
   discussion, test-run fixtures, debate/consensus templates, type
   unification), history (snapshot-based, 20-cap + 10-min cooldown), deploy
   (Pandoc, Docker, handbook, demo).
+- **Native Agent / Skill support**: backend-managed native Agents bind to
+  Provider models, can install/attach Skills, and execute only user-assigned
+  Skills. Skill sources include private upload, server-shared local Skills,
+  and official marketplace entries from
+  `OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json`.
 
 ## Working Rules
 
@@ -111,7 +120,8 @@ surface plus a multi-Agent review/polishing/workflow layer.
 - Read `CHANGE_POLICY.yaml` before editing protected or high-risk files.
 - Every mutation goes through Request → Plan → Change. Save the kernel objects under `.acp/kernel/`.
 - Branch flow: real work on `YuwanZ`; promote via `develop` → `main`.
-- Privacy: `src/.acp/kernel/` and `src/docs/` are git-ignored and MUST stay out of git.
+- Privacy: `.acp/kernel/` is git-ignored and MUST stay out of git. Public
+  user docs live in `docs/`.
 - **Orchestrator boundary**: extending `agent_orchestrator.py` within the
   agent + loop node model is acceptable. Introducing a NEW node type
   (debate, consensus, condition, merge as engine-level concepts) OR
@@ -126,19 +136,13 @@ surface plus a multi-Agent review/polishing/workflow layer.
 .
 ├── start.sh                                 (dev launcher: backend :8000 + collab :4444 + frontend :5173)
 ├── scripts/dify.sh                          (wraps reference/dify/docker/docker-compose.yaml)
-└── src/
-    ├── .acp/                                (governance, git-ignored)
-    │   ├── version.yaml
-    │   ├── kernel/{requests,plans,changes}/ (REQ/PLN/CHG-NNNN)
-    │   ├── support/                         (AGENT.md + PROJECT_MAP + LOAD_RULES + CHANGE_POLICY)
-    │   └── capability/capabilities.yaml
-    ├── docs/                                (planning, git-ignored)
-    │   ├── v1_executive_plan.tex
-    │   ├── v2_executive_plan.md / .tex      (V2 plan, 12 weeks — historical)
-    │   ├── v2_1_amendment_dify.md           (V2 → Dify-backed pivot)
-    │   ├── v3_executive_plan.md             (V3 — finishing posture, 6-8 weeks)
-    │   ├── architecture_data_flow.md        (8-layer data flow)
-    │   └── figma.md / doubao*.tex / ...
+├── .acp/                                    (governance; kernel is git-ignored)
+│   ├── version.yaml
+│   ├── kernel/{requests,plans,changes}/     (REQ/PLN/CHG-NNNN)
+│   ├── support/                             (AGENT.md + PROJECT_MAP + LOAD_RULES + CHANGE_POLICY)
+│   └── capability/capabilities.yaml
+├── docs/                                    (public user docs + GitHub Pages)
+└── services/
     ├── collab-server/                       (Node.js Yjs WebSocket server)
     │   ├── package.json                     (yjs, y-protocols, y-leveldb, ws)
     │   ├── tsconfig.json
@@ -151,13 +155,15 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │   └── app/
     │       ├── main.py                      (FastAPI + CORS + lifespan + snapshot task)
     │       ├── settings.py / database.py / secrets_vault.py
-    │       ├── models.py                    (7 tables)
+    │       ├── models.py                    (SQLAlchemy tables incl. native Agent / Skill)
     │       ├── schemas.py                   (Pydantic I/O)
     │       ├── api/
     │       │   ├── __init__.py              (router aggregator)
     │       │   ├── health.py
     │       │   ├── auth.py                  (register/login/logout/me/verify/collab-token)
     │       │   ├── providers.py
+    │       │   ├── native_agents.py         (native Agent credentials/skills/agents/marketplace)
+    │       │   ├── github.py / archives.py  (GitHub account + project archive)
     │       │   ├── workflows.py             (cached + runs + definitions + execute)
     │       │   ├── filesystem.py            (project tree + upload + internal doc content)
     │       │   ├── conversations.py         (SSE chat messages)
@@ -166,7 +172,11 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │           ├── dify_client.py           (Dify SSE)
     │           ├── nanobot_client.py        (OpenAI-style + multimodal)
     │           ├── provider_service.py
+    │           ├── native_agent_service.py  (native Agent + Skill CRUD)
+    │           ├── native_agent_runner.py   (provider-backed native Agent runtime)
+    │           ├── skill_marketplace_service.py / skill_content_crypto.py
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
+    │           ├── project_archive_service.py / github_service.py
     │           ├── project_fs_service.py    (SQLite file tree)
     │           ├── latex_compiler.py        (latexmk subprocess)
     │           ├── attached_files.py        (@ file normalization)
@@ -183,12 +193,15 @@ surface plus a multi-Agent review/polishing/workflow layer.
             │   ├── selectionContext.ts
             │   ├── outputParser.ts          (SSE → annotations)
             │   ├── mentions.ts              (@ parsing + attached files)
+            │   ├── trainingExportApi.ts     (annotation training export)
             │   ├── rangeTracker.ts          (annotation position mapping)
             │   └── collaborationProvider.ts (Yjs WebSocket + awareness)
             ├── stores/
             │   ├── documentStore.ts         (+ collaborating flag)
             │   ├── editorStore.ts
             │   ├── settingsStore.ts
+            │   ├── nativeAgentStore.ts      (native Agent + Skill Market)
+            │   ├── automationStore.ts
             │   ├── workflowStore.ts         (runs + definitions + SSE)
             │   ├── annotationStore.ts
             │   ├── filesystemStore.ts
@@ -201,12 +214,12 @@ surface plus a multi-Agent review/polishing/workflow layer.
             └── features/
                 ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions)
                 ├── settings/                (SettingsDialog)
-                ├── topbar/                  (Topbar + ProviderBadge + ViewControl)
+                ├── topbar/                  (Topbar + ViewControl + notifications + presence)
                 ├── file-tree/               (FileTree + OutlineList)
                 ├── preview/                 (LatexPreview + MarkdownPreview)
                 ├── workspace-center/        (EditorColumn + Toolbar + AnnotationColumn + PreviewColumn)
                 ├── annotation-panel/        (AnnotationPanel + CommentComposer)
-                ├── right-panel/             (RightPanel + Discussion/Team/Workflow/Definitions/RunHistory tabs)
+                ├── right-panel/             (Discussion/Team Agent-Skill-Workflow/Automation/RunHistory/Versions)
                 │   └── workflow-canvas/     (react-flow + palette + inspector)
                 └── shared/                  (MentionInput + fileSizeGate + CollaborationStatus + ProjectEventBridge)
 ```
@@ -224,20 +237,26 @@ Services are organized under `services/`:
 
 - **project-foundation** — ACP governance, planning docs, repo tooling, Dify launcher.
 - **frontend-workspace** — App.tsx shell: bootstrap, layout, cross-panel store wiring.
-- **frontend-topbar** — top bar + ProviderBadge + view controls.
+- **frontend-topbar** — top bar + view controls + notifications + presence.
 - **frontend-workspace-center** — editor + toolbar + annotation column + preview column.
 - **frontend-file-tree** — left-column project tree + outline.
 - **frontend-preview** — LaTeX / Markdown preview renderers.
 - **frontend-settings** — Provider registry dialog.
-- **frontend-stores** — 10 Zustand stores.
+- **frontend-stores** — Zustand stores for documents, workflows, native Agents,
+  automation, collaboration, history, project/user state, and UI view state.
 - **frontend-annotations** — AnnotationPanel + decorations; CommentComposer + continue composer.
-- **frontend-right-panel** — tabbed right panel (Discussion / Team / Workflow / Definitions / History). Alias of historical `frontend-workspace/agent-panel`.
+- **frontend-right-panel** — tabbed right panel (Discussion / Team with
+  Agent-Skill-Workflow subtabs / Automation / Run History / Versions). Alias
+  of historical `frontend-workspace/agent-panel`.
 - **frontend-conversations** — doc-scoped chat (UI + store + backend).
 - **frontend-mention-system** — @-mention infrastructure (parser + input component + backend contract). Shared by annotations + discussion.
 - **latex-editor** — self-contained editor module.
 - **latex-compile** — latexmk → PDF pipeline (backend + frontend).
 - **domain-model** — TypeScript contracts across 8 layers.
 - **backend-service** — FastAPI + SQLite core.
+- **native-agent-skills** — native Agent credentials, Agent CRUD/runtime,
+  encrypted Skill content, local Skill library, Skill Marketplace sync/install,
+  and AgentSkill assignment.
 - **workflow-integration** — provider clients (Dify + Nanobot) + provider registry + single-agent run lifecycle.
 - **workflow-orchestration** — V2.2 self-hosted multi-agent orchestrator + definition API + visual canvas + templates. Canonical baseline.
 - **real-time-editing** — Yjs CRDT collaborative editing: collab-server (Node.js WebSocket + LevelDB), y-codemirror.next binding, awareness (remote cursors), periodic snapshot to DB.

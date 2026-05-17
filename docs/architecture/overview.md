@@ -26,7 +26,8 @@ YuwanLabWriter 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
               │  • Yjs 文档同步  │  │  • REST API      │
               │  • Awareness     │──▶  • SSE 事件流    │
               │  • LevelDB 持久  │  │  • SQLite 存储   │
-              └──────────────────┘  │  • Agent 编排    │
+              └──────────────────┘  │  • Agent/Skill   │
+                                    │  • Agent 编排    │
                                     │  • LaTeX 编译    │
                                     └──────────────────┘
 ```
@@ -53,8 +54,9 @@ YuwanLabWriter 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
 ### 批注/工作流
 
 ```
-选中文字 → 运行 workflow → Backend agent_orchestrator
-    → 调用 Provider (Nanobot/Dify/Claude)
+选中文字 → 运行 workflow / 原生 Agent → Backend agent_orchestrator 或 NativeAgentRunner
+    → 调用 Provider (Nanobot/Dify)
+    → 仅加载用户给该 Agent 装配的 Skill
     → 解析输出 → 创建 Annotation → SSE 通知前端
     → 前端 annotationStore 更新 → 编辑器高亮装饰
 ```
@@ -89,8 +91,10 @@ Project
 
 - **Provider**：外部或原生 AI 服务配置；稳定字段保存身份、归属和 endpoint，可变探测结果保存在 `meta`
 - **CachedWorkflow**：外部 provider 同步出的可运行 Agent / workflow 投影
-- **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider
-- **Skill**：原生 Agent 可引用的系统、私有或公开 Skill
+- **NativeAgentCredential**：原生 Agent 运行凭证，加密存储
+- **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider；运行时只能读取用户装配的 Skill
+- **Skill**：原生 Agent 可引用的私有、共享或市场 Skill；内容加密存储，市场索引来自官方 `YuwanLabWriter.Skills` catalog
+- **SkillHidden**：用户本地 Skill 库隐藏/移除状态
 - **WorkflowDefinition**：用户自定义的多节点工作流
 - **WorkflowRun**：工作流运行记录
 - **Annotation**：批注卡片（锚定到文档位置）
@@ -125,7 +129,7 @@ Provider 和原生 Agent 的日常变化不应推动 schema 变化。新增 prov
 
 ## 安全设计
 
-- API Key 使用 Fernet 对称加密存储，密钥文件权限 600
+- API Key、GitHub token、原生 Agent 凭证和 Skill 内容使用 Fernet 对称加密存储，密钥文件权限 600
 - 用户密码使用 bcrypt 哈希
 - Session 基于 cookie，httpOnly
 - CORS 白名单限制（默认只允许 localhost + 私有网段）

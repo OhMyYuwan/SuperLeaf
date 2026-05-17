@@ -11,6 +11,7 @@ from . import (
     filesystem,
     github,
     health,
+    native_agents,
     notifications,
     projects,
     providers,
@@ -25,6 +26,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(providers.router)
+api_router.include_router(native_agents.router)
 api_router.include_router(projects.router)
 api_router.include_router(workflows.router)
 api_router.include_router(workflow_test_cases.router)

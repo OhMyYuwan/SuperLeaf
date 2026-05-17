@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_session
 from ..models import Provider, User
-from ..schemas import AgentStatOut, ProviderIn, ProviderOut, ProviderStatsOut, ProviderUpdate
+from ..schemas import AgentStatOut, ProviderIn, ProviderModelOut, ProviderOut, ProviderStatsOut, ProviderUpdate
 from ..services import stats_service
 from ..services.provider_service import ProviderService
 from .deps import get_current_user
@@ -114,6 +114,21 @@ async def probe_provider(
     if p is None:
         raise HTTPException(404, "Provider not found")
     return _to_out(p)
+
+
+@router.get("/{provider_id}/models", response_model=list[ProviderModelOut])
+async def list_provider_models(
+    provider_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> list[ProviderModelOut]:
+    try:
+        rows = await ProviderService(db).list_models(provider_id, user_id=user.id)
+    except Exception as exc:
+        raise HTTPException(502, f"Model scan failed: {type(exc).__name__}: {str(exc)[:240]}") from exc
+    if rows is None:
+        raise HTTPException(404, "Provider not found")
+    return [ProviderModelOut(**row) for row in rows]
 
 
 @router.get("/{provider_id}/stats", response_model=ProviderStatsOut)

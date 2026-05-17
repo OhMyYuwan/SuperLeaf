@@ -40,6 +40,9 @@ export type RunEventKind =
   | 'roundtable.converged'
   | 'dify'
   | 'nanobot'
+  | 'native.agent.step'
+  | 'native.agent.raw'
+  | 'native.agent.output.delta'
 
 export interface RunEvent {
   kind: RunEventKind

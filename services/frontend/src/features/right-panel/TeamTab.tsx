@@ -20,11 +20,17 @@ import {
   Ban,
   CheckCircle,
   Download,
+  Pencil,
 } from 'lucide-react'
 import type {
   CachedWorkflow,
+  NativeAgent,
+  NativeAgentDraft,
+  NativeAgentPatch,
   Provider,
   ProviderDraft,
+  ProviderModel,
+  ProviderUpdate,
   WorkflowDefinition,
   WorkflowDefinitionDraft,
 } from '../../services/backendApi'
@@ -37,6 +43,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useAnnotationStore } from '../../stores/annotationStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { useNativeAgentStore } from '../../stores/nativeAgentStore'
 import { trainingExportApi } from '../../services/trainingExportApi'
 import { WorkflowDefinitionsPanel } from './WorkflowDefinitionsPanel'
 
@@ -269,10 +276,44 @@ function ProviderBlock({
   onAfterMutate,
 }: ProviderBlockProps) {
   const probe = useSettingsStore((s) => s.probe)
+  const updateProvider = useSettingsStore((s) => s.update)
   const remove = useSettingsStore((s) => s.remove)
   const activate = useSettingsStore((s) => s.activate)
+  const nativeAgents = useNativeAgentStore((s) => s.agents)
+  const nativeLoaded = useNativeAgentStore((s) => s.loaded)
+  const nativeError = useNativeAgentStore((s) => s.error)
+  const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
+  const createNativeAgent = useNativeAgentStore((s) => s.createAgent)
+  const updateNativeAgent = useNativeAgentStore((s) => s.updateAgent)
+  const removeNativeAgent = useNativeAgentStore((s) => s.removeAgent)
   const [busy, setBusy] = useState<'probe' | 'remove' | 'activate' | null>(null)
   const [statsByWorkflow, setStatsByWorkflow] = useState<Record<string, AgentStat>>({})
+  const [editingProvider, setEditingProvider] = useState(false)
+  const [providerPatch, setProviderPatch] = useState<ProviderUpdate>({
+    name: provider.name,
+    endpoint: provider.endpoint,
+    api_key: '',
+  })
+  const [providerError, setProviderError] = useState<string | null>(null)
+  const [showNativeForm, setShowNativeForm] = useState(false)
+  const [modelOptions, setModelOptions] = useState<ProviderModel[]>([])
+  const [modelError, setModelError] = useState<string | null>(null)
+
+  const providerNativeAgents = nativeAgents.filter((agent) => agent.provider_id === provider.id)
+
+  useEffect(() => {
+    setProviderPatch({ name: provider.name, endpoint: provider.endpoint, api_key: '' })
+  }, [provider.id, provider.name, provider.endpoint])
+
+  useEffect(() => {
+    if (provider.kind === 'native' && !nativeLoaded) void loadNativeAgents()
+  }, [provider.kind, nativeLoaded, loadNativeAgents])
+
+  useEffect(() => {
+    if (provider.kind === 'native') {
+      setModelOptions(modelsFromProviderMeta(provider.meta))
+    }
+  }, [provider.kind, provider.meta])
 
   // Fetch per-agent stats whenever the workflow set under this provider
   // changes. Failures are non-fatal: cards just render without stats.
@@ -297,7 +338,11 @@ function ProviderBlock({
 
   const handleProbe = async () => {
     setBusy('probe')
-    await probe(provider.id)
+    const updated = await probe(provider.id)
+    if (updated?.kind === 'native') {
+      setModelOptions(modelsFromProviderMeta(updated.meta))
+      setModelError(null)
+    }
     setBusy(null)
     onAfterMutate()
   }
@@ -312,6 +357,30 @@ function ProviderBlock({
     setBusy('activate')
     await activate(provider.id)
     setBusy(null)
+  }
+  const handleProviderUpdate = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setProviderError(null)
+    const patch: ProviderUpdate = {
+      name: providerPatch.name?.trim(),
+      endpoint: providerPatch.endpoint?.trim(),
+    }
+    if (providerPatch.api_key?.trim()) patch.api_key = providerPatch.api_key.trim()
+    if (!patch.name || !patch.endpoint) {
+      setProviderError('名称和 endpoint 不能为空')
+      return
+    }
+    const updated = await updateProvider(provider.id, patch)
+    if (updated) {
+      const synced = await probe(provider.id)
+      if (synced?.kind === 'native') {
+        setModelOptions(modelsFromProviderMeta(synced.meta))
+      }
+      setEditingProvider(false)
+      onAfterMutate()
+    } else {
+      setProviderError('保存失败')
+    }
   }
 
   return (
@@ -329,6 +398,9 @@ function ProviderBlock({
         <div className="agent-team-block-actions">
           <button className="ghost-btn small" onClick={handleProbe} disabled={!!busy} title="测试连接并同步">
             {busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+          </button>
+          <button className="ghost-btn small" onClick={() => setEditingProvider((v) => !v)} disabled={!!busy} title="编辑 Provider">
+            <Pencil size={12} />
           </button>
           {!provider.is_active && (
             <button className="ghost-btn small" onClick={handleActivate} disabled={!!busy} title="设为默认">
@@ -348,14 +420,53 @@ function ProviderBlock({
         <div className="detail error">{provider.status_detail}</div>
       )}
 
+      {editingProvider && (
+        <form className="provider-edit-form" onSubmit={handleProviderUpdate}>
+          <div className="form-row">
+            <label>
+              <span>名称</span>
+              <input
+                value={providerPatch.name ?? ''}
+                onChange={(event) => setProviderPatch((prev) => ({ ...prev, name: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Endpoint</span>
+              <input
+                value={providerPatch.endpoint ?? ''}
+                onChange={(event) => setProviderPatch((prev) => ({ ...prev, endpoint: event.target.value }))}
+              />
+            </label>
+          </div>
+          <label className="full">
+            <span>API Key</span>
+            <input
+              type="password"
+              value={providerPatch.api_key ?? ''}
+              onChange={(event) => setProviderPatch((prev) => ({ ...prev, api_key: event.target.value }))}
+              placeholder={provider.has_api_key ? '留空表示不修改' : '请输入 API key'}
+            />
+          </label>
+          {providerError && <div className="form-error">{providerError}</div>}
+          <div className="form-actions">
+            <button type="button" className="ghost-btn" onClick={() => setEditingProvider(false)}>
+              取消
+            </button>
+            <button type="submit" className="primary-btn">
+              保存 Provider
+            </button>
+          </div>
+        </form>
+      )}
+
       <div className="agent-list">
-        {!workflowsLoaded && <div className="agent-empty-inline">加载中…</div>}
-        {workflowsLoaded && workflows.length === 0 && (
+        {provider.kind !== 'native' && !workflowsLoaded && <div className="agent-empty-inline">加载中…</div>}
+        {provider.kind !== 'native' && workflowsLoaded && workflows.length === 0 && (
           <div className="agent-empty-inline">
             该供应商下还没有 Agent。在 {providerConsoleLabel(provider.kind)} 创建后点上方刷新。
           </div>
         )}
-        {workflows.filter((w) => !w.is_disabled).map((wf) => (
+        {provider.kind !== 'native' && workflows.filter((w) => !w.is_disabled).map((wf) => (
           <AgentCard
             key={wf.id}
             workflow={wf}
@@ -364,7 +475,45 @@ function ProviderBlock({
             onAfterMutate={onAfterMutate}
           />
         ))}
+        {provider.kind === 'native' && !nativeLoaded && <div className="agent-empty-inline">加载中…</div>}
+        {provider.kind === 'native' && nativeLoaded && providerNativeAgents.length === 0 && (
+          <div className="agent-empty-inline">这个原生 Provider 里还没有 Agent。</div>
+        )}
+        {provider.kind === 'native' && nativeLoaded && providerNativeAgents.map((agent) => (
+          <NativeAgentCard
+            key={agent.id}
+            agent={agent}
+            modelOptions={modelOptions}
+            modelError={modelError}
+            onUpdate={updateNativeAgent}
+            onRemove={removeNativeAgent}
+            onAfterMutate={onAfterMutate}
+          />
+        ))}
       </div>
+      {provider.kind === 'native' && (
+        showNativeForm ? (
+          <NativeAgentForm
+            providerId={provider.id}
+            modelOptions={modelOptions}
+            modelError={modelError}
+            onCancel={() => setShowNativeForm(false)}
+            onSave={async (draft) => {
+              const created = await createNativeAgent(draft)
+              if (created) {
+                setShowNativeForm(false)
+                onAfterMutate()
+              }
+            }}
+          />
+        ) : (
+          <button className="primary-btn add-native-agent-btn" onClick={() => setShowNativeForm(true)}>
+            <Plus size={14} /> 添加 Agent
+          </button>
+        )
+      )}
+      {provider.kind === 'native' && modelError && <div className="form-error">{modelError}</div>}
+      {provider.kind === 'native' && nativeError && <div className="form-error">{nativeError}</div>}
     </div>
   )
 }
@@ -425,6 +574,217 @@ function AgentCard({ workflow, stat, onChatWithAgent, onAfterMutate }: AgentCard
         </button>
       </div>
     </div>
+  )
+}
+
+interface NativeAgentCardProps {
+  agent: NativeAgent
+  modelOptions: ProviderModel[]
+  modelError: string | null
+  onUpdate: (id: string, patch: NativeAgentPatch) => Promise<NativeAgent | null>
+  onRemove: (id: string) => Promise<boolean>
+  onAfterMutate: () => void
+}
+
+function NativeAgentCard({ agent, modelOptions, modelError, onUpdate, onRemove, onAfterMutate }: NativeAgentCardProps) {
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const handleRemove = async () => {
+    if (!confirm(`删除 Agent「${agent.name}」？`)) return
+    setBusy(true)
+    const removed = await onRemove(agent.id)
+    if (removed) onAfterMutate()
+    setBusy(false)
+  }
+
+  if (editing) {
+    return (
+      <NativeAgentForm
+        providerId={agent.provider_id}
+        agent={agent}
+        modelOptions={modelOptions}
+        modelError={modelError}
+        onCancel={() => setEditing(false)}
+        onSave={async (draft) => {
+          const updated = await onUpdate(agent.id, draft)
+          if (updated) {
+            setEditing(false)
+            onAfterMutate()
+          }
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="agent-card native">
+      <div className="agent-avatar" style={{ background: agentColor('native') }}>
+        {agent.name.slice(0, 1).toUpperCase()}
+      </div>
+      <div className="agent-info">
+        <strong>{agent.name}</strong>
+        <span>
+          原生 · {agent.model}
+          {agent.description ? ` · ${agent.description}` : ''}
+        </span>
+        <span className="agent-stats-empty">{agent.is_enabled ? '已启用' : '已停用'}</span>
+      </div>
+      <div className="agent-card-actions">
+        <button
+          className="tree-action-btn"
+          title={agent.is_enabled ? '停用 Agent' : '启用 Agent'}
+          onClick={async () => {
+            const updated = await onUpdate(agent.id, { is_enabled: !agent.is_enabled })
+            if (updated) onAfterMutate()
+          }}
+        >
+          {agent.is_enabled ? <Ban size={12} /> : <CheckCircle size={12} />}
+        </button>
+        <button className="tree-action-btn" title="编辑 Agent" onClick={() => setEditing(true)}>
+          <Pencil size={12} />
+        </button>
+        <button className="tree-action-btn" title="删除 Agent" onClick={handleRemove} disabled={busy}>
+          {busy ? <Loader2 size={12} className="spin" /> : <Trash2 size={12} />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function NativeAgentForm({
+  providerId,
+  agent,
+  modelOptions,
+  modelError,
+  onCancel,
+  onSave,
+}: {
+  providerId: string
+  agent?: NativeAgent
+  modelOptions: ProviderModel[]
+  modelError?: string | null
+  onCancel: () => void
+  onSave: (draft: NativeAgentDraft) => Promise<void>
+}) {
+  const initialModel = agent?.model || modelOptions[0]?.id || 'gpt-4.1-mini'
+  const [modelMode, setModelMode] = useState<'select' | 'custom'>(
+    modelOptions.length > 0 && (!agent || modelOptions.some((model) => model.id === agent.model))
+      ? 'select'
+      : 'custom',
+  )
+  const [draft, setDraft] = useState<NativeAgentDraft>({
+    name: agent?.name ?? '',
+    description: agent?.description ?? '',
+    provider_id: providerId,
+    model: initialModel,
+    instructions: agent?.instructions ?? '',
+    skill_ids: agent?.skill_ids ?? [],
+    output_contract: agent?.output_contract ?? 'annotation',
+    runtime_config: agent?.runtime_config ?? {},
+    is_enabled: agent?.is_enabled ?? true,
+  })
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (modelOptions.some((model) => model.id === draft.model)) {
+      setModelMode('select')
+    }
+    if (!agent && modelOptions.length > 0 && !modelOptions.some((model) => model.id === draft.model)) {
+      setDraft((prev) => ({ ...prev, model: modelOptions[0].id }))
+      setModelMode('select')
+    }
+  }, [agent, draft.model, modelOptions])
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setFormError(null)
+    if (!draft.name.trim() || !draft.model.trim()) {
+      setFormError('名称和模型不能为空')
+      return
+    }
+    setSaving(true)
+    await onSave({
+      ...draft,
+      name: draft.name.trim(),
+      model: draft.model.trim(),
+      instructions: draft.instructions.trim(),
+    })
+    setSaving(false)
+  }
+
+  return (
+    <form className="native-agent-inline-form" onSubmit={handleSubmit}>
+      <div className="form-row">
+        <label>
+          <span>Agent 名称</span>
+          <input
+            value={draft.name}
+            onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
+            autoFocus={!agent}
+          />
+        </label>
+        <label>
+          <span>模型</span>
+          <div className="model-picker">
+            <select
+              value={modelMode === 'select' ? draft.model : '__custom__'}
+              onChange={(event) => {
+                const value = event.target.value
+                if (value === '__custom__') {
+                  setModelMode('custom')
+                  return
+                }
+                setModelMode('select')
+                setDraft((prev) => ({ ...prev, model: value }))
+              }}
+            >
+              <option value="__custom__">自定义模型名</option>
+              {modelOptions.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name || model.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          {modelMode === 'custom' && (
+            <input
+              value={draft.model}
+              onChange={(event) => setDraft((prev) => ({ ...prev, model: event.target.value }))}
+              placeholder="gpt-4.1-mini"
+            />
+          )}
+          {modelError && <small className="model-error">{modelError}</small>}
+        </label>
+      </div>
+      <label className="full">
+        <span>描述</span>
+        <input
+          value={draft.description}
+          onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))}
+          placeholder="这个 Agent 负责什么"
+        />
+      </label>
+      <label className="full">
+        <span>指令</span>
+        <textarea
+          value={draft.instructions}
+          onChange={(event) => setDraft((prev) => ({ ...prev, instructions: event.target.value }))}
+          rows={4}
+          placeholder="Agent 的系统指令，可留空后续再补"
+        />
+      </label>
+      {formError && <div className="form-error">{formError}</div>}
+      <div className="form-actions">
+        <button type="button" className="ghost-btn" onClick={onCancel} disabled={saving}>
+          取消
+        </button>
+        <button type="submit" className="primary-btn" disabled={saving}>
+          {saving ? <Loader2 size={14} className="spin" /> : agent ? '保存 Agent' : '添加 Agent'}
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -493,6 +853,7 @@ function AgentQualityRow({ workflowId }: { workflowId: string }) {
 
 function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const create = useSettingsStore((s) => s.create)
+  const probe = useSettingsStore((s) => s.probe)
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
@@ -512,6 +873,8 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           ? 'https://api.dify.ai/v1'
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
+            : kind === 'native'
+              ? 'https://api.openai.com/v1'
             : kind === 'nanobot'
               ? getLocalServiceUrl(8902)
               : 'http://localhost:8080/v1',
@@ -532,11 +895,13 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     }
     setSubmitting(true)
     const result = await create(filledDraft)
-    setSubmitting(false)
     if (result) {
+      await probe(result.id)
+      setSubmitting(false)
       onClose()
       onCreated()
     } else {
+      setSubmitting(false)
       setFormError('创建失败，查看控制台')
     }
   }
@@ -564,6 +929,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             <option value="dify-cloud">Dify Cloud</option>
             <option value="claude-direct">Claude API 直连</option>
             <option value="nanobot">Nanobot</option>
+            <option value="native">原生 Agent</option>
           </select>
         </label>
       </div>
@@ -572,7 +938,13 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-          placeholder={draft.kind === 'nanobot' ? getLocalServiceUrl(8902) : 'http://localhost:8080/v1'}
+          placeholder={
+            draft.kind === 'nanobot'
+              ? getLocalServiceUrl(8902)
+              : draft.kind === 'native'
+                ? 'https://api.openai.com/v1'
+                : 'http://localhost:8080/v1'
+          }
         />
       </label>
       <label className="full">
@@ -627,6 +999,7 @@ function BackendStatusBar({
 }
 
 function agentColor(kind: string): string {
+  if (kind === 'native') return '#059669'
   if (kind === 'nanobot') return '#0ea5e9'
   if (kind.includes('chat')) return '#7c3aed'
   if (kind.includes('agent')) return '#059669'
@@ -636,7 +1009,36 @@ function agentColor(kind: string): string {
 function providerConsoleLabel(kind: Provider['kind']): string {
   if (kind === 'claude-direct') return 'Claude 控制台'
   if (kind === 'nanobot') return 'Nanobot 服务'
+  if (kind === 'native') return '原生 Agent Provider'
   return 'Dify 控制台'
+}
+
+function modelsFromProviderMeta(meta: Record<string, unknown>): ProviderModel[] {
+  const models = meta.models
+  if (Array.isArray(models)) {
+    return models
+      .map((item) => {
+        if (typeof item === 'string') {
+          return { id: item, name: item, description: '' }
+        }
+        if (!item || typeof item !== 'object') return null
+        const record = item as Record<string, unknown>
+        const id = String(record.id ?? record.name ?? '').trim()
+        if (!id) return null
+        return {
+          id,
+          name: String(record.name ?? id),
+          description: String(record.description ?? ''),
+        }
+      })
+      .filter((item): item is ProviderModel => item !== null)
+  }
+  const ids = meta.model_ids
+  if (!Array.isArray(ids)) return []
+  return ids
+    .map((id) => String(id).trim())
+    .filter(Boolean)
+    .map((id) => ({ id, name: id, description: '' }))
 }
 
 interface DisabledAgentsModalProps {

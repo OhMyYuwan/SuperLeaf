@@ -46,7 +46,7 @@ export function getLocalServiceUrl(port: number): string {
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string
@@ -69,6 +69,12 @@ export interface ProviderUpdate {
   name?: string
   endpoint?: string
   api_key?: string
+}
+
+export interface ProviderModel {
+  id: string
+  name: string
+  description: string
 }
 
 export async function http<T>(path: string, init?: HttpInit): Promise<T> {
@@ -194,6 +200,171 @@ export const providerApi = {
     http<Provider>(`/api/providers/${id}/activate`, { method: 'POST' }),
   probe: (id: string) =>
     http<Provider>(`/api/providers/${id}/probe`, { method: 'POST' }),
+  listModels: (id: string) =>
+    http<ProviderModel[]>(`/api/providers/${id}/models`),
+}
+
+export interface NativeAgentCredential {
+  id: string
+  user_id: string
+  name: string
+  base_url: string
+  runtime_kind: string
+  default_model: string
+  status: 'unknown' | 'ok' | 'error' | string
+  status_detail: string
+  meta: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  has_api_key: boolean
+}
+
+export interface NativeAgentCredentialDraft {
+  name: string
+  base_url: string
+  api_key: string
+  runtime_kind?: string
+  default_model: string
+}
+
+export interface NativeAgentCredentialPatch {
+  name?: string
+  base_url?: string
+  api_key?: string
+  runtime_kind?: string
+  default_model?: string
+}
+
+export interface Skill {
+  id: string
+  owner_user_id: string
+  name: string
+  public_name: string
+  description: string
+  content: string
+  visibility: 'system' | 'private' | 'public' | string
+  source: 'bundled' | 'upload' | string
+  version: number
+  tags: string[]
+  can_edit: boolean
+  created_at: string
+  updated_at: string
+  published_at: string | null
+}
+
+export interface SkillDraft {
+  name: string
+  description?: string
+  content: string
+  tags?: string[]
+}
+
+export interface SkillPatch {
+  name?: string
+  description?: string
+  content?: string
+  tags?: string[]
+}
+
+export interface NativeAgent {
+  id: string
+  project_id: string
+  owner_user_id: string
+  provider_id: string
+  name: string
+  description: string
+  model: string
+  instructions: string
+  skill_ids: string[]
+  output_contract: 'annotation' | 'plan' | 'workflow' | 'freeform' | string
+  runtime_config: Record<string, unknown>
+  is_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface NativeAgentDraft {
+  name: string
+  description?: string
+  provider_id: string
+  model: string
+  instructions: string
+  skill_ids?: string[]
+  output_contract?: NativeAgent['output_contract']
+  runtime_config?: Record<string, unknown>
+  is_enabled?: boolean
+}
+
+export interface NativeAgentPatch {
+  name?: string
+  description?: string
+  provider_id?: string
+  model?: string
+  instructions?: string
+  skill_ids?: string[]
+  output_contract?: NativeAgent['output_contract']
+  runtime_config?: Record<string, unknown>
+  is_enabled?: boolean
+}
+
+export const nativeAgentApi = {
+  credentials: {
+    list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
+    create: (draft: NativeAgentCredentialDraft) =>
+      http<NativeAgentCredential>('/api/native-agent/credentials', {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      }),
+    update: (id: string, patch: NativeAgentCredentialPatch) =>
+      http<NativeAgentCredential>(`/api/native-agent/credentials/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    probe: (id: string) =>
+      http<NativeAgentCredential>(`/api/native-agent/credentials/${encodeURIComponent(id)}/probe`, {
+        method: 'POST',
+      }),
+  },
+  skills: {
+    list: () => http<Skill[]>('/api/native-agent/skills'),
+    create: (draft: SkillDraft) =>
+      http<Skill>('/api/native-agent/skills', { method: 'POST', body: JSON.stringify(draft) }),
+    update: (id: string, patch: SkillPatch) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    publish: (id: string) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}/publish`, {
+        method: 'POST',
+      }),
+    unpublish: (id: string) =>
+      http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}/unpublish`, {
+        method: 'POST',
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  agents: {
+    list: (providerId?: string) => {
+      const qs = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''
+      return http<NativeAgent[]>(`/api/native-agent/agents${qs}`)
+    },
+    create: (draft: NativeAgentDraft) =>
+      http<NativeAgent>('/api/native-agent/agents', {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      }),
+    update: (id: string, patch: NativeAgentPatch) =>
+      http<NativeAgent>(`/api/native-agent/agents/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) =>
+      http<void>(`/api/native-agent/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
 }
 
 export interface CachedWorkflow {

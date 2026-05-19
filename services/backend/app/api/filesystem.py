@@ -240,6 +240,27 @@ def _doc_format_for_filename(name: str) -> str | None:
     return _TEXT_DOC_EXTS.get(ext)
 
 
+@router.post("/api/project/import.zip", status_code=200)
+async def import_project_zip(
+    file: UploadFile,
+    db: Session = Depends(get_session),
+    project: Project = Depends(require_write_access),
+) -> dict:
+    blob = await file.read()
+    try:
+        doc_count, file_count, byte_count = ProjectFsService(db, project).replace_from_zip(
+            blob
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {
+        "ok": True,
+        "doc_count": doc_count,
+        "file_count": file_count,
+        "byte_count": byte_count,
+    }
+
+
 @router.post("/api/files/upload", status_code=201)
 async def upload_file(
     file: UploadFile,

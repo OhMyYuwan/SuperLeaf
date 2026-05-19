@@ -9,6 +9,7 @@ import {
   Plus,
   FolderPlus,
   FolderUp,
+  FileArchive,
   Pencil,
   Trash2,
   Upload,
@@ -62,6 +63,7 @@ interface FileTreeProps {
   ) => Promise<void>
   onUploadFile: (file: File, folderId?: string | null) => Promise<void>
   onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
+  onUploadProjectZip: (file: File) => Promise<void>
   onRenameProject: (name: string) => Promise<void>
 }
 
@@ -82,6 +84,7 @@ export function FileTree({
   onMoveEntity,
   onUploadFile,
   onUploadFolder,
+  onUploadProjectZip,
   onRenameProject,
 }: FileTreeProps) {
   const handleCreateRootFolder = async () => {
@@ -104,6 +107,14 @@ export function FileTree({
 
   const handleUploadFolderRoot = () => {
     triggerUploadFolder((files) => onUploadFolder(files, null))
+  }
+
+  const handleUploadZipRoot = () => {
+    const ok = confirm(
+      '导入 ZIP 会替换当前项目的全部文件树，并关闭当前打开的文档。是否继续？',
+    )
+    if (!ok) return
+    triggerUploadZip((file) => onUploadProjectZip(file))
   }
 
   const handleRenameProject = () => {
@@ -137,6 +148,9 @@ export function FileTree({
           </button>
           <button className="tree-action-btn" title="上传文件夹" onClick={handleUploadFolderRoot}>
             <FolderUp size={13} />
+          </button>
+          <button className="tree-action-btn" title="导入 ZIP（替换项目）" onClick={handleUploadZipRoot}>
+            <FileArchive size={13} />
           </button>
           <button className="tree-action-btn" title="导出 ZIP" onClick={handleExport}>
             <Download size={13} />
@@ -510,6 +524,17 @@ function triggerUploadFolder(onFiles: (files: FileList) => void) {
   input.onchange = () => {
     const files = input.files
     if (files && files.length > 0) onFiles(files)
+  }
+  input.click()
+}
+
+function triggerUploadZip(onFile: (file: File) => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.zip,application/zip,application/x-zip-compressed'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) onFile(file)
   }
   input.click()
 }

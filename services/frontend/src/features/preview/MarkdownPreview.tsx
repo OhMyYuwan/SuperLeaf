@@ -15,11 +15,13 @@ import MarkdownIt from 'markdown-it'
 // markdown-it-katex 2.x ships CJS with no bundled types.
 // @ts-expect-error — no types
 import mdKatex from 'markdown-it-katex'
+import { useFilesystemStore } from '../../stores/filesystemStore'
 import {
   sourceJumpFromMarkdownElement,
   stampMarkdownSourceLines,
   type SourceJump,
 } from '../../services/previewSourceMap'
+import { buildMarkdownAssetUrlMap, rewriteMarkdownImageSources } from './markdownAssets'
 import 'katex/dist/katex.min.css'
 import './markdown-preview.css'
 
@@ -41,11 +43,18 @@ const md = new MarkdownIt({
   })
 
 export function MarkdownPreview({ source, className, onSourceJump }: MarkdownPreviewProps) {
+  const tree = useFilesystemStore((state) => state.tree)
+  const assetUrls = useMemo(
+    () => (tree ? buildMarkdownAssetUrlMap(tree.root) : null),
+    [tree],
+  )
+
   const html = useMemo(() => {
     const tokens = md.parse(source ?? '', {})
+    if (assetUrls) rewriteMarkdownImageSources(tokens, assetUrls)
     stampMarkdownSourceLines(tokens)
     return md.renderer.render(tokens, md.options, {})
-  }, [source])
+  }, [assetUrls, source])
 
   return (
     <div

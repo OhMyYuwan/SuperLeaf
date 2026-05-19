@@ -48,6 +48,7 @@ interface FilesystemState {
   ) => Promise<void>
   uploadFile: (file: File, folderId?: string | null) => Promise<void>
   uploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
+  uploadProjectZip: (file: File) => Promise<void>
 
   setPreviewFile: (file: TreeFile | null) => void
   convertFileToDoc: (fileId: string) => Promise<string>
@@ -197,6 +198,28 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
     } finally {
       set({ loading: false })
       await get().loadTree()
+    }
+  },
+
+  uploadProjectZip: async (file) => {
+    set({ loading: true, error: null })
+    try {
+      const documentStore = useDocumentStore.getState()
+      for (const id of Object.keys(documentStore.documents)) {
+        documentStore.removeDocument(id)
+      }
+      set({
+        activePreviewFile: null,
+        expandedFolderIds: { root: true },
+      })
+      await filesystemApi.importProjectZip(file)
+      await get().loadTree()
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e)
+      set({ error })
+      throw e
+    } finally {
+      set({ loading: false })
     }
   },
 

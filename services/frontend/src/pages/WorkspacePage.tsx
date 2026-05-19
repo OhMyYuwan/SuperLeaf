@@ -76,6 +76,7 @@ export function WorkspacePage() {
   const moveEntity = useFilesystemStore((s) => s.moveEntity)
   const uploadFile = useFilesystemStore((s) => s.uploadFile)
   const uploadFolder = useFilesystemStore((s) => s.uploadFolder)
+  const uploadProjectZip = useFilesystemStore((s) => s.uploadProjectZip)
   const renameProject = useFilesystemStore((s) => s.renameProject)
   const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
   const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
@@ -441,6 +442,7 @@ export function WorkspacePage() {
                     onMoveEntity={moveEntity}
                     onUploadFile={uploadFile}
                     onUploadFolder={uploadFolder}
+                    onUploadProjectZip={uploadProjectZip}
                     onRenameProject={renameProject}
                   />
                   <OutlineList

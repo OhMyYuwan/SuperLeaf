@@ -477,13 +477,14 @@ function FolderNode({
 
   if (isRoot) {
     return (
-      <div
-        className={`tree-folder-block root ${dragOver ? 'drag-over' : ''}`}
-        onDragOver={handleDragOverFolder}
-        onDragLeave={handleDragLeaveFolder}
-        onDrop={handleDropOnFolder}
-      >
-        <div className="tree-root-drop-target" title="拖到这里移动到项目根目录">
+      <div className={`tree-folder-block root ${dragOver ? 'drag-over' : ''}`}>
+        <div
+          className="tree-root-drop-target"
+          title="拖到这里移动到项目根目录"
+          onDragOver={handleDragOverFolder}
+          onDragLeave={handleDragLeaveFolder}
+          onDrop={handleDropOnFolder}
+        >
           <FolderOpen size={14} />
           <span>项目根目录</span>
         </div>

@@ -356,7 +356,7 @@
 }
 
 /* Drag-and-drop visual feedback */
-.tree-folder-block.drag-over {
+.tree-folder-block:not(.root).drag-over {
   background: rgba(59, 130, 246, 0.1);
   outline: 1px dashed rgba(59, 130, 246, 0.6);
   outline-offset: -1px;

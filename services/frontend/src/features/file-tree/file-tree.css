@@ -1,10 +1,27 @@
 .left-panel {
   padding: 14px;
-  gap: 14px;
+  gap: 0;
+}
+
+.left-panel-split {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.left-panel .resize-handle.vertical {
+  width: 100%;
+  height: 4px;
+  min-height: 4px;
+  margin: 5px 0;
+  cursor: row-resize;
+  border-radius: 999px;
 }
 
 .panel-section {
   flex: 1;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -22,9 +39,50 @@
 
 .file-list,
 .outline-list {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.outline-list {
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.outline-section.collapsed {
+  justify-content: center;
+}
+
+.outline-section-title {
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.outline-title-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.outline-collapse-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.9);
+  cursor: pointer;
+}
+.outline-collapse-btn:hover {
+  background: rgba(59, 130, 246, 0.28);
+  color: #dbeafe;
 }
 
 .file-item,

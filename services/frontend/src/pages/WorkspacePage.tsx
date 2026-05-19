@@ -123,6 +123,7 @@ export function WorkspacePage() {
   } | null>(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false)
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
@@ -425,31 +426,50 @@ export function WorkspacePage() {
               <Panel defaultSize={20} minSize={OUTER_PANEL_AUTO_COLLAPSE_PERCENT}>
                 <ErrorBoundary label="文件树">
                   <div className="panel left-panel">
-                  <FileTree
-                    tree={tree}
-                    activeDocId={activeDocumentId}
-                    activeFileId={activePreviewFile?.id ?? null}
-                    expandedFolderIds={expandedFolderIds}
-                    loading={treeLoading}
-                    error={treeError}
-                    onToggleFolder={toggleExpanded}
-                    onOpenDoc={handleOpenDoc}
-                    onOpenFile={handleOpenFile}
-                    onCreateFolder={createFolder}
-                    onCreateDoc={createDoc}
-                    onRenameEntity={renameEntity}
-                    onDeleteEntity={deleteEntity}
-                    onMoveEntity={moveEntity}
-                    onUploadFile={uploadFile}
-                    onUploadFolder={uploadFolder}
-                    onUploadProjectZip={uploadProjectZip}
-                    onRenameProject={renameProject}
-                  />
-                  <OutlineList
-                    sections={activeDoc ? activeDoc.structure.sections : null}
-                    docId={activeDocumentId}
-                    onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
-                  />
+                    <PanelGroup
+                      key={outlineCollapsed ? 'left-outline-collapsed' : 'left-outline-open'}
+                      orientation="vertical"
+                      className="left-panel-split"
+                    >
+                      <Panel defaultSize={outlineCollapsed ? 92 : 62} minSize={24}>
+                        <FileTree
+                          tree={tree}
+                          activeDocId={activeDocumentId}
+                          activeFileId={activePreviewFile?.id ?? null}
+                          expandedFolderIds={expandedFolderIds}
+                          loading={treeLoading}
+                          error={treeError}
+                          onToggleFolder={toggleExpanded}
+                          onOpenDoc={handleOpenDoc}
+                          onOpenFile={handleOpenFile}
+                          onCreateFolder={createFolder}
+                          onCreateDoc={createDoc}
+                          onRenameEntity={renameEntity}
+                          onDeleteEntity={deleteEntity}
+                          onMoveEntity={moveEntity}
+                          onUploadFile={uploadFile}
+                          onUploadFolder={uploadFolder}
+                          onUploadProjectZip={uploadProjectZip}
+                          onRenameProject={renameProject}
+                        />
+                      </Panel>
+                      {!outlineCollapsed && (
+                        <PanelResizeHandle className="resize-handle vertical" />
+                      )}
+                      <Panel
+                        defaultSize={outlineCollapsed ? 8 : 38}
+                        minSize={outlineCollapsed ? 8 : 16}
+                        maxSize={outlineCollapsed ? 8 : 76}
+                      >
+                        <OutlineList
+                          sections={activeDoc ? activeDoc.structure.sections : null}
+                          docId={activeDocumentId}
+                          collapsed={outlineCollapsed}
+                          onToggleCollapsed={() => setOutlineCollapsed((v) => !v)}
+                          onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
+                        />
+                      </Panel>
+                    </PanelGroup>
                   </div>
                 </ErrorBoundary>
               </Panel>

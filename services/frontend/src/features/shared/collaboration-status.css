@@ -1,6 +1,7 @@
 .collab-status {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 6px;
   padding: 0 8px;
 }

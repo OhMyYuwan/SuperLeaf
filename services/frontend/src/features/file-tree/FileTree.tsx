@@ -352,6 +352,20 @@ function FolderNode({
     onDeleteEntity('doc', doc.id)
   }
 
+  const handleDownloadDoc = async (e: React.MouseEvent, doc: TreeDoc) => {
+    e.stopPropagation()
+    try {
+      const backendDoc = await filesystemApi.getDoc(doc.id)
+      const blob = new Blob([backendDoc.content ?? ''], {
+        type: mimeForDocFormat(backendDoc.format),
+      })
+      downloadBlob(blob, backendDoc.name || doc.name)
+    } catch (err) {
+      console.error('download doc failed', err)
+      alert('下载文档失败，请稍后重试。')
+    }
+  }
+
   const handleRenameFile = (e: React.MouseEvent, file: TreeFile) => {
     e.stopPropagation()
     const name = prompt('重命名文件', file.name)?.trim()
@@ -363,6 +377,15 @@ function FolderNode({
     e.stopPropagation()
     if (!confirm(`确定删除文件「${file.name}」？`)) return
     onDeleteEntity('file', file.id)
+  }
+
+  const handleDownloadFile = (e: React.MouseEvent, file: TreeFile) => {
+    e.stopPropagation()
+    const a = document.createElement('a')
+    a.href = filesystemApi.fileUrl(file.id)
+    a.download = file.name
+    a.rel = 'noopener'
+    a.click()
   }
 
   const children = (
@@ -403,6 +426,13 @@ function FolderNode({
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{doc.name}</span>
             <span className="tree-actions inline">
+              <button
+                className="tree-action-btn"
+                title="下载"
+                onClick={(e) => void handleDownloadDoc(e, doc)}
+              >
+                <Download size={11} />
+              </button>
               <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
                 <Pencil size={11} />
               </button>
@@ -429,6 +459,9 @@ function FolderNode({
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{file.name}</span>
             <span className="tree-actions inline">
+              <button className="tree-action-btn" title="下载" onClick={(e) => handleDownloadFile(e, file)}>
+                <Download size={11} />
+              </button>
               <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
                 <Pencil size={11} />
               </button>
@@ -556,4 +589,19 @@ function prettySize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function mimeForDocFormat(format: 'tex' | 'md' | 'txt'): string {
+  if (format === 'md') return 'text/markdown;charset=utf-8'
+  if (format === 'tex') return 'application/x-tex;charset=utf-8'
+  return 'text/plain;charset=utf-8'
+}
+
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

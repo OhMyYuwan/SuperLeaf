@@ -176,7 +176,10 @@
 
 .tree-folder-row:hover .tree-actions.inline,
 .tree-doc-row:hover .tree-actions.inline,
-.tree-file-row:hover .tree-actions.inline {
+.tree-file-row:hover .tree-actions.inline,
+.tree-folder-row:focus-within .tree-actions.inline,
+.tree-doc-row:focus-within .tree-actions.inline,
+.tree-file-row:focus-within .tree-actions.inline {
   opacity: 1;
 }
 

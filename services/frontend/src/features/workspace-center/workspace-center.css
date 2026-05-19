@@ -3,22 +3,38 @@
   gap: 0;
 }
 
-.editor-toolbar {
+.editor-toolbar-shell {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 14px 18px;
+  width: 100%;
+  min-width: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(2, 6, 23, 0.55);
 }
 
+.editor-toolbar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  background: transparent;
+}
+
 .toolbar-left {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 14px;
 }
 
 .doc-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
   color: #e5e7eb;
@@ -68,9 +84,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .selection-info {
+  max-width: min(360px, 34vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: rgba(148, 163, 184, 0.85);
   background: rgba(59, 130, 246, 0.14);
@@ -101,9 +122,47 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 700;
   color: #cbd5e1;
+}
+
+.preview-column-header {
+  justify-content: space-between;
+}
+
+.column-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.preview-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.preview-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.preview-export-btn:hover {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.55);
+  color: #1d4ed8;
 }
 
 .latex-editor-host {

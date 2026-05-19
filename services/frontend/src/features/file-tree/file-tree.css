@@ -46,6 +46,38 @@
   gap: 4px;
 }
 
+.tree-list,
+.outline-list {
+  scrollbar-color: rgba(226, 232, 240, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.tree-list::-webkit-scrollbar,
+.outline-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tree-list::-webkit-scrollbar-track,
+.tree-list::-webkit-scrollbar-corner,
+.outline-list::-webkit-scrollbar-track,
+.outline-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.tree-list::-webkit-scrollbar-thumb,
+.outline-list::-webkit-scrollbar-thumb {
+  background: rgba(226, 232, 240, 0.24);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+.tree-list::-webkit-scrollbar-thumb:hover,
+.outline-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 232, 240, 0.38);
+  background-clip: content-box;
+}
+
 .outline-list {
   overflow-x: hidden;
   overflow-y: auto;
@@ -229,7 +261,32 @@
 
 .tree-list {
   overflow-x: hidden;
+  overflow-x: clip;
   overflow-y: auto;
+  overscroll-behavior-x: none;
+}
+
+.tree-list::-webkit-scrollbar {
+  width: 8px;
+  height: 0;
+}
+
+.tree-list::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
+}
+
+.tree-list::-webkit-scrollbar-track:horizontal,
+.tree-list::-webkit-scrollbar-thumb:horizontal {
+  background: transparent;
+  border: 0;
+}
+
+.tree-list .tree-folder-block,
+.tree-list .tree-root-drop-target,
+.tree-list .file-item {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tree-folder-row:hover .tree-actions.inline,

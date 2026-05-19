@@ -43,6 +43,7 @@ import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
+const OUTLINE_COLLAPSED_HEIGHT = '44px'
 
 export function WorkspacePage() {
   const { projectId = '' } = useParams<{ projectId: string }>()
@@ -418,7 +419,7 @@ export function WorkspacePage() {
       <main className="workspace">
         <PanelGroup
           orientation="horizontal"
-          style={{ height: '100%' }}
+          className="workspace-panel-group"
           onLayoutChanged={(layout) => handlePanelLayout(Object.values(layout))}
         >
           {leftPanelVisible && !leftCollapsed && (
@@ -431,7 +432,10 @@ export function WorkspacePage() {
                       orientation="vertical"
                       className="left-panel-split"
                     >
-                      <Panel defaultSize={outlineCollapsed ? 92 : 62} minSize={24}>
+                      <Panel
+                        defaultSize={outlineCollapsed ? undefined : '54%'}
+                        minSize={outlineCollapsed ? '160px' : '32%'}
+                      >
                         <FileTree
                           tree={tree}
                           activeDocId={activeDocumentId}
@@ -457,9 +461,9 @@ export function WorkspacePage() {
                         <PanelResizeHandle className="resize-handle vertical" />
                       )}
                       <Panel
-                        defaultSize={outlineCollapsed ? 8 : 38}
-                        minSize={outlineCollapsed ? 8 : 16}
-                        maxSize={outlineCollapsed ? 8 : 76}
+                        defaultSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '46%'}
+                        minSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '28%'}
+                        maxSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '68%'}
                       >
                         <OutlineList
                           sections={activeDoc ? activeDoc.structure.sections : null}
@@ -501,7 +505,11 @@ export function WorkspacePage() {
                 <EditorToolbar doc={activeDoc} selection={activeSelection} />
                 <CollaborationStatus />
               </div>
-              <PanelGroup orientation="horizontal" style={{ height: 'calc(100% - 48px)' }}>
+              <PanelGroup
+                orientation="horizontal"
+                className="editor-content-split"
+                style={{ flex: 1, minHeight: 0, height: 'auto' }}
+              >
                 {annotationColumnVisible && (
                   <>
                     <Panel defaultSize={22} minSize={16}>

@@ -477,7 +477,7 @@ export function WorkspacePage() {
 
           <Panel defaultSize={50} minSize={36}>
             <div className="panel editor-panel">
-              <div style={{ display: 'flex', alignItems: 'center' }}>
+              <div className="editor-toolbar-shell">
                 <EditorToolbar doc={activeDoc} selection={activeSelection} />
                 <CollaborationStatus />
               </div>

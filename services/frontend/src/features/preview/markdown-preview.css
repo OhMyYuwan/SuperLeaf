@@ -1,11 +1,27 @@
 .md-preview {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 22px 26px;
   min-height: 100%;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
   color: #1e293b;
   background: #f8fafc;
   line-height: 1.65;
   font-size: 15px;
   font-family: 'Inter', 'PingFang SC', system-ui, sans-serif;
+}
+
+.scroll-viewport > div:has(> .md-preview) {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.md-preview * {
+  box-sizing: border-box;
 }
 
 .md-preview h1,
@@ -57,9 +73,11 @@
   padding: 12px 14px;
   margin: 0.9em 0;
   border-radius: 8px;
+  max-width: 100%;
   background: #0f172a;
   color: #e2e8f0;
   overflow-x: auto;
+  white-space: pre;
   font-size: 13px;
 }
 .md-preview pre code {
@@ -67,6 +85,11 @@
   background: transparent;
   color: inherit;
   font-size: inherit;
+}
+
+.md-preview :not(pre) > code {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .md-preview blockquote {
@@ -96,8 +119,12 @@
 }
 
 .md-preview table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
   margin: 1em 0;
+  overflow-x: auto;
   font-size: 13px;
 }
 .md-preview th,
@@ -112,12 +139,61 @@
 }
 
 .md-preview img {
+  display: block;
   max-width: 100%;
+  height: auto;
   border-radius: 6px;
+}
+
+.md-mermaid {
+  width: 100%;
+  max-width: 100%;
+  min-height: 96px;
+  margin: 1em 0;
+  overflow-x: auto;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.md-mermaid.is-rendered {
+  padding: 12px;
+  min-height: 0;
+}
+.md-mermaid.is-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 12px;
+}
+.md-mermaid-placeholder {
+  padding: 16px;
+}
+.md-mermaid svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+.md-mermaid-source {
+  margin: 0 !important;
+  border-radius: 8px;
+}
+.md-mermaid-error-title {
+  padding: 10px 12px 0;
+  color: #b91c1c;
+  font-weight: 700;
+  font-size: 13px;
+}
+.md-mermaid-error-message {
+  padding: 2px 12px 10px;
+  color: #991b1b;
+  font-size: 12px;
 }
 
 /* KaTeX: block math should center + breathe */
 .md-preview .katex-display {
+  max-width: 100%;
   margin: 1em 0;
   overflow-x: auto;
   overflow-y: hidden;

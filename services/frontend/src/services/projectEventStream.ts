@@ -18,12 +18,15 @@
  *
  * Duplicate-id filtering: events carry a UUID `id`. We remember the last
  * 128 ids to ignore replays that may happen during a transient reconnect.
+ * Events also carry a best-effort per-project `seq`; the bridge can use gaps
+ * as a signal to reload authoritative project state.
  */
 
 import { BACKEND_BASE, getClientId } from './backendApi'
 
 export interface ProjectEvent {
   id: string
+  seq?: number
   type: string
   ts: string
   project_id: string
@@ -112,6 +115,7 @@ class Stream {
       'annotation.updated',
       'annotation.deleted',
       'doc.updated',
+      'project.tree.changed',
     ]
     for (const t of KNOWN) {
       es.addEventListener(t, onMessage as EventListener)

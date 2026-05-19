@@ -215,16 +215,16 @@ export function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDocumentId, projectReady])
 
-  // Poor-man's multi-device sync: when the tab regains focus or visibility,
-  // re-hydrate the active doc + its annotations so changes made on another
-  // device/browser show up. Overleaf does this via WebSocket reconnection
-  // catch-up; we'll add real-time in phase 2.
+  // Multi-device catch-up: when the tab regains focus or visibility, refresh
+  // the authoritative file tree and the active doc/annotations if a doc is open.
   useEffect(() => {
     if (!projectReady) return
-    if (!activeDocumentId) return
     const refresh = () => {
-      void refreshFromBackend(activeDocumentId)
-      void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      void loadTree()
+      if (activeDocumentId) {
+        void refreshFromBackend(activeDocumentId)
+        void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      }
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refresh()
@@ -235,7 +235,7 @@ export function WorkspacePage() {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [activeDocumentId, projectReady, refreshFromBackend])
+  }, [activeDocumentId, loadTree, projectReady, refreshFromBackend])
 
   // Bootstrap on project switch ---------------------------------------------
   useEffect(() => {

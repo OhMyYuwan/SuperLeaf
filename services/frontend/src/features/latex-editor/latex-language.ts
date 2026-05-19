@@ -13,9 +13,15 @@ import { stex } from '@codemirror/legacy-modes/mode/stex'
 import {
   autocompletion,
   CompletionContext,
+  snippetCompletion,
 } from '@codemirror/autocomplete'
-import type { CompletionResult } from '@codemirror/autocomplete'
+import type { Completion, CompletionResult } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
+import {
+  latexBeginEnvironmentSnippetCompletions,
+  latexCommandSnippetCompletions,
+  latexSnippetCommandTriggers,
+} from './latex-snippets'
 
 /** A small but useful set of LaTeX commands and environments. */
 const LATEX_COMMANDS: string[] = [
@@ -115,22 +121,53 @@ const LATEX_ENVIRONMENTS: string[] = [
 ]
 
 function latexCompletion(context: CompletionContext): CompletionResult | null {
-  // Match a LaTeX command being typed: \word
-  const command = context.matchBefore(/\\[A-Za-z]*/)
-  if (command && command.from !== command.to) {
-    return {
-      from: command.from + 1,
-      options: LATEX_COMMANDS.map((name) => ({
-        label: name,
-        type: 'function',
-        apply: name,
-      })),
-      validFor: /^[A-Za-z]*$/,
+  // Match a structured environment being opened: \begin{fig...
+  const beginEnv = context.matchBefore(/\\begin\{[A-Za-z*]*$/)
+  if (beginEnv) {
+    const prefixMatch = beginEnv.text.match(/\{([A-Za-z*]*)$/)
+    const prefix = prefixMatch?.[1] ?? ''
+    const structuredOptions = latexBeginEnvironmentSnippetCompletions(prefix)
+    const options = [
+      ...structuredOptions,
+      ...genericBeginEnvironmentCompletions(
+        prefix,
+        new Set(structuredOptions.map((option) => option.label)),
+      ),
+    ]
+    if (options.length > 0) {
+      return {
+        from: beginEnv.from,
+        options,
+        validFor: /^\\begin\{[A-Za-z*]*$/,
+        filter: false,
+      }
     }
   }
 
-  // Match an environment being opened: \begin{...
-  const env = context.matchBefore(/\\(begin|end)\{[A-Za-z*]*$/)
+  // Match a LaTeX command being typed: \word
+  const command = context.matchBefore(/\\[A-Za-z]*/)
+  if (command && command.from !== command.to) {
+    const prefix = command.text.slice(1)
+    const snippetTriggers = latexSnippetCommandTriggers()
+    const snippetCompletions = latexCommandSnippetCompletions(prefix)
+    const commandCompletions = LATEX_COMMANDS
+      .filter((name) => name.startsWith(prefix.toLowerCase()))
+      .filter((name) => !snippetTriggers.has(name))
+      .map((name) => ({
+        label: `\\${name}`,
+        type: 'function',
+        apply: `\\${name}`,
+      }))
+    return {
+      from: command.from,
+      options: [...snippetCompletions, ...commandCompletions],
+      validFor: /^\\[A-Za-z]*$/,
+      filter: false,
+    }
+  }
+
+  // Match an environment being closed: \end{...
+  const env = context.matchBefore(/\\end\{[A-Za-z*]*$/)
   if (env) {
     const prefixMatch = env.text.match(/\{([A-Za-z*]*)$/)
     if (!prefixMatch) return null
@@ -147,6 +184,26 @@ function latexCompletion(context: CompletionContext): CompletionResult | null {
   }
 
   return null
+}
+
+function genericBeginEnvironmentCompletions(
+  prefix: string,
+  skippedLabels: Set<string>,
+): Completion[] {
+  const normalized = prefix.toLowerCase()
+  return LATEX_ENVIRONMENTS
+    .filter((name) => name.toLowerCase().startsWith(normalized))
+    .filter((name) => !skippedLabels.has(name))
+    .map((name) => snippetCompletion(genericEnvironmentSnippet(name), {
+      label: name,
+      detail: 'environment',
+      type: 'class',
+      boost: 40,
+    }))
+}
+
+function genericEnvironmentSnippet(name: string): string {
+  return `\\begin\\{${name}\\}\n\t\${1}\n\\end\\{${name}\\}\n\${0}`
 }
 
 /**

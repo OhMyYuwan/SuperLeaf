@@ -12,12 +12,11 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, Form
 from fastapi.responses import Response
 
-from ..models import FileBlob
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import FileBlob, Project
+from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import (
     DocCreateIn,
     DocOut,
@@ -55,8 +54,16 @@ def rename_project(
     body: ProjectRenameBody,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
-    ProjectFsService(db, project).rename_project(body.name)
+    renamed = ProjectFsService(db, project).rename_project(body.name)
+    _publish_tree_changed(
+        project,
+        "project.renamed",
+        origin_client_id=x_client_id,
+        project_id=renamed.id,
+        name=renamed.name,
+    )
     return {"ok": True}
 
 
@@ -65,12 +72,22 @@ def create_folder(
     body: FolderCreateIn,
     db: Session = Depends(get_session),
     project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> FolderOut:
     svc = ProjectFsService(db, project)
     try:
         folder = svc.create_folder(parent_folder_id=body.parent_folder_id, name=body.name)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _publish_tree_changed(
+        project,
+        "folder.created",
+        origin_client_id=x_client_id,
+        folder_id=folder.id,
+        parent_folder_id=folder.parent_folder_id,
+        name=folder.name,
+        folder=_tree_folder_payload(folder),
+    )
     return FolderOut.model_validate(folder)
 
 
@@ -79,6 +96,7 @@ def create_doc(
     body: DocCreateIn,
     db: Session = Depends(get_session),
     project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     svc = ProjectFsService(db, project)
     try:
@@ -90,6 +108,16 @@ def create_doc(
         )
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _publish_tree_changed(
+        project,
+        "doc.created",
+        origin_client_id=x_client_id,
+        doc_id=doc.id,
+        folder_id=doc.folder_id,
+        name=doc.name,
+        format=doc.format,
+        doc=_tree_doc_payload(doc),
+    )
     return DocOut.model_validate(doc)
 
 
@@ -174,12 +202,21 @@ def rename_entity(
     body: RenameBody,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
     ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
     if not ok:
         raise HTTPException(404, "entity not found")
+    _publish_tree_changed(
+        project,
+        f"{entity_type}.renamed",
+        origin_client_id=x_client_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        name=body.name,
+    )
     return {"ok": True}
 
 
@@ -189,12 +226,21 @@ def delete_entity(
     entity_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
     count = ProjectFsService(db, project).delete_entity(entity_type, entity_id)
     if count == 0:
         raise HTTPException(404, "entity not found")
+    _publish_tree_changed(
+        project,
+        f"{entity_type}.deleted",
+        origin_client_id=x_client_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        deleted_count=count,
+    )
     return {"ok": True, "deleted_count": count}
 
 
@@ -209,6 +255,7 @@ def move_entity(
     body: MoveBody,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
@@ -217,6 +264,14 @@ def move_entity(
         # Cycle / not-found errors → 400 / 404 respectively.
         status = 404 if err and "not found" in err else 400
         raise HTTPException(status, err or "move failed")
+    _publish_tree_changed(
+        project,
+        f"{entity_type}.moved",
+        origin_client_id=x_client_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        target_folder_id=body.target_folder_id,
+    )
     return {"ok": True}
 
 
@@ -240,11 +295,30 @@ def _doc_format_for_filename(name: str) -> str | None:
     return _TEXT_DOC_EXTS.get(ext)
 
 
+def _publish_tree_changed(
+    project: Project,
+    action: str,
+    *,
+    origin_client_id: str = "",
+    **payload: object,
+) -> None:
+    bus.publish(
+        project.id,
+        "project.tree.changed",
+        {
+            "action": action,
+            **payload,
+        },
+        origin_client_id=origin_client_id,
+    )
+
+
 @router.post("/api/project/import.zip", status_code=200)
 async def import_project_zip(
     file: UploadFile,
     db: Session = Depends(get_session),
     project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
     try:
@@ -253,6 +327,15 @@ async def import_project_zip(
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    _publish_tree_changed(
+        project,
+        "project.imported_zip",
+        origin_client_id=x_client_id,
+        filename=file.filename or "",
+        doc_count=doc_count,
+        file_count=file_count,
+        byte_count=byte_count,
+    )
     return {
         "ok": True,
         "doc_count": doc_count,
@@ -267,6 +350,7 @@ async def upload_file(
     folder_id: str | None = Form(None),
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
     name = file.filename or "untitled"
@@ -291,6 +375,16 @@ async def upload_file(
             )
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
+        _publish_tree_changed(
+            project,
+            "doc.uploaded",
+            origin_client_id=x_client_id,
+            doc_id=d.id,
+            folder_id=d.folder_id,
+            name=d.name,
+            format=d.format,
+            doc=_tree_doc_payload(d),
+        )
         return {
             "kind": "doc",
             "id": d.id,
@@ -312,6 +406,17 @@ async def upload_file(
         )
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _publish_tree_changed(
+        project,
+        "file.uploaded",
+        origin_client_id=x_client_id,
+        file_id=f.id,
+        folder_id=f.folder_id,
+        name=f.name,
+        size_bytes=f.size_bytes,
+        mime_type=f.mime_type,
+        file=_tree_file_payload(f),
+    )
     return {
         "kind": "file",
         "id": f.id,
@@ -369,6 +474,7 @@ def convert_file_to_doc(
     file_id: str,
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     """Migrate a text-like FileBlob (uploaded before the split into docs/files) into `docs`.
 
@@ -388,7 +494,48 @@ def convert_file_to_doc(
     doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
     db.delete(f)
     db.commit()
+    _publish_tree_changed(
+        project,
+        "file.converted_to_doc",
+        origin_client_id=x_client_id,
+        file_id=file_id,
+        doc_id=doc.id,
+        folder_id=doc.folder_id,
+        name=doc.name,
+        format=doc.format,
+        doc=_tree_doc_payload(doc),
+    )
     return DocOut.model_validate(doc)
+
+
+def _tree_folder_payload(folder: Folder) -> dict[str, object]:
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "folders": [],
+        "docs": [],
+        "files": [],
+    }
+
+
+def _tree_doc_payload(doc: Doc) -> dict[str, object]:
+    return {
+        "id": doc.id,
+        "name": doc.name,
+        "format": doc.format,
+        "size_bytes": len((doc.content or "").encode("utf-8")),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+def _tree_file_payload(file: FileBlob) -> dict[str, object]:
+    return {
+        "id": file.id,
+        "name": file.name,
+        "mime_type": file.mime_type,
+        "size_bytes": file.size_bytes,
+        "updated_at": file.updated_at.isoformat(),
+    }
 
 
 @projects_router.get("/{project_id}/export.zip")

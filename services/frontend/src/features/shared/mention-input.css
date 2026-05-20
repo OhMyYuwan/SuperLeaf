@@ -13,8 +13,13 @@
 .mention-input-text {
   width: 100%;
   box-sizing: border-box;
-  font-family: inherit;
-  font-size: inherit;
+  /* font shorthand resets all sub-properties to inherit, matching the mirror
+     div which also uses `font: inherit`. This prevents any per-character width
+     drift between the two layers that would misalign the caret. */
+  font: inherit;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
   color: inherit;
   background: var(--bg-input, transparent);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
@@ -22,7 +27,6 @@
   padding: 6px 8px;
   resize: vertical;
   outline: none;
-  line-height: 1.5;
 }
 
 .mention-input-stack .mention-input-textarea {
@@ -65,13 +69,20 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-wrap: break-word;
-  font-family: inherit;
-  font-size: inherit;
+  /* Use font shorthand so every font sub-property (weight, variant, stretch,
+     feature-settings, kerning …) inherits identically to the textarea which
+     gets `font: inherit` from the global App.css reset. Individual properties
+     like font-family/font-size alone are not enough — the remaining sub-
+     properties default differently on div vs form elements in some browsers,
+     causing per-character width drift and cursor misalignment. */
+  font: inherit;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
   color: var(--mention-text-color, #e5e7eb);
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 6px 8px;
-  line-height: 1.5;
   overflow: hidden;
 }
 

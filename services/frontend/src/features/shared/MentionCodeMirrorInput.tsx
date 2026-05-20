@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObjec
 import {
   Compartment,
   EditorState,
+  Prec,
   RangeSetBuilder,
   StateEffect,
   StateField,
@@ -141,10 +142,40 @@ export function MentionCodeMirrorInput({
   useEffect(() => {
     if (!containerRef.current) return
 
+    const moveActive = (delta: number): boolean => {
+      const currentMenu = menuRef.current
+      if (!currentMenu) return false
+      setActiveIdx((activeIdxRef.current + delta + currentMenu.items.length) % currentMenu.items.length)
+      return true
+    }
+
+    const pickActive = (view: EditorView): boolean => {
+      const currentMenu = menuRef.current
+      if (!currentMenu) return false
+      void insertMentionCandidate(view, currentMenu, currentMenu.items[activeIdxRef.current], onCandidatePickedRef)
+      setMenu(null)
+      return true
+    }
+
+    const closeMenu = (): boolean => {
+      if (!menuRef.current) return false
+      setMenu(null)
+      return true
+    }
+
     const state = EditorState.create({
       doc: value,
       extensions: [
         history(),
+        Prec.highest(
+          keymap.of([
+            { key: 'ArrowDown', run: () => moveActive(1) },
+            { key: 'ArrowUp', run: () => moveActive(-1) },
+            { key: 'Enter', run: pickActive },
+            { key: 'Tab', run: pickActive },
+            { key: 'Escape', run: closeMenu },
+          ]),
+        ),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
@@ -159,32 +190,6 @@ export function MentionCodeMirrorInput({
         mentionCandidatesField,
         mentionDecorationsPlugin,
         EditorView.domEventHandlers({
-          keydown(event, view) {
-            const currentMenu = menuRef.current
-            if (!currentMenu) return false
-            if (event.key === 'ArrowDown') {
-              event.preventDefault()
-              setActiveIdx((activeIdxRef.current + 1) % currentMenu.items.length)
-              return true
-            }
-            if (event.key === 'ArrowUp') {
-              event.preventDefault()
-              setActiveIdx((activeIdxRef.current - 1 + currentMenu.items.length) % currentMenu.items.length)
-              return true
-            }
-            if (event.key === 'Enter' || event.key === 'Tab') {
-              event.preventDefault()
-              void insertMentionCandidate(view, currentMenu, currentMenu.items[activeIdxRef.current], onCandidatePickedRef)
-              setMenu(null)
-              return true
-            }
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              setMenu(null)
-              return true
-            }
-            return false
-          },
           keyup(_event, view) {
             refreshMentionMenu(view, candidatesRef.current, setMenu)
             return false

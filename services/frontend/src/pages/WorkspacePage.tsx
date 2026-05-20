@@ -39,6 +39,7 @@ import { useProjectStore } from '../stores/projectStore'
 import { useUserStore } from '../stores/userStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
+import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
 
@@ -217,25 +218,40 @@ export function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDocumentId, projectReady])
 
-  // Multi-device catch-up: when the tab regains focus or visibility, refresh
-  // the authoritative file tree and the active doc/annotations if a doc is open.
+  // Multi-device catch-up: when the tab regains focus or visibility, hydrate
+  // annotations only if the SSE stream had a disconnect since the last hydrate.
+  // SSE already delivers all incremental changes in real time, so a full
+  // hydrate on every focus is wasteful (causes 3 extra requests per window
+  // switch). We only need it to catch up on events missed during a disconnect.
+  // On reconnect we also hydrate immediately rather than waiting for the next
+  // focus, so the user never sees stale decorations after a network blip.
   useEffect(() => {
     if (!projectReady) return
-    const refresh = () => {
-      void loadTree()
-      if (activeDocumentId) {
-        void refreshFromBackend(activeDocumentId)
+    const hydrateIfNeeded = () => {
+      if (activeDocumentId && projectEventStream.needsHydrate()) {
         void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
       }
+    }
+    const refresh = () => {
+      void loadTree()
+      if (activeDocumentId) void refreshFromBackend(activeDocumentId)
+      hydrateIfNeeded()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refresh()
     }
+    // Hydrate immediately on SSE reconnect — don't wait for the next focus.
+    const unsubReconnect = projectEventStream.onReconnect(() => {
+      if (activeDocumentId) {
+        void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      }
+    })
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', onVisibility)
+      unsubReconnect()
     }
   }, [activeDocumentId, loadTree, projectReady, refreshFromBackend])
 

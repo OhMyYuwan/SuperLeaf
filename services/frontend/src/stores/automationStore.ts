@@ -72,11 +72,10 @@ const AUTO_ANNOTATION_CONTRACT = [
   '- `% AUTO ...` 是用户写给自动化批注流程的局部指令，不是论文正文；它可以要求你特别检查紧随其后的文本或当前块。',
   '- 默认只审阅文档正文。LaTeX `\\begin{document}` 之前的导言区（包、宏、排版或编译配置）不要生成批注，除非 `% AUTO` 明确要求检查导言区。',
   '- 坐标必须相对 `目标段落` 的原文，从 0 开始；不要使用全文绝对坐标。',
-  '- 优先输出严格 JSON 对象，字段为 `annotations`、`suggestions`、`risks`。不要在 JSON 外添加说明文字。',
+  '- 优先输出严格 JSON 对象，只使用 `annotations` 字段。不要输出 `suggestions` 或 `risks` 字段，也不要在 JSON 外添加说明文字。',
   '- `annotations[]`: `{ "from": number, "to": number, "content": string, "type": "comment|question|warning|praise", "severity": "low|medium|high", "tags": string[] }`。',
-  '- `suggestions[]`: `{ "from": number, "to": number, "original": string, "proposed": string, "reason": string, "confidence": number }`。',
-  '- `risks[]`: `{ "from": number, "to": number, "risk_type": "logic|citation|clarity|style|factual|consistency", "severity": "low|medium|high", "description": string, "mitigation": string }`。',
-  '- 没有可执行问题时返回 `{ "annotations": [], "suggestions": [], "risks": [] }`。',
+  '- 如果要表达改写建议或风险提醒，也写成一条普通 annotation 的 `content`；不要拆成其他卡片类型。',
+  '- 没有可执行问题时返回 `{ "annotations": [] }`。',
   '[END ANNOTATION SKILL CONTRACT]',
 ].join('\n')
 

@@ -65,6 +65,20 @@ const MIN_CHUNK_CHARS = 600
 const MAX_CHUNK_CHARS = 8000
 const MIN_REFRESH_EVERY = 1
 const MAX_REFRESH_EVERY = 50
+const AUTO_MARKER_RE = /^\s*%\s*AUTO\b/im
+const LATEX_BEGIN_DOCUMENT_RE = /\\begin\s*\{\s*document\s*\}/i
+const AUTO_ANNOTATION_CONTRACT = [
+  '[ANNOTATION SKILL CONTRACT]',
+  '- `% AUTO ...` 是用户写给自动化批注流程的局部指令，不是论文正文；它可以要求你特别检查紧随其后的文本或当前块。',
+  '- 默认只审阅文档正文。LaTeX `\\begin{document}` 之前的导言区（包、宏、排版或编译配置）不要生成批注，除非 `% AUTO` 明确要求检查导言区。',
+  '- 坐标必须相对 `目标段落` 的原文，从 0 开始；不要使用全文绝对坐标。',
+  '- 优先输出严格 JSON 对象，字段为 `annotations`、`suggestions`、`risks`。不要在 JSON 外添加说明文字。',
+  '- `annotations[]`: `{ "from": number, "to": number, "content": string, "type": "comment|question|warning|praise", "severity": "low|medium|high", "tags": string[] }`。',
+  '- `suggestions[]`: `{ "from": number, "to": number, "original": string, "proposed": string, "reason": string, "confidence": number }`。',
+  '- `risks[]`: `{ "from": number, "to": number, "risk_type": "logic|citation|clarity|style|factual|consistency", "severity": "low|medium|high", "description": string, "mitigation": string }`。',
+  '- 没有可执行问题时返回 `{ "annotations": [], "suggestions": [], "risks": [] }`。',
+  '[END ANNOTATION SKILL CONTRACT]',
+].join('\n')
 
 export const useAutomationStore = create<AutomationState>((set, get) => ({
   targetKind: 'agent',
@@ -324,6 +338,7 @@ function buildAutomationQuery(args: {
       : '当前 workflow run 可能是无状态的，因此请严格依赖本次请求提供的上下文。',
     '只输出适合生成批注卡片的意见、建议或风险提示；不要直接重写整篇文章。',
     '如果段落中包含以 % AUTO 开头的 LaTeX 注释，请把它理解为用户写给自动化流程的局部提示，不要当作论文正文。',
+    AUTO_ANNOTATION_CONTRACT,
     '',
     `[AUTOMATION SESSION] ${session.id}`,
     `[DOCUMENT HASH] ${session.docHash}`,
@@ -418,6 +433,7 @@ function renderAttachedFilesForPrompt(attachedFiles: readonly AttachedFile[]): s
 function buildParagraphChunks(doc: Document, maxChars: number): AutomationChunk[] {
   const paragraphs = [...(doc.structure.paragraphs ?? [])]
     .filter((p) => p.text.trim().length > 0)
+    .filter((p) => shouldIncludeAutomationParagraph(doc, p))
     .sort((a, b) => a.range.from - b.range.from)
 
   const rawChunks = paragraphs.flatMap((paragraph) => splitParagraph(doc, paragraph, maxChars))
@@ -426,6 +442,28 @@ function buildParagraphChunks(doc: Document, maxChars: number): AutomationChunk[
     index: idx + 1,
     total: rawChunks.length,
   }))
+}
+
+export function countAutomationReviewTargets(doc: Document): number {
+  return (doc.structure.paragraphs ?? [])
+    .filter((paragraph) => paragraph.text.trim().length > 0)
+    .filter((paragraph) => shouldIncludeAutomationParagraph(doc, paragraph))
+    .length
+}
+
+function shouldIncludeAutomationParagraph(doc: Document, paragraph: Paragraph): boolean {
+  const text = paragraph.text.trim()
+  if (!text) return false
+  if (AUTO_MARKER_RE.test(text)) return true
+  if (doc.format !== 'tex') return true
+  return !isBeforeLatexDocumentBody(doc.content, paragraph.range)
+}
+
+function isBeforeLatexDocumentBody(content: string, range: { from: number; to: number }): boolean {
+  const match = LATEX_BEGIN_DOCUMENT_RE.exec(content)
+  if (!match) return false
+  const bodyStart = match.index + match[0].length
+  return range.to <= bodyStart
 }
 
 function splitParagraph(

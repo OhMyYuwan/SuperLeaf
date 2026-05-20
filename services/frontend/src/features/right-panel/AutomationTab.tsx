@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { Bot, FileText, Play, Square, Workflow } from 'lucide-react'
-import { useAutomationStore } from '../../stores/automationStore'
+import { countAutomationReviewTargets, useAutomationStore } from '../../stores/automationStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
@@ -47,7 +47,7 @@ export function AutomationTab() {
 
   const availableAgents = workflows.filter((workflow) => !workflow.is_disabled)
   const availableTargets = targetKind === 'agent' ? availableAgents : definitions
-  const paragraphCount = activeDoc?.structure.paragraphs.filter((p) => p.text.trim()).length ?? 0
+  const paragraphCount = activeDoc ? countAutomationReviewTargets(activeDoc) : 0
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0
   const fileCandidates = useMemo(
     () => sortFilesCurrentFirst(flattenFileCandidates(tree), activeDoc?.id ?? null),

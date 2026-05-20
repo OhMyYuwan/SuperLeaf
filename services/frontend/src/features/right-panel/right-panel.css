@@ -980,6 +980,41 @@
   line-height: 1.45;
 }
 
+.automation-mention-field {
+  --mention-input-color: #ffffff;
+  --mention-selection-color: #ffffff;
+  --mention-caret-color: #ffffff;
+  --mention-native-placeholder-color: rgba(148, 163, 184, 0.54);
+}
+
+.automation-mention-field .mention-input-stack {
+  background: rgba(15, 23, 42, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.automation-mention-field:focus-within .mention-input-stack {
+  border-color: rgba(45, 212, 191, 0.58);
+}
+
+.automation-mention-field .mention-input-textarea {
+  min-height: 96px;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.automation-mention-field .mention-input-textarea {
+  background: transparent;
+}
+
+.automation-mention-field .mention-input-textarea:focus {
+  border-color: transparent;
+}
+
 .automation-field.narrow {
   max-width: 220px;
 }

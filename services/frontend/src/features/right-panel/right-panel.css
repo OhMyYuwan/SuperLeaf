@@ -955,7 +955,7 @@
 
 .automation-control-grid select,
 .automation-field input,
-.automation-field textarea {
+.automation-field textarea:not(.mention-input-textarea) {
   width: 100%;
   min-width: 0;
   background: rgba(2, 6, 23, 0.66);
@@ -970,49 +970,23 @@
 
 .automation-control-grid select:focus,
 .automation-field input:focus,
-.automation-field textarea:focus {
+.automation-field textarea:not(.mention-input-textarea):focus {
   border-color: rgba(59, 130, 246, 0.55);
 }
 
-.automation-field textarea {
+.automation-field textarea:not(.mention-input-textarea) {
   min-height: 94px;
   resize: vertical;
   line-height: 1.45;
 }
 
-.automation-mention-field {
-  --mention-input-color: #ffffff;
-  --mention-selection-color: #ffffff;
-  --mention-caret-color: #ffffff;
-  --mention-native-placeholder-color: rgba(148, 163, 184, 0.54);
-}
-
-.automation-mention-field .mention-input-stack {
-  background: rgba(15, 23, 42, 0.58);
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
-}
-
-.automation-mention-field:focus-within .mention-input-stack {
-  border-color: rgba(45, 212, 191, 0.58);
-}
-
-.automation-mention-field .mention-input-textarea {
-  min-height: 96px;
-  border: 0;
-  border-radius: 7px;
-  padding: 8px 10px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.automation-mention-field .mention-input-textarea {
-  background: transparent;
-}
-
-.automation-mention-field .mention-input-textarea:focus {
-  border-color: transparent;
+.automation-intent-input {
+  --mention-cm-min-height: 112px;
+  --mention-cm-text: #ffffff;
+  --mention-cm-muted: rgba(148, 163, 184, 0.62);
+  --mention-cm-file-bg: rgba(20, 184, 166, 0.18);
+  --mention-cm-file-text: #86efac;
+  --mention-cm-file-border: rgba(34, 197, 94, 0.42);
 }
 
 .automation-field.narrow {

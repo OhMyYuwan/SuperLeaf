@@ -9,12 +9,13 @@ import {
   sortFilesCurrentFirst,
   type MentionCandidate,
 } from '../../services/mentions'
-import { MentionInput } from '../shared/MentionInput'
+import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 
 export function AutomationTab() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const tree = useFilesystemStore((s) => s.tree)
+  const loadTree = useFilesystemStore((s) => s.loadTree)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -57,6 +58,10 @@ export function AutomationTab() {
     if (!workflowsLoaded) void loadWorkflows()
     if (!definitionsLoaded) void loadDefinitions()
   }, [workflowsLoaded, definitionsLoaded, loadWorkflows, loadDefinitions])
+
+  useEffect(() => {
+    if (!tree) void loadTree()
+  }, [tree, loadTree])
 
   useEffect(() => {
     if (targetId || availableTargets.length === 0) return
@@ -140,19 +145,15 @@ export function AutomationTab() {
 
       <label className="automation-field">
         <span>自动批注意图</span>
-        <MentionInput
+        <MentionCodeMirrorInput
           value={instruction}
           onChange={setInstruction}
-          agents={[]}
-          workflows={[]}
           files={fileCandidates}
           placeholder="输入自动批注意图，用 @ 引用项目文件作为参考…"
           rows={4}
           disabled={running}
-          className="automation-mention-field"
+          className="automation-intent-input"
           onCandidatePicked={handleCandidatePicked}
-          menuPlacement="composer-panel"
-          renderMirrorLayer={false}
         />
       </label>
 

@@ -1,15 +1,14 @@
-"""Static Skill marketplace sync and installation.
+"""Static Skill marketplace sync and local recipe registration.
 
 The marketplace is served as GitHub Pages/static files. Runtime Agent
-execution never reads from the marketplace; installed Skills are copied into
-the local `skills` table first.
+execution never reads from the marketplace directly; installed marketplace
+items become local Skill recipe rows first, then Agent setup executes npx.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import hashlib
 import json
 import urllib.parse
 import urllib.request
@@ -19,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Skill
 from ..settings import settings
-from .skill_content_crypto import encrypt_skill_content
+from .skill_recipe_metadata import build_npx_install_command, build_recipe_tags, recipe_meta_from_tags
 
 
 class SkillMarketplaceError(RuntimeError):
@@ -42,6 +41,11 @@ class MarketplaceEntry:
     entry_url: str
     readme_url: str
     checksum_sha256: str
+    repo_url: str
+    source_url: str
+    source_ref: str
+    skill_name: str
+    install_command: str
     installed: bool = False
     installed_skill_id: str | None = None
     installed_version: str = ""
@@ -79,38 +83,45 @@ class SkillMarketplaceService:
 
     def install(self, skill_id: str, *, user_id: str) -> tuple[Skill, MarketplaceEntry]:
         entry = self._find_entry(skill_id, user_id=user_id)
-        content = self._fetch_text(entry.entry_url)
-        checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        if entry.checksum_sha256 and checksum != entry.checksum_sha256:
-            raise SkillMarketplaceError("Skill checksum mismatch")
-
         now = datetime.utcnow()
         existing = self._installed_by_catalog_id(user_id=user_id).get(entry.id)
-        meta_tags = _catalog_tags(entry, checksum=checksum)
+        tags = build_recipe_tags(
+            source="marketplace",
+            repo_url=entry.repo_url,
+            source_url=entry.source_url,
+            source_ref=entry.source_ref,
+            skill_name=entry.skill_name,
+            install_command=entry.install_command,
+            marketplace_id=entry.id,
+            catalog_version=entry.version,
+            catalog_author=entry.author_github,
+            catalog_checksum=entry.checksum_sha256,
+            base_tags=entry.tags,
+        )
         if existing is None:
             row = Skill(
                 owner_user_id=user_id,
-                name=entry.name,
+                name=entry.name or entry.display_name or entry.id,
                 public_name=entry.id,
                 description=entry.description,
-                content=encrypt_skill_content(content),
+                content="",
                 visibility="private",
                 source="marketplace",
                 version=1,
-                tags=meta_tags,
+                tags=tags,
                 created_at=now,
                 updated_at=now,
             )
             self.db.add(row)
         else:
             row = existing
-            row.name = entry.name
+            row.name = entry.name or entry.display_name or entry.id
             row.public_name = entry.id
             row.description = entry.description
-            row.content = encrypt_skill_content(content)
+            row.content = ""
             row.visibility = "private"
             row.source = "marketplace"
-            row.tags = meta_tags
+            row.tags = tags
             row.version += 1
             row.updated_at = now
         self.db.commit()
@@ -165,6 +176,10 @@ class SkillMarketplaceService:
         entry = str(raw.get("entry") or "SKILL.md").strip()
         skill_url = str(raw.get("skill_url") or f"{path}/skill.yaml").strip()
         entry_url = str(raw.get("entry_url") or f"{path}/{entry}").strip()
+        repo_url, source_ref = _repo_from_catalog(self.catalog_url, raw)
+        source_url = str(raw.get("source_url") or _source_url(repo_url, source_ref, path)).strip()
+        skill_name = str(raw.get("skill_name") or raw.get("name") or "").strip()
+        install_command = str(raw.get("install_command") or _install_command(source_url or repo_url, skill_name)).strip()
         return MarketplaceEntry(
             id=str(raw.get("id") or "").strip(),
             name=str(raw.get("name") or "").strip(),
@@ -180,6 +195,11 @@ class SkillMarketplaceService:
             entry_url=entry_url,
             readme_url=str(raw.get("readme_url") or "").strip(),
             checksum_sha256=str(raw.get("checksum_sha256") or "").strip(),
+            repo_url=repo_url,
+            source_url=source_url,
+            source_ref=source_ref,
+            skill_name=skill_name,
+            install_command=install_command,
         )
 
     def _installed_by_catalog_id(self, *, user_id: str) -> dict[str, Skill]:
@@ -196,32 +216,14 @@ class SkillMarketplaceService:
         return out
 
 
-def _catalog_tags(entry: MarketplaceEntry, *, checksum: str) -> list[str]:
-    tags = [tag for tag in entry.tags if not tag.startswith("ylw:")]
-    tags.extend(
-        [
-            f"ylw:catalog-id={entry.id}",
-            f"ylw:catalog-version={entry.version}",
-            f"ylw:catalog-author={entry.author_github}",
-            f"ylw:catalog-checksum={checksum}",
-        ]
-    )
-    return tags
-
-
 def _catalog_meta(row: Skill) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for tag in row.tags or []:
-        text = str(tag)
-        if text.startswith("ylw:catalog-id="):
-            out["id"] = text.split("=", 1)[1]
-        elif text.startswith("ylw:catalog-version="):
-            out["version"] = text.split("=", 1)[1]
-        elif text.startswith("ylw:catalog-author="):
-            out["author"] = text.split("=", 1)[1]
-        elif text.startswith("ylw:catalog-checksum="):
-            out["checksum"] = text.split("=", 1)[1]
-    return out
+    meta = recipe_meta_from_tags(row.tags)
+    return {
+        "id": meta.get("marketplace_id", ""),
+        "version": meta.get("catalog_version", ""),
+        "author": meta.get("catalog_author", ""),
+        "checksum": meta.get("catalog_checksum", ""),
+    }
 
 
 def _version_key(value: str) -> tuple[int, int, int]:
@@ -234,3 +236,37 @@ def _version_key(value: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)  # type: ignore[return-value]
+
+
+def _repo_from_catalog(catalog_url: str, raw: dict) -> tuple[str, str]:
+    repo_url = str(raw.get("repo_url") or "").strip()
+    source_ref = str(raw.get("source_ref") or raw.get("ref") or "").strip()
+    if repo_url:
+        return repo_url, source_ref
+
+    parsed = urllib.parse.urlparse(catalog_url)
+    parts = [p for p in parsed.path.split("/") if p]
+    if parsed.netloc == "raw.githubusercontent.com" and len(parts) >= 3:
+        owner, repo, ref = parts[0], parts[1], parts[2]
+        return f"https://github.com/{owner}/{repo}.git", source_ref or ref
+    if parsed.netloc == "github.com" and len(parts) >= 2:
+        owner, repo = parts[0], parts[1].removesuffix(".git")
+        return f"https://github.com/{owner}/{repo}.git", source_ref
+    return "", source_ref
+
+
+def _install_command(repo_url: str, skill_name: str) -> str:
+    return build_npx_install_command(repo_url, skill_name)
+
+
+def _source_url(repo_url: str, source_ref: str, path: str) -> str:
+    if not repo_url or not path:
+        return ""
+    parsed = urllib.parse.urlparse(repo_url)
+    if parsed.netloc != "github.com":
+        return repo_url
+    cleaned_path = parsed.path.removesuffix(".git").strip("/")
+    if "/" not in cleaned_path:
+        return repo_url
+    ref = source_ref or "main"
+    return f"https://github.com/{cleaned_path}/tree/{urllib.parse.quote(ref)}/{path.strip('/')}"

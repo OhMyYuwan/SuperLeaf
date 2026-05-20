@@ -7,14 +7,25 @@ credentials, and Skills. Runtime execution is intentionally out of scope.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import re
+import shlex
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import GitHubAccount, NativeAgent, NativeAgentCredential, Provider, Skill, SkillHidden
+from ..models import GitHubAccount, NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Provider, Skill, SkillHidden
 from ..secrets_vault import encrypt
-from .skill_content_crypto import encrypt_skill_content
+from ..schemas import NativeAgentSkillRecipeIn
+from .agent_workspace_service import AgentWorkspaceService
+from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstallError, SkillNpxInstaller
+from .skill_content_crypto import decrypt_skill_content, encrypt_skill_content
+from .skill_recipe_metadata import (
+    build_npx_install_command,
+    build_recipe_tags,
+    is_direct_skill_source,
+    recipe_meta_from_tags,
+)
 
 
 SYSTEM_SKILLS = [
@@ -203,6 +214,59 @@ class NativeAgentService:
         self.db.refresh(row)
         return row
 
+    def create_recipe_skill(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        description: str,
+        repo_url: str = "",
+        source_url: str = "",
+        source_ref: str = "",
+        skill_name: str = "",
+        install_command: str = "",
+        tags: list[str] | None = None,
+    ) -> Skill:
+        parsed_source, parsed_skill = _parse_skill_add_command(install_command)
+        source = (source_url or repo_url or parsed_source).strip()
+        if not source:
+            raise ValueError("自定义 Skill 需要 GitHub URL、npx 支持的 package，或完整 npx skills add 指令")
+        cleaned_skill_name = (skill_name or parsed_skill).strip()
+        if not is_direct_skill_source(source) and not cleaned_skill_name:
+            raise ValueError("repo/package 安装需要填写 skill name；直接 GitHub Skill 文件夹 URL 可以留空")
+        public_name = _recipe_public_name(user_id=user_id, source=source, skill_name=cleaned_skill_name, name=name)
+        display_name = _clean_name(name or public_name or cleaned_skill_name or _skill_name_from_source(source))
+        command = build_npx_install_command(source, cleaned_skill_name)
+        existing = (
+            self.db.query(Skill)
+            .filter(Skill.owner_user_id == user_id, Skill.public_name == public_name)
+            .first()
+        )
+        if existing is not None:
+            raise ValueError("Skill 已存在，请使用已有本地 Skill 装配 Agent")
+        row = Skill(
+            owner_user_id=user_id,
+            name=display_name,
+            public_name=public_name,
+            description=description.strip(),
+            content="",
+            visibility="private",
+            source="custom",
+            tags=build_recipe_tags(
+                source="custom",
+                repo_url=(repo_url or parsed_source or source).strip(),
+                source_url=source,
+                source_ref=source_ref.strip(),
+                skill_name=cleaned_skill_name,
+                install_command=command,
+                base_tags=_clean_tags(tags or []),
+            ),
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
     def update_skill(
         self,
         skill_id: str,
@@ -303,15 +367,17 @@ class NativeAgentService:
     # --- project-scoped native agents -----------------------------------
 
     def list_agents(self, *, project_id: str, user_id: str) -> list[NativeAgent]:
-        return (
+        rows = (
             self.db.query(NativeAgent)
             .filter(NativeAgent.project_id == project_id, NativeAgent.owner_user_id == user_id)
             .order_by(NativeAgent.updated_at.desc())
             .all()
         )
+        self._sync_agent_skill_refs(rows, project_id=project_id, user_id=user_id)
+        return rows
 
     def list_agents_for_provider(self, *, project_id: str, user_id: str, provider_id: str) -> list[NativeAgent]:
-        return (
+        rows = (
             self.db.query(NativeAgent)
             .filter(
                 NativeAgent.project_id == project_id,
@@ -321,11 +387,14 @@ class NativeAgentService:
             .order_by(NativeAgent.updated_at.desc())
             .all()
         )
+        self._sync_agent_skill_refs(rows, project_id=project_id, user_id=user_id)
+        return rows
 
     def get_agent(self, agent_id: str, *, project_id: str, user_id: str) -> NativeAgent | None:
         row = self.db.get(NativeAgent, agent_id)
         if row is None or row.project_id != project_id or row.owner_user_id != user_id:
             return None
+        self._sync_agent_skill_refs([row], project_id=project_id, user_id=user_id)
         return row
 
     def create_agent(
@@ -338,7 +407,9 @@ class NativeAgentService:
         provider_id: str,
         model: str,
         instructions: str,
+        agent_md: str = "",
         skill_ids: list[str],
+        skill_recipes: list[NativeAgentSkillRecipeIn] | list[dict] | None = None,
         output_contract: str,
         runtime_config: dict,
         is_enabled: bool,
@@ -352,12 +423,20 @@ class NativeAgentService:
             description=description.strip(),
             model=model.strip(),
             instructions=instructions,
+            agent_md=(agent_md or instructions).strip(),
             skill_ids=skill_ids,
             output_contract=output_contract,
             runtime_config=runtime_config or {},
             is_enabled=is_enabled,
+            setup_status="setting_up" if (skill_ids or skill_recipes) else "ready",
         )
         self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        workspace = AgentWorkspaceService(self.db)
+        workspace.ensure_workspace(row, agent_md=row.agent_md or row.instructions)
+        self._install_selected_skills(row, user_id=user_id, project_id=project_id, skill_ids=skill_ids)
+        self._install_skill_recipes(row, user_id=user_id, project_id=project_id, recipes=skill_recipes or [])
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -377,9 +456,17 @@ class NativeAgentService:
         skill_ids = patch.get("skill_ids", row.skill_ids)
         self._validate_agent_refs(user_id=user_id, provider_id=provider_id, skill_ids=skill_ids)
 
-        for key in ("name", "description", "provider_id", "model", "instructions", "skill_ids", "output_contract", "runtime_config", "is_enabled"):
+        for key in ("name", "description", "provider_id", "model", "instructions", "agent_md", "skill_ids", "output_contract", "runtime_config", "is_enabled"):
             if key in patch and patch[key] is not None:
                 setattr(row, key, patch[key])
+        if "agent_md" in patch and patch["agent_md"] is not None:
+            AgentWorkspaceService(self.db).write_agent_md(row, str(patch["agent_md"]))
+        else:
+            AgentWorkspaceService(self.db).ensure_workspace(row)
+        if "skill_ids" in patch and patch["skill_ids"] is not None:
+            self._install_selected_skills(row, user_id=user_id, project_id=project_id, skill_ids=row.skill_ids or [])
+        if patch.get("skill_recipes"):
+            self._install_skill_recipes(row, user_id=user_id, project_id=project_id, recipes=patch["skill_recipes"])
         row.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(row)
@@ -393,6 +480,234 @@ class NativeAgentService:
         self.db.commit()
         return True
 
+    def list_agent_skill_installs(self, agent_id: str, *, project_id: str, user_id: str) -> list[NativeAgentSkillInstall]:
+        agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
+        if agent is None:
+            return []
+        return (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(
+                NativeAgentSkillInstall.agent_id == agent_id,
+                NativeAgentSkillInstall.project_id == project_id,
+                NativeAgentSkillInstall.user_id == user_id,
+            )
+            .order_by(NativeAgentSkillInstall.created_at.desc())
+            .all()
+        )
+
+    def install_agent_skill_recipe(
+        self,
+        agent_id: str,
+        *,
+        project_id: str,
+        user_id: str,
+        recipe: NativeAgentSkillRecipeIn | dict,
+    ) -> NativeAgentSkillInstall | None:
+        agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
+        if agent is None:
+            return None
+        installs = self._install_skill_recipes(agent, user_id=user_id, project_id=project_id, recipes=[recipe])
+        self.db.commit()
+        return installs[0] if installs else None
+
+    def _sync_agent_skill_refs(self, agents: list[NativeAgent], *, project_id: str, user_id: str) -> None:
+        if not agents:
+            return
+        changed = False
+        for agent in agents:
+            installs = (
+                self.db.query(NativeAgentSkillInstall)
+                .filter(
+                    NativeAgentSkillInstall.agent_id == agent.id,
+                    NativeAgentSkillInstall.project_id == project_id,
+                    NativeAgentSkillInstall.user_id == user_id,
+                    NativeAgentSkillInstall.status == "installed",
+                )
+                .all()
+            )
+            if not installs:
+                continue
+            current = [str(sid) for sid in agent.skill_ids or [] if str(sid)]
+            next_ids = list(current)
+            for install in installs:
+                skill = self._local_skill_from_install(install, user_id=user_id)
+                if skill is None:
+                    continue
+                if skill.id not in next_ids:
+                    next_ids.append(skill.id)
+                    changed = True
+            if next_ids != current:
+                agent.skill_ids = next_ids
+                agent.updated_at = datetime.utcnow()
+                self.db.add(agent)
+                changed = True
+        if changed:
+            self.db.commit()
+
+    def _local_skill_from_install(self, install: NativeAgentSkillInstall, *, user_id: str) -> Skill | None:
+        source = str(install.source or "").strip() or "custom"
+        if source not in {"marketplace", "custom"}:
+            return None
+        source_url = _source_from_install(install)
+        if not source_url:
+            return None
+        skill_name = str(install.skill_name or install.folder_name or _skill_name_from_source(source_url)).strip()
+        public_name = (
+            str(install.marketplace_id or "").strip()
+            if source == "marketplace" and str(install.marketplace_id or "").strip()
+            else _custom_public_name(user_id=user_id, name=skill_name, source=source_url)
+        )
+        existing = (
+            self.db.query(Skill)
+            .filter(Skill.owner_user_id == user_id, Skill.public_name == public_name)
+            .first()
+        )
+        install_command = str(install.install_command or "").strip() or build_npx_install_command(source_url, skill_name)
+        tags = build_recipe_tags(
+            source=source,
+            repo_url=str(install.repo_url or source_url).strip(),
+            source_url=source_url,
+            source_ref=str(install.source_ref or "").strip(),
+            skill_name=skill_name,
+            install_command=install_command,
+            marketplace_id=str(install.marketplace_id or "").strip(),
+            base_tags=[],
+        )
+        if existing is not None:
+            if not recipe_meta_from_tags(existing.tags).get("source_url"):
+                existing.tags = tags
+                existing.content = ""
+                existing.source = source
+                existing.updated_at = datetime.utcnow()
+                self.db.add(existing)
+            return existing
+        row = Skill(
+            owner_user_id=user_id,
+            name=skill_name,
+            public_name=public_name,
+            description=f"Installed on Agent from {source_url}",
+            content="",
+            visibility="private",
+            source=source,
+            tags=tags,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def _install_selected_skills(
+        self,
+        agent: NativeAgent,
+        *,
+        user_id: str,
+        project_id: str,
+        skill_ids: list[str],
+    ) -> list[NativeAgentSkillInstall]:
+        if not skill_ids:
+            if not agent.setup_status:
+                agent.setup_status = "ready"
+            return []
+
+        workspace = AgentWorkspaceService(self.db)
+        workspace.ensure_workspace(agent)
+        installer = SkillNpxInstaller(workspace)
+        installed_rows: list[NativeAgentSkillInstall] = []
+        logs: list[str] = []
+        agent.setup_status = "setting_up"
+        self.db.add(agent)
+        self.db.flush()
+
+        for skill_id in skill_ids:
+            skill = self.get_skill(str(skill_id), user_id=user_id)
+            if skill is None:
+                continue
+            recipe = _recipe_from_skill(skill)
+            if recipe is not None:
+                row = NativeAgentSkillInstall(
+                    project_id=project_id,
+                    user_id=user_id,
+                    agent_id=agent.id,
+                    source=recipe.source or skill.source,
+                    marketplace_id=recipe.marketplace_id,
+                    repo_url=recipe.repo_url,
+                    source_ref=recipe.source_ref,
+                    skill_name=recipe.skill_name or skill.name,
+                    install_command=recipe.install_command,
+                    status="running",
+                )
+                self.db.add(row)
+                self.db.flush()
+                try:
+                    result = installer.install(agent, recipe)
+                except SkillNpxInstallError as exc:
+                    row.status = "failed"
+                    row.install_log = str(exc)[:12000]
+                    logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
+                    installed_rows.append(row)
+                    continue
+                row.status = "installed"
+                row.folder_name = result.folder_name
+                row.folder_path = result.folder_path
+                row.manifest = result.manifest
+                row.install_command = result.install_command
+                row.install_log = result.log
+                row.installed_at = datetime.utcnow()
+                logs.append(f"{skill.public_name or skill.name}: installed as {result.folder_name}")
+                installed_rows.append(row)
+                continue
+
+            content = decrypt_skill_content(skill.content)
+            row = NativeAgentSkillInstall(
+                project_id=project_id,
+                user_id=user_id,
+                agent_id=agent.id,
+                source=skill.source,
+                marketplace_id="",
+                repo_url="",
+                source_ref="",
+                skill_name=skill.name,
+                install_command="local SKILL.md copy",
+                status="running",
+            )
+            self.db.add(row)
+            self.db.flush()
+            if not content.strip():
+                row.status = "failed"
+                row.install_log = "Local Skill has no SKILL.md content or npx recipe"
+                logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
+                installed_rows.append(row)
+                continue
+            try:
+                dest, manifest = workspace.install_skill_content(
+                    agent,
+                    folder_name=skill.public_name or skill.name,
+                    content=content,
+                )
+            except Exception as exc:
+                row.status = "failed"
+                row.install_log = str(exc)[:12000]
+                logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
+                installed_rows.append(row)
+                continue
+            row.status = "installed"
+            row.folder_name = dest.name
+            row.folder_path = str(dest)
+            row.manifest = manifest
+            row.install_log = "Installed local SKILL.md."
+            row.installed_at = datetime.utcnow()
+            logs.append(f"{skill.public_name or skill.name}: installed as {dest.name}")
+            installed_rows.append(row)
+
+        if installed_rows and all(row.status == "installed" for row in installed_rows):
+            agent.setup_status = "ready"
+        elif installed_rows:
+            agent.setup_status = "setup_failed"
+        else:
+            agent.setup_status = "ready"
+        agent.setup_log = "\n".join(logs)[-12000:]
+        self.db.add(agent)
+        return installed_rows
+
     def _validate_agent_refs(self, *, user_id: str, provider_id: str, skill_ids: list[str]) -> None:
         provider = self.db.get(Provider, provider_id) if provider_id else None
         if provider is None or provider.user_id != user_id:
@@ -402,6 +717,71 @@ class NativeAgentService:
         for sid in skill_ids:
             if self.get_skill(str(sid), user_id=user_id) is None:
                 raise ValueError(f"skill not available: {sid}")
+
+    def _install_skill_recipes(
+        self,
+        agent: NativeAgent,
+        *,
+        user_id: str,
+        project_id: str,
+        recipes: list[NativeAgentSkillRecipeIn] | list[dict],
+    ) -> list[NativeAgentSkillInstall]:
+        if not recipes:
+            if not agent.setup_status:
+                agent.setup_status = "ready"
+            return []
+
+        workspace = AgentWorkspaceService(self.db)
+        workspace.ensure_workspace(agent)
+        installer = SkillNpxInstaller(workspace)
+        installed_rows: list[NativeAgentSkillInstall] = []
+        logs: list[str] = []
+        agent.setup_status = "setting_up"
+        self.db.add(agent)
+        self.db.flush()
+
+        for raw in recipes:
+            recipe = _recipe_from(raw)
+            row = NativeAgentSkillInstall(
+                project_id=project_id,
+                user_id=user_id,
+                agent_id=agent.id,
+                source=recipe.source or "marketplace",
+                marketplace_id=recipe.marketplace_id,
+                repo_url=recipe.repo_url,
+                source_ref=recipe.source_ref,
+                skill_name=recipe.skill_name,
+                install_command=recipe.install_command,
+                status="running",
+            )
+            self.db.add(row)
+            self.db.flush()
+            try:
+                result = installer.install(agent, recipe)
+            except SkillNpxInstallError as exc:
+                row.status = "failed"
+                row.install_log = str(exc)[:12000]
+                agent.setup_status = "setup_failed"
+                logs.append(f"{recipe.skill_name}: {row.install_log}")
+                installed_rows.append(row)
+                continue
+            row.status = "installed"
+            row.folder_name = result.folder_name
+            row.folder_path = result.folder_path
+            row.manifest = result.manifest
+            row.install_command = result.install_command
+            row.install_log = result.log
+            row.installed_at = datetime.utcnow()
+            installed_rows.append(row)
+            logs.append(f"{recipe.skill_name}: installed as {result.folder_name}")
+
+        if all(row.status == "installed" for row in installed_rows):
+            agent.setup_status = "ready"
+        else:
+            agent.setup_status = "setup_failed"
+        agent.setup_log = "\n".join(logs)[-12000:]
+        self.db.add(agent)
+        return installed_rows
 
     def _public_name(self, *, user_id: str, skill_name: str) -> str:
         username = self._github_login(user_id=user_id)
@@ -472,6 +852,44 @@ def _skill_name_from_content(content: str) -> str:
     return "SKILL"
 
 
+def _skill_name_from_source(source: str) -> str:
+    cleaned = str(source or "").rstrip("/")
+    if not cleaned:
+        return "custom-skill"
+    tail = cleaned.split("/")[-1].removesuffix(".git")
+    return tail or "custom-skill"
+
+
+def _custom_public_name(*, user_id: str, name: str, source: str) -> str:
+    digest = hashlib.sha1(f"{user_id}:{source}".encode("utf-8")).hexdigest()[:10]
+    return f"custom@{_slug(name)}-{digest}"
+
+
+def _recipe_public_name(*, user_id: str, source: str, skill_name: str, name: str = "") -> str:
+    github_name = _github_recipe_public_name(source, skill_name)
+    if github_name:
+        return github_name
+    display = name or skill_name or _skill_name_from_source(source)
+    return _custom_public_name(user_id=user_id, name=display, source=source)
+
+
+def _github_recipe_public_name(source: str, skill_name: str) -> str:
+    match = re.match(r"^git@github\.com:([^/]+)/(.+?)(?:\.git)?$", str(source or "").strip())
+    if match:
+        owner = match.group(1)
+        return f"{owner}@{_slug(skill_name)}" if skill_name else ""
+    parsed = re.match(r"^https://github\.com/([^/]+)/(.+)$", str(source or "").strip())
+    if not parsed:
+        return ""
+    owner = parsed.group(1)
+    tail = parsed.group(2).rstrip("/").split("/")[-1].removesuffix(".git")
+    if "@" in tail:
+        return tail
+    if skill_name:
+        return f"{owner}@{_slug(skill_name)}"
+    return ""
+
+
 def _skill_author(row: Skill) -> str:
     if row.source == "marketplace":
         for tag in row.tags or []:
@@ -503,3 +921,88 @@ def _clean_tags(tags: list[str]) -> list[str]:
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-").lower()
     return cleaned or "user"
+
+
+def _recipe_from_skill(row: Skill) -> SkillInstallRecipe | None:
+    meta = recipe_meta_from_tags(row.tags)
+    source_url = (meta.get("source_url") or meta.get("repo_url") or "").strip()
+    if not source_url:
+        return None
+    skill_name = (meta.get("skill_name") or row.name or "").strip()
+    install_command = (meta.get("install_command") or build_npx_install_command(source_url, skill_name)).strip()
+    return SkillInstallRecipe(
+        repo_url=(meta.get("repo_url") or source_url).strip(),
+        source_url=source_url,
+        source_ref=meta.get("source_ref", "").strip(),
+        skill_name=skill_name,
+        install_command=install_command,
+        marketplace_id=meta.get("marketplace_id", "").strip() or (row.public_name if row.source == "marketplace" else ""),
+        source=meta.get("source", "").strip() or row.source or "custom",
+    )
+
+
+def _source_from_install(row: NativeAgentSkillInstall) -> str:
+    command_source = _source_from_install_command(row.install_command)
+    return command_source or str(row.repo_url or "").strip()
+
+
+def _source_from_install_command(command: str) -> str:
+    text = str(command or "").strip()
+    if not text:
+        return ""
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return ""
+    for idx in range(len(parts) - 3):
+        if parts[idx] == "npx" and parts[idx + 2] == "skills" and parts[idx + 3] == "add":
+            return parts[idx + 4] if idx + 4 < len(parts) else ""
+        if parts[idx] == "skills" and parts[idx + 1] == "add":
+            return parts[idx + 2] if idx + 2 < len(parts) else ""
+    return ""
+
+
+def _parse_skill_add_command(command: str) -> tuple[str, str]:
+    text = str(command or "").strip()
+    if not text:
+        return "", ""
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return "", ""
+    source = ""
+    skill_name = ""
+    for idx in range(len(parts) - 1):
+        if parts[idx] != "skills" or parts[idx + 1] != "add":
+            continue
+        if idx + 2 >= len(parts):
+            break
+        source = parts[idx + 2]
+        rest = parts[idx + 3 :]
+        for opt_idx, item in enumerate(rest):
+            if item == "--skill" and opt_idx + 1 < len(rest):
+                skill_name = rest[opt_idx + 1]
+                break
+            if item.startswith("--skill="):
+                skill_name = item.split("=", 1)[1]
+                break
+        break
+    return source, skill_name
+
+
+def _recipe_from(raw: NativeAgentSkillRecipeIn | dict) -> SkillInstallRecipe:
+    if isinstance(raw, NativeAgentSkillRecipeIn):
+        data = raw.model_dump()
+    elif hasattr(raw, "model_dump"):
+        data = raw.model_dump()
+    else:
+        data = dict(raw or {})
+    return SkillInstallRecipe(
+        repo_url=str(data.get("repo_url") or "").strip(),
+        skill_name=str(data.get("skill_name") or "").strip(),
+        source_url=str(data.get("source_url") or "").strip(),
+        install_command=str(data.get("install_command") or "").strip(),
+        marketplace_id=str(data.get("marketplace_id") or "").strip(),
+        source_ref=str(data.get("source_ref") or "").strip(),
+        source=str(data.get("source") or "marketplace").strip() or "marketplace",
+    )

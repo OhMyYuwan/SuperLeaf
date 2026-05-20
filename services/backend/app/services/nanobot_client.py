@@ -96,6 +96,8 @@ class NanobotClient:
         session_id: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4000,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         body: dict[str, Any] = {
             "model": model,
@@ -106,6 +108,9 @@ class NanobotClient:
         }
         if session_id:
             body["session_id"] = session_id
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = tool_choice or "auto"
 
         async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
             async with client.stream(

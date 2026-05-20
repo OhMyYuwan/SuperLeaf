@@ -1,11 +1,20 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Bot, FileText, Play, Square, Workflow } from 'lucide-react'
 import { useAutomationStore } from '../../stores/automationStore'
 import { useDocumentStore } from '../../stores/documentStore'
+import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import {
+  flattenFileCandidates,
+  sortFilesCurrentFirst,
+  type MentionCandidate,
+} from '../../services/mentions'
+import { MentionInput } from '../shared/MentionInput'
+import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 
 export function AutomationTab() {
   const activeDoc = useDocumentStore((s) => s.getActive())
+  const tree = useFilesystemStore((s) => s.tree)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -39,6 +48,10 @@ export function AutomationTab() {
   const availableTargets = targetKind === 'agent' ? availableAgents : definitions
   const paragraphCount = activeDoc?.structure.paragraphs.filter((p) => p.text.trim()).length ?? 0
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0
+  const fileCandidates = useMemo(
+    () => sortFilesCurrentFirst(flattenFileCandidates(tree), activeDoc?.id ?? null),
+    [tree, activeDoc?.id],
+  )
 
   useEffect(() => {
     if (!workflowsLoaded) void loadWorkflows()
@@ -49,6 +62,11 @@ export function AutomationTab() {
     if (targetId || availableTargets.length === 0) return
     setTargetId(availableTargets[0].id)
   }, [targetId, availableTargets, setTargetId])
+
+  const handleCandidatePicked = (candidate: MentionCandidate): boolean => {
+    if (candidate.kind === 'file') return confirmLargeFileAttachment(candidate)
+    return true
+  }
 
   return (
     <div className="tab-content-wrapper automation-tab">
@@ -122,11 +140,19 @@ export function AutomationTab() {
 
       <label className="automation-field">
         <span>自动批注意图</span>
-        <textarea
+        <MentionInput
           value={instruction}
-          onChange={(event) => setInstruction(event.target.value)}
+          onChange={setInstruction}
+          agents={[]}
+          workflows={[]}
+          files={fileCandidates}
+          placeholder="输入自动批注意图，用 @ 引用项目文件作为参考…"
           rows={4}
           disabled={running}
+          className="automation-mention-field"
+          onCandidatePicked={handleCandidatePicked}
+          menuPlacement="composer-panel"
+          renderMirrorLayer={false}
         />
       </label>
 

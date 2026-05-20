@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import type { Document, Paragraph, Section } from '../types/document'
+import {
+  flattenFileCandidates,
+  parseMentions,
+  resolveAttachedFiles,
+  stripMentions,
+  uniqueMentionedFiles,
+  type AttachedFile,
+} from '../services/mentions'
 import { useDocumentStore } from './documentStore'
+import { useFilesystemStore } from './filesystemStore'
 import { useWorkflowStore } from './workflowStore'
 
 export type AutomationTargetKind = 'agent' | 'workflow'
@@ -125,7 +134,8 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
       conversationId: '',
     }
     const paperContext = buildPaperContext(snapshot, docHash)
-    const instruction = state.instruction.trim() || DEFAULT_INSTRUCTION
+    const references = await resolveInstructionReferences(state.instruction)
+    const instruction = references.instruction || DEFAULT_INSTRUCTION
     const fullContextEvery = state.fullContextEvery
 
     set({
@@ -135,7 +145,9 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
       total: chunks.length,
       completed: 0,
       error: null,
-      lastMessage: `准备审核 ${chunks.length} 个段落，并锁定当前文档快照。`,
+      lastMessage: references.attachedFiles.length > 0
+        ? `准备审核 ${chunks.length} 个段落，已附带 ${references.attachedFiles.length} 个参考文件，并锁定当前文档快照。`
+        : `准备审核 ${chunks.length} 个段落，并锁定当前文档快照。`,
       sessionId: session.id,
       sessionConversationId: '',
       sessionDocHash: docHash,
@@ -175,6 +187,7 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
           session,
           paperContext,
           includeFullContext,
+          attachedFiles: references.attachedFiles,
         })
         if (result.conversationId) {
           session.conversationId = result.conversationId
@@ -210,6 +223,7 @@ async function runChunk(args: {
   session: AutomationSession
   paperContext: PaperContext
   includeFullContext: boolean
+  attachedFiles: AttachedFile[]
 }): Promise<{ error: string | null; conversationId?: string }> {
   const {
     doc,
@@ -220,6 +234,7 @@ async function runChunk(args: {
     session,
     paperContext,
     includeFullContext,
+    attachedFiles,
   } = args
   const workflow = useWorkflowStore.getState()
   const query = buildAutomationQuery({
@@ -229,7 +244,9 @@ async function runChunk(args: {
     paperContext,
     includeFullContext,
     targetKind,
+    attachedFiles,
   })
+  const contextFiles = attachedFilesToContextFiles(attachedFiles)
   const body = {
     document_id: doc.id,
     range_start: chunk.range.from,
@@ -247,9 +264,11 @@ async function runChunk(args: {
       section_title: chunk.sectionTitle,
       paper_brief: paperContext.brief,
       full_latex_context: includeFullContext ? paperContext.fullLatex : '',
+      attached_files: attachedFiles,
       instruction,
     },
     query,
+    context_files: contextFiles,
   }
 
   if (targetKind === 'workflow') {
@@ -286,8 +305,17 @@ function buildAutomationQuery(args: {
   paperContext: PaperContext
   includeFullContext: boolean
   targetKind: AutomationTargetKind
+  attachedFiles: AttachedFile[]
 }): string {
-  const { chunk, instruction, session, paperContext, includeFullContext, targetKind } = args
+  const {
+    chunk,
+    instruction,
+    session,
+    paperContext,
+    includeFullContext,
+    targetKind,
+    attachedFiles,
+  } = args
   return [
     '你正在执行 YuwanLabWriter 自动批注模式。',
     '这是无人值守的连续审稿任务：请把本次任务视为同一个自动化 session 中的一步。',
@@ -303,6 +331,9 @@ function buildAutomationQuery(args: {
     includeFullContext
       ? `[FULL LATEX SNAPSHOT]\n${paperContext.fullLatex}\n[END FULL LATEX SNAPSHOT]`
       : `[COMPACT PAPER CONTEXT]\n${paperContext.brief}\n[END COMPACT PAPER CONTEXT]`,
+    targetKind === 'agent' && attachedFiles.length > 0
+      ? renderAttachedFilesForPrompt(attachedFiles)
+      : '',
     '',
     `段落：${chunk.index}/${chunk.total}`,
     chunk.sectionTitle ? `章节：${chunk.sectionTitle}` : '',
@@ -312,6 +343,76 @@ function buildAutomationQuery(args: {
     chunk.text,
     '--- 目标段落结束 ---',
   ].filter(Boolean).join('\n')
+}
+
+async function resolveInstructionReferences(rawInstruction: string): Promise<{
+  instruction: string
+  attachedFiles: AttachedFile[]
+}> {
+  const tree = useFilesystemStore.getState().tree
+  const fileCandidates = flattenFileCandidates(tree)
+  if (fileCandidates.length === 0) {
+    return { instruction: rawInstruction.trim(), attachedFiles: [] }
+  }
+
+  const mentions = parseMentions(rawInstruction, fileCandidates)
+  const mentionedFiles = uniqueMentionedFiles(mentions)
+  if (mentionedFiles.length === 0) {
+    return { instruction: rawInstruction.trim(), attachedFiles: [] }
+  }
+
+  const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
+    onFetchError: (file, error) => {
+      console.warn('[automationStore] failed to fetch @mentioned file', file.path, error)
+    },
+  })
+  return {
+    instruction: stripMentions(rawInstruction, mentions).trim(),
+    attachedFiles,
+  }
+}
+
+function attachedFilesToContextFiles(attachedFiles: readonly AttachedFile[]) {
+  return attachedFiles.map((file) => ({
+    name: file.path || file.name,
+    document_id: file.path || file.name,
+    content: contextFileContent(file),
+  }))
+}
+
+function contextFileContent(file: AttachedFile): string {
+  if (file.omitted) {
+    return `[file omitted: ${file.omit_reason ?? 'attachment budget exceeded'}]`
+  }
+  if (file.kind === 'doc') {
+    return file.content ?? ''
+  }
+  return [
+    `[binary file: ${file.name}]`,
+    `path: ${file.path}`,
+    file.mime ? `mime: ${file.mime}` : '',
+    file.url ? `url: ${file.url}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function renderAttachedFilesForPrompt(attachedFiles: readonly AttachedFile[]): string {
+  const lines: string[] = ['[ATTACHED FILES]']
+  for (const file of attachedFiles) {
+    const header = [
+      `[FILE: ${file.name}`,
+      `path=${file.path}`,
+      `kind=${file.kind}`,
+      `size=${file.original_size_bytes}B`,
+      file.truncated ? 'truncated=true' : '',
+      file.mime ? `mime=${file.mime}` : '',
+      file.url ? `url=${file.url}` : '',
+    ].filter(Boolean).join(' | ')
+    lines.push(`${header}]`)
+    lines.push(contextFileContent(file))
+    lines.push(`[END FILE: ${file.name}]`)
+  }
+  lines.push('[END ATTACHED FILES]')
+  return lines.join('\n')
 }
 
 function buildParagraphChunks(doc: Document, maxChars: number): AutomationChunk[] {

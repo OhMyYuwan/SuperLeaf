@@ -263,6 +263,10 @@ class NativeAgent(Base):
     model: Mapped[str] = mapped_column(String(128), default="")
     instructions: Mapped[str] = mapped_column(Text, default="")
     skill_ids: Mapped[list] = mapped_column(JSON, default=list)
+    agent_md: Mapped[str] = mapped_column(Text, default="")
+    workspace_path: Mapped[str] = mapped_column(String(1024), default="")
+    setup_status: Mapped[str] = mapped_column(String(32), default="ready")
+    setup_log: Mapped[str] = mapped_column(Text, default="")
     output_contract: Mapped[str] = mapped_column(String(32), default="annotation")
     runtime_config: Mapped[dict] = mapped_column(JSON, default=dict)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -270,6 +274,37 @@ class NativeAgent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class NativeAgentSkillInstall(Base):
+    """Agent-scoped Skill folder installed through an npx recipe.
+
+    The file contents live on disk under the Agent workspace. This row is only
+    the searchable install ledger and manifest.
+    """
+
+    __tablename__ = "native_agent_skill_installs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    agent_id: Mapped[str] = mapped_column(ForeignKey("native_agents.id"), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="marketplace")
+    marketplace_id: Mapped[str] = mapped_column(String(256), default="")
+    repo_url: Mapped[str] = mapped_column(String(1024), default="")
+    source_ref: Mapped[str] = mapped_column(String(128), default="")
+    skill_name: Mapped[str] = mapped_column(String(256), default="")
+    folder_name: Mapped[str] = mapped_column(String(256), default="")
+    install_command: Mapped[str] = mapped_column(Text, default="")
+    folder_path: Mapped[str] = mapped_column(String(1024), default="")
+    manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    install_log: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class WorkflowTestCase(Base):

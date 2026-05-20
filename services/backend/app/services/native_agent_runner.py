@@ -8,9 +8,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 from typing import Any
 
 from .attached_files import render_attached_files_block
+from .agent_workspace_service import (
+    AgentWorkspaceError,
+    list_agent_workspace_files,
+    read_agent_workspace_file,
+)
 from .nanobot_client import NanobotClient
 
 
@@ -31,8 +38,10 @@ class NativeAgentRuntimeConfig:
     model: str
     instructions: str
     skills: list[NativeSkillBlock] = field(default_factory=list)
+    workspace_root: str = ""
     temperature: float = 0.2
     max_tokens: int = 4000
+    max_tool_rounds: int = 8
 
 
 @dataclass(slots=True)
@@ -70,6 +79,11 @@ class NativeAgentRunner:
             },
         }
 
+        if self.config.workspace_root:
+            async for evt in self._stream_with_workspace_tools(client, system_prompt, user_prompt, session_id):
+                yield evt
+            return
+
         async for evt in client.run_streaming(
             model=self.config.model,
             messages=[
@@ -94,8 +108,10 @@ class NativeAgentRunner:
     def _system_prompt(self) -> str:
         parts = [
             "You are a native YuwanLabWriter Agent.",
-            "You must only use the context explicitly provided in the user message.",
-            "Do not claim to have read project files, folders, or databases.",
+            "You must only use the user message and your assigned Agent workspace.",
+            "Your only readable workspace is `.agents/` for this Agent.",
+            "Use list_agent_files and read_agent_file when you need Skill files.",
+            "Never claim to read files outside `.agents/`.",
             "Do not propose direct file mutations. Return review output only.",
         ]
         if self.config.instructions.strip():
@@ -148,6 +164,96 @@ class NativeAgentRunner:
             parts.extend(["", file_block])
         return "\n".join(parts).strip()
 
+    async def _stream_with_workspace_tools(
+        self,
+        client: NanobotClient,
+        system_prompt: str,
+        user_prompt: str,
+        session_id: str | None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        tools = _workspace_tools()
+
+        for _round in range(max(1, self.config.max_tool_rounds)):
+            tool_acc = _ToolAccumulator()
+            content_parts: list[str] = []
+            async for evt in client.run_streaming(
+                model=self.config.model,
+                messages=messages,
+                session_id=session_id,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                tools=tools,
+                tool_choice="auto",
+            ):
+                delta = _delta_text(evt)
+                if delta:
+                    content_parts.append(delta)
+                tool_acc.add_event(evt)
+                yield {"event": "native.agent.raw", "data": evt}
+                if delta:
+                    yield {"event": "native.agent.output.delta", "data": {"delta": delta}}
+
+            tool_calls = tool_acc.calls()
+            if not tool_calls:
+                return
+
+            assistant_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": "".join(content_parts) or None,
+                "tool_calls": tool_calls,
+            }
+            messages.append(assistant_message)
+            for call in tool_calls:
+                result = self._execute_workspace_tool(call)
+                yield {
+                    "event": "native.agent.tool",
+                    "data": {
+                        "name": call.get("function", {}).get("name", ""),
+                        "result_preview": result[:500],
+                    },
+                }
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id") or "tool-call",
+                        "content": result,
+                    }
+                )
+
+        yield {
+            "event": "native.agent.output.delta",
+            "data": {"delta": "\n\n[Tool limit reached while reading Agent workspace.]"},
+        }
+
+    def _execute_workspace_tool(self, call: dict[str, Any]) -> str:
+        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = str(fn.get("name") or "")
+        args_raw = fn.get("arguments") or "{}"
+        try:
+            args = json.loads(args_raw) if isinstance(args_raw, str) else dict(args_raw)
+        except (TypeError, ValueError):
+            args = {}
+        root = Path(self.config.workspace_root)
+        try:
+            if name == "list_agent_files":
+                prefix = str(args.get("prefix") or ".agents")
+                files = list_agent_workspace_files(root, prefix=prefix)
+                return json.dumps(
+                    [{"path": file.path, "type": file.type, "size": file.size} for file in files],
+                    ensure_ascii=False,
+                )
+            if name == "read_agent_file":
+                path = str(args.get("path") or "")
+                content = read_agent_workspace_file(root, path)
+                return content
+        except AgentWorkspaceError as exc:
+            return f"ERROR: {exc}"
+        return f"ERROR: unknown tool {name}"
+
 
 def _delta_text(evt: dict[str, Any]) -> str:
     choices = evt.get("choices")
@@ -164,3 +270,95 @@ def _delta_text(evt: dict[str, Any]) -> str:
         return message["content"]
     text = first.get("text")
     return text if isinstance(text, str) else ""
+
+
+def _workspace_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_agent_files",
+                "description": "List files and folders in this Agent's read-only .agents workspace.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prefix": {
+                            "type": "string",
+                            "description": "Path under .agents, for example .agents or .agents/skills.",
+                        }
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_agent_file",
+                "description": "Read a safe text file from this Agent's read-only .agents workspace.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path under .agents, for example .agents/skills/name/SKILL.md.",
+                        }
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+    ]
+
+
+class _ToolAccumulator:
+    def __init__(self) -> None:
+        self._calls: dict[int, dict[str, Any]] = {}
+
+    def add_event(self, evt: dict[str, Any]) -> None:
+        choices = evt.get("choices")
+        if not isinstance(choices, list):
+            return
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if isinstance(message, dict):
+                self._add_tool_calls(message.get("tool_calls"))
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                self._add_tool_calls(delta.get("tool_calls"))
+
+    def _add_tool_calls(self, raw_calls: Any) -> None:
+        if not isinstance(raw_calls, list):
+            return
+        for fallback_index, raw in enumerate(raw_calls):
+            if not isinstance(raw, dict):
+                continue
+            index = int(raw.get("index") if raw.get("index") is not None else fallback_index)
+            current = self._calls.setdefault(
+                index,
+                {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+            )
+            if raw.get("id"):
+                current["id"] = raw["id"]
+            if raw.get("type"):
+                current["type"] = raw["type"]
+            fn = raw.get("function")
+            if isinstance(fn, dict):
+                current_fn = current.setdefault("function", {"name": "", "arguments": ""})
+                if fn.get("name"):
+                    current_fn["name"] = str(current_fn.get("name") or "") + str(fn["name"])
+                if fn.get("arguments"):
+                    current_fn["arguments"] = str(current_fn.get("arguments") or "") + str(fn["arguments"])
+
+    def calls(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for index in sorted(self._calls):
+            call = self._calls[index]
+            fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+            if not fn.get("name"):
+                continue
+            if not call.get("id"):
+                call["id"] = f"tool-call-{index}"
+            out.append(call)
+        return out

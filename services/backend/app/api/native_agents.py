@@ -10,21 +10,26 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, object_session
 
 from ..database import get_session
-from ..models import NativeAgent, NativeAgentCredential, Project, Skill, User
+from ..models import NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Project, Skill, User
 from ..schemas import (
+    AgentWorkspaceFileOut,
     NativeAgentCredentialIn,
     NativeAgentCredentialOut,
     NativeAgentCredentialPatch,
     NativeAgentIn,
     NativeAgentOut,
     NativeAgentPatch,
+    NativeAgentSkillInstallOut,
+    NativeAgentSkillRecipeIn,
     SkillIn,
     SkillMarketplaceEntryOut,
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
     SkillPatch,
+    SkillRecipeIn,
 )
+from ..services.agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from ..services.native_agent_service import NativeAgentService
 from ..services.skill_marketplace_service import (
     MarketplaceEntry,
@@ -65,6 +70,10 @@ def _skill_out(row: Skill, user_id: str) -> SkillOut:
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
     return NativeAgentOut.model_validate(row, from_attributes=True)
+
+
+def _install_out(row: NativeAgentSkillInstall) -> NativeAgentSkillInstallOut:
+    return NativeAgentSkillInstallOut.model_validate(row, from_attributes=True)
 
 
 def _marketplace_entry_out(entry: MarketplaceEntry) -> SkillMarketplaceEntryOut:
@@ -160,6 +169,29 @@ def create_skill(
             entry_filename=body.entry_filename,
             description=body.description,
             content=body.content,
+            tags=body.tags,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _skill_out(row, user.id)
+
+
+@router.post("/skills/recipe", response_model=SkillOut, status_code=201)
+def create_recipe_skill(
+    body: SkillRecipeIn,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillOut:
+    try:
+        row = NativeAgentService(db).create_recipe_skill(
+            user_id=user.id,
+            name=body.name,
+            description=body.description,
+            repo_url=body.repo_url,
+            source_url=body.source_url,
+            source_ref=body.source_ref,
+            skill_name=body.skill_name,
+            install_command=body.install_command,
             tags=body.tags,
         )
     except ValueError as exc:
@@ -309,7 +341,9 @@ def create_agent(
             provider_id=body.provider_id,
             model=body.model,
             instructions=body.instructions,
+            agent_md=body.agent_md,
             skill_ids=body.skill_ids,
+            skill_recipes=body.skill_recipes,
             output_contract=body.output_contract,
             runtime_config=body.runtime_config,
             is_enabled=body.is_enabled,
@@ -317,6 +351,56 @@ def create_agent(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return _agent_out(row)
+
+
+@router.get("/agents/{agent_id}/skills", response_model=list[NativeAgentSkillInstallOut])
+def list_agent_skill_installs(
+    agent_id: str,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[NativeAgentSkillInstallOut]:
+    rows = NativeAgentService(db).list_agent_skill_installs(agent_id, project_id=project.id, user_id=user.id)
+    return [_install_out(row) for row in rows]
+
+
+@router.post("/agents/{agent_id}/skills/install-npx", response_model=NativeAgentSkillInstallOut, status_code=201)
+def install_agent_skill_recipe(
+    agent_id: str,
+    body: NativeAgentSkillRecipeIn,
+    project: Project = Depends(require_write_access),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> NativeAgentSkillInstallOut:
+    try:
+        row = NativeAgentService(db).install_agent_skill_recipe(
+            agent_id,
+            project_id=project.id,
+            user_id=user.id,
+            recipe=body,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "native agent not found")
+    return _install_out(row)
+
+
+@router.get("/agents/{agent_id}/workspace/tree", response_model=list[AgentWorkspaceFileOut])
+def agent_workspace_tree(
+    agent_id: str,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[AgentWorkspaceFileOut]:
+    agent = NativeAgentService(db).get_agent(agent_id, project_id=project.id, user_id=user.id)
+    if agent is None:
+        raise HTTPException(404, "native agent not found")
+    try:
+        files = AgentWorkspaceService(db).workspace_tree(agent)
+    except AgentWorkspaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return [AgentWorkspaceFileOut(path=item.path, type=item.type, size=item.size) for item in files]
 
 
 @router.patch("/agents/{agent_id}", response_model=NativeAgentOut)

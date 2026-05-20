@@ -288,6 +288,11 @@ export interface SkillMarketplaceEntry {
   entry_url: string
   readme_url: string
   checksum_sha256: string
+  repo_url: string
+  source_url: string
+  source_ref: string
+  skill_name: string
+  install_command: string
   installed: boolean
   installed_skill_id: string | null
   installed_version: string
@@ -313,6 +318,17 @@ export interface SkillDraft {
   tags?: string[]
 }
 
+export interface SkillRecipeDraft {
+  name?: string
+  description?: string
+  repo_url?: string
+  source_url?: string
+  source_ref?: string
+  skill_name?: string
+  install_command?: string
+  tags?: string[]
+}
+
 export interface SkillPatch {
   name?: string
   description?: string
@@ -329,12 +345,53 @@ export interface NativeAgent {
   description: string
   model: string
   instructions: string
+  agent_md: string
   skill_ids: string[]
+  workspace_path: string
+  setup_status: string
+  setup_log: string
   output_contract: 'annotation' | 'plan' | 'workflow' | 'freeform' | string
   runtime_config: Record<string, unknown>
   is_enabled: boolean
   created_at: string
   updated_at: string
+}
+
+export interface NativeAgentSkillRecipe {
+  source?: string
+  marketplace_id?: string
+  repo_url: string
+  source_url?: string
+  source_ref?: string
+  skill_name: string
+  install_command?: string
+}
+
+export interface NativeAgentSkillInstall {
+  id: string
+  project_id: string
+  user_id: string
+  agent_id: string
+  source: string
+  marketplace_id: string
+  repo_url: string
+  source_ref: string
+  skill_name: string
+  folder_name: string
+  install_command: string
+  folder_path: string
+  manifest: Record<string, unknown>
+  status: string
+  install_log: string
+  created_at: string
+  updated_at: string
+  installed_at: string | null
+}
+
+export interface AgentWorkspaceFile {
+  path: string
+  type: 'file' | 'directory' | string
+  size: number
 }
 
 export interface NativeAgentDraft {
@@ -343,7 +400,9 @@ export interface NativeAgentDraft {
   provider_id: string
   model: string
   instructions: string
+  agent_md?: string
   skill_ids?: string[]
+  skill_recipes?: NativeAgentSkillRecipe[]
   output_contract?: NativeAgent['output_contract']
   runtime_config?: Record<string, unknown>
   is_enabled?: boolean
@@ -355,7 +414,9 @@ export interface NativeAgentPatch {
   provider_id?: string
   model?: string
   instructions?: string
+  agent_md?: string
   skill_ids?: string[]
+  skill_recipes?: NativeAgentSkillRecipe[]
   output_contract?: NativeAgent['output_contract']
   runtime_config?: Record<string, unknown>
   is_enabled?: boolean
@@ -385,6 +446,8 @@ export const nativeAgentApi = {
     list: () => http<Skill[]>('/api/native-agent/skills'),
     create: (draft: SkillDraft) =>
       http<Skill>('/api/native-agent/skills', { method: 'POST', body: JSON.stringify(draft) }),
+    createRecipe: (draft: SkillRecipeDraft) =>
+      http<Skill>('/api/native-agent/skills/recipe', { method: 'POST', body: JSON.stringify(draft) }),
     update: (id: string, patch: SkillPatch) =>
       http<Skill>(`/api/native-agent/skills/${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -431,6 +494,15 @@ export const nativeAgentApi = {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
+    installs: (id: string) =>
+      http<NativeAgentSkillInstall[]>(`/api/native-agent/agents/${encodeURIComponent(id)}/skills`),
+    installSkill: (id: string, recipe: NativeAgentSkillRecipe) =>
+      http<NativeAgentSkillInstall>(`/api/native-agent/agents/${encodeURIComponent(id)}/skills/install-npx`, {
+        method: 'POST',
+        body: JSON.stringify(recipe),
+      }),
+    workspaceTree: (id: string) =>
+      http<AgentWorkspaceFile[]>(`/api/native-agent/agents/${encodeURIComponent(id)}/workspace/tree`),
     remove: (id: string) =>
       http<void>(`/api/native-agent/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },

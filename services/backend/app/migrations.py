@@ -57,6 +57,7 @@ def run_migrations(engine: Engine) -> None:
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
         _rebuild_native_agents_table(conn)
+        _add_native_agent_workspace_columns(conn)
         _encrypt_plaintext_skill_content(conn)
 
 
@@ -349,3 +350,17 @@ def _encrypt_plaintext_skill_content(conn) -> None:
             text("UPDATE skills SET content = :content WHERE id = :id"),
             {"id": row[0], "content": encrypt_skill_content(row[1] or "")},
         )
+
+
+def _add_native_agent_workspace_columns(conn) -> None:
+    if not _table_exists(conn, "native_agents"):
+        return
+    additions = {
+        "agent_md": "TEXT DEFAULT ''",
+        "workspace_path": "VARCHAR(1024) DEFAULT ''",
+        "setup_status": "VARCHAR(32) DEFAULT 'ready'",
+        "setup_log": "TEXT DEFAULT ''",
+    }
+    for column, ddl in additions.items():
+        if not _column_exists(conn, "native_agents", column):
+            conn.execute(text(f"ALTER TABLE native_agents ADD COLUMN {column} {ddl}"))

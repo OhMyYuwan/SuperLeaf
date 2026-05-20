@@ -39,6 +39,7 @@ import type {
   SkillDraft,
   SkillMarketplaceEntry,
   SkillPatch,
+  SkillRecipeDraft,
   WorkflowDefinition,
   WorkflowDefinitionDraft,
 } from '../../services/backendApi'
@@ -111,6 +112,7 @@ export function TeamTab({
   const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
   const loadMarketplace = useNativeAgentStore((s) => s.loadMarketplace)
   const createSkill = useNativeAgentStore((s) => s.createSkill)
+  const createRecipeSkill = useNativeAgentStore((s) => s.createRecipeSkill)
   const updateSkill = useNativeAgentStore((s) => s.updateSkill)
   const publishSkill = useNativeAgentStore((s) => s.publishSkill)
   const unpublishSkill = useNativeAgentStore((s) => s.unpublishSkill)
@@ -285,13 +287,14 @@ export function TeamTab({
           error={marketplaceError || nativeError}
           onRefresh={() => void loadMarketplace()}
           onCreatePrivateSkill={createSkill}
+          onCreateRecipeSkill={createRecipeSkill}
+          onInstallMarketplaceSkill={installMarketplaceSkill}
+          onUpdateMarketplaceSkill={updateMarketplaceSkill}
+          onUninstallMarketplaceSkill={uninstallMarketplaceSkill}
           onUpdateSkill={updateSkill}
           onPublishSkill={publishSkill}
           onUnpublishSkill={unpublishSkill}
           onRemoveSkill={removeSkill}
-          onInstall={installMarketplaceSkill}
-          onUpdate={updateMarketplaceSkill}
-          onUninstall={uninstallMarketplaceSkill}
         />
       )}
 
@@ -689,6 +692,10 @@ function NativeAgentCard({ agent, modelOptions, modelError, onUpdate, onRemove, 
           {agent.description ? ` · ${agent.description}` : ''}
         </span>
         <span className="agent-stats-empty">{agent.is_enabled ? '已启用' : '已停用'}</span>
+        <span className={`agent-stats-empty ${agent.setup_status === 'setup_failed' ? 'error' : ''}`}>
+          Workspace: {agent.setup_status || 'ready'}
+          {agent.setup_log ? ` · ${agent.setup_log.slice(0, 80)}` : ''}
+        </span>
       </div>
       <div className="agent-card-actions">
         <button
@@ -741,6 +748,7 @@ function NativeAgentForm({
     provider_id: providerId,
     model: initialModel,
     instructions: agent?.instructions ?? '',
+    agent_md: agent?.agent_md || agent?.instructions || '',
     skill_ids: agent?.skill_ids ?? [],
     output_contract: agent?.output_contract ?? 'annotation',
     runtime_config: agent?.runtime_config ?? {},
@@ -749,15 +757,8 @@ function NativeAgentForm({
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (modelOptions.some((model) => model.id === draft.model)) {
-      setModelMode('select')
-    }
-    if (!agent && modelOptions.length > 0 && !modelOptions.some((model) => model.id === draft.model)) {
-      setDraft((prev) => ({ ...prev, model: modelOptions[0].id }))
-      setModelMode('select')
-    }
-  }, [agent, draft.model, modelOptions])
+  const modelInOptions = modelOptions.some((model) => model.id === draft.model)
+  const effectiveModelMode = modelMode === 'select' && modelInOptions ? 'select' : 'custom'
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -772,6 +773,7 @@ function NativeAgentForm({
       name: draft.name.trim(),
       model: draft.model.trim(),
       instructions: draft.instructions.trim(),
+      agent_md: (draft.agent_md || draft.instructions).trim(),
     })
     setSaving(false)
   }
@@ -791,7 +793,7 @@ function NativeAgentForm({
           <span>模型</span>
           <div className="model-picker">
             <select
-              value={modelMode === 'select' ? draft.model : '__custom__'}
+              value={effectiveModelMode === 'select' ? draft.model : '__custom__'}
               onChange={(event) => {
                 const value = event.target.value
                 if (value === '__custom__') {
@@ -810,7 +812,7 @@ function NativeAgentForm({
               ))}
             </select>
           </div>
-          {modelMode === 'custom' && (
+          {effectiveModelMode === 'custom' && (
             <input
               value={draft.model}
               onChange={(event) => setDraft((prev) => ({ ...prev, model: event.target.value }))}
@@ -829,18 +831,18 @@ function NativeAgentForm({
         />
       </label>
       <label className="full">
-        <span>指令</span>
+        <span>AGENT.md</span>
         <textarea
-          value={draft.instructions}
-          onChange={(event) => setDraft((prev) => ({ ...prev, instructions: event.target.value }))}
-          rows={4}
-          placeholder="Agent 的系统指令，可留空后续再补"
+          value={draft.agent_md ?? ''}
+          onChange={(event) => setDraft((prev) => ({ ...prev, agent_md: event.target.value, instructions: event.target.value }))}
+          rows={5}
+          placeholder="写入该 Agent 的 .agents/AGENT.md"
         />
       </label>
       <fieldset className="skill-picker-field">
-        <legend>AgentSkill</legend>
+        <legend>Skill 装配</legend>
         {skills.length === 0 ? (
-          <div className="agent-empty-inline">还没有安装 Skill。先在 Skill Market 安装，再给 Agent 装配。</div>
+          <div className="agent-empty-inline">本地 Skill 库为空。先在 Skill 页面安装市场 Skill 或添加自定义 Skill。</div>
         ) : (
           <div className="skill-picker">
             {skills.map((skill) => {
@@ -858,7 +860,7 @@ function NativeAgentForm({
                     }}
                   />
                   <span>{skillLabel(skill)}</span>
-                  <small>{skill.source}</small>
+                  <small>{skillPillLabel(skill)}</small>
                 </label>
               )
             })}
@@ -885,13 +887,14 @@ function SkillManagementPanel({
   error,
   onRefresh,
   onCreatePrivateSkill,
+  onCreateRecipeSkill,
+  onInstallMarketplaceSkill,
+  onUpdateMarketplaceSkill,
+  onUninstallMarketplaceSkill,
   onUpdateSkill,
   onPublishSkill,
   onUnpublishSkill,
   onRemoveSkill,
-  onInstall,
-  onUpdate,
-  onUninstall,
 }: {
   skills: Skill[]
   marketplaceSkills: SkillMarketplaceEntry[]
@@ -899,22 +902,24 @@ function SkillManagementPanel({
   error: string | null
   onRefresh: () => void
   onCreatePrivateSkill: (draft: SkillDraft) => Promise<Skill | null>
+  onCreateRecipeSkill: (draft: SkillRecipeDraft) => Promise<Skill | null>
+  onInstallMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
+  onUpdateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
+  onUninstallMarketplaceSkill: (id: string) => Promise<boolean>
   onUpdateSkill: (id: string, patch: SkillPatch) => Promise<Skill | null>
   onPublishSkill: (id: string) => Promise<Skill | null>
   onUnpublishSkill: (id: string) => Promise<Skill | null>
   onRemoveSkill: (id: string) => Promise<boolean>
-  onInstall: (id: string) => Promise<SkillMarketplaceEntry | null>
-  onUpdate: (id: string) => Promise<SkillMarketplaceEntry | null>
-  onUninstall: (id: string) => Promise<boolean>
 }) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [showPrivateForm, setShowPrivateForm] = useState(false)
+  const [showRecipeForm, setShowRecipeForm] = useState(false)
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null)
   const [marketSearch, setMarketSearch] = useState('')
   const [pendingShareIds, setPendingShareIds] = useState<Set<string>>(new Set())
-  const installedByPublicName = new Map(skills.map((skill) => [skill.public_name, skill]))
   const privateSkills = skills.filter((skill) => skill.source === 'upload')
   const marketplaceInstalled = skills.filter((skill) => skill.source === 'marketplace')
+  const customRecipeSkills = skills.filter((skill) => skill.source === 'custom')
   const filteredMarketplaceSkills = marketplaceSkills.filter((entry) => skillMarketMatches(entry, marketSearch))
 
   const run = async (id: string, action: () => Promise<unknown>) => {
@@ -926,7 +931,7 @@ function SkillManagementPanel({
   return (
     <section className="skill-management-panel">
       <div className="tab-header-row">
-        <span>Skill 管理：{skills.length} 个可用 · {marketplaceInstalled.length} 个市场安装 · {privateSkills.length} 个私有</span>
+        <span>Skill 管理：{skills.length} 个可用 · {marketplaceInstalled.length} 个市场 · {customRecipeSkills.length} 个自定义 · {privateSkills.length} 个私有</span>
         <button className="small-btn" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 同步市场
         </button>
@@ -939,10 +944,25 @@ function SkillManagementPanel({
             <strong>本地 Skill 库</strong>
             <span>Agent 只能装配这里已经存在的 Skill。</span>
           </div>
-          <button className="ghost-btn small" type="button" onClick={() => setShowPrivateForm((v) => !v)}>
-            <Plus size={12} /> 私有 Skill
-          </button>
+          <div className="skill-market-actions">
+            <button className="ghost-btn small" type="button" onClick={() => setShowRecipeForm((v) => !v)}>
+              <Plus size={12} /> 自定义 npx
+            </button>
+            <button className="ghost-btn small" type="button" onClick={() => setShowPrivateForm((v) => !v)}>
+              <Plus size={12} /> 私有 SKILL.md
+            </button>
+          </div>
         </div>
+        {showRecipeForm && (
+          <RecipeSkillForm
+            onCancel={() => setShowRecipeForm(false)}
+            onSave={async (draft) => {
+              const created = await onCreateRecipeSkill(draft)
+              if (created) setShowRecipeForm(false)
+              return created
+            }}
+          />
+        )}
         {showPrivateForm && (
           <PrivateSkillForm
             onCancel={() => setShowPrivateForm(false)}
@@ -1030,7 +1050,7 @@ function SkillManagementPanel({
             return updated
           }}
         />
-        <div className="skill-management-note">私有 Skill 仅当前用户可见；共享 Skill 在所选范围内可见。官方 Skill 请从 Skill Market 安装。</div>
+        <div className="skill-management-note">市场和自定义 npx Skill 这里只登记配方；创建或保存 Agent 时才会真正安装到该 Agent 的 .agents/skills。</div>
       </section>
 
       <section className="skill-market-panel">
@@ -1058,45 +1078,38 @@ function SkillManagementPanel({
         ) : (
           <div className="skill-market-list">
             {filteredMarketplaceSkills.map((entry) => {
-              const installed = entry.installed || installedByPublicName.has(entry.id)
               return (
                 <div key={entry.id} className="skill-market-row">
                   <div className="skill-market-copy">
                     <strong>{entry.id}</strong>
                     <span>{entry.description}</span>
-                    <small>v{entry.version} · @{entry.author_github}</small>
+                    <small>{entry.installed ? `已在本地 Skill 库登记 v${entry.installed_version || entry.version}` : entry.install_command}</small>
                   </div>
                   <div className="skill-market-actions">
-                    {installed && <span className="native-pill ok">已安装</span>}
-                    {entry.update_available && (
+                    <span className={`native-pill ${entry.installed ? 'ok' : 'neutral'}`}>
+                      {entry.installed ? '本地' : '市场'}
+                    </span>
+                    {entry.installed && entry.update_available && (
                       <button
                         className="ghost-btn small"
                         type="button"
                         disabled={busyId === entry.id}
-                        onClick={() => void run(entry.id, () => onUpdate(entry.id))}
+                        onClick={() => void run(entry.id, () => onUpdateMarketplaceSkill(entry.id))}
                       >
                         更新
                       </button>
                     )}
-                    {!installed ? (
-                      <button
-                        className="ghost-btn small"
-                        type="button"
-                        disabled={busyId === entry.id}
-                        onClick={() => void run(entry.id, () => onInstall(entry.id))}
-                      >
-                        {busyId === entry.id ? <Loader2 size={12} className="spin" /> : <Download size={12} />} 安装
-                      </button>
-                    ) : (
-                      <button
-                        className="ghost-btn small"
-                        type="button"
-                        disabled={busyId === entry.id}
-                        onClick={() => void run(entry.id, () => onUninstall(entry.id))}
-                      >
-                        卸载
-                      </button>
-                    )}
+                    <button
+                      className="ghost-btn small"
+                      type="button"
+                      disabled={busyId === entry.id}
+                      onClick={() => {
+                        if (entry.installed) void run(entry.id, () => onUninstallMarketplaceSkill(entry.id))
+                        else void run(entry.id, () => onInstallMarketplaceSkill(entry.id))
+                      }}
+                    >
+                      {entry.installed ? '移除本地' : '安装到本地'}
+                    </button>
                   </div>
                 </div>
               )
@@ -1105,6 +1118,104 @@ function SkillManagementPanel({
         )}
       </section>
     </section>
+  )
+}
+
+function RecipeSkillForm({
+  onCancel,
+  onSave,
+}: {
+  onCancel: () => void
+  onSave: (draft: SkillRecipeDraft) => Promise<Skill | null>
+}) {
+  const [npxCommand, setNpxCommand] = useState('')
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [skillName, setSkillName] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [description, setDescription] = useState('')
+  const [tagText, setTagText] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setError(null)
+    const command = npxCommand.trim()
+    const parsed = command ? parseSkillAddCommand(command) : null
+    const source = sourceUrl.trim() || parsed?.source || ''
+    const name = skillName.trim() || parsed?.skillName || ''
+    if (!source) {
+      setError('请填写 npx skills add 指令，或 GitHub Skill 文件夹 URL / npx 支持的 package')
+      return
+    }
+    if (!isDirectSkillSource(source) && !name) {
+      setError('repo/package 模式需要填写 skill name；直接 GitHub Skill 文件夹 URL 可以留空')
+      return
+    }
+    setSaving(true)
+    const created = await onSave({
+      name: displayName.trim() || name || inferSkillNameFromSource(source),
+      description: description.trim(),
+      repo_url: source,
+      source_url: source,
+      skill_name: name,
+      install_command: command || customNpxCommand(source, name),
+      tags: normalizeTagText(tagText),
+    })
+    if (!created) setError('保存失败，请检查上方错误提示')
+    setSaving(false)
+  }
+
+  return (
+    <form className="native-agent-inline-form" onSubmit={handleSubmit}>
+      <label className="full">
+        <span>npx 指令</span>
+        <input
+          value={npxCommand}
+          onChange={(event) => setNpxCommand(event.target.value)}
+          placeholder="npx skills add https://github.com/vercel-labs/skills --skill find-skills"
+        />
+      </label>
+      <label className="full">
+        <span>npx 来源</span>
+        <input
+          value={sourceUrl}
+          onChange={(event) => setSourceUrl(event.target.value)}
+          placeholder="https://github.com/owner/repo/tree/main/skills/author@skill"
+        />
+      </label>
+      <div className="form-row">
+        <label>
+          <span>Skill name</span>
+          <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="repo/package 模式才需要" />
+        </label>
+        <label>
+          <span>显示名称</span>
+          <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="默认从来源推断" />
+        </label>
+      </div>
+      <label className="full">
+        <span>描述</span>
+        <input value={description} onChange={(event) => setDescription(event.target.value)} />
+      </label>
+      <label className="full">
+        <span>标签</span>
+        <input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="review, latex" />
+      </label>
+      {(sourceUrl.trim() || npxCommand.trim()) && (
+        <div className="skill-folder-summary">
+          <strong>{recipePreviewName(sourceUrl.trim(), skillName.trim(), npxCommand.trim())}</strong>
+          <span>{customNpxCommand(sourceUrl.trim() || parseSkillAddCommand(npxCommand.trim())?.source || '', skillName.trim() || parseSkillAddCommand(npxCommand.trim())?.skillName || '')}</span>
+        </div>
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button type="button" className="ghost-btn" onClick={onCancel} disabled={saving}>取消</button>
+        <button type="submit" className="primary-btn" disabled={saving}>
+          {saving ? <Loader2 size={14} className="spin" /> : '保存配方'}
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -1409,15 +1520,68 @@ function skillLabel(skill: Skill): string {
   return skill.public_name || skill.name
 }
 
+function customNpxCommand(source: string, skillName: string): string {
+  if (!source) return ''
+  const parts = ['npx', '--yes', 'skills', 'add', source]
+  if (skillName && !isDirectSkillSource(source)) {
+    parts.push('--skill', skillName)
+  }
+  parts.push('--agent', 'codex', '--copy', '--yes')
+  return parts.join(' ')
+}
+
+function isDirectSkillSource(source: string): boolean {
+  return source.includes('github.com/') && source.includes('/tree/')
+}
+
+function parseSkillAddCommand(command: string): { source: string; skillName: string } | null {
+  const parts = splitCommand(command)
+  const skillsIndex = parts.findIndex((part, index) => part === 'skills' && parts[index + 1] === 'add')
+  if (skillsIndex < 0 || !parts[skillsIndex + 2]) return null
+  const rest = parts.slice(skillsIndex + 3)
+  let skillName = ''
+  for (let index = 0; index < rest.length; index += 1) {
+    const part = rest[index]
+    if (part === '--skill' && rest[index + 1]) {
+      skillName = rest[index + 1]
+      break
+    }
+    if (part.startsWith('--skill=')) {
+      skillName = part.slice('--skill='.length)
+      break
+    }
+  }
+  return { source: parts[skillsIndex + 2], skillName }
+}
+
+function splitCommand(command: string): string[] {
+  return (command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, ''))
+}
+
+function recipePreviewName(source: string, skillName: string, command: string): string {
+  const parsed = command ? parseSkillAddCommand(command) : null
+  const resolvedSource = source || parsed?.source || ''
+  const resolvedSkill = skillName || parsed?.skillName || ''
+  const github = resolvedSource.match(/^https:\/\/github\.com\/([^/]+)\/(.+)$/)
+  if (github) {
+    const tail = github[2].replace(/\/$/, '').split('/').pop()?.replace(/\.git$/, '') ?? ''
+    if (tail.includes('@')) return tail
+    if (resolvedSkill) return `${github[1]}@${resolvedSkill}`
+  }
+  return resolvedSkill || inferSkillNameFromSource(resolvedSource)
+}
+
 function skillPillLabel(skill: Skill, pendingShare = false): string {
   if (skill.visibility === 'system' || skill.source === 'bundled') return '内置'
   if (skill.source === 'marketplace') return '市场'
+  if (skill.source === 'custom') return '自定义 npx'
   if (skill.visibility === 'public') return pendingShare ? '共享·待更新' : '共享'
   return '私有'
 }
 
 function skillPillTone(skill: Skill): string {
   if (skill.visibility === 'public' || skill.source === 'bundled' || skill.source === 'marketplace') return 'ok'
+  if (skill.source === 'custom') return 'neutral'
   return ''
 }
 
@@ -1442,6 +1606,12 @@ function inferSkillName(content: string): string {
     if (trimmed.toLowerCase().startsWith('name:')) return trimmed.split(':').slice(1).join(':').trim() || 'SKILL'
   }
   return 'SKILL'
+}
+
+function inferSkillNameFromSource(source: string): string {
+  const cleaned = source.trim().replace(/\/$/, '')
+  const last = cleaned.split('/').pop()?.replace(/\.git$/, '')
+  return last || 'custom-skill'
 }
 
 function skillMarketMatches(entry: SkillMarketplaceEntry, query: string): boolean {

@@ -7,7 +7,7 @@ const ctx = {
 }
 
 describe('outputParser', () => {
-  it('parses strict structured outputs and offsets ranges', () => {
+  it('parses strict structured outputs, folds legacy arrays into annotations, and offsets ranges', () => {
     const r = parseDifyOutputs(
       {
         annotations: [{ from: 0, to: 4, content: 'too vague', type: 'comment', severity: 'medium' }],
@@ -18,10 +18,14 @@ describe('outputParser', () => {
       },
       ctx,
     )
-    expect(r.annotations).toHaveLength(1)
+    expect(r.annotations).toHaveLength(3)
     expect(r.annotations[0].targetRange).toEqual({ from: 100, to: 104 })
-    expect(r.suggestions[0].targetRange).toEqual({ from: 105, to: 107 })
-    expect(r.risks[0].targetRange).toEqual({ from: 100, to: 130 })
+    expect(r.annotations[1].targetRange).toEqual({ from: 105, to: 107 })
+    expect(r.annotations[1].content).toContain('becomes')
+    expect(r.annotations[2].targetRange).toEqual({ from: 100, to: 130 })
+    expect(r.annotations[2].content).toContain('unclear scope')
+    expect(r.suggestions).toHaveLength(0)
+    expect(r.risks).toHaveLength(0)
   })
 
   it('extracts JSON from a fenced code block', () => {
@@ -59,7 +63,22 @@ describe('outputParser', () => {
       { text: 'ok', outputs: { suggestions: [{ from: 0, to: 4, proposed: 'these' }] } },
       ctx,
     )
-    expect(r.suggestions).toHaveLength(1)
-    expect(r.suggestions[0].proposed).toBe('these')
+    expect(r.annotations).toHaveLength(1)
+    expect(r.annotations[0].content).toContain('these')
+    expect(r.suggestions).toHaveLength(0)
+  })
+
+  it('drops empty structured rows', () => {
+    const r = parseDifyOutputs(
+      {
+        annotations: [{ from: 0, to: 4, content: '' }],
+        suggestions: [{ from: 0, to: 4, proposed: '' }],
+        risks: [{ from: 0, to: 4, description: '' }],
+      },
+      ctx,
+    )
+    expect(r.annotations).toHaveLength(0)
+    expect(r.suggestions).toHaveLength(0)
+    expect(r.risks).toHaveLength(0)
   })
 })

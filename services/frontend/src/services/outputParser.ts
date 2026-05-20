@@ -4,10 +4,14 @@
  *
  * Dify workflows can be authored to emit:
  *   1. Strict structured JSON in workflow_finished.outputs (preferred).
- *      Schema: { annotations: [...], suggestions: [...], risks: [...] }
+ *      Preferred schema: { annotations: [...] }
  *   2. A single string field (e.g. `result`, `text`) containing JSON we can
  *      pull out of a fenced block.
  *   3. Free-form natural language (chat-mode default).
+ *
+ * Legacy `suggestions` and `risks` arrays are accepted for compatibility, but
+ * normalized into normal annotation cards. The annotation panel no longer
+ * creates separate suggestion/risk card kinds for Agent output.
  *
  * For (3) we fall back to a single `comment` annotation that anchors to the
  * original selection — the user still gets a card to Accept / Delete / Continue.
@@ -45,20 +49,27 @@ interface RawAnnotation {
 interface RawSuggestion {
   from?: number
   to?: number
+  content?: string
+  text?: string
   original?: string
   proposed?: string
   reason?: string
+  severity?: string
+  tags?: string[]
   confidence?: number
 }
 
 interface RawRisk {
   from?: number
   to?: number
+  content?: string
+  text?: string
   risk_type?: string
   riskType?: string
   severity?: string
   description?: string
   mitigation?: string
+  tags?: string[]
 }
 
 export function parseDifyOutputs(outputs: unknown, ctx: ParseContext): ParsedAgentOutput {
@@ -172,40 +183,90 @@ function finalize(
     return { from: offset + f, to: offset + t }
   }
 
-  const annotations = (raw.annotations ?? []).map<Omit<Annotation, 'agentId'>>((a) => ({
-    id: uuid(),
-    targetRange: clampRange(a.from, a.to),
-    targetText: ctx.selectionText.slice(a.from ?? 0, a.to ?? selLen),
-    content: a.content ?? a.text ?? '',
-    type: normalizeAnnType(a.type),
-    severity: normalizeSeverity(a.severity),
-    tags: a.tags ?? [],
-    resolved: false,
-    createdAt: new Date(),
-  }))
+  const makeAnnotation = (
+    from: number | undefined,
+    to: number | undefined,
+    content: string,
+    type: Annotation['type'],
+    severity: Annotation['severity'],
+    tags: string[],
+  ): Omit<Annotation, 'agentId'> | null => {
+    const trimmed = content.trim()
+    if (!trimmed) return null
+    const localFrom = Math.max(0, Math.min(typeof from === 'number' ? from : 0, selLen))
+    const localTo = Math.max(localFrom + 1, Math.min(typeof to === 'number' ? to : selLen, selLen))
+    return {
+      id: uuid(),
+      targetRange: clampRange(from, to),
+      targetText: ctx.selectionText.slice(localFrom, localTo),
+      content: trimmed,
+      type,
+      severity,
+      tags,
+      resolved: false,
+      createdAt: new Date(),
+    }
+  }
 
-  const suggestions = (raw.suggestions ?? []).map<Omit<Suggestion, 'agentId'>>((s) => ({
-    id: uuid(),
-    targetRange: clampRange(s.from, s.to),
-    original: s.original ?? ctx.selectionText.slice(s.from ?? 0, s.to ?? selLen),
-    proposed: s.proposed ?? '',
-    reason: s.reason ?? '',
-    confidence: typeof s.confidence === 'number' ? s.confidence : 0.6,
-    status: 'pending',
-    createdAt: new Date(),
-  }))
+  const annotations = [
+    ...(raw.annotations ?? []).map((a) => makeAnnotation(
+      a.from,
+      a.to,
+      a.content ?? a.text ?? '',
+      normalizeAnnType(a.type),
+      normalizeSeverity(a.severity),
+      a.tags ?? [],
+    )),
+    ...(raw.suggestions ?? []).map((s) => makeAnnotation(
+      s.from,
+      s.to,
+      suggestionContent(s),
+      'comment',
+      normalizeSeverity(s.severity),
+      s.tags ?? [],
+    )),
+    ...(raw.risks ?? []).map((r) => makeAnnotation(
+      r.from,
+      r.to,
+      riskContent(r),
+      'warning',
+      normalizeSeverity(r.severity),
+      r.tags ?? [],
+    )),
+  ].filter((item): item is Omit<Annotation, 'agentId'> => item !== null)
 
-  const risks = (raw.risks ?? []).map<Omit<Risk, 'agentId'>>((r) => ({
-    id: uuid(),
-    targetRange: clampRange(r.from, r.to),
-    riskType: normalizeRiskType(r.risk_type ?? r.riskType),
-    severity: normalizeSeverity(r.severity) ?? 'medium',
-    description: r.description ?? '',
-    mitigation: r.mitigation,
-    createdAt: new Date(),
-  }))
+  return { annotations, suggestions: [], risks: [], rawText }
+}
 
-  return { annotations, suggestions, risks, rawText }
+function suggestionContent(value: RawSuggestion): string {
+  const direct = cleanText(value.content ?? value.text)
+  if (direct) return direct
+
+  const original = cleanText(value.original)
+  const proposed = cleanText(value.proposed)
+  const reason = cleanText(value.reason)
+  const parts: string[] = []
+  if (original && proposed) parts.push(`建议改写：${original} → ${proposed}`)
+  else if (proposed) parts.push(`建议改写为：${proposed}`)
+  if (reason) parts.push(`理由：${reason}`)
+  return parts.join('\n')
+}
+
+function riskContent(value: RawRisk): string {
+  const direct = cleanText(value.content ?? value.text)
+  if (direct) return direct
+
+  const description = cleanText(value.description)
+  const mitigation = cleanText(value.mitigation)
+  const riskType = normalizeRiskType(value.risk_type ?? value.riskType)
+  const parts: string[] = []
+  if (description) parts.push(`风险（${riskType}）：${description}`)
+  if (mitigation) parts.push(`建议处理：${mitigation}`)
+  return parts.join('\n')
+}
+
+function cleanText(value: string | undefined): string {
+  return (value ?? '').trim()
 }
 
 function normalizeAnnType(value: string | undefined): Annotation['type'] {

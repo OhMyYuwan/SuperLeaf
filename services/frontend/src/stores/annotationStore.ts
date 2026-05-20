@@ -35,6 +35,7 @@ import { uuid } from '../lib/uuid'
 import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
 import { BackendError } from '../services/backendApi'
+import { projectEventStream } from '../services/projectEventStream'
 
 let _getUserId: (() => string) | null = null
 export function registerUserIdGetter(fn: () => string) { _getUserId = fn }
@@ -842,6 +843,9 @@ export const useAnnotationStore = create<AnnotationState>()(
         reviewStatusByAnnotation: statusMap,
       }
     })
+    // Signal to the SSE stream that we're now in sync — focus-triggered
+    // hydrates can be skipped until the next disconnect.
+    projectEventStream.markHydrated()
   },
 
   allEvaluationTags: () => {

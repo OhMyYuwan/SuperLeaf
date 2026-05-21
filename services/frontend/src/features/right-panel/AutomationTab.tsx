@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { Bot, FileText, Play, Square, Workflow } from 'lucide-react'
 import { countAutomationReviewTargets, useAutomationStore } from '../../stores/automationStore'
+import type { WriteTarget } from '../../stores/automationStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
@@ -28,6 +29,8 @@ export function AutomationTab() {
   const instruction = useAutomationStore((s) => s.instruction)
   const maxChunkChars = useAutomationStore((s) => s.maxChunkChars)
   const fullContextEvery = useAutomationStore((s) => s.fullContextEvery)
+  const outputMode = useAutomationStore((s) => s.outputMode)
+  const writeTarget = useAutomationStore((s) => s.writeTarget)
   const running = useAutomationStore((s) => s.running)
   const currentIndex = useAutomationStore((s) => s.currentIndex)
   const total = useAutomationStore((s) => s.total)
@@ -42,6 +45,8 @@ export function AutomationTab() {
   const setInstruction = useAutomationStore((s) => s.setInstruction)
   const setMaxChunkChars = useAutomationStore((s) => s.setMaxChunkChars)
   const setFullContextEvery = useAutomationStore((s) => s.setFullContextEvery)
+  const setOutputMode = useAutomationStore((s) => s.setOutputMode)
+  const setWriteTarget = useAutomationStore((s) => s.setWriteTarget)
   const start = useAutomationStore((s) => s.start)
   const stop = useAutomationStore((s) => s.stop)
 
@@ -143,13 +148,54 @@ export function AutomationTab() {
         </label>
       </div>
 
+      <div className="automation-mode-row">
+        <span>输出模式</span>
+        <div className="automation-mode-toggle">
+          <button
+            type="button"
+            className={outputMode === 'annotate' ? 'active' : ''}
+            onClick={() => setOutputMode('annotate')}
+            disabled={running}
+          >
+            批注
+          </button>
+          <button
+            type="button"
+            className={outputMode === 'write' ? 'active' : ''}
+            onClick={() => setOutputMode('write')}
+            disabled={running}
+          >
+            写入
+          </button>
+        </div>
+      </div>
+
+      {outputMode === 'write' && (
+        <label className="automation-field narrow">
+          <span>写入位置</span>
+          <select
+            value={writeTarget}
+            onChange={(event) => setWriteTarget(event.target.value as WriteTarget)}
+            disabled={running}
+          >
+            <option value="append">追加到文档末尾</option>
+            <option value="replace-doc">替换整个文档</option>
+            <option value="replace-chunk">替换当前段落</option>
+          </select>
+        </label>
+      )}
+
       <label className="automation-field">
-        <span>自动批注意图</span>
+        <span>{outputMode === 'write' ? '自动写入意图' : '自动批注意图'}</span>
         <MentionCodeMirrorInput
           value={instruction}
           onChange={setInstruction}
           files={fileCandidates}
-          placeholder="输入自动批注意图，用 @ 引用项目文件作为参考…"
+          placeholder={
+            outputMode === 'write'
+              ? '描述要写入的内容（例如「润色当前段落，保持原意」），用 @ 引用项目文件作为参考…'
+              : '输入自动批注意图，用 @ 引用项目文件作为参考…'
+          }
           rows={4}
           disabled={running}
           className="automation-intent-input"
@@ -207,12 +253,14 @@ export function AutomationTab() {
             onClick={() => void start()}
             disabled={!activeDoc || !targetId || paragraphCount === 0}
           >
-            <Play size={14} /> 开始自动批注
+            <Play size={14} /> {outputMode === 'write' ? '开始自动写入' : '开始自动批注'}
           </button>
         )}
         <span className="automation-hint">
           <Workflow size={12} />
-          首段和每隔 N 段会重新提交全文；正文变化会自动暂停。
+          {outputMode === 'write'
+            ? '写入模式：Agent 输出将直接写入文档，不创建批注卡片。'
+            : '首段和每隔 N 段会重新提交全文；正文变化会自动暂停。'}
         </span>
       </div>
     </div>

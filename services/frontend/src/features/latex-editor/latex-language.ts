@@ -32,6 +32,7 @@ import {
   type LatexCitationCompletion,
   type LatexCompletionData,
 } from './latex-completion-data'
+import { latexFolding } from './latex-folding'
 
 /** A small but useful set of LaTeX commands and environments. */
 const LATEX_COMMANDS: string[] = [
@@ -340,6 +341,7 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
   return [
     latexCompletionDataState.init(() => normalizeLatexCompletionData(completionData)),
     new LanguageSupport(StreamLanguage.define(stex)),
+    latexFolding(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     autocompletion({
       override: [latexCompletionSource],

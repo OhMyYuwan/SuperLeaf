@@ -52,6 +52,28 @@ const overleafDarkTheme = EditorView.theme(
       color: 'rgb(144,145,148)',
       borderRight: '1px solid rgba(148, 163, 184, 0.18)',
     },
+    '.cm-foldGutter .cm-gutterElement > span': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '14px',
+      height: '20px',
+      borderRadius: '3px',
+      color: 'rgba(203, 213, 225, 0.68)',
+      cursor: 'pointer',
+    },
+    '.cm-foldGutter .cm-gutterElement > span:hover': {
+      backgroundColor: 'rgba(148, 163, 184, 0.16)',
+      color: '#e2e8f0',
+    },
+    '.cm-foldPlaceholder': {
+      border: '1px solid rgba(148, 163, 184, 0.32)',
+      borderRadius: '4px',
+      backgroundColor: 'rgba(15, 23, 42, 0.88)',
+      color: 'rgba(226, 232, 240, 0.86)',
+      padding: '0 5px',
+      cursor: 'pointer',
+    },
     '.cm-activeLine': {
       backgroundColor: '#44475a40',
     },

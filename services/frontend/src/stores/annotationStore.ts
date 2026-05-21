@@ -19,7 +19,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
-import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
+import { mapRange, mapRangeThrough, type DocChange } from '../services/rangeTracker'
 import type { AttachedFile } from '../services/mentions'
 import { operationApi } from '../services/operationApi'
 import {
@@ -43,6 +43,27 @@ function getCurrentUserId(): string { return _getUserId?.() ?? '' }
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function shouldPersistMappedRange(
+  range: { from: number; to: number },
+  changes: DocChange[],
+): boolean {
+  let current = range
+  for (const change of changes) {
+    const overlapsRange = change.from < current.to && change.to > current.from
+    const insertsInsideRange =
+      change.from === change.to && change.from > current.from && change.from < current.to
+    const touchesCollapsedAnchor =
+      current.to <= current.from && change.from <= current.from && change.to >= current.from
+    const next = mapRange(current, change)
+    const collapsedByChange = next.to <= next.from && (next.from !== current.from || next.to !== current.to)
+    if (overlapsRange || insertsInsideRange || touchesCollapsedAnchor || collapsedByChange) {
+      return true
+    }
+    current = next
+  }
+  return false
 }
 
 function threadToDto(thread: ThreadMessage[]): AnnotationThreadMessageDto[] {
@@ -493,7 +514,7 @@ export const useAnnotationStore = create<AnnotationState>()(
 
   applyDocumentChange: (documentId, changes) => {
     if (changes.length === 0) return
-    const supersededIds: string[] = []
+    const rangePatches: Array<{ id: string; from: number; to: number }> = []
     set((state) => {
       const items = { ...state.items }
       let changed = false
@@ -501,24 +522,27 @@ export const useAnnotationStore = create<AnnotationState>()(
         if (item.documentId !== documentId) continue
         if (item.status === 'deleted' || item.status === 'superseded') continue
         const newRange = mapRangeThrough(item.range, changes)
-        if (newRange === null) {
-          items[id] = { ...item, status: 'superseded' }
-          supersededIds.push(id)
-          changed = true
-        } else if (newRange.from !== item.range.from || newRange.to !== item.range.to) {
+        if (newRange.from !== item.range.from || newRange.to !== item.range.to) {
           items[id] = { ...item, range: newRange }
+          if (shouldPersistMappedRange(item.range, changes)) {
+            rangePatches.push({ id, from: newRange.from, to: newRange.to })
+          }
           changed = true
         }
       }
       return changed ? { items } : state
     })
     // Range offsets are computed on-the-fly by other clients via
-    // mapRangeThrough as they receive doc.updated events; we don't push
-    // each typing-induced offset to the server. But once a card is
-    // superseded (its target text was deleted), that's a permanent state
-    // change every device must see — sync it.
-    for (const id of supersededIds) {
-      patchAnnotationRemote(id, { status: 'superseded' }, '同步批注状态')
+    // mapRangeThrough as they receive doc.updated events; we don't push pure
+    // before-range typing offsets to the server. Edits that touch the annotated
+    // text itself are durable range changes, so persist them without changing
+    // card status.
+    for (const patch of rangePatches) {
+      patchAnnotationRemote(
+        patch.id,
+        { range_from: patch.from, range_to: patch.to },
+        '同步批注位置',
+      )
     }
   },
 

@@ -1056,6 +1056,47 @@
   font-size: 11px;
 }
 
+.automation-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.automation-mode-row > span {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.automation-mode-toggle {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+.automation-mode-toggle button {
+  padding: 5px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.automation-mode-toggle button:hover:not(:disabled) {
+  color: #e5e7eb;
+}
+.automation-mode-toggle button.active {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
+.automation-mode-toggle button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Team tab sub-tab switcher (Agent / 工作流) */
 .team-subtabs {
   display: inline-flex;

@@ -13,8 +13,6 @@ import { useFilesystemStore } from './filesystemStore'
 import { useWorkflowStore } from './workflowStore'
 
 export type AutomationTargetKind = 'agent' | 'workflow'
-export type OutputMode = 'annotate' | 'write'
-export type WriteTarget = 'append' | 'replace-doc' | 'replace-chunk'
 
 interface AutomationChunk {
   index: number
@@ -42,8 +40,6 @@ interface AutomationState {
   instruction: string
   maxChunkChars: number
   fullContextEvery: number
-  outputMode: OutputMode
-  writeTarget: WriteTarget
   running: boolean
   stopRequested: boolean
   currentIndex: number
@@ -60,8 +56,6 @@ interface AutomationState {
   setInstruction: (instruction: string) => void
   setMaxChunkChars: (value: number) => void
   setFullContextEvery: (value: number) => void
-  setOutputMode: (mode: OutputMode) => void
-  setWriteTarget: (target: WriteTarget) => void
   start: () => Promise<void>
   stop: () => void
 }
@@ -84,14 +78,6 @@ const AUTO_ANNOTATION_CONTRACT = [
   '- 没有可执行问题时返回 `{ "annotations": [] }`。',
   '[END ANNOTATION SKILL CONTRACT]',
 ].join('\n')
-const AUTO_WRITE_CONTRACT = [
-  '[WRITE MODE CONTRACT]',
-  '- 你正在执行直接写入模式。请直接输出目标文本内容，不要输出 JSON，不要输出批注卡片。',
-  '- 输出的内容将被直接写入文档，请确保格式与文档格式（LaTeX/Markdown/纯文本）一致。',
-  '- 不要在输出中包含任何解释、前言或后记。只输出要写入文档的内容本身。',
-  '- 如果段落中包含以 % AUTO 开头的 LaTeX 注释，请把它理解为用户写给自动化流程的局部提示，不要输出到文档中。',
-  '[END WRITE MODE CONTRACT]',
-].join('\n')
 
 export const useAutomationStore = create<AutomationState>((set, get) => ({
   targetKind: 'agent',
@@ -99,8 +85,6 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
   instruction: DEFAULT_INSTRUCTION,
   maxChunkChars: 2600,
   fullContextEvery: 8,
-  outputMode: 'annotate',
-  writeTarget: 'append',
   running: false,
   stopRequested: false,
   currentIndex: 0,
@@ -126,8 +110,6 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
     )
     set({ fullContextEvery })
   },
-  setOutputMode: (outputMode) => set({ outputMode }),
-  setWriteTarget: (writeTarget) => set({ writeTarget }),
 
   stop: () => {
     set({ stopRequested: true, lastMessage: '正在停止：当前段落完成后会停止。' })
@@ -158,9 +140,6 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
       return
     }
 
-    const outputMode = state.outputMode
-    const writeTarget = state.writeTarget
-
     const session: AutomationSession = {
       id: makeSessionId(snapshot.id),
       docId: snapshot.id,
@@ -172,11 +151,6 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
     const instruction = references.instruction || DEFAULT_INSTRUCTION
     const fullContextEvery = state.fullContextEvery
 
-    const replaceDocWarning =
-      outputMode === 'write' && writeTarget === 'replace-doc' && chunks.length > 1
-        ? `（注意：替换整个文档模式下，每个段落都会覆写整篇文档，最终只保留最后一段的输出）`
-        : ''
-
     set({
       running: true,
       stopRequested: false,
@@ -185,8 +159,8 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
       completed: 0,
       error: null,
       lastMessage: references.attachedFiles.length > 0
-        ? `准备处理 ${chunks.length} 个段落，已附带 ${references.attachedFiles.length} 个参考文件，并锁定当前文档快照。${replaceDocWarning}`
-        : `准备处理 ${chunks.length} 个段落，并锁定当前文档快照。${replaceDocWarning}`,
+        ? `准备审核 ${chunks.length} 个段落，已附带 ${references.attachedFiles.length} 个参考文件，并锁定当前文档快照。`
+        : `准备审核 ${chunks.length} 个段落，并锁定当前文档快照。`,
       sessionId: session.id,
       sessionConversationId: '',
       sessionDocHash: docHash,
@@ -199,15 +173,13 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
           break
         }
 
-        if (outputMode === 'annotate') {
-          const liveDoc = useDocumentStore.getState().documents[snapshot.id]
-          if (!liveDoc || hashContent(liveDoc.content) !== docHash) {
-            set({
-              error: '文档内容已变化，自动化已暂停。请重新启动自动化以锁定新的上下文。',
-              lastMessage: `已暂停，完成 ${get().completed}/${chunks.length} 个段落。`,
-            })
-            break
-          }
+        const liveDoc = useDocumentStore.getState().documents[snapshot.id]
+        if (!liveDoc || hashContent(liveDoc.content) !== docHash) {
+          set({
+            error: '文档内容已变化，自动化已暂停。请重新启动自动化以锁定新的上下文。',
+            lastMessage: `已暂停，完成 ${get().completed}/${chunks.length} 个段落。`,
+          })
+          break
         }
 
         const chunk = chunks[i]
@@ -215,8 +187,8 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
         set({
           currentIndex: i + 1,
           lastMessage: includeFullContext
-            ? `正在处理第 ${i + 1}/${chunks.length} 个段落，并刷新全文上下文。`
-            : `正在处理第 ${i + 1}/${chunks.length} 个段落。`,
+            ? `正在审核第 ${i + 1}/${chunks.length} 个段落，并刷新全文上下文。`
+            : `正在审核第 ${i + 1}/${chunks.length} 个段落。`,
         })
 
         const result = await runChunk({
@@ -229,8 +201,6 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
           paperContext,
           includeFullContext,
           attachedFiles: references.attachedFiles,
-          outputMode,
-          writeTarget,
         })
         if (result.conversationId) {
           session.conversationId = result.conversationId
@@ -250,9 +220,7 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
         lastMessage: latest.error
           ? latest.lastMessage
           : latest.completed >= latest.total
-            ? outputMode === 'write'
-              ? `自动写入完成：${latest.completed}/${latest.total} 个段落。`
-              : `自动批注完成：${latest.completed}/${latest.total} 个段落。`
+            ? `自动批注完成：${latest.completed}/${latest.total} 个段落。`
             : latest.lastMessage,
       }))
     }
@@ -269,8 +237,6 @@ async function runChunk(args: {
   paperContext: PaperContext
   includeFullContext: boolean
   attachedFiles: AttachedFile[]
-  outputMode: OutputMode
-  writeTarget: WriteTarget
 }): Promise<{ error: string | null; conversationId?: string }> {
   const {
     doc,
@@ -282,8 +248,6 @@ async function runChunk(args: {
     paperContext,
     includeFullContext,
     attachedFiles,
-    outputMode,
-    writeTarget,
   } = args
   const workflow = useWorkflowStore.getState()
   const query = buildAutomationQuery({
@@ -294,20 +258,18 @@ async function runChunk(args: {
     includeFullContext,
     targetKind,
     attachedFiles,
-    outputMode,
   })
+  // Native agent backend reads `inputs.instruction` (not `query`), so the
+  // contract must travel inside `inputs.instruction` to actually reach the model.
+  const effectiveInstruction = `${AUTO_ANNOTATION_CONTRACT}\n\n${instruction}`
   const contextFiles = attachedFilesToContextFiles(attachedFiles)
-  const autoIngest = outputMode === 'annotate'
   const body = {
     document_id: doc.id,
     range_start: chunk.range.from,
     range_end: chunk.range.to,
     conversation_id: targetKind === 'agent' ? session.conversationId : session.id,
     inputs: {
-      automation_mode:
-        outputMode === 'write' ? 'paragraph_auto_write' : 'paragraph_auto_annotation',
-      automation_output_mode: outputMode,
-      automation_write_target: outputMode === 'write' ? writeTarget : '',
+      automation_mode: 'paragraph_auto_annotation',
       automation_session_id: session.id,
       automation_doc_hash: session.docHash,
       automation_context_refresh: includeFullContext,
@@ -319,7 +281,7 @@ async function runChunk(args: {
       paper_brief: paperContext.brief,
       full_latex_context: includeFullContext ? paperContext.fullLatex : '',
       attached_files: attachedFiles,
-      instruction,
+      instruction: effectiveInstruction,
     },
     query,
     context_files: contextFiles,
@@ -328,20 +290,16 @@ async function runChunk(args: {
   if (targetKind === 'workflow') {
     let failed: string | null = null
     await workflow.executeDefinition(targetId, body, {
-      autoIngestToAnnotations: autoIngest,
+      autoIngestToAnnotations: true,
       onFailed: (error) => { failed = error },
     })
-    if (outputMode === 'write' && !failed) {
-      const rawText = extractWriteOutput(targetId)
-      if (rawText) applyWriteOutput({ docId: doc.id, chunk, rawText, writeTarget })
-    }
     return { error: failed }
   }
 
   let failed: string | null = null
   let conversationId = session.conversationId
   await workflow.run(targetId, body, {
-    autoIngestToAnnotations: autoIngest,
+    autoIngestToAnnotations: true,
     onCompleted: (payload) => {
       if (payload.conversation_id) conversationId = payload.conversation_id
     },
@@ -353,61 +311,7 @@ async function runChunk(args: {
     const payload = last.payload as { error?: string } | string
     failed = typeof payload === 'string' ? payload : payload.error ?? 'Agent run failed'
   }
-  if (outputMode === 'write' && !failed) {
-    const rawText = extractWriteOutput(targetId)
-    if (rawText) applyWriteOutput({ docId: doc.id, chunk, rawText, writeTarget })
-  }
   return { error: failed, conversationId }
-}
-
-function extractWriteOutput(targetId: string): string {
-  const events = useWorkflowStore.getState().lastRunEvents[targetId] ?? []
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const evt = events[i]
-    if (evt.kind !== 'ylw.run.finished' && evt.kind !== 'workflow.completed') continue
-    const payload = evt.payload as { outputs?: unknown } | unknown
-    const outputs = (payload as { outputs?: unknown })?.outputs ?? payload
-    const text = pickWriteText(outputs)
-    if (text) return text
-  }
-  return ''
-}
-
-function pickWriteText(outputs: unknown): string {
-  if (typeof outputs === 'string') return outputs.trim()
-  if (!outputs || typeof outputs !== 'object') return ''
-  const record = outputs as Record<string, unknown>
-  const keys = ['text', 'answer', 'result', 'content', 'output']
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return ''
-}
-
-function applyWriteOutput(args: {
-  docId: string
-  chunk: AutomationChunk
-  rawText: string
-  writeTarget: WriteTarget
-}): void {
-  const docStore = useDocumentStore.getState()
-  const liveContent = docStore.documents[args.docId]?.content ?? ''
-  let newContent: string
-  switch (args.writeTarget) {
-    case 'append':
-      newContent = liveContent.trimEnd() + '\n\n' + args.rawText
-      break
-    case 'replace-doc':
-      newContent = args.rawText
-      break
-    case 'replace-chunk':
-      newContent = liveContent.slice(0, args.chunk.range.from)
-        + args.rawText
-        + liveContent.slice(args.chunk.range.to)
-      break
-  }
-  docStore.updateContent(args.docId, newContent)
 }
 
 function buildAutomationQuery(args: {
@@ -418,7 +322,6 @@ function buildAutomationQuery(args: {
   includeFullContext: boolean
   targetKind: AutomationTargetKind
   attachedFiles: AttachedFile[]
-  outputMode: OutputMode
 }): string {
   const {
     chunk,
@@ -428,24 +331,16 @@ function buildAutomationQuery(args: {
     includeFullContext,
     targetKind,
     attachedFiles,
-    outputMode,
   } = args
-  const isWrite = outputMode === 'write'
   return [
-    isWrite
-      ? '你正在执行 YuwanLabWriter 自动写入模式。'
-      : '你正在执行 YuwanLabWriter 自动批注模式。',
-    isWrite
-      ? '这是无人值守的连续写作任务：请把本次任务视为同一个自动化 session 中的一步，输出会被直接写入文档。'
-      : '这是无人值守的连续审稿任务：请把本次任务视为同一个自动化 session 中的一步。',
+    '你正在执行 YuwanLabWriter 自动批注模式。',
+    '这是无人值守的连续审稿任务：请把本次任务视为同一个自动化 session 中的一步。',
     targetKind === 'agent'
       ? '如果你支持会话记忆，请延续之前对全文的理解；不要把每个段落当成全新论文。'
       : '当前 workflow run 可能是无状态的，因此请严格依赖本次请求提供的上下文。',
-    isWrite
-      ? '请直接输出要写入文档的目标文本本身；不要输出 JSON、不要输出批注卡片、不要添加解释。'
-      : '只输出适合生成批注卡片的意见、建议或风险提示；不要直接重写整篇文章。',
+    '只输出适合生成批注卡片的意见、建议或风险提示；不要直接重写整篇文章。',
     '如果段落中包含以 % AUTO 开头的 LaTeX 注释，请把它理解为用户写给自动化流程的局部提示，不要当作论文正文。',
-    isWrite ? AUTO_WRITE_CONTRACT : AUTO_ANNOTATION_CONTRACT,
+    AUTO_ANNOTATION_CONTRACT,
     '',
     `[AUTOMATION SESSION] ${session.id}`,
     `[DOCUMENT HASH] ${session.docHash}`,

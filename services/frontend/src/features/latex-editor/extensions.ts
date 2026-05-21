@@ -15,9 +15,12 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import {
   bracketMatching,
+  foldAll,
   foldGutter,
   foldKeymap,
   indentOnInput,
+  toggleFold,
+  unfoldAll,
 } from '@codemirror/language'
 import {
   closeBrackets,
@@ -36,6 +39,11 @@ export type EditorFormat = 'tex' | 'md' | 'txt'
 const AUTO_COMMENT_PREFIX = '% AUTO '
 const COMMENT_PREFIX = '% '
 const AUTO_COMMENT_DOUBLE_PRESS_MS = 600
+const OVERLEAF_FOLDING_KEYMAP = [
+  { key: 'F2', run: toggleFold },
+  { key: 'Alt-Shift-1', run: foldAll },
+  { key: 'Alt-Shift-0', run: unfoldAll },
+]
 
 export function languageFor(
   format: EditorFormat,
@@ -118,7 +126,10 @@ export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[]
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     ...(includeHistory ? [history()] : []),
-    foldGutter(),
+    foldGutter({
+      openText: '▾',
+      closedText: '▸',
+    }),
     drawSelection(),
     indentOnInput(),
     bracketMatching(),
@@ -134,6 +145,7 @@ export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[]
       ...defaultKeymap,
       ...searchKeymap,
       ...(includeHistory ? historyKeymap : []),
+      ...OVERLEAF_FOLDING_KEYMAP,
       ...foldKeymap,
       ...completionKeymap,
       ...lintKeymap,

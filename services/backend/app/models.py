@@ -289,6 +289,7 @@ class NativeAgentSkillInstall(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True, default="")
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
     agent_id: Mapped[str] = mapped_column(ForeignKey("native_agents.id"), index=True)
+    skill_id: Mapped[str] = mapped_column(String(32), index=True, default="")
     source: Mapped[str] = mapped_column(String(32), default="marketplace")
     marketplace_id: Mapped[str] = mapped_column(String(256), default="")
     repo_url: Mapped[str] = mapped_column(String(1024), default="")

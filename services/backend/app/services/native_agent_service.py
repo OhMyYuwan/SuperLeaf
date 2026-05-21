@@ -530,11 +530,16 @@ class NativeAgentService:
             current = [str(sid) for sid in agent.skill_ids or [] if str(sid)]
             next_ids = list(current)
             for install in installs:
-                skill = self._local_skill_from_install(install, user_id=user_id)
-                if skill is None:
+                had_skill_id = bool(str(getattr(install, "skill_id", "") or "").strip())
+                skill_id = self._skill_id_from_install(install, user_id=user_id)
+                if not skill_id:
                     continue
-                if skill.id not in next_ids:
-                    next_ids.append(skill.id)
+                if self.get_skill(skill_id, user_id=user_id) is None:
+                    continue
+                if not had_skill_id:
+                    changed = True
+                if skill_id not in next_ids:
+                    next_ids.append(skill_id)
                     changed = True
             if next_ids != current:
                 agent.skill_ids = next_ids
@@ -562,7 +567,10 @@ class NativeAgentService:
             .filter(Skill.owner_user_id == user_id, Skill.public_name == public_name)
             .first()
         )
-        install_command = str(install.install_command or "").strip() or build_npx_install_command(source_url, skill_name)
+        install_command = str(install.install_command or "").strip() or build_npx_install_command(
+            source_url,
+            skill_name,
+        )
         tags = build_recipe_tags(
             source=source,
             repo_url=str(install.repo_url or source_url).strip(),
@@ -595,6 +603,114 @@ class NativeAgentService:
         self.db.flush()
         return row
 
+    def _skill_id_from_install(self, install: NativeAgentSkillInstall, *, user_id: str) -> str:
+        skill_id = str(getattr(install, "skill_id", "") or "").strip()
+        if skill_id:
+            return skill_id
+        skill = self._legacy_local_skill_from_install(install, user_id=user_id)
+        if skill is None:
+            skill = self._local_skill_from_install(install, user_id=user_id)
+        if skill is None:
+            return ""
+        install.skill_id = skill.id
+        self.db.add(install)
+        return skill.id
+
+    def _legacy_local_skill_from_install(
+        self,
+        install: NativeAgentSkillInstall,
+        *,
+        user_id: str,
+    ) -> Skill | None:
+        folder_name = str(install.folder_name or "").strip()
+        if folder_name:
+            row = (
+                self.db.query(Skill)
+                .filter(Skill.owner_user_id == user_id, Skill.public_name == folder_name)
+                .first()
+            )
+            if row is not None:
+                return row
+        skill_name = str(install.skill_name or "").strip()
+        if not skill_name:
+            return None
+        skill = self._local_skill_from_install(install, user_id=user_id)
+        if skill is not None:
+            return skill
+        return (
+            self.db.query(Skill)
+            .filter(Skill.owner_user_id == user_id, Skill.name == skill_name)
+            .order_by(Skill.updated_at.desc())
+            .first()
+        )
+
+    def _remove_unselected_skill_installs(
+        self,
+        agent: NativeAgent,
+        *,
+        user_id: str,
+        project_id: str,
+        selected_skill_ids: set[str],
+    ) -> list[str]:
+        rows = (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(
+                NativeAgentSkillInstall.agent_id == agent.id,
+                NativeAgentSkillInstall.project_id == project_id,
+                NativeAgentSkillInstall.user_id == user_id,
+            )
+            .all()
+        )
+        if not rows:
+            return []
+
+        workspace = AgentWorkspaceService(self.db)
+        logs: list[str] = []
+        for row in rows:
+            skill_id = self._skill_id_from_install(row, user_id=user_id)
+            if not skill_id:
+                continue
+            if skill_id in selected_skill_ids:
+                continue
+
+            label = row.skill_name or row.folder_name or skill_id
+            if row.folder_name:
+                try:
+                    workspace.remove_skill_folder(agent, row.folder_name)
+                except Exception as exc:
+                    row.status = "remove_failed"
+                    row.install_log = str(exc)[:12000]
+                    self.db.add(row)
+                    logs.append(f"{label}: remove failed: {row.install_log}")
+                    continue
+            self.db.delete(row)
+            logs.append(f"{label}: removed")
+        return logs
+
+    def _installed_skill_ids_for_agent(
+        self,
+        agent: NativeAgent,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> set[str]:
+        rows = (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(
+                NativeAgentSkillInstall.agent_id == agent.id,
+                NativeAgentSkillInstall.project_id == project_id,
+                NativeAgentSkillInstall.user_id == user_id,
+                NativeAgentSkillInstall.status == "installed",
+            )
+            .all()
+        )
+        out: set[str] = set()
+        for row in rows:
+            skill_id = self._skill_id_from_install(row, user_id=user_id)
+            if skill_id:
+                out.add(skill_id)
+        return out
+
     def _install_selected_skills(
         self,
         agent: NativeAgent,
@@ -603,21 +719,45 @@ class NativeAgentService:
         project_id: str,
         skill_ids: list[str],
     ) -> list[NativeAgentSkillInstall]:
-        if not skill_ids:
-            if not agent.setup_status:
-                agent.setup_status = "ready"
+        selected_skill_ids = _unique_ids(skill_ids)
+        selected_skill_id_set = set(selected_skill_ids)
+        removed_logs = self._remove_unselected_skill_installs(
+            agent,
+            user_id=user_id,
+            project_id=project_id,
+            selected_skill_ids=selected_skill_id_set,
+        )
+
+        if not selected_skill_ids:
+            agent.setup_status = "ready"
+            if removed_logs:
+                agent.setup_log = "\n".join(removed_logs)[-12000:]
+            self.db.add(agent)
             return []
 
         workspace = AgentWorkspaceService(self.db)
         workspace.ensure_workspace(agent)
         installer = SkillNpxInstaller(workspace)
+        already_installed = self._installed_skill_ids_for_agent(
+            agent,
+            project_id=project_id,
+            user_id=user_id,
+        )
+        pending_skill_ids = [skill_id for skill_id in selected_skill_ids if skill_id not in already_installed]
+        if not pending_skill_ids:
+            agent.setup_status = "ready"
+            if removed_logs:
+                agent.setup_log = "\n".join(removed_logs)[-12000:]
+            self.db.add(agent)
+            return []
+
         installed_rows: list[NativeAgentSkillInstall] = []
-        logs: list[str] = []
+        logs: list[str] = list(removed_logs)
         agent.setup_status = "setting_up"
         self.db.add(agent)
         self.db.flush()
 
-        for skill_id in skill_ids:
+        for skill_id in pending_skill_ids:
             skill = self.get_skill(str(skill_id), user_id=user_id)
             if skill is None:
                 continue
@@ -627,6 +767,7 @@ class NativeAgentService:
                     project_id=project_id,
                     user_id=user_id,
                     agent_id=agent.id,
+                    skill_id=skill.id,
                     source=recipe.source or skill.source,
                     marketplace_id=recipe.marketplace_id,
                     repo_url=recipe.repo_url,
@@ -661,6 +802,7 @@ class NativeAgentService:
                 project_id=project_id,
                 user_id=user_id,
                 agent_id=agent.id,
+                skill_id=skill.id,
                 source=skill.source,
                 marketplace_id="",
                 repo_url="",
@@ -840,6 +982,17 @@ def _clean_name(value: str) -> str:
     if not cleaned:
         raise ValueError("name required")
     return cleaned
+
+
+def _unique_ids(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            out.append(cleaned)
+    return out
 
 
 def _skill_name_from_content(content: str) -> str:

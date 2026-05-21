@@ -93,6 +93,13 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     () => [...agentCandidates, ...workflowCandidates, ...fileCandidates],
     [agentCandidates, workflowCandidates, fileCandidates],
   )
+  const validSelectedAgentId = useMemo(
+    () =>
+      selectedAgentId && workflows.some((w) => w.id === selectedAgentId)
+        ? selectedAgentId
+        : workflows[0]?.id ?? null,
+    [selectedAgentId, workflows],
+  )
 
   // Files the user has @-mentioned in the current draft (for chip row preview).
   const pendingFileMentions = useMemo(() => {
@@ -101,46 +108,37 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     return uniqueMentionedFiles(mentions)
   }, [inputText, allCandidates])
 
-  // Auto-select first agent if none selected.
-  useEffect(() => {
-    if (!selectedAgentId && workflows.length > 0) {
-      setSelectedAgentId(workflows[0].id)
-    }
-  }, [selectedAgentId, workflows])
-
   // Load conversations when document or agent changes.
   useEffect(() => {
-    if (documentId && selectedAgentId) {
-      loadConversations({ documentId, workflowId: selectedAgentId })
-    }
-  }, [documentId, selectedAgentId, loadConversations])
+    if (!documentId || !validSelectedAgentId) return
+    loadConversations({ documentId, workflowId: validSelectedAgentId })
+  }, [documentId, validSelectedAgentId, loadConversations])
 
   // Filter conversations for current (doc, agent).
   const filteredConversations = useMemo(() => {
     return Object.values(conversations).filter(
-      (c) => c.document_id === documentId && c.workflow_id === selectedAgentId,
+      (c) => c.document_id === documentId && c.workflow_id === validSelectedAgentId,
     )
-  }, [conversations, documentId, selectedAgentId])
+  }, [conversations, documentId, validSelectedAgentId])
 
-  // Auto-select first conversation if none active.
-  useEffect(() => {
-    if (!activeConversationId && filteredConversations.length > 0) {
-      setActiveConversationId(filteredConversations[0].id)
-    }
-  }, [activeConversationId, filteredConversations])
+  const activeConversationIdForRender =
+    activeConversationId && filteredConversations.some((c) => c.id === activeConversationId)
+      ? activeConversationId
+      : null
+  const effectiveConversationId = activeConversationIdForRender ?? filteredConversations[0]?.id ?? null
 
   // Load messages when active conversation changes.
   useEffect(() => {
-    if (activeConversationId) {
-      loadMessages(activeConversationId)
+    if (effectiveConversationId) {
+      loadMessages(effectiveConversationId)
     }
-  }, [activeConversationId, loadMessages])
+  }, [effectiveConversationId, loadMessages])
 
   const handleNewConversation = async () => {
-    if (!documentId || !selectedAgentId) return
+    if (!documentId || !validSelectedAgentId) return
     const conv = await createConversation({
       document_id: documentId,
-      workflow_id: selectedAgentId,
+      workflow_id: validSelectedAgentId,
       title: '新对话',
     })
     if (conv) {
@@ -152,14 +150,14 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     e?.stopPropagation()
     if (!confirm('删除这个对话？')) return
     await deleteConversation(id)
-    if (activeConversationId === id) {
+    if (effectiveConversationId === id) {
       setActiveConversationId(null)
     }
   }
 
   const handleSend = async () => {
     const rawText = inputText.trim()
-    if (!rawText || !activeConversationId) return
+    if (!rawText || !effectiveConversationId) return
 
     const mentions = parseMentions(rawText, allCandidates)
     const cleanedText = stripMentions(rawText, mentions) || rawText
@@ -194,14 +192,14 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     // If the user only @-mentioned workflows (no fresh agent question),
     // dispatch workflow(s) without routing through sendMessage. Otherwise
     // the Agent picker path runs normally AND any @workflow mentions fan out.
-    await sendMessage(activeConversationId, body)
+    await sendMessage(effectiveConversationId, body)
 
     if (mentionedWorkflows.length > 0 && documentId) {
       await Promise.all(
         mentionedWorkflows.map((wf) =>
           dispatchWorkflowToConversation({
             workflow: wf,
-            conversationId: activeConversationId,
+            conversationId: effectiveConversationId,
             documentId,
             selection: activeSelection,
             attachedFiles,
@@ -227,11 +225,11 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     setInputText(next.replace(/\s{2,}/g, ' '))
   }
 
-  const activeMessages = activeConversationId ? messages[activeConversationId] ?? [] : []
-  const isStreaming = activeConversationId ? streaming[activeConversationId] ?? false : false
-  const delta = activeConversationId ? streamingDelta[activeConversationId] ?? '' : ''
-  const activeConversation = activeConversationId
-    ? conversations[activeConversationId]
+  const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
+  const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
+  const delta = effectiveConversationId ? streamingDelta[effectiveConversationId] ?? '' : ''
+  const activeConversation = effectiveConversationId
+    ? conversations[effectiveConversationId]
     : null
 
   if (!documentId) {
@@ -256,8 +254,11 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         <label className="agent-picker-label">
           <span>Agent：</span>
           <select
-            value={selectedAgentId ?? ''}
-            onChange={(e) => setSelectedAgentId(e.target.value)}
+            value={validSelectedAgentId ?? ''}
+            onChange={(e) => {
+              setSelectedAgentId(e.target.value || null)
+              setActiveConversationId(null)
+            }}
           >
             {workflows.map((w) => (
               <option key={w.id} value={w.id}>
@@ -299,7 +300,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                         <span className="conversation-dropdown-title">
                           {conv.title || '未命名对话'}
                         </span>
-                        {conv.id === activeConversationId && (
+                        {conv.id === effectiveConversationId && (
                           <Check size={12} className="active-check" />
                         )}
                       </div>
@@ -345,14 +346,14 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
       <div className="discussion-body-compact">
         <div className="message-area-full">
-          {!activeConversationId && (
+          {!effectiveConversationId && (
             <div className="message-empty">
               {filteredConversations.length === 0
                 ? '点击右上角 + 创建新对话'
                 : '从右上角历史按钮选择一个对话'}
             </div>
           )}
-          {activeConversationId && (
+          {effectiveConversationId && (
             <>
               <div className="message-stream">
                 {activeMessages.map((msg) => (

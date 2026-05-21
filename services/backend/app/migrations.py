@@ -58,6 +58,7 @@ def run_migrations(engine: Engine) -> None:
         _add_project_archive_github_columns(conn)
         _rebuild_native_agents_table(conn)
         _add_native_agent_workspace_columns(conn)
+        _add_native_agent_skill_install_columns(conn)
         _encrypt_plaintext_skill_content(conn)
 
 
@@ -364,3 +365,18 @@ def _add_native_agent_workspace_columns(conn) -> None:
     for column, ddl in additions.items():
         if not _column_exists(conn, "native_agents", column):
             conn.execute(text(f"ALTER TABLE native_agents ADD COLUMN {column} {ddl}"))
+
+
+def _add_native_agent_skill_install_columns(conn) -> None:
+    if not _table_exists(conn, "native_agent_skill_installs"):
+        return
+    if not _column_exists(conn, "native_agent_skill_installs", "skill_id"):
+        conn.execute(
+            text("ALTER TABLE native_agent_skill_installs ADD COLUMN skill_id VARCHAR(32) DEFAULT ''")
+        )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_native_agent_skill_installs_skill_id "
+            "ON native_agent_skill_installs(skill_id)"
+        )
+    )

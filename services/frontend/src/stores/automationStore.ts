@@ -259,6 +259,9 @@ async function runChunk(args: {
     targetKind,
     attachedFiles,
   })
+  // Native agent backend reads `inputs.instruction` (not `query`), so the
+  // contract must travel inside `inputs.instruction` to actually reach the model.
+  const effectiveInstruction = `${AUTO_ANNOTATION_CONTRACT}\n\n${instruction}`
   const contextFiles = attachedFilesToContextFiles(attachedFiles)
   const body = {
     document_id: doc.id,
@@ -278,7 +281,7 @@ async function runChunk(args: {
       paper_brief: paperContext.brief,
       full_latex_context: includeFullContext ? paperContext.fullLatex : '',
       attached_files: attachedFiles,
-      instruction,
+      instruction: effectiveInstruction,
     },
     query,
     context_files: contextFiles,

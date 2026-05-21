@@ -65,7 +65,7 @@ class NativeAgentRunner:
             api_key=self.config.api_key,
             timeout=30.0,
         )
-        system_prompt = self._system_prompt()
+        system_prompt = self._system_prompt(payload)
         user_prompt = self._user_prompt(payload)
         session_id = payload.conversation_id or None
 
@@ -105,15 +105,21 @@ class NativeAgentRunner:
                     "data": {"delta": delta},
                 }
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, payload: NativeRunPayload | None = None) -> str:
+        inputs = (payload.inputs if payload else {}) or {}
+        write_mode = str(inputs.get("write_mode") or "").strip()
+        legacy_output_mode = str(inputs.get("automation_output_mode") or "").strip()
+        is_write_mode = bool(write_mode) or legacy_output_mode == "write"
+
         parts = [
             "You are a native YuwanLabWriter Agent.",
             "You must only use the user message and your assigned Agent workspace.",
             "Your only readable workspace is `.agents/` for this Agent.",
             "Use list_agent_files and read_agent_file when you need Skill files.",
             "Never claim to read files outside `.agents/`.",
-            "Do not propose direct file mutations. Return review output only.",
         ]
+        if not is_write_mode:
+            parts.append("Do not propose direct file mutations. Return review output only.")
         if self.config.instructions.strip():
             parts.extend(["", "Agent instructions:", self.config.instructions.strip()])
         if self.config.skills:
@@ -122,13 +128,55 @@ class NativeAgentRunner:
             for skill in self.config.skills:
                 parts.append(f"\n--- Skill: {skill.name} v{skill.version} ({skill.source}) ---")
                 parts.append(skill.content.strip())
-        parts.extend(
-            [
-                "",
-                "When producing annotations, prefer JSON with keys annotations, suggestions, risks.",
-                "If free-form output is more appropriate, keep it concise and actionable.",
-            ]
-        )
+        if is_write_mode:
+            doc_format = str(inputs.get("doc_format") or "").strip().lower()
+            fence_lang = "latex" if doc_format == "tex" else ("markdown" if doc_format == "md" else "text")
+            parts.extend(
+                [
+                    "",
+                    "Output mode: WRITE. The user has requested direct text output that will be written into the document.",
+                    f"Wrap the full target text in a fenced code block: ```{fence_lang} ... ```",
+                    "Do NOT output JSON, do NOT output annotation cards, do NOT add explanation outside the fence.",
+                    "If the user message contains [PRE-EXISTING TEXT], preserve its preamble, style, and indentation; modify only what the user instruction asks.",
+                ]
+            )
+            if doc_format == "tex":
+                parts.extend(
+                    [
+                        "",
+                        "TARGET FORMAT: LaTeX (.tex).",
+                        "- Use LaTeX commands: \\section{...}, \\subsection{...}, \\textbf{...}, \\emph{...}, \\cite{key}, \\ref{label}, inline math $...$, display math \\[...\\] or equation environment, lists via itemize/enumerate.",
+                        "- DO NOT use Markdown syntax: no `# heading`, no `**bold**`, no `*italic*`, no `- bullet` outside itemize, no `[text](url)`, no inner triple-backtick code fences (the only fence is the outermost output fence).",
+                        "- Preserve every existing \\command{...} and citation key verbatim. Do not rewrite \\cite{X} as [X].",
+                        "- Escape LaTeX special characters correctly when they appear as text: % & _ # $ { }.",
+                    ]
+                )
+            elif doc_format == "md":
+                parts.extend(
+                    [
+                        "",
+                        "TARGET FORMAT: Markdown (.md).",
+                        "- Use Markdown syntax: `# heading`, `**bold**`, `*italic*`, `-` / `1.` lists, `[text](url)`, inline code with backticks.",
+                        "- DO NOT use LaTeX commands such as \\section, \\textbf, \\cite, \\ref. If the source has math, keep it as `$...$` or `$$...$$`.",
+                        "- If you need a nested code block inside the output, use `~~~` or more backticks to avoid colliding with the outer ``` fence.",
+                    ]
+                )
+            else:
+                parts.extend(
+                    [
+                        "",
+                        "TARGET FORMAT: Plain text (.txt).",
+                        "- Output plain prose only — no LaTeX commands, no Markdown syntax. Use blank lines between paragraphs.",
+                    ]
+                )
+        else:
+            parts.extend(
+                [
+                    "",
+                    "When producing annotations, prefer JSON with keys annotations, suggestions, risks.",
+                    "If free-form output is more appropriate, keep it concise and actionable.",
+                ]
+            )
         return "\n".join(part for part in parts if part is not None).strip()
 
     def _user_prompt(self, payload: NativeRunPayload) -> str:

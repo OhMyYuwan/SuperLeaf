@@ -17,6 +17,7 @@ import {
   type DocChangeInfo,
   type SelectionInfo,
 } from '../latex-editor'
+import type { LatexCitationCompletion } from '../latex-editor/latex-completion-data'
 import { useCollaborationStore } from '../../stores/collaborationStore'
 
 interface EditorColumnProps {
@@ -29,6 +30,7 @@ interface EditorColumnProps {
   onSelectionChange: (info: { from: number; to: number; text: string }) => void
   onDocChange: (changes: DocChangeInfo[]) => void
   onDecorationClick: (id: string) => void
+  citationCompletions?: LatexCitationCompletion[]
   onAddComment?: (params: {
     range: { from: number; to: number }
     targetText: string
@@ -45,6 +47,7 @@ export function EditorColumn({
   onSelectionChange,
   onDocChange,
   onDecorationClick,
+  citationCompletions,
   onAddComment,
 }: EditorColumnProps) {
   const [toolbar, setToolbar] = useState<{
@@ -92,6 +95,7 @@ export function EditorColumn({
             onSelectionChange={handleSelectionChange}
             onDocChange={onDocChange}
             onDecorationClick={onDecorationClick}
+            citationCompletions={citationCompletions}
             toolbar={toolbar}
             onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
@@ -113,6 +117,7 @@ function EditorWithCollab({
   onSelectionChange,
   onDocChange,
   onDecorationClick,
+  citationCompletions,
   toolbar,
   onAddComment,
 }: {
@@ -125,6 +130,7 @@ function EditorWithCollab({
   onSelectionChange: (info: SelectionInfo) => void
   onDocChange: (changes: DocChangeInfo[]) => void
   onDecorationClick: (id: string) => void
+  citationCompletions?: LatexCitationCompletion[]
   toolbar: { x: number; y: number } | null
   onAddComment?: () => void
 }) {
@@ -146,6 +152,7 @@ function EditorWithCollab({
       activeDecorationId={activeAnnotationId}
       panelHoverId={hoveredAnnotationId ?? null}
       onDecorationClick={onDecorationClick}
+      citationCompletions={citationCompletions}
       scrollTo={scrollTo}
       yText={isCollab ? provider!.yText : undefined}
       awareness={isCollab ? provider!.awareness : undefined}

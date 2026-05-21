@@ -3,6 +3,7 @@ import {
   findLatexStructuredSnippet,
   latexBeginEnvironmentSnippetCompletions,
   latexCommandSnippetCompletions,
+  latexCommandTriggerMatches,
   latexSnippetCommandTriggers,
 } from '../features/latex-editor/latex-snippets'
 
@@ -27,6 +28,12 @@ describe('latex snippets', () => {
     const triggers = latexSnippetCommandTriggers()
     expect(triggers.has('table')).toBe(true)
     expect(triggers.has('eq')).toBe(true)
+  })
+
+  it('keeps contains command matches while ranking prefix matches first', () => {
+    const labels = latexCommandSnippetCompletions('sec').map((item) => item.label)
+    expect(labels.slice(0, 2)).toEqual(['\\sec', '\\section'])
+    expect(latexCommandTriggerMatches('c')).toContain('sec')
   })
 
   it('offers begin-environment snippets by prefix', () => {

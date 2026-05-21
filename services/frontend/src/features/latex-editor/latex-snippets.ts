@@ -1,4 +1,5 @@
 import { snippetCompletion, type Completion } from '@codemirror/autocomplete'
+import { completionBoostFor, matchesCompletionQuery } from './latex-completion-data'
 
 export interface LatexStructuredSnippet {
   id: string
@@ -189,13 +190,28 @@ export function latexCommandSnippetCompletions(prefix: string): Completion[] {
   const normalized = normalizeTriggerPrefix(prefix)
   return LATEX_STRUCTURED_SNIPPETS.flatMap((snippet) =>
     snippet.commandTriggers
-      .filter((trigger) => trigger.startsWith(normalized))
-      .map((trigger) => snippetCompletion(snippet.template, {
-        label: `\\${trigger}`,
-        detail: snippet.detail,
-        type: 'keyword',
-        boost: snippet.boost ?? 70,
-      })),
+      .filter((trigger) => matchesCompletionQuery(trigger, normalized))
+      .map((trigger) => ({
+        trigger,
+        completion: snippetCompletion(snippet.template, {
+          label: `\\${trigger}`,
+          detail: snippet.detail,
+          type: 'keyword',
+          boost: completionBoostFor(trigger, normalized, snippet.boost ?? 70),
+        }),
+      }))
+  )
+    .sort((a, b) =>
+      (b.completion.boost ?? 0) - (a.completion.boost ?? 0) ||
+      a.trigger.localeCompare(b.trigger),
+    )
+    .map((item) => item.completion)
+}
+
+export function latexCommandTriggerMatches(prefix: string): string[] {
+  const normalized = normalizeTriggerPrefix(prefix)
+  return LATEX_STRUCTURED_SNIPPETS.flatMap((snippet) =>
+    snippet.commandTriggers.filter((trigger) => matchesCompletionQuery(trigger, normalized)),
   )
 }
 

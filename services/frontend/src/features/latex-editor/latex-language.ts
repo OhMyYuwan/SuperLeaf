@@ -16,12 +16,20 @@ import {
   snippetCompletion,
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult } from '@codemirror/autocomplete'
-import type { Extension } from '@codemirror/state'
+import { StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   latexBeginEnvironmentSnippetCompletions,
   latexCommandSnippetCompletions,
   latexSnippetCommandTriggers,
 } from './latex-snippets'
+import {
+  completionBoostFor,
+  filterCitationCompletions,
+  findCitationArgumentContext,
+  normalizeLatexCompletionData,
+  type LatexCitationCompletion,
+  type LatexCompletionData,
+} from './latex-completion-data'
 
 /** A small but useful set of LaTeX commands and environments. */
 const LATEX_COMMANDS: string[] = [
@@ -45,8 +53,21 @@ const LATEX_COMMANDS: string[] = [
   'ref',
   'eqref',
   'cite',
+  'citep',
+  'citet',
+  'citeauthor',
+  'citeyear',
+  'parencite',
+  'textcite',
+  'autocite',
+  'footcite',
+  'supercite',
+  'nocite',
   'bibliography',
+  'addbibresource',
+  'printbibliography',
   'bibliographystyle',
+  'bibitem',
   'item',
   'textbf',
   'textit',
@@ -86,6 +107,20 @@ const LATEX_COMMANDS: string[] = [
   'let',
 ]
 
+export const setLatexCompletionDataEffect = StateEffect.define<LatexCompletionData>()
+
+const latexCompletionDataState = StateField.define<LatexCompletionData>({
+  create: () => normalizeLatexCompletionData(),
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setLatexCompletionDataEffect)) {
+        return normalizeLatexCompletionData(effect.value)
+      }
+    }
+    return value
+  },
+})
+
 const LATEX_ENVIRONMENTS: string[] = [
   'document',
   'abstract',
@@ -121,6 +156,9 @@ const LATEX_ENVIRONMENTS: string[] = [
 ]
 
 function latexCompletion(context: CompletionContext): CompletionResult | null {
+  const citationResult = citationCompletion(context)
+  if (citationResult) return citationResult
+
   // Match a structured environment being opened: \begin{fig...
   const beginEnv = context.matchBefore(/\\begin\{[A-Za-z*]*$/)
   if (beginEnv) {
@@ -147,17 +185,29 @@ function latexCompletion(context: CompletionContext): CompletionResult | null {
   // Match a LaTeX command being typed: \word
   const command = context.matchBefore(/\\[A-Za-z]*/)
   if (command && command.from !== command.to) {
+    if (
+      command.text === '\\' &&
+      command.from > 0 &&
+      context.state.sliceDoc(command.from - 1, command.from) === '\\'
+    ) {
+      return null
+    }
     const prefix = command.text.slice(1)
     const snippetTriggers = latexSnippetCommandTriggers()
     const snippetCompletions = latexCommandSnippetCompletions(prefix)
     const commandCompletions = LATEX_COMMANDS
-      .filter((name) => name.startsWith(prefix.toLowerCase()))
+      .filter((name) => matchesCommandQuery(name, prefix))
       .filter((name) => !snippetTriggers.has(name))
-      .map((name) => ({
+      .map((name): Completion => ({
         label: `\\${name}`,
         type: 'function',
         apply: `\\${name}`,
+        boost: completionBoostFor(name, prefix.toLowerCase(), 45),
       }))
+      .sort((a, b) =>
+        (b.boost ?? 0) - (a.boost ?? 0) ||
+        a.label.localeCompare(b.label),
+      )
     return {
       from: command.from,
       options: [...snippetCompletions, ...commandCompletions],
@@ -186,6 +236,49 @@ function latexCompletion(context: CompletionContext): CompletionResult | null {
   return null
 }
 
+function citationCompletion(context: CompletionContext): CompletionResult | null {
+  const completionData = context.state.field(latexCompletionDataState, false)
+  const citations = completionData?.citations ?? []
+  if (citations.length === 0) return null
+
+  const line = context.state.doc.lineAt(context.pos)
+  const beforeCursor = context.state.sliceDoc(line.from, context.pos)
+  const citationContext = findCitationArgumentContext(beforeCursor)
+  if (!citationContext) return null
+
+  const options = filterCitationCompletions(
+    citations,
+    citationContext.query,
+    citationContext.existingKeys,
+  ).map(citationToCompletion)
+
+  if (options.length === 0 && !context.explicit) return null
+
+  return {
+    from: line.from + citationContext.fromOffset,
+    options,
+    validFor: /^[^,}]*$/,
+    filter: false,
+  }
+}
+
+function citationToCompletion(citation: LatexCitationCompletion): Completion {
+  return {
+    label: citation.key,
+    type: 'reference',
+    detail: citation.detail,
+    info: citation.info,
+    apply: citation.key,
+    boost: 80,
+  }
+}
+
+function matchesCommandQuery(name: string, prefix: string): boolean {
+  const normalized = prefix.toLowerCase()
+  if (!normalized) return true
+  return name.toLowerCase().includes(normalized)
+}
+
 function genericBeginEnvironmentCompletions(
   prefix: string,
   skippedLabels: Set<string>,
@@ -210,8 +303,9 @@ function genericEnvironmentSnippet(name: string): string {
  * Public API: a single extension bundle that can be plugged into any CodeMirror
  * 6 EditorState as part of `extensions`.
  */
-export function latex(): Extension {
+export function latex(completionData?: Partial<LatexCompletionData>): Extension {
   return [
+    latexCompletionDataState.init(() => normalizeLatexCompletionData(completionData)),
     new LanguageSupport(StreamLanguage.define(stex)),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     autocompletion({

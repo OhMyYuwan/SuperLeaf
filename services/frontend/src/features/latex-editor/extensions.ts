@@ -28,6 +28,7 @@ import { lintKeymap } from '@codemirror/lint'
 import { markdown } from '@codemirror/lang-markdown'
 
 import { latex } from './latex-language'
+import type { LatexCompletionData } from './latex-completion-data'
 import { overleafDark } from './theme'
 
 export type EditorFormat = 'tex' | 'md' | 'txt'
@@ -36,10 +37,13 @@ const AUTO_COMMENT_PREFIX = '% AUTO '
 const COMMENT_PREFIX = '% '
 const AUTO_COMMENT_DOUBLE_PRESS_MS = 600
 
-export function languageFor(format: EditorFormat): Extension {
+export function languageFor(
+  format: EditorFormat,
+  completionData?: Partial<LatexCompletionData>,
+): Extension {
   switch (format) {
     case 'tex':
-      return latex()
+      return latex(completionData)
     case 'md':
       return markdown()
     case 'txt':

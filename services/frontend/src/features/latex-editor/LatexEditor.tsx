@@ -21,6 +21,8 @@ import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import { setLatexCompletionDataEffect } from './latex-language'
+import type { LatexCitationCompletion, LatexCompletionData } from './latex-completion-data'
 import { collaborationExtensions } from './collaboration-extensions'
 import {
   annotationDecorationsExtension,
@@ -68,6 +70,7 @@ export interface LatexEditorProps {
   yText?: Y.Text
   awareness?: Awareness
   collaborating?: boolean
+  citationCompletions?: LatexCitationCompletion[]
 }
 
 export function LatexEditor({
@@ -86,6 +89,7 @@ export function LatexEditor({
   yText,
   awareness,
   collaborating,
+  citationCompletions,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -95,6 +99,11 @@ export function LatexEditor({
   const onDecorationClickRef = useRef(onDecorationClick)
   const languageCompartment = useMemo(() => new Compartment(), [])
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
+  const completionData = useMemo<LatexCompletionData>(
+    () => ({ citations: citationCompletions ?? [] }),
+    [citationCompletions],
+  )
+  const completionDataRef = useRef(completionData)
   const [sourceJumpFlash, setSourceJumpFlash] = useState(false)
 
   useEffect(() => {
@@ -126,7 +135,7 @@ export function LatexEditor({
       extensions: [
         ...baseExtensions({ includeHistory: !isCollab }),
         ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
-        languageCompartment.of(languageFor(format)),
+        languageCompartment.of(languageFor(format, completionData)),
         shortcutsCompartment.of(shortcutKeymapFor(format)),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
@@ -199,11 +208,21 @@ export function LatexEditor({
     if (!view) return
     view.dispatch({
       effects: [
-        languageCompartment.reconfigure(languageFor(format)),
+        languageCompartment.reconfigure(languageFor(format, completionDataRef.current)),
         shortcutsCompartment.reconfigure(shortcutKeymapFor(format)),
       ],
     })
   }, [format, languageCompartment, shortcutsCompartment])
+
+  // Push project-level completion metadata into the LaTeX language extension.
+  useEffect(() => {
+    completionDataRef.current = completionData
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: setLatexCompletionDataEffect.of(completionData),
+    })
+  }, [completionData])
 
   // Push decoration specs into the editor.
   useEffect(() => {

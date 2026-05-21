@@ -11,7 +11,7 @@
  * stale doc/file/annotation state from the prior project for one tick.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import { Topbar } from '../features/topbar'
@@ -39,9 +39,12 @@ import { useProjectStore } from '../stores/projectStore'
 import { useUserStore } from '../stores/userStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
+import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesystemApi'
 import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
+import { collectLatexCitationCompletions } from '../features/latex-editor/latex-completion-data'
+import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
 const OUTLINE_COLLAPSED_HEIGHT = '44px'
@@ -57,6 +60,7 @@ export function WorkspacePage() {
   const refreshFromBackend = useDocumentStore((s) => s.refreshFromBackend)
   const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
   const flushPendingSave = useDocumentStore((s) => s.flushPendingSave)
+  const upsertBackendDoc = useDocumentStore((s) => s.upsertFromBackendDoc)
   const saveStatusMap = useDocumentStore((s) => s.saveStatus)
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
@@ -127,6 +131,7 @@ export function WorkspacePage() {
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [outlineCollapsed, setOutlineCollapsed] = useState(false)
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
+  const loadingBibDocIds = useRef(new Set<string>())
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
 
@@ -154,6 +159,15 @@ export function WorkspacePage() {
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
+  const citationCompletions = useMemo(() => {
+    const sources = Object.values(documents)
+      .filter(isCitationSourceDoc)
+      .map((doc) => ({
+        name: doc.metadata.title,
+        content: doc.content,
+      }))
+    return collectLatexCitationCompletions(sources)
+  }, [documents])
 
   const decorationSpecs: DecorationSpec[] = useMemo(() => {
     if (!activeDocumentId) return []
@@ -176,6 +190,29 @@ export function WorkspacePage() {
     if (!activeDocumentId) return
     void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
   }, [activeDocumentId, projectReady])
+
+  // Overleaf keeps bibliography keys in project metadata. Our project tree is
+  // backed by backend docs, so load `.bib` docs quietly into the document cache
+  // and derive citation metadata from their live content.
+  useEffect(() => {
+    if (!projectReady || !tree) return
+    const bibDocs = collectBibTreeDocs(tree.root)
+    for (const bibDoc of bibDocs) {
+      if (documents[bibDoc.id]) continue
+      if (loadingBibDocIds.current.has(bibDoc.id)) continue
+      loadingBibDocIds.current.add(bibDoc.id)
+      void filesystemApi.getDoc(bibDoc.id)
+        .then((doc) => {
+          upsertBackendDoc(doc)
+        })
+        .catch((err) => {
+          console.warn('[WorkspacePage] failed to load bibliography doc', bibDoc.name, err)
+        })
+        .finally(() => {
+          loadingBibDocIds.current.delete(bibDoc.id)
+        })
+    }
+  }, [documents, projectReady, tree, upsertBackendDoc])
 
   // Collaboration: connect/disconnect Yjs when the active document changes.
   const currentUser = useUserStore((s) => s.currentUser)
@@ -556,6 +593,7 @@ export function WorkspacePage() {
                           activeAnnotationId={activeAnnotationId}
                           hoveredAnnotationId={hoveredAnnotationId}
                           scrollTo={editorScrollTo}
+                          citationCompletions={citationCompletions}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}
@@ -647,4 +685,24 @@ export function WorkspacePage() {
       </main>
     </div>
   )
+}
+
+function collectBibTreeDocs(folder: TreeFolder): TreeDoc[] {
+  return [
+    ...folder.docs.filter((doc) => isBibDocumentName(doc.name)),
+    ...folder.folders.flatMap((child) => collectBibTreeDocs(child)),
+  ]
+}
+
+function isCitationSourceDoc(doc: Document): boolean {
+  const title = doc.metadata.title.toLowerCase()
+  return (
+    isBibDocumentName(title) ||
+    /\\bibitem(?:\[[^\]]*])?\{[^}]+\}/.test(doc.content) ||
+    /@[A-Za-z]+\s*[{(]\s*[^,\s{}()]+,/.test(doc.content)
+  )
+}
+
+function isBibDocumentName(name: string): boolean {
+  return name.toLowerCase().endsWith('.bib')
 }

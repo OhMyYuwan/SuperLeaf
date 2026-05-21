@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Conversation, Message, Project, User
+from ..models import Conversation, Message, Project, User
 from ..schemas import (
     ConversationCreateIn,
     ConversationOut,
@@ -26,14 +26,22 @@ from ..schemas import (
     MessageOut,
     MessageSendIn,
 )
-from ..services.dify_client import DifyError
-from ..services.nanobot_client import NanobotError
-from ..services.provider_service import ProviderService
+from ..services.agent_registry_service import AgentRegistryService, ResolvedAgent
+from ..services.agent_workspace_service import AgentWorkspaceService
 from ..services.attached_files import (
     collect_image_attachments,
     normalize_attached_files,
     render_attached_files_block,
 )
+from ..services.dify_client import DifyError
+from ..services.nanobot_client import NanobotError
+from ..services.native_agent_runner import (
+    NativeAgentRunner,
+    NativeAgentRuntimeConfig,
+    NativeRunPayload,
+)
+from ..services.provider_service import ProviderService
+from ..secrets_vault import decrypt
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -52,6 +60,30 @@ def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") 
         message_count=message_count,
         last_message_preview=last_preview,
     )
+
+
+def _resolve_agent(
+    db: Session,
+    workflow_id: str,
+    *,
+    project: Project,
+    user: User,
+    require_enabled: bool = True,
+) -> ResolvedAgent | None:
+    return AgentRegistryService(db).resolve(
+        workflow_id,
+        project_id=project.id,
+        user_id=user.id,
+        require_enabled=require_enabled,
+    )
+
+
+def _agent_name(resolved: ResolvedAgent) -> str:
+    if resolved.native_agent is not None:
+        return resolved.native_agent.name
+    if resolved.cached_workflow is not None:
+        return resolved.cached_workflow.name
+    return resolved.workflow_id
 
 
 @router.get("", response_model=list[ConversationOut])
@@ -106,15 +138,15 @@ def create_conversation(
     project: Project = Depends(get_current_project),
     user: User = Depends(get_current_user),
 ) -> ConversationOut:
-    cw = db.get(CachedWorkflow, body.workflow_id)
-    if cw is None:
+    resolved = _resolve_agent(db, body.workflow_id, project=project, user=user)
+    if resolved is None:
         raise HTTPException(404, "Agent (workflow) not found")
     conv = Conversation(
         project_id=project.id,
         user_id=user.id,
         document_id=body.document_id,
         workflow_id=body.workflow_id,
-        title=body.title or cw.name,
+        title=body.title or _agent_name(resolved),
     )
     db.add(conv)
     db.commit()
@@ -207,16 +239,15 @@ async def send_message(
     conv = db.get(Conversation, conversation_id)
     if conv is None or conv.project_id != project.id or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
-    cw = db.get(CachedWorkflow, conv.workflow_id)
-    if cw is None or cw.user_id != user.id:
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None:
         raise HTTPException(404, "Agent (workflow) gone")
 
-    svc = ProviderService(db)
-    provider = svc.get(cw.provider_id, user_id=user.id)
-    if provider is None:
-        raise HTTPException(404, "Provider for this agent is gone")
-
-    client = svc.make_client(provider)
+    provider = resolved.provider
+    cw = resolved.cached_workflow
+    if resolved.source != "native" and cw is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    client = ProviderService(db).make_client(provider) if resolved.source != "native" else None
 
     # Persist user message immediately so the UI can echo even if Dify fails.
     user_msg = Message(
@@ -288,7 +319,53 @@ async def send_message(
         external_conv_id = conv.external_conversation_id
 
         try:
-            if provider.kind == "nanobot":
+            if resolved.source == "native":
+                agent = resolved.native_agent
+                if agent is None:
+                    raise TypeError("Native Agent resolution is missing agent row")
+                native_conversation_id = external_conv_id or f"ylw-native-conv-{conversation_id}"
+                native_inputs = dict(body.inputs or {})
+                if attached_files:
+                    native_inputs["attached_files"] = attached_files
+                skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+                workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
+                runner = NativeAgentRunner(
+                    NativeAgentRuntimeConfig(
+                        agent_id=agent.id,
+                        agent_name=agent.name,
+                        provider_endpoint=provider.endpoint,
+                        api_key=decrypt(provider.api_key_enc),
+                        model=agent.model,
+                        instructions=agent.instructions,
+                        skills=skills,
+                        workspace_root=str(workspace_root),
+                        temperature=float((agent.runtime_config or {}).get("temperature", 0.2)),
+                        max_tokens=int((agent.runtime_config or {}).get("max_tokens", 4000)),
+                        max_tool_rounds=int((agent.runtime_config or {}).get("max_tool_rounds", 8)),
+                    )
+                )
+                payload = NativeRunPayload(
+                    document_id=conv.document_id,
+                    range_start=body.range_start or 0,
+                    range_end=body.range_end or 0,
+                    inputs=native_inputs,
+                    query=body.content,
+                    conversation_id=native_conversation_id,
+                )
+                async for evt in runner.stream(payload):
+                    kind = str(evt.get("event") or "")
+                    data = evt.get("data") or {}
+                    if kind == "native.agent.output.delta" and isinstance(data, dict):
+                        delta = data.get("delta")
+                        if isinstance(delta, str):
+                            agent_text_parts.append(delta)
+                            yield {
+                                "event": "ylw.msg.delta",
+                                "data": json.dumps({"delta": delta}),
+                            }
+                    yield {"event": kind, "data": json.dumps(data)}
+                external_conv_id = native_conversation_id
+            elif provider.kind == "nanobot":
                 from ..services.nanobot_client import NanobotClient
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")

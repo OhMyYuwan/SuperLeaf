@@ -217,6 +217,7 @@ class NativeAgentSkillInstallOut(BaseModel):
     project_id: str
     user_id: str
     agent_id: str
+    skill_id: str = ""
     source: str
     marketplace_id: str
     repo_url: str

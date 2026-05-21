@@ -372,6 +372,7 @@ export interface NativeAgentSkillInstall {
   project_id: string
   user_id: string
   agent_id: string
+  skill_id: string
   source: string
   marketplace_id: string
   repo_url: string

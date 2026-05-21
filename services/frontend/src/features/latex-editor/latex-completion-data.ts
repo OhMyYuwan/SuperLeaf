@@ -3,6 +3,9 @@ export interface LatexCitationCompletion {
   detail?: string
   info?: string
   source?: string
+  title?: string
+  author?: string
+  year?: string
 }
 
 export interface LatexCompletionData {
@@ -30,6 +33,7 @@ export interface CitationArgumentContext {
 
 const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [] }
 const IGNORED_BIB_TYPES = new Set(['comment', 'preamble', 'string'])
+const NO_MATCH = Number.NEGATIVE_INFINITY
 
 export function normalizeLatexCompletionData(
   data?: Partial<LatexCompletionData> | null,
@@ -161,39 +165,88 @@ export function filterCitationCompletions(
   limit = 200,
 ): LatexCitationCompletion[] {
   const existing = new Set(existingKeys)
-  const normalizedQuery = query.toLowerCase()
+  const normalizedQuery = normalizeCompletionQuery(query)
 
   return citations
     .filter((citation) => !existing.has(citation.key))
-    .filter((citation) => matchesCompletionQuery(citation.key, normalizedQuery))
-    .sort((a, b) =>
-      completionBoostFor(b.key, normalizedQuery) - completionBoostFor(a.key, normalizedQuery) ||
-      a.key.localeCompare(b.key),
-    )
+    .map((citation) => ({
+      citation,
+      score: scoreCitationCompletion(citation, normalizedQuery),
+    }))
+    .filter((item) => item.score > NO_MATCH)
+    .sort((a, b) => b.score - a.score || a.citation.key.localeCompare(b.citation.key))
+    .map((item) => item.citation)
     .slice(0, limit)
 }
 
 export function matchesCompletionQuery(value: string, query: string): boolean {
-  const normalized = query.toLowerCase()
-  if (!normalized) return true
-  return value.toLowerCase().includes(normalized)
+  return completionMatchScore(value, query) > NO_MATCH
 }
 
 export function completionBoostFor(value: string, query: string, base = 0): number {
-  const normalized = query.toLowerCase()
-  if (!normalized) return base
+  const score = completionMatchScore(value, query)
+  return score > NO_MATCH ? base + score : base - 1000
+}
+
+export function completionMatchScore(value: string | undefined, query: string): number {
+  const normalized = normalizeCompletionQuery(query)
+  if (!normalized) return 0
+  if (!value) return NO_MATCH
 
   const text = value.toLowerCase()
+  if (text === normalized) {
+    return 700
+  }
   if (text.startsWith(normalized)) {
-    return base + 100 - Math.min(text.length, 50) / 10
+    return 620 - lengthPenalty(text)
   }
 
-  const index = text.indexOf(normalized)
-  if (index >= 0) {
-    return base + 20 - Math.min(index, 50) / 10
+  const wordPrefixIndex = findWordPrefixIndex(value, normalized)
+  if (wordPrefixIndex >= 0) {
+    return 520 - wordPrefixIndex * 4 - lengthPenalty(text)
   }
 
-  return base - 100
+  const containsIndex = text.indexOf(normalized)
+  if (containsIndex >= 0) {
+    return 400 - Math.min(containsIndex, 80) - lengthPenalty(text)
+  }
+
+  const acronym = acronymFor(value)
+  if (acronym.startsWith(normalized)) {
+    return 320 - lengthPenalty(acronym)
+  }
+
+  if (normalized.length >= 3) {
+    const fuzzy = fuzzyMatchScore(text, normalized)
+    if (fuzzy > NO_MATCH) {
+      return 220 + fuzzy - lengthPenalty(text)
+    }
+  }
+
+  return NO_MATCH
+}
+
+export function scoreCitationCompletion(
+  citation: LatexCitationCompletion,
+  query: string,
+): number {
+  const tokens = tokenizeCompletionQuery(query)
+  if (tokens.length === 0) return 0
+
+  let score = 0
+  for (const token of tokens) {
+    const tokenScore = Math.max(
+      weightedCompletionScore(citation.key, token, 1600),
+      weightedCompletionScore(citation.title, token, 900),
+      weightedCompletionScore(citation.author, token, 760),
+      weightedCompletionScore(citation.year, token, 650),
+      weightedCompletionScore(citation.source, token, 300),
+      weightedCompletionScore(citation.detail, token, 260),
+    )
+    if (tokenScore <= NO_MATCH) return NO_MATCH
+    score += tokenScore
+  }
+  return score
 }
 
 function normalizeCitationCompletions(
@@ -217,7 +270,72 @@ function toCitationCompletion(entry: ParsedBibEntry): LatexCitationCompletion {
     detail: detail || entry.source,
     info: info || undefined,
     source: entry.source,
+    title: entry.title,
+    author: entry.author,
+    year: entry.year,
   }
+}
+
+function normalizeCompletionQuery(query: string): string {
+  return query.replace(/^\\+/, '').trim().toLowerCase()
+}
+
+function tokenizeCompletionQuery(query: string): string[] {
+  const normalized = normalizeCompletionQuery(query)
+  if (!normalized) return []
+  return normalized.split(/\s+/).filter(Boolean)
+}
+
+function weightedCompletionScore(
+  value: string | undefined,
+  query: string,
+  weight: number,
+): number {
+  const score = completionMatchScore(value, query)
+  return score > NO_MATCH ? weight + score : NO_MATCH
+}
+
+function findWordPrefixIndex(value: string, query: string): number {
+  const parts = value.split(/[\s._:@/\\-]+/).filter(Boolean)
+  let offset = 0
+  for (const part of parts) {
+    if (part.toLowerCase().startsWith(query)) return offset
+    offset += part.length + 1
+  }
+  return -1
+}
+
+function acronymFor(value: string): string {
+  return value
+    .split(/[\s._:@/\\-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toLowerCase() ?? '')
+    .join('')
+}
+
+function fuzzyMatchScore(text: string, query: string): number {
+  let textIndex = 0
+  let runLength = 0
+  let score = 0
+
+  for (const queryChar of query) {
+    const found = text.indexOf(queryChar, textIndex)
+    if (found < 0) return NO_MATCH
+    if (found === textIndex) {
+      runLength += 1
+      score += 8 + runLength * 2
+    } else {
+      runLength = 0
+      score += Math.max(1, 8 - Math.min(found - textIndex, 7))
+    }
+    textIndex = found + 1
+  }
+
+  return score
+}
+
+function lengthPenalty(text: string): number {
+  return Math.min(text.length, 80) / 12
 }
 
 function compactAuthors(author?: string): string | undefined {

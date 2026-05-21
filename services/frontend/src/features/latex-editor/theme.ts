@@ -82,6 +82,13 @@ const overleafDarkTheme = EditorView.theme(
       backgroundColor: '#3b82f6',
       color: 'white',
     },
+    '.cm-completionInfo.cm-completionInfo-above': {
+      right: 'auto',
+      whiteSpace: 'normal',
+      lineHeight: '1.45',
+      overflowWrap: 'anywhere',
+      boxShadow: '0 14px 32px rgba(2, 6, 23, 0.35)',
+    },
   },
   { dark: true },
 )

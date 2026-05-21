@@ -5,11 +5,10 @@ import {
   extractBibitemKeys,
   filterCitationCompletions,
   findCitationArgumentContext,
+  scoreCitationCompletion,
 } from '../features/latex-editor/latex-completion-data'
 
-describe('latex completion data', () => {
-  it('extracts BibTeX citation keys with useful metadata', () => {
-    const bib = `
+const bib = `
 @article{vaswani2017attention,
   title={Attention Is All You Need},
   author={Vaswani, Ashish and Shazeer, Noam},
@@ -23,6 +22,8 @@ describe('latex completion data', () => {
 }
 `
 
+describe('latex completion data', () => {
+  it('extracts BibTeX citation keys with useful metadata', () => {
     const entries = collectLatexCitationCompletions([
       { name: 'references.bib', content: bib },
     ])
@@ -60,5 +61,26 @@ describe('latex completion data', () => {
     )
 
     expect(filtered.map((entry) => entry.key)).toEqual(['alpha-control', 'control-alpha'])
+  })
+
+  it('filters citations against key, title, author, and multi-token input', () => {
+    const entries = collectLatexCitationCompletions([
+      { name: 'references.bib', content: bib },
+    ])
+
+    expect(filterCitationCompletions(entries, 'worth words')[0].key).toBe('dosovitskiy2021image')
+    expect(filterCitationCompletions(entries, 'shazeer')[0].key).toBe('vaswani2017attention')
+    expect(filterCitationCompletions(entries, '2017')[0].key).toBe('vaswani2017attention')
+    expect(filterCitationCompletions(entries, 'vas', ['vaswani2017attention']).map((entry) => entry.key))
+      .not.toContain('vaswani2017attention')
+  })
+
+  it('weights citation key matches above bibliography metadata matches', () => {
+    const keyMatch = { key: 'attention2024', title: 'A Different Paper' }
+    const titleMatch = { key: 'paper2024', title: 'Attention Methods' }
+
+    expect(scoreCitationCompletion(keyMatch, 'attention')).toBeGreaterThan(
+      scoreCitationCompletion(titleMatch, 'attention'),
+    )
   })
 })

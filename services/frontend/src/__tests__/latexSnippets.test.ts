@@ -6,6 +6,7 @@ import {
   latexCommandTriggerMatches,
   latexSnippetCommandTriggers,
 } from '../features/latex-editor/latex-snippets'
+import { completionBoostFor, matchesCompletionQuery } from '../features/latex-editor/latex-completion-data'
 
 describe('latex snippets', () => {
   it('defines structured figure and table snippets', () => {
@@ -34,6 +35,8 @@ describe('latex snippets', () => {
     const labels = latexCommandSnippetCompletions('sec').map((item) => item.label)
     expect(labels.slice(0, 2)).toEqual(['\\sec', '\\section'])
     expect(latexCommandTriggerMatches('c')).toContain('sec')
+    expect(completionBoostFor('cite', 'c')).toBeGreaterThan(completionBoostFor('section', 'c'))
+    expect(matchesCompletionQuery('includegraphics', 'graph')).toBe(true)
   })
 
   it('offers begin-environment snippets by prefix', () => {

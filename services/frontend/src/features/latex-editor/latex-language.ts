@@ -17,6 +17,7 @@ import {
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult } from '@codemirror/autocomplete'
 import { StateEffect, StateField, type Extension } from '@codemirror/state'
+import type { EditorView, Rect } from '@codemirror/view'
 import {
   latexBeginEnvironmentSnippetCompletions,
   latexCommandSnippetCompletions,
@@ -26,6 +27,7 @@ import {
   completionBoostFor,
   filterCitationCompletions,
   findCitationArgumentContext,
+  matchesCompletionQuery,
   normalizeLatexCompletionData,
   type LatexCitationCompletion,
   type LatexCompletionData,
@@ -155,7 +157,7 @@ const LATEX_ENVIRONMENTS: string[] = [
   'definition',
 ]
 
-function latexCompletion(context: CompletionContext): CompletionResult | null {
+export function latexCompletionSource(context: CompletionContext): CompletionResult | null {
   const citationResult = citationCompletion(context)
   if (citationResult) return citationResult
 
@@ -175,9 +177,10 @@ function latexCompletion(context: CompletionContext): CompletionResult | null {
     if (options.length > 0) {
       return {
         from: beginEnv.from,
+        to: context.pos,
         options,
-        validFor: /^\\begin\{[A-Za-z*]*$/,
         filter: false,
+        update: (_current, _from, _to, nextContext) => latexCompletionSource(nextContext),
       }
     }
   }
@@ -210,9 +213,10 @@ function latexCompletion(context: CompletionContext): CompletionResult | null {
       )
     return {
       from: command.from,
+      to: context.pos,
       options: [...snippetCompletions, ...commandCompletions],
-      validFor: /^\\[A-Za-z]*$/,
       filter: false,
+      update: (_current, _from, _to, nextContext) => latexCompletionSource(nextContext),
     }
   }
 
@@ -256,9 +260,10 @@ function citationCompletion(context: CompletionContext): CompletionResult | null
 
   return {
     from: line.from + citationContext.fromOffset,
+    to: context.pos,
     options,
-    validFor: /^[^,}]*$/,
     filter: false,
+    update: (_current, _from, _to, nextContext) => citationCompletion(nextContext),
   }
 }
 
@@ -266,17 +271,45 @@ function citationToCompletion(citation: LatexCitationCompletion): Completion {
   return {
     label: citation.key,
     type: 'reference',
-    detail: citation.detail,
     info: citation.info,
     apply: citation.key,
     boost: 80,
   }
 }
 
+export function positionLatexCompletionInfo(
+  _view: EditorView,
+  list: Rect,
+  _option: Rect,
+  info: Rect,
+  space: Rect,
+): { style?: string; class?: string } {
+  const margin = 8
+  const listWidth = Math.max(220, list.right - list.left)
+  const availableWidth = Math.max(220, space.right - space.left - margin * 2)
+  const maxWidth = Math.min(460, availableWidth)
+  const infoWidth = Math.max(220, info.right - info.left)
+  const width = Math.min(maxWidth, Math.max(listWidth, Math.min(infoWidth, maxWidth)))
+  const minLeft = space.left + margin - list.left
+  const maxLeft = space.right - margin - list.left - width
+  const left = Math.max(minLeft, Math.min(0, maxLeft))
+  const maxHeight = Math.max(96, list.top - space.top - margin * 2)
+
+  return {
+    class: 'cm-completionInfo-above',
+    style: [
+      `left: ${Math.round(left)}px`,
+      `bottom: calc(100% + ${margin}px)`,
+      `width: ${Math.round(width)}px`,
+      `max-width: ${Math.round(maxWidth)}px`,
+      `max-height: ${Math.round(maxHeight)}px`,
+      'overflow: auto',
+    ].join('; '),
+  }
+}
+
 function matchesCommandQuery(name: string, prefix: string): boolean {
-  const normalized = prefix.toLowerCase()
-  if (!normalized) return true
-  return name.toLowerCase().includes(normalized)
+  return matchesCompletionQuery(name, prefix)
 }
 
 function genericBeginEnvironmentCompletions(
@@ -309,8 +342,9 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
     new LanguageSupport(StreamLanguage.define(stex)),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     autocompletion({
-      override: [latexCompletion],
+      override: [latexCompletionSource],
       activateOnTyping: true,
+      positionInfo: positionLatexCompletionInfo,
     }),
   ]
 }

@@ -238,9 +238,14 @@
   gap: 4px;
 }
 .tree-actions.inline {
-  margin-left: auto;
+  width: 0;
+  max-width: 0;
+  margin-left: 0;
+  gap: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  pointer-events: none;
+  transition: opacity 0.15s ease, max-width 0.15s ease;
 }
 
 .tree-action-btn {
@@ -295,7 +300,13 @@
 .tree-folder-row:focus-within .tree-actions.inline,
 .tree-doc-row:focus-within .tree-actions.inline,
 .tree-file-row:focus-within .tree-actions.inline {
+  width: auto;
+  max-width: 180px;
+  margin-left: auto;
+  gap: 4px;
+  overflow: visible;
   opacity: 1;
+  pointer-events: auto;
 }
 
 .tree-toggle-btn,

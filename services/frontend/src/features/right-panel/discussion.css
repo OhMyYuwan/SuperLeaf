@@ -111,6 +111,16 @@
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.4);
   margin-bottom: 8px;
+  scrollbar-color: rgba(148, 163, 184, 0.46) transparent;
+}
+
+.message-stream::-webkit-scrollbar {
+  background: transparent;
+}
+
+.message-stream::-webkit-scrollbar-track,
+.message-stream::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .message-bubble {

@@ -33,6 +33,12 @@ from ..services.attached_files import (
     normalize_attached_files,
     render_attached_files_block,
 )
+from ..services.conversation_session_service import (
+    conversation_session_messages_from_rows,
+    delete_conversation_session,
+    render_session_messages_for_prompt,
+    write_conversation_session,
+)
 from ..services.dify_client import DifyError
 from ..services.nanobot_client import NanobotError
 from ..services.native_agent_runner import (
@@ -199,6 +205,7 @@ def delete_conversation(
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(c)
     db.commit()
+    delete_conversation_session(conversation_id)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageOut])
@@ -269,6 +276,24 @@ async def send_message(
 
     user_msg_payload = MessageOut.model_validate(user_msg).model_dump(mode="json")
 
+    def _conversation_message_rows() -> list[Message]:
+        return (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+
+    def _sync_conversation_session() -> None:
+        write_conversation_session(conv, _conversation_message_rows())
+
+    all_message_rows = _conversation_message_rows()
+    _sync_conversation_session()
+    history_rows = [row for row in all_message_rows if row.id != user_msg.id]
+    session_context = render_session_messages_for_prompt(
+        conversation_session_messages_from_rows(history_rows)
+    )
+
     # Build the prompt that actually goes to the agent. When the user has a
     # selection active, weave it into the query so the agent can see the
     # discussed text + its neighbouring context. We do this here (not in the
@@ -285,6 +310,10 @@ async def send_message(
         body.range_start is not None and body.range_end is not None
     )
 
+    prompt_parts: list[str] = []
+    if session_context:
+        prompt_parts.append(session_context)
+
     if has_selection:
         context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
         if section_title:
@@ -298,16 +327,15 @@ async def send_message(
         if after:
             context_parts.append(f"下文：\n{after}")
         context_parts.append("[END DISCUSSION CONTEXT]")
-        agent_query = "\n\n".join(context_parts)
-    else:
-        agent_query = ""
+        prompt_parts.append("\n\n".join(context_parts))
 
     attached_block = render_attached_files_block(attached_files)
     if attached_block:
-        agent_query = f"{agent_query}\n\n{attached_block}" if agent_query else attached_block
+        prompt_parts.append(attached_block)
 
-    if agent_query:
-        agent_query = f"{agent_query}\n\n用户消息：{body.content}"
+    if prompt_parts:
+        prompt_parts.append(f"[CURRENT USER MESSAGE]\n{body.content}")
+        agent_query = "\n\n".join(prompt_parts)
     else:
         agent_query = body.content
 
@@ -325,8 +353,15 @@ async def send_message(
                     raise TypeError("Native Agent resolution is missing agent row")
                 native_conversation_id = external_conv_id or f"ylw-native-conv-{conversation_id}"
                 native_inputs = dict(body.inputs or {})
-                if attached_files:
-                    native_inputs["attached_files"] = attached_files
+                for prepared_key in (
+                    "target_text",
+                    "before",
+                    "after",
+                    "section_title",
+                    "attached_files",
+                ):
+                    native_inputs.pop(prepared_key, None)
+                native_inputs["instruction"] = agent_query
                 skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
                 workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
                 runner = NativeAgentRunner(
@@ -349,7 +384,7 @@ async def send_message(
                     range_start=body.range_start or 0,
                     range_end=body.range_end or 0,
                     inputs=native_inputs,
-                    query=body.content,
+                    query="",
                     conversation_id=native_conversation_id,
                 )
                 async for evt in runner.stream(payload):
@@ -436,6 +471,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
+            _sync_conversation_session()
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
         except Exception as e:  # noqa: BLE001
@@ -449,6 +485,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
+            _sync_conversation_session()
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
 
@@ -465,6 +502,7 @@ async def send_message(
         conv.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(agent_msg)
+        _sync_conversation_session()
 
         yield {
             "event": "ylw.msg.finished",
@@ -505,4 +543,11 @@ def inject_message(
     conv.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(msg)
+    rows = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    write_conversation_session(conv, rows)
     return MessageOut.model_validate(msg)

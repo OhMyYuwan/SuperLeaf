@@ -60,23 +60,22 @@ interface AutomationState {
   stop: () => void
 }
 
-const DEFAULT_INSTRUCTION = '请以自动批注模式审核这个段落，指出需要修改、补充、压缩或澄清的地方。'
+const DEFAULT_INSTRUCTION = '请直接用 Markdown 审核这个段落，给出清晰、可执行的修改意见。'
 const MIN_CHUNK_CHARS = 600
 const MAX_CHUNK_CHARS = 8000
 const MIN_REFRESH_EVERY = 1
 const MAX_REFRESH_EVERY = 50
 const AUTO_MARKER_RE = /^\s*%\s*AUTO\b/im
 const LATEX_BEGIN_DOCUMENT_RE = /\\begin\s*\{\s*document\s*\}/i
-const AUTO_ANNOTATION_CONTRACT = [
-  '[ANNOTATION SKILL CONTRACT]',
+const AUTO_MARKDOWN_CONTRACT = [
+  '[MARKDOWN REVIEW CONTRACT]',
   '- `% AUTO ...` 是用户写给自动化批注流程的局部指令，不是论文正文；它可以要求你特别检查紧随其后的文本或当前块。',
-  '- 默认只审阅文档正文。LaTeX `\\begin{document}` 之前的导言区（包、宏、排版或编译配置）不要生成批注，除非 `% AUTO` 明确要求检查导言区。',
-  '- 坐标必须相对 `目标段落` 的原文，从 0 开始；不要使用全文绝对坐标。',
-  '- 优先输出严格 JSON 对象，只使用 `annotations` 字段。不要输出 `suggestions` 或 `risks` 字段，也不要在 JSON 外添加说明文字。',
-  '- `annotations[]`: `{ "from": number, "to": number, "content": string, "type": "comment|question|warning|praise", "severity": "low|medium|high", "tags": string[] }`。',
-  '- 如果要表达改写建议或风险提醒，也写成一条普通 annotation 的 `content`；不要拆成其他卡片类型。',
-  '- 没有可执行问题时返回 `{ "annotations": [] }`。',
-  '[END ANNOTATION SKILL CONTRACT]',
+  '- 默认只审阅文档正文。LaTeX `\\begin{document}` 之前的导言区（包、宏、排版或编译配置）不要输出审阅意见，除非 `% AUTO` 明确要求检查导言区。',
+  '- 直接输出 Markdown。系统会把整段回答渲染成一个批注卡片。',
+  '- 不要输出 JSON，不要使用 `annotations`、`suggestions` 或 `risks` 字段，也不要把内容拆成多个批注类型。',
+  '- 可以使用短标题、项目符号和加粗重点；保持内容锚定在当前目标段落。',
+  '- 没有可执行问题时，简短说明“这段暂未发现需要修改的问题”。',
+  '[END MARKDOWN REVIEW CONTRACT]',
 ].join('\n')
 
 export const useAutomationStore = create<AutomationState>((set, get) => ({
@@ -261,7 +260,7 @@ async function runChunk(args: {
   })
   // Native agent backend reads `inputs.instruction` (not `query`), so the
   // contract must travel inside `inputs.instruction` to actually reach the model.
-  const effectiveInstruction = `${AUTO_ANNOTATION_CONTRACT}\n\n${instruction}`
+  const effectiveInstruction = `${AUTO_MARKDOWN_CONTRACT}\n\n${instruction}`
   const contextFiles = attachedFilesToContextFiles(attachedFiles)
   const body = {
     document_id: doc.id,
@@ -333,14 +332,14 @@ function buildAutomationQuery(args: {
     attachedFiles,
   } = args
   return [
-    '你正在执行 YuwanLabWriter 自动批注模式。',
+    '你正在执行 YuwanLabWriter 自动审稿模式。',
     '这是无人值守的连续审稿任务：请把本次任务视为同一个自动化 session 中的一步。',
     targetKind === 'agent'
       ? '如果你支持会话记忆，请延续之前对全文的理解；不要把每个段落当成全新论文。'
       : '当前 workflow run 可能是无状态的，因此请严格依赖本次请求提供的上下文。',
-    '只输出适合生成批注卡片的意见、建议或风险提示；不要直接重写整篇文章。',
+    '请直接输出 Markdown 审阅意见；系统会把整段回答作为一个批注渲染，不要拆成注释、建议或风险类别。',
     '如果段落中包含以 % AUTO 开头的 LaTeX 注释，请把它理解为用户写给自动化流程的局部提示，不要当作论文正文。',
-    AUTO_ANNOTATION_CONTRACT,
+    AUTO_MARKDOWN_CONTRACT,
     '',
     `[AUTOMATION SESSION] ${session.id}`,
     `[DOCUMENT HASH] ${session.docHash}`,

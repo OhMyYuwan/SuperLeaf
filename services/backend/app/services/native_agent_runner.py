@@ -173,8 +173,9 @@ class NativeAgentRunner:
             parts.extend(
                 [
                     "",
-                    "When producing annotations, prefer JSON with keys annotations, suggestions, risks.",
-                    "If free-form output is more appropriate, keep it concise and actionable.",
+                    "Return a direct Markdown response that can be rendered as-is in YuwanLabWriter.",
+                    "Do NOT output JSON or split the answer into annotations, suggestions, or risks unless the user or workflow explicitly asks for that structured schema.",
+                    "Keep the review concise, actionable, and anchored to the selected text.",
                 ]
             )
         return "\n".join(part for part in parts if part is not None).strip()

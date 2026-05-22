@@ -48,6 +48,8 @@ import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
 const OUTLINE_COLLAPSED_HEIGHT = '44px'
+const DEFAULT_REVIEW_PROMPT =
+  '请直接用 Markdown 针对以下文本给出清晰、可执行的评审意见。不要输出 JSON，也不要拆分 annotations/suggestions/risks。'
 
 export function WorkspacePage() {
   const { projectId = '' } = useParams<{ projectId: string }>()
@@ -380,7 +382,7 @@ export function WorkspacePage() {
       return
     }
     const selectionText = activeSelection.text
-    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    const userPrompt = instruction.trim() || DEFAULT_REVIEW_PROMPT
     runWorkflow(workflowId, {
       document_id: activeDocumentId,
       range_start: activeSelection.from,
@@ -406,7 +408,7 @@ export function WorkspacePage() {
       return
     }
     const selectionText = activeSelection.text
-    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    const userPrompt = instruction.trim() || DEFAULT_REVIEW_PROMPT
     executeDefinition(definitionId, {
       document_id: activeDocumentId,
       range_start: activeSelection.from,

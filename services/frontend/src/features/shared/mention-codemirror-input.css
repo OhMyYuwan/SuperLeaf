@@ -1,0 +1,147 @@
+.mention-cm-root {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  --mention-cm-bg: rgba(2, 6, 23, 0.66);
+  --mention-cm-border: rgba(148, 163, 184, 0.22);
+  --mention-cm-border-focus: rgba(59, 130, 246, 0.55);
+  --mention-cm-text: #ffffff;
+  --mention-cm-muted: rgba(148, 163, 184, 0.62);
+  --mention-cm-selection: rgba(90, 143, 255, 0.35);
+  --mention-cm-mention-bg: rgba(59, 130, 246, 0.18);
+  --mention-cm-mention-text: #93c5fd;
+  --mention-cm-mention-border: rgba(59, 130, 246, 0.34);
+  --mention-cm-file-bg: rgba(20, 184, 166, 0.18);
+  --mention-cm-file-text: #86efac;
+  --mention-cm-file-border: rgba(34, 197, 94, 0.42);
+}
+
+.mention-cm-root .cm-editor {
+  width: 100%;
+  min-height: var(--mention-cm-min-height, 112px);
+  border: 1px solid var(--mention-cm-border);
+  border-radius: 8px;
+  background: var(--mention-cm-bg);
+  color: var(--mention-cm-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.mention-cm-root .cm-editor.cm-focused {
+  outline: none;
+  border-color: var(--mention-cm-border-focus);
+}
+
+.mention-cm-root .cm-scroller {
+  min-height: var(--mention-cm-min-height, 112px);
+  overflow: auto;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.mention-cm-root .cm-content {
+  min-height: calc(var(--mention-cm-min-height, 112px) - 18px);
+  padding: 8px 10px;
+  caret-color: var(--mention-cm-text);
+  font-family: inherit;
+}
+
+.mention-cm-root .cm-line {
+  padding: 0;
+}
+
+.mention-cm-root .cm-placeholder {
+  color: var(--mention-cm-muted);
+}
+
+.mention-cm-root .cm-selectionBackground,
+.mention-cm-root .cm-content ::selection {
+  background: var(--mention-cm-selection) !important;
+}
+
+.mention-cm-root .cm-mention {
+  display: inline;
+  padding: 0 3px;
+  border: 1px solid var(--mention-cm-mention-border);
+  border-radius: 4px;
+  background: var(--mention-cm-mention-bg);
+  color: var(--mention-cm-mention-text);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.mention-cm-root .cm-mention-file {
+  border-color: var(--mention-cm-file-border);
+  background: var(--mention-cm-file-bg);
+  color: var(--mention-cm-file-text);
+}
+
+.mention-cm-root .cm-mention-workflow {
+  border-color: rgba(168, 85, 247, 0.4);
+  background: rgba(168, 85, 247, 0.18);
+  color: #d8b4fe;
+}
+
+.mention-cm-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+}
+
+.mention-cm-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention-cm-item:hover,
+.mention-cm-item.active {
+  background: rgba(59, 130, 246, 0.9);
+  color: #ffffff;
+}
+
+.mention-cm-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.mention-cm-item-detail {
+  min-width: 0;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 11px;
+}
+
+.mention-cm-item:hover .mention-cm-item-detail,
+.mention-cm-item.active .mention-cm-item-detail {
+  color: rgba(255, 255, 255, 0.82);
+}

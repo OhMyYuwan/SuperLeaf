@@ -10,6 +10,7 @@ goes through Conversation).
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,100 @@ from ..models import (
     WorkflowDefinition,
     WorkflowRun,
 )
+from .project_fs_service import ProjectFsService
+
+
+_DEFAULT_ASSET_FOLDER = "assets"
+_DEFAULT_BANNER_NAME = "github-header-banner.png"
+_DEFAULT_BANNER_MIME = "image/png"
+_DEFAULT_TEMPLATE_NAME = "default-project-template.zip"
+
+_DEFAULT_MAIN_TEX = r"""\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\graphicspath{{assets/}}
+
+\title{Welcome to YuwanLabWriter}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\includegraphics[width=0.9\linewidth]{github-header-banner.png}
+\end{center}
+
+\section{Start Writing}
+Welcome to YuwanLabWriter, a LaTeX-first research writing workspace for
+drafting, reviewing, and polishing academic work with native Agent support.
+
+\section{What You Can Do Here}
+\begin{itemize}
+  \item Write in LaTeX or Markdown while keeping project files organized.
+  \item Preview compiled output and iterate quickly on structure and style.
+  \item Invite Agents into focused discussions, reviews, and workflow runs.
+  \item Keep supporting figures, datasets, and notes under the project tree.
+\end{itemize}
+
+\section{Next Steps}
+Replace this starter text with your paper outline, add your references and
+figures, then use the workspace panels to review, compile, and refine your
+draft.
+
+\end{document}
+"""
+
+_DEFAULT_MAIN_MD = """![YuwanLabWriter banner](assets/github-header-banner.png)
+
+# Welcome to YuwanLabWriter
+
+YuwanLabWriter is a local-first research writing workspace built for drafting,
+reviewing, and polishing academic documents with native Agent support.
+
+## Start Here
+
+- Use `main.tex` for a LaTeX-first manuscript.
+- Use this `main.md` file for notes, planning, or Markdown-first drafts.
+- Put images and other project assets in the `assets` folder.
+- Invite Agents into the discussion and workflow panels when you want review,
+  critique, or rewriting help.
+
+## A Good First Outline
+
+1. Problem and motivation
+2. Related work
+3. Method or system design
+4. Experiments or evaluation
+5. Results, limitations, and next steps
+
+Replace this starter document with your own project brief whenever you are
+ready.
+"""
+
+
+def _default_banner_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[4]
+        / _DEFAULT_ASSET_FOLDER
+        / _DEFAULT_BANNER_NAME
+    )
+
+
+def _default_template_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[4]
+        / _DEFAULT_ASSET_FOLDER
+        / _DEFAULT_TEMPLATE_NAME
+    )
+
+
+def _read_default_banner() -> bytes:
+    try:
+        return _default_banner_path().read_bytes()
+    except OSError:
+        return b""
 
 
 class LastProjectError(Exception):
@@ -50,9 +145,63 @@ class ProjectService:
     def create(self, *, user_id: str, name: str) -> Project:
         p = Project(name=name, user_id=user_id)
         self.db.add(p)
+        self.db.flush()
+        if self._seed_template_content(p):
+            self.db.refresh(p)
+            return p
+        self._seed_default_content(p)
         self.db.commit()
         self.db.refresh(p)
         return p
+
+    def _seed_template_content(self, project: Project) -> bool:
+        try:
+            template = _default_template_path().read_bytes()
+            ProjectFsService(self.db, project).replace_from_zip(template)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _seed_default_content(self, project: Project) -> None:
+        main_tex = Doc(
+            project_id=project.id,
+            folder_id=None,
+            name="main.tex",
+            format="tex",
+            content=_DEFAULT_MAIN_TEX,
+            version=1,
+        )
+        main_md = Doc(
+            project_id=project.id,
+            folder_id=None,
+            name="main.md",
+            format="md",
+            content=_DEFAULT_MAIN_MD,
+            version=1,
+        )
+        assets = Folder(
+            project_id=project.id,
+            parent_folder_id=None,
+            name=_DEFAULT_ASSET_FOLDER,
+            sort_index=0,
+        )
+
+        self.db.add_all([main_tex, main_md, assets])
+        self.db.flush()
+        project.main_doc_id = main_tex.id
+
+        banner = _read_default_banner()
+        if banner:
+            self.db.add(
+                FileBlob(
+                    project_id=project.id,
+                    folder_id=assets.id,
+                    name=_DEFAULT_BANNER_NAME,
+                    mime_type=_DEFAULT_BANNER_MIME,
+                    size_bytes=len(banner),
+                    blob=banner,
+                )
+            )
 
     def update(
         self,

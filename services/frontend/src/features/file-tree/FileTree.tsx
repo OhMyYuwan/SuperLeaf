@@ -9,6 +9,7 @@ import {
   Plus,
   FolderPlus,
   FolderUp,
+  FileArchive,
   Pencil,
   Trash2,
   Upload,
@@ -62,6 +63,7 @@ interface FileTreeProps {
   ) => Promise<void>
   onUploadFile: (file: File, folderId?: string | null) => Promise<void>
   onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
+  onUploadProjectZip: (file: File) => Promise<void>
   onRenameProject: (name: string) => Promise<void>
 }
 
@@ -82,6 +84,7 @@ export function FileTree({
   onMoveEntity,
   onUploadFile,
   onUploadFolder,
+  onUploadProjectZip,
   onRenameProject,
 }: FileTreeProps) {
   const handleCreateRootFolder = async () => {
@@ -104,6 +107,14 @@ export function FileTree({
 
   const handleUploadFolderRoot = () => {
     triggerUploadFolder((files) => onUploadFolder(files, null))
+  }
+
+  const handleUploadZipRoot = () => {
+    const ok = confirm(
+      '导入 ZIP 会替换当前项目的全部文件树，并关闭当前打开的文档。是否继续？',
+    )
+    if (!ok) return
+    triggerUploadZip((file) => onUploadProjectZip(file))
   }
 
   const handleRenameProject = () => {
@@ -137,6 +148,9 @@ export function FileTree({
           </button>
           <button className="tree-action-btn" title="上传文件夹" onClick={handleUploadFolderRoot}>
             <FolderUp size={13} />
+          </button>
+          <button className="tree-action-btn" title="导入 ZIP（替换项目）" onClick={handleUploadZipRoot}>
+            <FileArchive size={13} />
           </button>
           <button className="tree-action-btn" title="导出 ZIP" onClick={handleExport}>
             <Download size={13} />
@@ -338,6 +352,20 @@ function FolderNode({
     onDeleteEntity('doc', doc.id)
   }
 
+  const handleDownloadDoc = async (e: React.MouseEvent, doc: TreeDoc) => {
+    e.stopPropagation()
+    try {
+      const backendDoc = await filesystemApi.getDoc(doc.id)
+      const blob = new Blob([backendDoc.content ?? ''], {
+        type: mimeForDocFormat(backendDoc.format),
+      })
+      downloadBlob(blob, backendDoc.name || doc.name)
+    } catch (err) {
+      console.error('download doc failed', err)
+      alert('下载文档失败，请稍后重试。')
+    }
+  }
+
   const handleRenameFile = (e: React.MouseEvent, file: TreeFile) => {
     e.stopPropagation()
     const name = prompt('重命名文件', file.name)?.trim()
@@ -349,6 +377,15 @@ function FolderNode({
     e.stopPropagation()
     if (!confirm(`确定删除文件「${file.name}」？`)) return
     onDeleteEntity('file', file.id)
+  }
+
+  const handleDownloadFile = (e: React.MouseEvent, file: TreeFile) => {
+    e.stopPropagation()
+    const a = document.createElement('a')
+    a.href = filesystemApi.fileUrl(file.id)
+    a.download = file.name
+    a.rel = 'noopener'
+    a.click()
   }
 
   const children = (
@@ -389,6 +426,13 @@ function FolderNode({
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{doc.name}</span>
             <span className="tree-actions inline">
+              <button
+                className="tree-action-btn"
+                title="下载"
+                onClick={(e) => void handleDownloadDoc(e, doc)}
+              >
+                <Download size={11} />
+              </button>
               <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
                 <Pencil size={11} />
               </button>
@@ -415,6 +459,9 @@ function FolderNode({
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{file.name}</span>
             <span className="tree-actions inline">
+              <button className="tree-action-btn" title="下载" onClick={(e) => handleDownloadFile(e, file)}>
+                <Download size={11} />
+              </button>
               <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
                 <Pencil size={11} />
               </button>
@@ -430,13 +477,14 @@ function FolderNode({
 
   if (isRoot) {
     return (
-      <div
-        className={`tree-folder-block root ${dragOver ? 'drag-over' : ''}`}
-        onDragOver={handleDragOverFolder}
-        onDragLeave={handleDragLeaveFolder}
-        onDrop={handleDropOnFolder}
-      >
-        <div className="tree-root-drop-target" title="拖到这里移动到项目根目录">
+      <div className={`tree-folder-block root ${dragOver ? 'drag-over' : ''}`}>
+        <div
+          className="tree-root-drop-target"
+          title="拖到这里移动到项目根目录"
+          onDragOver={handleDragOverFolder}
+          onDragLeave={handleDragLeaveFolder}
+          onDrop={handleDropOnFolder}
+        >
           <FolderOpen size={14} />
           <span>项目根目录</span>
         </div>
@@ -514,6 +562,17 @@ function triggerUploadFolder(onFiles: (files: FileList) => void) {
   input.click()
 }
 
+function triggerUploadZip(onFile: (file: File) => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.zip,application/zip,application/x-zip-compressed'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) onFile(file)
+  }
+  input.click()
+}
+
 function inferFormat(name: string): 'tex' | 'md' | 'txt' {
   const lower = name.toLowerCase()
   if (lower.endsWith('.md')) return 'md'
@@ -531,4 +590,19 @@ function prettySize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function mimeForDocFormat(format: 'tex' | 'md' | 'txt'): string {
+  if (format === 'md') return 'text/markdown;charset=utf-8'
+  if (format === 'tex') return 'application/x-tex;charset=utf-8'
+  return 'text/plain;charset=utf-8'
+}
+
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

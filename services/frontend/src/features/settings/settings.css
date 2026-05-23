@@ -92,16 +92,24 @@
 
 .settings-tabs button {
   min-height: 30px;
+  border: 1px solid transparent;
   border-radius: 6px;
+  background: transparent;
   color: rgba(203, 213, 225, 0.82);
   font-size: 12px;
   cursor: pointer;
 }
 
-.settings-tabs button:hover,
-.settings-tabs button.active {
-  background: rgba(59, 130, 246, 0.18);
+.settings-tabs button:hover {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.18);
   color: #e5e7eb;
+}
+
+.settings-tabs button.active {
+  background: transparent;
+  border-color: #22d3ee;
+  color: #22d3ee;
 }
 
 .inline-btn {

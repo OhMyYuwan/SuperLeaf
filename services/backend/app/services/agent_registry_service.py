@@ -60,12 +60,15 @@ class AgentRegistryService:
                 continue
             if skill.visibility not in ("system", "public") and skill.owner_user_id != user_id:
                 continue
+            content = decrypt_skill_content(skill.content)
+            if not content.strip():
+                continue
             out.append(
                 NativeSkillBlock(
                     name=skill.public_name or skill.name,
                     version=skill.version,
                     source=skill.source,
-                    content=decrypt_skill_content(skill.content),
+                    content=content,
                 )
             )
         return out

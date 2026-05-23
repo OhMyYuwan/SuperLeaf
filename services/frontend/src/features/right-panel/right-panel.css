@@ -954,6 +954,7 @@
 }
 
 .automation-control-grid select,
+.automation-field select,
 .automation-field input,
 .automation-field textarea:not(.mention-input-textarea) {
   width: 100%;
@@ -968,7 +969,14 @@
   outline: none;
 }
 
+.automation-control-grid select option,
+.automation-field select option {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
 .automation-control-grid select:focus,
+.automation-field select:focus,
 .automation-field input:focus,
 .automation-field textarea:not(.mention-input-textarea):focus {
   border-color: rgba(59, 130, 246, 0.55);

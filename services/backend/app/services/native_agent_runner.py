@@ -175,6 +175,7 @@ class NativeAgentRunner:
                     "",
                     "Return a direct Markdown response that can be rendered as-is in YuwanLabWriter.",
                     "Do NOT output JSON or split the answer into annotations, suggestions, or risks unless the user or workflow explicitly asks for that structured schema.",
+                    "If you include replaceable text, put that snippet in one fenced code block and keep its source format from the user's selected text.",
                     "Keep the review concise, actionable, and anchored to the selected text.",
                 ]
             )

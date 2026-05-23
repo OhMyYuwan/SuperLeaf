@@ -10,7 +10,7 @@
  *   3. Free-form natural language (chat-mode default).
  *
  * Legacy `suggestions` and `risks` arrays are accepted for compatibility, but
- * normalized into normal annotation cards. The annotation panel no longer
+ * folded into one normal annotation card. The annotation panel no longer
  * creates separate suggestion/risk card kinds for Agent output.
  *
  * For (3) we fall back to a single `comment` annotation that anchors to the
@@ -174,68 +174,65 @@ function finalize(
   ctx: ParseContext,
   rawText?: string,
 ): ParsedAgentOutput {
-  const offset = ctx.range.from
-  const selLen = ctx.range.to - ctx.range.from
+  const pieces: string[] = []
+  const tags = new Set<string>()
+  let severity: NonNullable<Annotation['severity']> = 'medium'
+  let type: Annotation['type'] = 'comment'
 
-  const clampRange = (from?: number, to?: number) => {
-    const f = Math.max(0, Math.min(typeof from === 'number' ? from : 0, selLen))
-    const t = Math.max(f + 1, Math.min(typeof to === 'number' ? to : selLen, selLen))
-    return { from: offset + f, to: offset + t }
-  }
-
-  const makeAnnotation = (
-    from: number | undefined,
-    to: number | undefined,
+  const addPiece = (
     content: string,
-    type: Annotation['type'],
-    severity: Annotation['severity'],
-    tags: string[],
-  ): Omit<Annotation, 'agentId'> | null => {
+    nextType: Annotation['type'],
+    nextSeverity: NonNullable<Annotation['severity']>,
+    nextTags: string[] = [],
+  ) => {
     const trimmed = content.trim()
-    if (!trimmed) return null
-    const localFrom = Math.max(0, Math.min(typeof from === 'number' ? from : 0, selLen))
-    const localTo = Math.max(localFrom + 1, Math.min(typeof to === 'number' ? to : selLen, selLen))
-    return {
-      id: uuid(),
-      targetRange: clampRange(from, to),
-      targetText: ctx.selectionText.slice(localFrom, localTo),
-      content: trimmed,
-      type,
-      severity,
-      tags,
-      resolved: false,
-      createdAt: new Date(),
+    if (!trimmed) return
+    pieces.push(trimmed)
+    for (const tag of nextTags) {
+      const clean = tag.trim()
+      if (clean) tags.add(clean)
     }
+    severity = maxSeverity(severity, nextSeverity)
+    type = mergeAnnotationType(type, nextType)
   }
 
-  const annotations = [
-    ...(raw.annotations ?? []).map((a) => makeAnnotation(
-      a.from,
-      a.to,
+  for (const a of raw.annotations ?? []) {
+    addPiece(
       a.content ?? a.text ?? '',
       normalizeAnnType(a.type),
       normalizeSeverity(a.severity),
       a.tags ?? [],
-    )),
-    ...(raw.suggestions ?? []).map((s) => makeAnnotation(
-      s.from,
-      s.to,
-      suggestionContent(s),
-      'comment',
-      normalizeSeverity(s.severity),
-      s.tags ?? [],
-    )),
-    ...(raw.risks ?? []).map((r) => makeAnnotation(
-      r.from,
-      r.to,
-      riskContent(r),
-      'warning',
-      normalizeSeverity(r.severity),
-      r.tags ?? [],
-    )),
-  ].filter((item): item is Omit<Annotation, 'agentId'> => item !== null)
+    )
+  }
+  for (const s of raw.suggestions ?? []) {
+    addPiece(suggestionContent(s), 'comment', normalizeSeverity(s.severity), s.tags ?? [])
+  }
+  for (const r of raw.risks ?? []) {
+    addPiece(riskContent(r), 'warning', normalizeSeverity(r.severity), r.tags ?? [])
+  }
 
-  return { annotations, suggestions: [], risks: [], rawText }
+  if (pieces.length === 0) {
+    return { annotations: [], suggestions: [], risks: [], rawText }
+  }
+
+  return {
+    annotations: [
+      {
+        id: uuid(),
+        targetRange: { from: ctx.range.from, to: ctx.range.to },
+        targetText: ctx.selectionText,
+        content: pieces.join('\n\n'),
+        type,
+        severity,
+        tags: [...tags],
+        resolved: false,
+        createdAt: new Date(),
+      },
+    ],
+    suggestions: [],
+    risks: [],
+    rawText,
+  }
 }
 
 function suggestionContent(value: RawSuggestion): string {
@@ -282,11 +279,29 @@ function normalizeAnnType(value: string | undefined): Annotation['type'] {
   }
 }
 
-function normalizeSeverity(value: string | undefined): Annotation['severity'] {
+function normalizeSeverity(value: string | undefined): NonNullable<Annotation['severity']> {
   const v = (value ?? '').toLowerCase()
   if (v === 'low' || v === 'medium' || v === 'high') return v
   if (v === 'critical') return 'high'
   return 'medium'
+}
+
+function maxSeverity(
+  current: NonNullable<Annotation['severity']>,
+  next: NonNullable<Annotation['severity']>,
+): NonNullable<Annotation['severity']> {
+  const rank: Record<NonNullable<Annotation['severity']>, number> = { low: 0, medium: 1, high: 2 }
+  return rank[next] > rank[current] ? next : current
+}
+
+function mergeAnnotationType(
+  current: Annotation['type'],
+  next: Annotation['type'],
+): Annotation['type'] {
+  if (current === 'warning' || next === 'warning') return 'warning'
+  if (current === 'question' || next === 'question') return 'question'
+  if (current === 'comment' || next === 'comment') return 'comment'
+  return next
 }
 
 function normalizeRiskType(value: string | undefined): Risk['riskType'] {

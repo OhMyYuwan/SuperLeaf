@@ -14,6 +14,7 @@
 
 import type { ProjectTree, TreeDoc, TreeFile, TreeFolder } from './filesystemApi'
 import { filesystemApi } from './filesystemApi'
+import type { DocumentFormat } from '../types/document'
 
 export type AgentCandidate = { kind: 'agent'; id: string; name: string }
 export type WorkflowCandidate = { kind: 'workflow'; id: string; name: string; description?: string }
@@ -423,13 +424,17 @@ export function buildAgentPrompt({
   userMessage,
   threadHistory,
   attachedFiles,
+  documentFormat,
 }: {
   targetText: string
   userMessage: string
   threadHistory: Array<{ role: 'user' | 'agent'; content: string; agentName?: string }>
   attachedFiles?: readonly AttachedFile[]
+  documentFormat?: DocumentFormat
 }): string {
   const lines: string[] = []
+  lines.push(buildPanelReplyContract({ targetText, userMessage, documentFormat }))
+  lines.push('')
   if (targetText.trim()) {
     lines.push('上下文（正文被批注的片段）:')
     lines.push(targetText.trim())
@@ -463,6 +468,52 @@ export function buildAgentPrompt({
   lines.push('当前提问:')
   lines.push(userMessage)
   return lines.join('\n')
+}
+
+function buildPanelReplyContract({
+  targetText,
+  userMessage,
+  documentFormat,
+}: {
+  targetText: string
+  userMessage: string
+  documentFormat?: DocumentFormat
+}): string {
+  const sourceFormat = inferSourceFormat(`${targetText}\n${userMessage}`, documentFormat)
+  return [
+    '[REPLY FORMAT]',
+    '- 主要回答直接用 Markdown。',
+    '- 不要输出 JSON，也不要把内容拆成 annotations/suggestions/risks 或多张批注。',
+    `- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持${sourceFormat.label}源格式，围栏语言建议：${sourceFormat.fence}.`,
+    '[END REPLY FORMAT]',
+  ].join('\n')
+}
+
+function inferSourceFormat(
+  text: string,
+  documentFormat?: DocumentFormat,
+): { label: string; fence: 'latex' | 'markdown' | 'text' } {
+  const sample = text.trim()
+  if (looksLikeLatex(sample)) return { label: ' LaTeX ', fence: 'latex' }
+  if (looksLikeMarkdown(sample)) return { label: ' Markdown ', fence: 'markdown' }
+  if (documentFormat === 'tex') return { label: ' LaTeX ', fence: 'latex' }
+  if (documentFormat === 'md') return { label: ' Markdown ', fence: 'markdown' }
+  return { label: '纯文本', fence: 'text' }
+}
+
+function looksLikeLatex(text: string): boolean {
+  return /\\(?:begin|end|section|subsection|subsubsection|paragraph|cite|ref|label|textbf|emph|item)\b/u.test(text)
+    || /\\[a-zA-Z]+\s*\{/u.test(text)
+    || /\$(?:\\.|[^$\n])+\$/u.test(text)
+}
+
+function looksLikeMarkdown(text: string): boolean {
+  return /^#{1,6}\s+\S/mu.test(text)
+    || /^>\s+\S/mu.test(text)
+    || /^ {0,3}(?:[-*+]|\d+\.)\s+\S/mu.test(text)
+    || /\[[^\]]+\]\([^)]+\)/u.test(text)
+    || /(?:^|\n)```/u.test(text)
+    || /\*\*[^*\n][\s\S]*?\*\*/u.test(text)
 }
 
 function formatFileHeader(f: AttachedFile): string {

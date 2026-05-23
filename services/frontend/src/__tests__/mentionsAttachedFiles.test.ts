@@ -58,6 +58,20 @@ describe('mentions attached files', () => {
     expect(prompt).toContain('[ATTACHED FILES]')
     expect(prompt).toContain('[FILE: reference.md | kind=doc')
     expect(prompt).toContain('Vaswani attention notes')
+    expect(prompt).toContain('主要回答直接用 Markdown')
+  })
+
+  it('adds concise replacement guidance with inferred document format', () => {
+    const prompt = buildAgentPrompt({
+      targetText: 'Existing paragraph without markup.',
+      userMessage: 'please rewrite this',
+      threadHistory: [],
+      documentFormat: 'tex',
+    })
+
+    expect(prompt).toContain('不要输出 JSON')
+    expect(prompt).toContain('代码块内容保持 LaTeX 源格式')
+    expect(prompt).toContain('围栏语言建议：latex')
   })
 
   it('omits document content when the total attachment budget is exceeded', async () => {

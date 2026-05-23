@@ -269,7 +269,7 @@ function InputNodeForm({ data, setConfig }: SubFormProps) {
  *
  * Important distinction:
  *   - `annotations` means the payload is shaped as
- *     {annotations,suggestions,risks} so the annotation panel can consume it.
+ *     {annotations} so the annotation panel can consume it.
  *   - Whether that payload is auto-ingested into the annotation column depends
  *     on the *run entrypoint*: workflow runs from the annotation/workflow path
  *     auto-ingest; discussion/chat flows keep the result in chat until the user
@@ -288,10 +288,10 @@ function OutputNodeForm({ data, setConfig }: SubFormProps) {
         <select value={format} onChange={(e) => setConfig({ format: e.target.value })}>
           <option value="text">纯文本（拼接上游输出）</option>
           <option value="json">JSON（合并上游结构化输出）</option>
-          <option value="annotations">注释卡片（注释/建议/风险）</option>
+          <option value="annotations">注释卡片（批注）</option>
         </select>
         <div className="form-hint-sm">
-          注释卡片表示最终输出契约为 annotations / suggestions / risks。通过工作流入口运行时会自动进入批注列；聊天入口后续由用户手动转入批注列。
+          注释卡片表示最终输出契约为 annotations。通过工作流入口运行时会自动进入批注列；聊天入口后续由用户手动转入批注列。
         </div>
       </div>
 

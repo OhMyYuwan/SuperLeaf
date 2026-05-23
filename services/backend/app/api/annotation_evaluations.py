@@ -8,6 +8,8 @@ the current project) so evaluations from another user/project never leak.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -279,6 +281,16 @@ def _ann_to_out(row: Annotation) -> AnnotationOut:
     return AnnotationOut.model_validate(row, from_attributes=True)
 
 
+def _json_ready(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    return value
+
+
 @router.get("/by-doc/{doc_id}/items", response_model=list[AnnotationOut])
 def list_annotations(
     doc_id: str,
@@ -325,8 +337,8 @@ def create_annotation(
         reason=body.reason,
         risk_type=body.risk_type,
         mitigation=body.mitigation,
-        thread=[m.model_dump(mode="json") for m in body.thread],
-        attached_files=[f.model_dump(mode="json") for f in body.attached_files],
+        thread=[_json_ready(m) for m in body.thread],
+        attached_files=[_json_ready(f) for f in body.attached_files],
         created_at=body.created_at,
     )
     db.commit()
@@ -361,7 +373,7 @@ def patch_annotation(
         range_from=body.range_from,
         range_to=body.range_to,
         content=body.content,
-        thread=([m.model_dump(mode="json") for m in body.thread] if body.thread is not None else None),
+        thread=([_json_ready(m) for m in body.thread] if body.thread is not None else None),
         publish=body.publish,
         acting_user_id=user.id,
     )

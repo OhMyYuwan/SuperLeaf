@@ -60,7 +60,7 @@ env/
 *.bak
 *~
 *.backend/
-
+assets/default-project-template/
 # Dev process logs
 logs/
 

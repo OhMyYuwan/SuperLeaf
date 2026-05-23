@@ -8,11 +8,14 @@ import {
   type NativeAgentCredentialPatch,
   type NativeAgentDraft,
   type NativeAgentPatch,
+  type NativeAgentSkillInstall,
+  type NativeAgentSkillRecipe,
   type Skill,
   type SkillDraft,
   type SkillMarketplace,
   type SkillMarketplaceEntry,
   type SkillPatch,
+  type SkillRecipeDraft,
 } from '../services/backendApi'
 
 interface NativeAgentState {
@@ -31,6 +34,7 @@ interface NativeAgentState {
   removeCredential: (id: string) => Promise<boolean>
   probeCredential: (id: string) => Promise<NativeAgentCredential | null>
   createSkill: (draft: SkillDraft) => Promise<Skill | null>
+  createRecipeSkill: (draft: SkillRecipeDraft) => Promise<Skill | null>
   updateSkill: (id: string, patch: SkillPatch) => Promise<Skill | null>
   publishSkill: (id: string) => Promise<Skill | null>
   unpublishSkill: (id: string) => Promise<Skill | null>
@@ -41,6 +45,7 @@ interface NativeAgentState {
   uninstallMarketplaceSkill: (id: string) => Promise<boolean>
   createAgent: (draft: NativeAgentDraft) => Promise<NativeAgent | null>
   updateAgent: (id: string, patch: NativeAgentPatch) => Promise<NativeAgent | null>
+  installAgentSkill: (id: string, recipe: NativeAgentSkillRecipe) => Promise<NativeAgentSkillInstall | null>
   removeAgent: (id: string) => Promise<boolean>
 }
 
@@ -58,11 +63,11 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
   loadAll: async () => {
     set({ loading: true, error: null })
     try {
-      const [credentials, skills, agents] = await Promise.all([
+      const [credentials, agents] = await Promise.all([
         nativeAgentApi.credentials.list(),
-        nativeAgentApi.skills.list(),
         nativeAgentApi.agents.list(),
       ])
+      const skills = await nativeAgentApi.skills.list()
       set({ credentials, skills, agents, loading: false, loaded: true })
     } catch (err) {
       set({ loading: false, error: toErrorMessage(err) })
@@ -116,6 +121,17 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
   createSkill: async (draft) => {
     try {
       const row = await nativeAgentApi.skills.create(draft)
+      set({ skills: mergeById(get().skills, row), error: null })
+      return row
+    } catch (err) {
+      set({ error: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  createRecipeSkill: async (draft) => {
+    try {
+      const row = await nativeAgentApi.skills.createRecipe(draft)
       set({ skills: mergeById(get().skills, row), error: null })
       return row
     } catch (err) {
@@ -250,6 +266,18 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
     try {
       const row = await nativeAgentApi.agents.update(id, patch)
       set({ agents: mergeById(get().agents, row), error: null })
+      return row
+    } catch (err) {
+      set({ error: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  installAgentSkill: async (id, recipe) => {
+    try {
+      const row = await nativeAgentApi.agents.installSkill(id, recipe)
+      const refreshed = await nativeAgentApi.agents.list()
+      set({ agents: refreshed, error: null })
       return row
     } catch (err) {
       set({ error: toErrorMessage(err) })

@@ -17,6 +17,7 @@ applying its optimistic mutation.
 Event shape:
     {
         "id": "<uuid>",         # for client-side de-dup across reconnects
+        "seq": 42,              # monotonic per project while this process is alive
         "type": "annotation.review_status.changed" | ...,
         "ts": "2026-05-12T...",
         "project_id": "...",
@@ -57,6 +58,7 @@ class ProjectEventBus:
         # project_id -> list of subscribers. We key by identity (`is`) for
         # removal so we can keep the dataclass mutable.
         self._subs: dict[str, list[_Subscriber]] = {}
+        self._seqs: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
     async def subscribe(self, project_id: str, user_id: str = "", user_display_name: str = "") -> _Subscriber:
@@ -91,8 +93,11 @@ class ProjectEventBus:
         bucket = self._subs.get(project_id)
         if not bucket:
             return
+        seq = self._seqs.get(project_id, 0) + 1
+        self._seqs[project_id] = seq
         event = {
             "id": str(uuid4()),
+            "seq": seq,
             "type": event_type,
             "ts": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
             "project_id": project_id,

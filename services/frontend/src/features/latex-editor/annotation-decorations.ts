@@ -64,11 +64,13 @@ function buildDecorations(value: AnnotationFieldValue): DecorationSet {
   )
   for (const s of sorted) {
     if (s.from < 0 || s.to <= s.from) continue
+    const active = s.id === value.activeId
+    const flash = s.id === value.flashId
     builder.add(
       s.from,
       s.to,
       Decoration.mark({
-        class: classFor(s, s.id === value.activeId, s.id === value.flashId),
+        class: classFor(s, active, flash),
         attributes: {
           'data-ann-id': s.id,
           'data-ann-kind': s.kind,
@@ -138,3 +140,5 @@ function clickHandler({ onPick }: ClickHandlerOptions): Extension {
 export function annotationDecorationsExtension(options: ClickHandlerOptions): Extension {
   return [annotationDecorationsField, decorationView, clickHandler(options)]
 }
+
+export const __test__ = { buildDecorations }

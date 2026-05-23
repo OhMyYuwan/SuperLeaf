@@ -7,16 +7,38 @@ later using this tree as the source of truth.
 
 from __future__ import annotations
 
+import io
+import mimetypes
+import shutil
+import stat
+import tempfile
+import zipfile
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
-import mimetypes
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy.orm import Session
 
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
 from . import version_service
+
+_MAX_ZIP_UPLOAD_BYTES = 100 * 1024 * 1024
+_MAX_ZIP_ENTRIES = 5000
+_MAX_ZIP_EXPANDED_BYTES = 250 * 1024 * 1024
+_DOC_SUFFIX_FORMATS = {
+    ".tex": "tex",
+    ".latex": "tex",
+    ".ltx": "tex",
+    ".bib": "tex",
+    ".sty": "tex",
+    ".cls": "tex",
+    ".bst": "tex",
+    ".md": "md",
+    ".markdown": "md",
+    ".txt": "txt",
+}
+
 
 class ProjectFsService:
     def __init__(self, db: Session, project: Project) -> None:
@@ -317,6 +339,46 @@ class ProjectFsService:
 
     # --------------------------------------------------------- import directory
 
+    def replace_from_zip(self, blob: bytes) -> tuple[int, int, int]:
+        """Replace this project's tree with the contents of a ZIP archive."""
+        if len(blob) > _MAX_ZIP_UPLOAD_BYTES:
+            raise ValueError("zip archive is too large")
+
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(blob))
+        except zipfile.BadZipFile as e:
+            raise ValueError("invalid zip archive") from e
+
+        with archive:
+            infos = [info for info in archive.infolist() if not info.is_dir()]
+            if not infos:
+                raise ValueError("zip archive is empty")
+            if len(infos) > _MAX_ZIP_ENTRIES:
+                raise ValueError("zip archive contains too many files")
+
+            expanded_size = sum(max(info.file_size, 0) for info in infos)
+            if expanded_size > _MAX_ZIP_EXPANDED_BYTES:
+                raise ValueError("zip archive expands to too much data")
+
+            with tempfile.TemporaryDirectory(prefix="ylw-zip-import-") as tmp:
+                root = Path(tmp)
+                extracted = 0
+                for info in infos:
+                    rel_path = _safe_zip_member_path(info.filename)
+                    if rel_path is None or _is_ignored_zip_member(rel_path):
+                        continue
+                    if _is_zip_symlink(info):
+                        continue
+                    target = root / rel_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(info) as src, target.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    extracted += 1
+
+                if extracted == 0:
+                    raise ValueError("zip archive does not contain importable files")
+                return self.replace_from_directory(root)
+
     def replace_from_directory(self, root: Path) -> tuple[int, int, int]:
         """Replace this project's tree with files from a local directory."""
         if not root.exists() or not root.is_dir():
@@ -362,7 +424,8 @@ class ProjectFsService:
             byte_count += len(payload)
             parent = ensure_folder(rel.parent)
             suffix = file_path.suffix.lower()
-            if suffix in {".tex", ".md", ".txt"}:
+            doc_format = _doc_format(suffix)
+            if doc_format is not None:
                 try:
                     content = payload.decode("utf-8")
                 except UnicodeDecodeError:
@@ -372,7 +435,7 @@ class ProjectFsService:
                         project_id=self.project.id,
                         folder_id=parent.id if parent else None,
                         name=rel.name,
-                        format=_doc_format(suffix),
+                        format=doc_format,
                         content=content,
                         version=1,
                     )
@@ -392,6 +455,35 @@ class ProjectFsService:
                 )
                 file_count += 1
 
+        self.db.flush()
+        main_doc = (
+            self.db.query(Doc)
+            .filter(
+                Doc.project_id == self.project.id,
+                Doc.folder_id.is_(None),
+                Doc.name == "main.tex",
+            )
+            .first()
+        )
+        if main_doc is None:
+            main_doc = (
+                self.db.query(Doc)
+                .filter(
+                    Doc.project_id == self.project.id,
+                    Doc.folder_id.is_(None),
+                    Doc.format == "tex",
+                )
+                .order_by(Doc.name.asc())
+                .first()
+            )
+        if main_doc is None:
+            main_doc = (
+                self.db.query(Doc)
+                .filter(Doc.project_id == self.project.id, Doc.format == "tex")
+                .order_by(Doc.name.asc())
+                .first()
+            )
+        self.project.main_doc_id = main_doc.id if main_doc is not None else ""
         self.project.updated_at = datetime.utcnow()
         self.db.commit()
         return doc_count, file_count, byte_count
@@ -439,9 +531,35 @@ class ProjectFsService:
         return buf.getvalue()
 
 
-def _doc_format(suffix: str) -> str:
-    if suffix == ".md":
-        return "md"
-    if suffix == ".txt":
-        return "txt"
-    return "tex"
+def _doc_format(suffix: str) -> str | None:
+    return _DOC_SUFFIX_FORMATS.get(suffix)
+
+
+def _safe_zip_member_path(name: str) -> Path | None:
+    normalized = name.replace("\\", "/").strip()
+    if not normalized:
+        return None
+    path = PurePosixPath(normalized)
+    if path.is_absolute():
+        raise ValueError("zip archive contains an absolute path")
+    parts = path.parts
+    if not parts:
+        return None
+    for part in parts:
+        if part in {"", ".", ".."} or "\x00" in part:
+            raise ValueError("zip archive contains an unsafe path")
+    return Path(*parts)
+
+
+def _is_ignored_zip_member(path: Path) -> bool:
+    parts = path.parts
+    return (
+        "__MACOSX" in parts
+        or ".git" in parts
+        or path.name in {".DS_Store", "Thumbs.db"}
+    )
+
+
+def _is_zip_symlink(info: zipfile.ZipInfo) -> bool:
+    mode = info.external_attr >> 16
+    return stat.S_ISLNK(mode)

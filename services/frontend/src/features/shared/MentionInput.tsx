@@ -5,15 +5,13 @@
  * Renders a textarea (or single-line input) and an autocomplete dropdown
  * that lists agent + workflow + file candidates, sectioned by kind.
  *
- * A second "mirror" layer sits behind the textarea and renders the same
- * text with each mention wrapped in a colored span. That layer is what
- * gives the user the visible highlight; the textarea itself stays a
- * normal black/white edit surface.
+ * By default, a second "mirror" layer sits behind multiline textareas and
+ * renders the same text with each mention wrapped in a colored span. Callers
+ * that use normal visible textarea text can disable that mirror layer.
  */
 
 import {
   forwardRef,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -58,6 +56,10 @@ interface MentionInputProps {
   onSubmit?: () => void
   /** Where the mention candidate menu should open relative to the input. */
   menuPlacement?: 'bottom' | 'top' | 'composer-panel'
+  /** Render the multiline mirror layer used for inline mention highlights. */
+  renderMirrorLayer?: boolean
+  /** Render multiline placeholders in the mirror layer for transparent textareas. */
+  renderMirrorPlaceholder?: boolean
 }
 
 interface MentionMenuState {
@@ -66,7 +68,7 @@ interface MentionMenuState {
 }
 
 const MAX_VISIBLE_CANDIDATES = 15
-const BOUNDARY_BEFORE = /[\s\(\[,;:。，、；：]/
+const BOUNDARY_BEFORE = /[\s([,;:。，、；：]/
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(props, ref) {
@@ -84,6 +86,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       onCandidatePicked,
       onSubmit,
       menuPlacement = 'bottom',
+      renderMirrorLayer = true,
+      renderMirrorPlaceholder = true,
     } = props
 
     const taRef = useRef<HTMLTextAreaElement>(null)
@@ -133,14 +137,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       () => [...filteredAgents, ...filteredWorkflows, ...filteredFiles],
       [filteredAgents, filteredWorkflows, filteredFiles],
     )
-
-    useEffect(() => {
-      if (flatVisible.length === 0) {
-        setHighlightIdx(0)
-        return
-      }
-      setHighlightIdx((i) => Math.min(i, flatVisible.length - 1))
-    }, [flatVisible])
+    const activeHighlightIdx = flatVisible.length > 0
+      ? Math.min(highlightIdx, flatVisible.length - 1)
+      : 0
 
     const updateMention = (text: string, caret: number) => {
       let at = -1
@@ -205,17 +204,17 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       if (menu && flatVisible.length > 0) {
         if (e.key === 'ArrowDown') {
           e.preventDefault()
-          setHighlightIdx((i) => (i + 1) % flatVisible.length)
+          setHighlightIdx((activeHighlightIdx + 1) % flatVisible.length)
           return
         }
         if (e.key === 'ArrowUp') {
           e.preventDefault()
-          setHighlightIdx((i) => (i - 1 + flatVisible.length) % flatVisible.length)
+          setHighlightIdx((activeHighlightIdx - 1 + flatVisible.length) % flatVisible.length)
           return
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault()
-          void handlePick(flatVisible[highlightIdx])
+          void handlePick(flatVisible[activeHighlightIdx])
           return
         }
         if (e.key === 'Escape') {
@@ -236,16 +235,24 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       }
     }
 
-    // Mirror layer: render the same text behind the textarea, with mentions
-    // wrapped in colored spans. Keep scroll position in sync so the highlight
-    // tracks the visible region of the textarea.
+    const shouldRenderMirrorLayer = multiline && renderMirrorLayer
+
+    // Mirror layer: render a styled copy behind the textarea. In the default
+    // transparent-text mode it owns both normal text and highlighted mentions.
     const highlightSegments = useMemo(() => {
+      if (!shouldRenderMirrorLayer) return []
       const mentions = parseMentions(value, allCandidates)
       return segmentText(value, mentions)
-    }, [value, allCandidates])
+    }, [value, allCandidates, shouldRenderMirrorLayer])
+    const displayPlaceholder = value.length === 0 ? placeholder : undefined
+    const shouldUseMirrorPlaceholder = shouldRenderMirrorLayer && renderMirrorPlaceholder
+    const mirrorPlaceholderText = shouldUseMirrorPlaceholder
+      ? displayPlaceholder
+      : undefined
+    const nativePlaceholderText = shouldUseMirrorPlaceholder ? undefined : displayPlaceholder
 
     const handleScroll = () => {
-      if (!multiline || !mirrorRef.current || !taRef.current) return
+      if (!shouldRenderMirrorLayer || !mirrorRef.current || !taRef.current) return
       mirrorRef.current.scrollTop = taRef.current.scrollTop
       mirrorRef.current.scrollLeft = taRef.current.scrollLeft
     }
@@ -255,39 +262,45 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     return (
       <div className={`mention-input-root ${className ?? ''}`}>
         {multiline ? (
-          <div className="mention-input-stack">
-            <div
-              ref={mirrorRef}
-              className="mention-input-mirror"
-              aria-hidden="true"
-            >
-              {highlightSegments.map((seg, i) => {
-                if (seg.type === 'mention') {
-                  const cls =
-                    seg.candidate.kind === 'file'
-                      ? 'mention-tag mention-tag-file'
-                      : seg.candidate.kind === 'workflow'
-                        ? 'mention-tag mention-tag-workflow'
-                        : 'mention-tag'
-                  return (
-                    <span key={i} className={cls}>
-                      {seg.raw}
-                    </span>
-                  )
-                }
-                return <span key={i}>{seg.content}</span>
-              })}
-              {/* trailing newline so the mirror grows with the textarea content */}
-              {'​'}
-            </div>
+          <div className={`mention-input-stack ${shouldRenderMirrorLayer ? 'with-mirror' : 'without-mirror'}`}>
+            {shouldRenderMirrorLayer && (
+              <div
+                ref={mirrorRef}
+                className="mention-input-mirror"
+                aria-hidden="true"
+              >
+                {mirrorPlaceholderText ? (
+                  <span className="mention-input-placeholder">{mirrorPlaceholderText}</span>
+                ) : (
+                  highlightSegments.map((seg, i) => {
+                    if (seg.type === 'mention') {
+                      const cls =
+                        seg.candidate.kind === 'file'
+                          ? 'mention-tag mention-tag-file'
+                          : seg.candidate.kind === 'workflow'
+                            ? 'mention-tag mention-tag-workflow'
+                            : 'mention-tag'
+                      return (
+                        <span key={i} className={cls}>
+                          {seg.raw}
+                        </span>
+                      )
+                    }
+                    return <span key={i}>{seg.content}</span>
+                  })
+                )}
+                {/* trailing newline so the mirror grows with the textarea content */}
+                {'​'}
+              </div>
+            )}
             <textarea
               ref={taRef}
-              className="mention-input-textarea transparent-caret"
+              className={`mention-input-textarea ${shouldRenderMirrorLayer ? 'transparent-caret' : ''}`}
               value={value}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               onScroll={handleScroll}
-              placeholder={placeholder}
+              placeholder={nativePlaceholderText}
               disabled={disabled}
               rows={rows}
               spellCheck={false}
@@ -315,7 +328,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
                   return (
                     <div
                       key={`a-${a.id}`}
-                      className={`mention-item ${idx === highlightIdx ? 'active' : ''}`}
+                      className={`mention-item ${idx === activeHighlightIdx ? 'active' : ''}`}
                       onMouseDown={(e) => {
                         e.preventDefault()
                         void handlePick(a)
@@ -336,7 +349,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
                   return (
                     <div
                       key={`w-${w.id}`}
-                      className={`mention-item mention-item-workflow ${idx === highlightIdx ? 'active' : ''}`}
+                      className={`mention-item mention-item-workflow ${idx === activeHighlightIdx ? 'active' : ''}`}
                       onMouseDown={(e) => {
                         e.preventDefault()
                         void handlePick(w)
@@ -360,7 +373,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
                   return (
                     <div
                       key={`f-${f.id}`}
-                      className={`mention-item mention-item-file ${idx === highlightIdx ? 'active' : ''} ${f.size_bytes >= HARD_REJECT_BYTES ? 'oversize' : ''}`}
+                      className={`mention-item mention-item-file ${idx === activeHighlightIdx ? 'active' : ''} ${f.size_bytes >= HARD_REJECT_BYTES ? 'oversize' : ''}`}
                       onMouseDown={(e) => {
                         e.preventDefault()
                         void handlePick(f)

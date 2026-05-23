@@ -16,6 +16,8 @@ import type { Section } from '../../types/document'
 interface OutlineListProps {
   sections: Section[] | null
   docId?: string | null
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   onSectionClick?: (section: Section) => void
 }
 
@@ -24,7 +26,13 @@ interface OutlineNode {
   children: OutlineNode[]
 }
 
-export function OutlineList({ sections, docId, onSectionClick }: OutlineListProps) {
+export function OutlineList({
+  sections,
+  docId,
+  collapsed = false,
+  onToggleCollapsed,
+  onSectionClick,
+}: OutlineListProps) {
   const tree = useMemo(() => buildOutlineTree(sections ?? []), [sections])
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
@@ -36,25 +44,37 @@ export function OutlineList({ sections, docId, onSectionClick }: OutlineListProp
     setExpanded((prev) => ({ ...prev, [id]: prev[id] === false }))
 
   return (
-    <div className="panel-section">
-      <div className="section-title">
-        <BookOpen size={16} /> 文档大纲
+    <div className={`panel-section outline-section${collapsed ? ' collapsed' : ''}`}>
+      <div className="section-title outline-section-title">
+        <span className="outline-title-label">
+          <BookOpen size={16} /> 文档大纲
+        </span>
+        <button
+          className="outline-collapse-btn"
+          type="button"
+          onClick={onToggleCollapsed}
+          title={collapsed ? '展开大纲' : '折叠大纲'}
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
-      <div className="outline-list">
-        {sections !== null && sections.length === 0 && (
-          <div className="outline-empty">此文档无章节标题</div>
-        )}
-        {tree.map((node) => (
-          <OutlineNodeView
-            key={node.section.id}
-            node={node}
-            depth={0}
-            expandedMap={expanded}
-            onToggle={toggle}
-            onSectionClick={onSectionClick}
-          />
-        ))}
-      </div>
+      {!collapsed && (
+        <div className="outline-list">
+          {sections !== null && sections.length === 0 && (
+            <div className="outline-empty">此文档无章节标题</div>
+          )}
+          {tree.map((node) => (
+            <OutlineNodeView
+              key={node.section.id}
+              node={node}
+              depth={0}
+              expandedMap={expanded}
+              onToggle={toggle}
+              onSectionClick={onSectionClick}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

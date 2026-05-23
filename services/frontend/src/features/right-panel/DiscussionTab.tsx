@@ -9,7 +9,7 @@
  * Conversation list is shown in a dropdown menu when clicking the history button.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import './discussion.css'
 import {
@@ -26,7 +26,7 @@ import { useConversationStore } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
-import type { CachedWorkflow, Message } from '../../services/backendApi'
+import type { CachedWorkflow, Conversation, Message } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import {
   parseMentions,
@@ -70,8 +70,12 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   )
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [manualConversation, setManualConversation] = useState<{
+    scopeKey: string
+    id: string
+  } | null>(null)
   const [inputText, setInputText] = useState('')
+  const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
@@ -104,6 +108,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         : workflows[0]?.id ?? null,
     [selectedAgentId, workflows],
   )
+  const conversationScopeKey = `${documentId ?? ''}::${validSelectedAgentId ?? ''}`
 
   // Files the user has @-mentioned in the current draft (for chip row preview).
   const pendingFileMentions = useMemo(() => {
@@ -120,14 +125,15 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
   // Filter conversations for current (doc, agent).
   const filteredConversations = useMemo(() => {
-    return Object.values(conversations).filter(
-      (c) => c.document_id === documentId && c.workflow_id === validSelectedAgentId,
-    )
+    return Object.values(conversations)
+      .filter((c) => c.document_id === documentId && c.workflow_id === validSelectedAgentId)
+      .sort(compareConversationsNewestFirst)
   }, [conversations, documentId, validSelectedAgentId])
 
   const activeConversationIdForRender =
-    activeConversationId && filteredConversations.some((c) => c.id === activeConversationId)
-      ? activeConversationId
+    manualConversation?.scopeKey === conversationScopeKey &&
+    filteredConversations.some((c) => c.id === manualConversation.id)
+      ? manualConversation.id
       : null
   const effectiveConversationId = activeConversationIdForRender ?? filteredConversations[0]?.id ?? null
 
@@ -146,7 +152,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       title: '新对话',
     })
     if (conv) {
-      setActiveConversationId(conv.id)
+      setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
     }
   }
 
@@ -155,7 +161,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     if (!confirm('删除这个对话？')) return
     await deleteConversation(id)
     if (effectiveConversationId === id) {
-      setActiveConversationId(null)
+      setManualConversation(null)
     }
   }
 
@@ -239,6 +245,20 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     ? conversations[effectiveConversationId]
     : null
 
+  useEffect(() => {
+    const el = messageStreamRef.current
+    if (!el) return
+    const scrollToBottom = () => {
+      el.scrollTop = el.scrollHeight
+    }
+    const frame = window.requestAnimationFrame(scrollToBottom)
+    const timer = window.setTimeout(scrollToBottom, 80)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
+  }, [effectiveConversationId, activeMessages.length, delta, isStreaming])
+
   if (!documentId) {
     return (
       <div className="tab-empty">
@@ -264,7 +284,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
             value={validSelectedAgentId ?? ''}
             onChange={(e) => {
               setSelectedAgentId(e.target.value || null)
-              setActiveConversationId(null)
+              setManualConversation(null)
             }}
           >
             {workflows.map((w) => (
@@ -299,7 +319,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   <DropdownMenu.Item
                     key={conv.id}
                     className="conversation-dropdown-item"
-                    onSelect={() => setActiveConversationId(conv.id)}
+                    onSelect={() =>
+                      setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
+                    }
                   >
                     <div className="conversation-dropdown-item-content">
                       <div className="conversation-dropdown-item-header">
@@ -362,7 +384,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           )}
           {effectiveConversationId && (
             <>
-              <div className="message-stream">
+              <div className="message-stream" ref={messageStreamRef}>
                 {activeMessages.map((msg) => (
                   <MessageBubble
                     key={msg.id}
@@ -492,6 +514,19 @@ function formatTime(iso: string): string {
   const sameDay = d.toDateString() === now.toDateString()
   if (sameDay) return d.toLocaleTimeString()
   return d.toLocaleDateString()
+}
+
+function compareConversationsNewestFirst(a: Conversation, b: Conversation): number {
+  return (
+    timestampValue(b.updated_at) - timestampValue(a.updated_at) ||
+    timestampValue(b.created_at) - timestampValue(a.created_at) ||
+    b.id.localeCompare(a.id)
+  )
+}
+
+function timestampValue(iso: string): number {
+  const value = new Date(iso).getTime()
+  return Number.isFinite(value) ? value : 0
 }
 
 /**

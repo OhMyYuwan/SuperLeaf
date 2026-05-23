@@ -8,6 +8,7 @@ hitting Dify, and so the chat stays coherent if the Dify side resets.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import Conversation, Message, Project, User
+from ..models import Conversation, Doc, Message, Project, User
 from ..schemas import (
     ConversationCreateIn,
     ConversationOut,
@@ -65,6 +66,62 @@ def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") 
         updated_at=c.updated_at,
         message_count=message_count,
         last_message_preview=last_preview,
+    )
+
+
+def _panel_reply_contract(
+    *,
+    doc_format: str = "",
+    target_text: str = "",
+    user_message: str = "",
+) -> str:
+    label, fence = _infer_source_format(
+        doc_format=doc_format,
+        sample=f"{target_text}\n{user_message}",
+    )
+    return "\n".join(
+        [
+            "[REPLY FORMAT]",
+            "- 主要回答直接用 Markdown。",
+            "- 不要输出 JSON，也不要把内容拆成 annotations/suggestions/risks 或多张批注。",
+            f"- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持{label}源格式，围栏语言建议：{fence}.",
+            "[END REPLY FORMAT]",
+        ]
+    )
+
+
+def _infer_source_format(*, doc_format: str, sample: str) -> tuple[str, str]:
+    if _looks_like_latex(sample):
+        return " LaTeX ", "latex"
+    if _looks_like_markdown(sample):
+        return " Markdown ", "markdown"
+    fmt = (doc_format or "").strip().lower()
+    if fmt == "tex":
+        return " LaTeX ", "latex"
+    if fmt == "md":
+        return " Markdown ", "markdown"
+    return "纯文本", "text"
+
+
+def _looks_like_latex(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\\(?:begin|end|section|subsection|subsubsection|paragraph|cite|ref|label|textbf|emph|item)\b",
+            text,
+        )
+        or re.search(r"\\[a-zA-Z]+\s*\{", text)
+        or re.search(r"\$(?:\\.|[^$\n])+\$", text)
+    )
+
+
+def _looks_like_markdown(text: str) -> bool:
+    return bool(
+        re.search(r"^#{1,6}\s+\S", text, re.M)
+        or re.search(r"^>\s+\S", text, re.M)
+        or re.search(r"^ {0,3}(?:[-*+]|\d+\.)\s+\S", text, re.M)
+        or re.search(r"\[[^\]]+\]\([^)]+\)", text)
+        or re.search(r"(?:^|\n)```", text)
+        or re.search(r"\*\*[^*\n][\s\S]*?\*\*", text)
     )
 
 
@@ -303,6 +360,8 @@ async def send_message(
     before = str(body.inputs.get("before") or "").strip()
     after = str(body.inputs.get("after") or "").strip()
     section_title = str(body.inputs.get("section_title") or "").strip()
+    document = db.get(Doc, conv.document_id)
+    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
     attached_files = normalize_attached_files(body.inputs.get("attached_files"))
     image_attachments = collect_image_attachments(attached_files)
 
@@ -313,6 +372,14 @@ async def send_message(
     prompt_parts: list[str] = []
     if session_context:
         prompt_parts.append(session_context)
+
+    prompt_parts.append(
+        _panel_reply_contract(
+            doc_format=doc_format,
+            target_text=target_text,
+            user_message=body.content,
+        )
+    )
 
     if has_selection:
         context_parts: list[str] = ["[DISCUSSION CONTEXT]"]

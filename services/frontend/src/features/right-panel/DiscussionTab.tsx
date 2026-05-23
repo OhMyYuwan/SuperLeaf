@@ -25,6 +25,7 @@ import {
 import { useConversationStore } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
+import { useDocumentStore } from '../../stores/documentStore'
 import type { CachedWorkflow, Message } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import {
@@ -64,6 +65,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const sendMessage = useConversationStore((s) => s.sendMessage)
   const injectMessage = useConversationStore((s) => s.injectMessage)
   const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
+  const activeDocFormat = useDocumentStore((s) =>
+    documentId ? s.documents[documentId]?.format : undefined,
+  )
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -181,6 +185,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       inputs.section_title = activeSelection.context.sectionTitle ?? ''
       inputs.before = activeSelection.context.before
       inputs.after = activeSelection.context.after
+    }
+    if (activeDocFormat) {
+      inputs.doc_format = activeDocFormat
     }
     if (attachedFiles.length > 0) {
       inputs.attached_files = attachedFiles

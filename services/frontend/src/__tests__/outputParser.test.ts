@@ -7,7 +7,7 @@ const ctx = {
 }
 
 describe('outputParser', () => {
-  it('parses strict structured outputs, folds legacy arrays into annotations, and offsets ranges', () => {
+  it('parses strict structured outputs and folds legacy arrays into one annotation', () => {
     const r = parseDifyOutputs(
       {
         annotations: [{ from: 0, to: 4, content: 'too vague', type: 'comment', severity: 'medium' }],
@@ -18,12 +18,11 @@ describe('outputParser', () => {
       },
       ctx,
     )
-    expect(r.annotations).toHaveLength(3)
-    expect(r.annotations[0].targetRange).toEqual({ from: 100, to: 104 })
-    expect(r.annotations[1].targetRange).toEqual({ from: 105, to: 107 })
-    expect(r.annotations[1].content).toContain('becomes')
-    expect(r.annotations[2].targetRange).toEqual({ from: 100, to: 130 })
-    expect(r.annotations[2].content).toContain('unclear scope')
+    expect(r.annotations).toHaveLength(1)
+    expect(r.annotations[0].targetRange).toEqual({ from: 100, to: 130 })
+    expect(r.annotations[0].content).toContain('too vague')
+    expect(r.annotations[0].content).toContain('becomes')
+    expect(r.annotations[0].content).toContain('unclear scope')
     expect(r.suggestions).toHaveLength(0)
     expect(r.risks).toHaveLength(0)
   })

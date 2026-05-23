@@ -15,6 +15,7 @@ import {
   type EditorFormat,
   type DecorationSpec,
   type DocChangeInfo,
+  type EditorRestoreState,
   type SelectionInfo,
 } from '../latex-editor'
 import type { LatexCitationCompletion } from '../latex-editor/latex-completion-data'
@@ -26,9 +27,11 @@ interface EditorColumnProps {
   activeAnnotationId: string | null
   hoveredAnnotationId?: string | null
   scrollTo: { pos: number; to?: number; seq: number } | null
+  restoreState?: EditorRestoreState | null
   onChange: (next: string) => void
   onSelectionChange: (info: { from: number; to: number; text: string }) => void
   onDocChange: (changes: DocChangeInfo[]) => void
+  onViewStateChange?: (documentId: string, state: EditorRestoreState) => void
   onDecorationClick: (id: string) => void
   citationCompletions?: LatexCitationCompletion[]
   onAddComment?: (params: {
@@ -43,9 +46,11 @@ export function EditorColumn({
   activeAnnotationId,
   hoveredAnnotationId,
   scrollTo,
+  restoreState,
   onChange,
   onSelectionChange,
   onDocChange,
+  onViewStateChange,
   onDecorationClick,
   citationCompletions,
   onAddComment,
@@ -91,9 +96,11 @@ export function EditorColumn({
             activeAnnotationId={activeAnnotationId}
             hoveredAnnotationId={hoveredAnnotationId}
             scrollTo={scrollTo}
+            restoreState={restoreState}
             onChange={onChange}
             onSelectionChange={handleSelectionChange}
             onDocChange={onDocChange}
+            onViewStateChange={onViewStateChange}
             onDecorationClick={onDecorationClick}
             citationCompletions={citationCompletions}
             toolbar={toolbar}
@@ -113,9 +120,11 @@ function EditorWithCollab({
   activeAnnotationId,
   hoveredAnnotationId,
   scrollTo,
+  restoreState,
   onChange,
   onSelectionChange,
   onDocChange,
+  onViewStateChange,
   onDecorationClick,
   citationCompletions,
   toolbar,
@@ -126,9 +135,11 @@ function EditorWithCollab({
   activeAnnotationId: string | null
   hoveredAnnotationId?: string | null
   scrollTo: { pos: number; to?: number; seq: number } | null
+  restoreState?: EditorRestoreState | null
   onChange: (next: string) => void
   onSelectionChange: (info: SelectionInfo) => void
   onDocChange: (changes: DocChangeInfo[]) => void
+  onViewStateChange?: (documentId: string, state: EditorRestoreState) => void
   onDecorationClick: (id: string) => void
   citationCompletions?: LatexCitationCompletion[]
   toolbar: { x: number; y: number } | null
@@ -143,11 +154,14 @@ function EditorWithCollab({
   return (
     <LatexEditor
       key={doc.id}
+      documentId={doc.id}
       value={doc.content}
       format={doc.format as EditorFormat}
       onChange={onChange}
       onSelectionChange={onSelectionChange}
       onDocChange={onDocChange}
+      restoreState={restoreState}
+      onViewStateChange={onViewStateChange}
       decorations={decorations}
       activeDecorationId={activeAnnotationId}
       panelHoverId={hoveredAnnotationId ?? null}

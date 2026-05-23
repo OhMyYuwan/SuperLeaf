@@ -10,8 +10,13 @@
 export interface EditorState {
   documentId: string
   selection: Selection | null
+  selectionRange: { from: number; to: number }
   cursor: number
-  viewport: { from: number; to: number }  // 当前可见区域
+  viewport: {
+    from: number
+    to: number
+    firstVisibleLine?: number
+  }  // 当前可见区域
   focusedParagraphId?: string  // 光标所在段落
 }
 

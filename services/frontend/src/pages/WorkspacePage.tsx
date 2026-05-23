@@ -42,7 +42,7 @@ import { BackendError } from '../services/backendApi'
 import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesystemApi'
 import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
-import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
+import type { DecorationSpec, DocChangeInfo, EditorRestoreState } from '../features/latex-editor'
 import { collectLatexCitationCompletions } from '../features/latex-editor/latex-completion-data'
 import type { Document } from '../types/document'
 
@@ -66,9 +66,13 @@ export function WorkspacePage() {
   const saveStatusMap = useDocumentStore((s) => s.saveStatus)
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
+  const updateEditorViewState = useEditorStore((s) => s.updateViewState)
   const activeSelection = useEditorStore((s) =>
     activeDocumentId ? s.states[activeDocumentId]?.selection ?? null : null,
   )
+  const activeEditorRestoreState = activeDocumentId
+    ? useEditorStore.getState().states[activeDocumentId] ?? null
+    : null
 
   // Filesystem tree ----------------------------------------------------------
   const tree = useFilesystemStore((s) => s.tree)
@@ -123,7 +127,12 @@ export function WorkspacePage() {
   // UI-only state -----------------------------------------------------------
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null)
-  const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; to?: number; seq: number } | null>(null)
+  const [editorScrollTo, setEditorScrollTo] = useState<{
+    documentId: string
+    pos: number
+    to?: number
+    seq: number
+  } | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
   const [pendingComment, setPendingComment] = useState<{
     range: { from: number; to: number }
@@ -161,6 +170,8 @@ export function WorkspacePage() {
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
+  const activeEditorScrollTo =
+    activeDocumentId && editorScrollTo?.documentId === activeDocumentId ? editorScrollTo : null
   const citationCompletions = useMemo(() => {
     const sources = Object.values(documents)
       .filter(isCitationSourceDoc)
@@ -453,6 +464,17 @@ export function WorkspacePage() {
     updateSelection(activeDocumentId, { from: info.from, to: info.to })
   }
 
+  const handleEditorViewStateChange = (documentId: string, state: EditorRestoreState) => {
+    updateEditorViewState(documentId, state)
+    setEditorScrollTo((prev) => {
+      if (!prev || prev.documentId !== documentId) return prev
+      const expectedTo = prev.to ?? prev.pos
+      return state.selectionRange.from === prev.pos && state.selectionRange.to === expectedTo
+        ? null
+        : prev
+    })
+  }
+
   const handleDecorationClick = (id: string) => {
     setActiveAnnotationId((prev) => (prev === id ? null : id))
   }
@@ -460,7 +482,7 @@ export function WorkspacePage() {
   const handlePreviewSourceJump = (jump: SourceJump) => {
     if (!activeDocumentId) return
     const to = jump.selectText ? jump.pos + jump.selectText.length : undefined
-    setEditorScrollTo({ pos: jump.pos, to, seq: Date.now() })
+    setEditorScrollTo({ documentId: activeDocumentId, pos: jump.pos, to, seq: Date.now() })
   }
 
   return (
@@ -525,7 +547,14 @@ export function WorkspacePage() {
                           docId={activeDocumentId}
                           collapsed={outlineCollapsed}
                           onToggleCollapsed={() => setOutlineCollapsed((v) => !v)}
-                          onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
+                          onSectionClick={(sec) => {
+                            if (!activeDocumentId) return
+                            setEditorScrollTo({
+                              documentId: activeDocumentId,
+                              pos: sec.range.from,
+                              seq: Date.now(),
+                            })
+                          }}
                         />
                       </Panel>
                     </PanelGroup>
@@ -594,11 +623,13 @@ export function WorkspacePage() {
                           decorations={decorationSpecs}
                           activeAnnotationId={activeAnnotationId}
                           hoveredAnnotationId={hoveredAnnotationId}
-                          scrollTo={editorScrollTo}
+                          scrollTo={activeEditorScrollTo}
+                          restoreState={activeEditorRestoreState}
                           citationCompletions={citationCompletions}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}
+                          onViewStateChange={handleEditorViewStateChange}
                           onDecorationClick={handleDecorationClick}
                           onAddComment={(p) => {
                             setPendingComment(p)
@@ -673,9 +704,14 @@ export function WorkspacePage() {
                   onUpdateDefinition={updateDefinition}
                   onDeleteDefinition={deleteDefinition}
                   onReloadWorkflows={loadWorkflows}
-                  onJumpToRange={(range) =>
-                    setEditorScrollTo({ pos: range.from, seq: Date.now() })
-                  }
+                  onJumpToRange={(range) => {
+                    if (!activeDocumentId) return
+                    setEditorScrollTo({
+                      documentId: activeDocumentId,
+                      pos: range.from,
+                      seq: Date.now(),
+                    })
+                  }}
                 />
                     </ErrorBoundary>
                   </Panel>

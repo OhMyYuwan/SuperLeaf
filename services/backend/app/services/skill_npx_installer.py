@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -44,13 +45,8 @@ class SkillNpxInstaller:
         self.workspace = workspace or AgentWorkspaceService()
 
     def install(self, agent: NativeAgent, recipe: SkillInstallRecipe) -> SkillInstallResult:
-        source_url = _validate_source_url(recipe.source_url or recipe.repo_url)
-        skill_name = _validate_skill_name(recipe.skill_name, required=not _is_direct_skill_source(source_url))
-        command = ["npx", "--yes", "skills", "add", source_url]
-        if skill_name and not _is_direct_skill_source(source_url):
-            command.extend(["--skill", skill_name])
-        command.extend(["--agent", "codex", "--copy", "--yes"])
-        display_command = recipe.install_command.strip() or " ".join(command)
+        command, source_url, skill_name = _command_from_recipe(recipe)
+        display_command = " ".join(shlex.quote(part) for part in command)
 
         tmp_parent = settings.data_dir / "tmp" / "native-skill-installs"
         tmp_parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +106,67 @@ def _validate_source_url(value: str) -> str:
     ):
         raise SkillNpxInstallError("repo_url must be a GitHub repo or skills package")
     return cleaned
+
+
+def _command_from_recipe(recipe: SkillInstallRecipe) -> tuple[list[str], str, str]:
+    raw_command = str(recipe.install_command or "").strip()
+    if raw_command:
+        command, source_url, command_skill_name = _parse_npx_install_command(raw_command)
+        skill_name = command_skill_name or _validate_skill_name(recipe.skill_name, required=False)
+        if skill_name and "--skill" not in command and not any(part.startswith("--skill=") for part in command):
+            command.extend(["--skill", skill_name])
+        command = _ensure_install_flags(command)
+        if not _is_direct_skill_source(source_url):
+            _validate_skill_name(skill_name, required=True)
+        return command, source_url, skill_name
+
+    source_url = _validate_source_url(recipe.source_url or recipe.repo_url)
+    skill_name = _validate_skill_name(recipe.skill_name, required=not _is_direct_skill_source(source_url))
+    command = ["npx", "--yes", "skills", "add", source_url]
+    if skill_name and not _is_direct_skill_source(source_url):
+        command.extend(["--skill", skill_name])
+    command.extend(["--agent", "codex", "--copy", "--yes"])
+    return command, source_url, skill_name
+
+
+def _parse_npx_install_command(command: str) -> tuple[list[str], str, str]:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        raise SkillNpxInstallError("install_command must be a valid npx command") from exc
+    if not parts or parts[0] != "npx":
+        raise SkillNpxInstallError("install_command must start with npx")
+    skills_index = -1
+    for idx in range(len(parts) - 1):
+        if parts[idx] == "skills" and parts[idx + 1] == "add":
+            skills_index = idx
+            break
+    if skills_index < 0 or skills_index + 2 >= len(parts):
+        raise SkillNpxInstallError("install_command must contain `skills add <source>`")
+    source_url = _validate_source_url(parts[skills_index + 2])
+    skill_name = ""
+    rest = parts[skills_index + 3 :]
+    for idx, item in enumerate(rest):
+        if item == "--skill" and idx + 1 < len(rest):
+            skill_name = _validate_skill_name(rest[idx + 1], required=False)
+            break
+        if item.startswith("--skill="):
+            skill_name = _validate_skill_name(item.split("=", 1)[1], required=False)
+            break
+    return parts, source_url, skill_name
+
+
+def _ensure_install_flags(command: list[str]) -> list[str]:
+    out = list(command)
+    if len(out) == 1 or out[1] != "--yes":
+        out.insert(1, "--yes")
+    if "--agent" not in out:
+        out.extend(["--agent", "codex"])
+    if "--copy" not in out:
+        out.append("--copy")
+    if not out or out[-1] != "--yes":
+        out.append("--yes")
+    return out
 
 
 def _validate_skill_name(value: str, *, required: bool) -> str:

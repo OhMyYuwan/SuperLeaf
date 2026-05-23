@@ -14,6 +14,7 @@
 
 import type { ProjectTree, TreeDoc, TreeFile, TreeFolder } from './filesystemApi'
 import { filesystemApi } from './filesystemApi'
+import type { DocumentFormat } from '../types/document'
 
 export type AgentCandidate = { kind: 'agent'; id: string; name: string }
 export type WorkflowCandidate = { kind: 'workflow'; id: string; name: string; description?: string }
@@ -40,7 +41,7 @@ export interface ParsedMention {
   quoted: boolean
 }
 
-const BOUNDARY_BEFORE = /[\s\(\[,;:。，、；：]/
+const BOUNDARY_BEFORE = /[\s([,;:。，、；：]/
 
 /**
  * Find all @mentions in `text` that resolve to one of the provided candidates.
@@ -57,10 +58,23 @@ export function parseMentions(
   candidates: readonly MentionCandidate[],
 ): ParsedMention[] {
   if (candidates.length === 0) return []
-  const sorted = [...candidates].sort((a, b) => b.name.length - a.name.length)
+  const labelsFor = (candidate: MentionCandidate): string[] => {
+    if (candidate.kind === 'file' && candidate.path && candidate.path !== candidate.name) {
+      return [candidate.path, candidate.name]
+    }
+    return [candidate.name]
+  }
+
+  const sorted = [...candidates].sort((a, b) => {
+    const aMax = Math.max(...labelsFor(a).map((label) => label.length))
+    const bMax = Math.max(...labelsFor(b).map((label) => label.length))
+    return bMax - aMax
+  })
   const byName = new Map<string, MentionCandidate>()
   for (const c of sorted) {
-    if (!byName.has(c.name)) byName.set(c.name, c)
+    for (const label of labelsFor(c)) {
+      if (!byName.has(label)) byName.set(label, c)
+    }
   }
 
   const out: ParsedMention[] = []
@@ -91,20 +105,25 @@ export function parseMentions(
 
     // Bare form: longest-prefix match.
     let matched: MentionCandidate | null = null
+    let matchedLabel = ''
     for (const c of sorted) {
-      if (text.startsWith(c.name, at + 1)) {
+      const label = labelsFor(c).find((candidateLabel) =>
+        text.startsWith(candidateLabel, at + 1),
+      )
+      if (label) {
         matched = c
+        matchedLabel = label
         break
       }
     }
     if (matched) {
       out.push({
         start: at,
-        end: at + 1 + matched.name.length,
+        end: at + 1 + matchedLabel.length,
         candidate: matched,
         quoted: false,
       })
-      i = at + 1 + matched.name.length
+      i = at + 1 + matchedLabel.length
     } else {
       i = at + 1
     }
@@ -405,13 +424,17 @@ export function buildAgentPrompt({
   userMessage,
   threadHistory,
   attachedFiles,
+  documentFormat,
 }: {
   targetText: string
   userMessage: string
   threadHistory: Array<{ role: 'user' | 'agent'; content: string; agentName?: string }>
   attachedFiles?: readonly AttachedFile[]
+  documentFormat?: DocumentFormat
 }): string {
   const lines: string[] = []
+  lines.push(buildPanelReplyContract({ targetText, userMessage, documentFormat }))
+  lines.push('')
   if (targetText.trim()) {
     lines.push('上下文（正文被批注的片段）:')
     lines.push(targetText.trim())
@@ -447,6 +470,52 @@ export function buildAgentPrompt({
   return lines.join('\n')
 }
 
+function buildPanelReplyContract({
+  targetText,
+  userMessage,
+  documentFormat,
+}: {
+  targetText: string
+  userMessage: string
+  documentFormat?: DocumentFormat
+}): string {
+  const sourceFormat = inferSourceFormat(`${targetText}\n${userMessage}`, documentFormat)
+  return [
+    '[REPLY FORMAT]',
+    '- 主要回答直接用 Markdown。',
+    '- 不要输出 JSON，也不要把内容拆成 annotations/suggestions/risks 或多张批注。',
+    `- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持${sourceFormat.label}源格式，围栏语言建议：${sourceFormat.fence}.`,
+    '[END REPLY FORMAT]',
+  ].join('\n')
+}
+
+function inferSourceFormat(
+  text: string,
+  documentFormat?: DocumentFormat,
+): { label: string; fence: 'latex' | 'markdown' | 'text' } {
+  const sample = text.trim()
+  if (looksLikeLatex(sample)) return { label: ' LaTeX ', fence: 'latex' }
+  if (looksLikeMarkdown(sample)) return { label: ' Markdown ', fence: 'markdown' }
+  if (documentFormat === 'tex') return { label: ' LaTeX ', fence: 'latex' }
+  if (documentFormat === 'md') return { label: ' Markdown ', fence: 'markdown' }
+  return { label: '纯文本', fence: 'text' }
+}
+
+function looksLikeLatex(text: string): boolean {
+  return /\\(?:begin|end|section|subsection|subsubsection|paragraph|cite|ref|label|textbf|emph|item)\b/u.test(text)
+    || /\\[a-zA-Z]+\s*\{/u.test(text)
+    || /\$(?:\\.|[^$\n])+\$/u.test(text)
+}
+
+function looksLikeMarkdown(text: string): boolean {
+  return /^#{1,6}\s+\S/mu.test(text)
+    || /^>\s+\S/mu.test(text)
+    || /^ {0,3}(?:[-*+]|\d+\.)\s+\S/mu.test(text)
+    || /\[[^\]]+\]\([^)]+\)/u.test(text)
+    || /(?:^|\n)```/u.test(text)
+    || /\*\*[^*\n][\s\S]*?\*\*/u.test(text)
+}
+
 function formatFileHeader(f: AttachedFile): string {
   const parts: string[] = [`[FILE: ${f.name}`, `kind=${f.kind}`]
   parts.push(`size=${f.original_size_bytes}B`)
@@ -462,6 +531,7 @@ function formatFileHeader(f: AttachedFile): string {
  * quoted form to keep the parser happy.
  */
 export function formatInsertion(c: MentionCandidate): string {
-  const needsQuote = /[\s"@]/.test(c.name)
-  return needsQuote ? `@"${c.name}" ` : `@${c.name} `
+  const label = c.kind === 'file' ? c.path || c.name : c.name
+  const needsQuote = /[\s"@]/.test(label)
+  return needsQuote ? `@"${label}" ` : `@${label} `
 }

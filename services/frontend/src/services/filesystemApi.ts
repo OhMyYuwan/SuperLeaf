@@ -111,6 +111,21 @@ export const filesystemApi = {
       { method: 'DELETE' },
     ),
 
+  importProjectZip: async (
+    file: File,
+  ): Promise<{ ok: boolean; doc_count: number; file_count: number; byte_count: number }> => {
+    const form = new FormData()
+    form.append('file', file)
+    const resp = await fetch(`${BASE}/api/project/import.zip`, {
+      method: 'POST',
+      body: form,
+      headers: formDataHeaders(),
+      credentials: 'include',
+    })
+    if (!resp.ok) throw new Error(await uploadErrorMessage(resp, `import zip ${resp.status}`))
+    return resp.json()
+  },
+
   uploadFile: async (
     file: File,
     folderId?: string | null,
@@ -121,16 +136,10 @@ export const filesystemApi = {
     const form = new FormData()
     form.append('file', file)
     if (folderId) form.append('folder_id', folderId)
-    // buildHeaders injects X-Project-Id, but for FormData we must let the
-    // browser set Content-Type (multipart boundary). So copy just X-Project-Id.
-    const projectHeaders = buildHeaders()
-    const headers: Record<string, string> = {}
-    const pid = projectHeaders.get('X-Project-Id')
-    if (pid) headers['X-Project-Id'] = pid
     const resp = await fetch(`${BASE}/api/files/upload`, {
       method: 'POST',
       body: form,
-      headers,
+      headers: formDataHeaders(),
       credentials: 'include',
     })
     if (!resp.ok) throw new Error(`upload ${resp.status}`)
@@ -158,4 +167,26 @@ export const filesystemApi = {
   fileUrl: (fileId: string) => `${BASE}/api/files/${encodeURIComponent(fileId)}`,
 
   exportZipUrl: (projectId: string) => `${BASE}/api/projects/${projectId}/export.zip`,
+}
+
+function formDataHeaders(): Record<string, string> {
+  // buildHeaders injects project/client ids, but for FormData we must let the
+  // browser set Content-Type (multipart boundary). Copy only custom headers.
+  const source = buildHeaders()
+  const headers: Record<string, string> = {}
+  for (const name of ['X-Project-Id', 'X-Client-Id']) {
+    const value = source.get(name)
+    if (value) headers[name] = value
+  }
+  return headers
+}
+
+async function uploadErrorMessage(resp: Response, fallback: string): Promise<string> {
+  try {
+    const payload = await resp.json() as { detail?: unknown }
+    if (typeof payload.detail === 'string' && payload.detail) return payload.detail
+  } catch {
+    // fall through
+  }
+  return fallback
 }

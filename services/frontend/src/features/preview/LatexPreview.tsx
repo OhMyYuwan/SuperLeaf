@@ -285,28 +285,6 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
         </div>
       )}
 
-      {lastResult && lastResult.ok && (
-        <div className="latex-preview-success-bar">
-          <span>
-            ✓ 编译成功 · {lastResult.compiler} · {(lastResult.duration_ms / 1000).toFixed(1)}s
-          </span>
-          <button
-            className="ghost-btn small"
-            onClick={() => {
-              setShowLog((v) => !v)
-              if (!fullLog) loadFullLog()
-            }}
-          >
-            <FileText size={12} />
-            日志
-            {showLog ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
-          {showLog && (
-            <pre className="latex-preview-log">{fullLog ?? lastResult.log_tail}</pre>
-          )}
-        </div>
-      )}
-
       <div
         className="latex-preview-pdf"
         ref={pdfScrollRef}

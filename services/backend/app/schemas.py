@@ -128,6 +128,17 @@ class SkillIn(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class SkillRecipeIn(BaseModel):
+    name: str = Field(default="", max_length=128)
+    description: str = ""
+    repo_url: str = Field(default="", max_length=1024)
+    source_url: str = Field(default="", max_length=1200)
+    source_ref: str = Field(default="", max_length=128)
+    skill_name: str = Field(default="", max_length=256)
+    install_command: str = Field(default="", max_length=2048)
+    tags: list[str] = Field(default_factory=list)
+
+
 class SkillPatch(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -170,6 +181,11 @@ class SkillMarketplaceEntryOut(BaseModel):
     entry_url: str
     readme_url: str = ""
     checksum_sha256: str
+    repo_url: str = ""
+    source_url: str = ""
+    source_ref: str = ""
+    skill_name: str = ""
+    install_command: str = ""
     installed: bool = False
     installed_skill_id: str | None = None
     installed_version: str = ""
@@ -186,13 +202,56 @@ class SkillMarketplaceInstallOut(BaseModel):
     marketplace_entry: SkillMarketplaceEntryOut
 
 
+class NativeAgentSkillRecipeIn(BaseModel):
+    source: str = Field(default="marketplace", max_length=32)
+    marketplace_id: str = Field(default="", max_length=256)
+    repo_url: str = Field(default="", max_length=1024)
+    source_url: str = Field(default="", max_length=1200)
+    source_ref: str = Field(default="", max_length=128)
+    skill_name: str = Field(default="", max_length=256)
+    install_command: str = Field(default="", max_length=2048)
+
+
+class NativeAgentSkillInstallOut(BaseModel):
+    id: str
+    project_id: str
+    user_id: str
+    agent_id: str
+    skill_id: str = ""
+    source: str
+    marketplace_id: str
+    repo_url: str
+    source_ref: str
+    skill_name: str
+    folder_name: str
+    install_command: str
+    folder_path: str
+    manifest: dict
+    status: str
+    install_log: str
+    created_at: datetime
+    updated_at: datetime
+    installed_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class AgentWorkspaceFileOut(BaseModel):
+    path: str
+    type: str
+    size: int = 0
+
+
 class NativeAgentIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str = ""
     provider_id: str = ""
     model: str = Field(default="", max_length=128)
     instructions: str = ""
+    agent_md: str = ""
     skill_ids: list[str] = Field(default_factory=list)
+    skill_recipes: list[NativeAgentSkillRecipeIn] = Field(default_factory=list)
     output_contract: str = Field(default="annotation", pattern="^(annotation|plan|workflow|freeform)$")
     runtime_config: dict = Field(default_factory=dict)
     is_enabled: bool = True
@@ -204,7 +263,9 @@ class NativeAgentPatch(BaseModel):
     provider_id: str | None = None
     model: str | None = None
     instructions: str | None = None
+    agent_md: str | None = None
     skill_ids: list[str] | None = None
+    skill_recipes: list[NativeAgentSkillRecipeIn] | None = None
     output_contract: str | None = Field(default=None, pattern="^(annotation|plan|workflow|freeform)$")
     runtime_config: dict | None = None
     is_enabled: bool | None = None
@@ -219,7 +280,11 @@ class NativeAgentOut(BaseModel):
     description: str
     model: str
     instructions: str
+    agent_md: str
     skill_ids: list[str]
+    workspace_path: str
+    setup_status: str
+    setup_log: str
     output_contract: str
     runtime_config: dict
     is_enabled: bool

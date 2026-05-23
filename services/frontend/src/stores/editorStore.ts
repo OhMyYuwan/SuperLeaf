@@ -17,6 +17,14 @@ interface EditorStoreState {
     documentId: string,
     range: { from: number; to: number },
   ) => Selection | null
+  updateViewState: (
+    documentId: string,
+    viewState: {
+      cursor: number
+      selectionRange: { from: number; to: number }
+      viewport: { from: number; to: number; firstVisibleLine?: number }
+    },
+  ) => void
   clearSelection: (documentId: string) => void
   getSelection: (documentId: string) => Selection | null
 }
@@ -27,17 +35,19 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   updateSelection: (documentId, range) => {
     const doc = useDocumentStore.getState().documents[documentId]
     if (!doc) return null
+    const selectionRange = clampRange(range, doc.content.length)
 
-    const selection = range.from === range.to
+    const selection = selectionRange.from === selectionRange.to
       ? null
-      : extractSelection(doc, range)
+      : extractSelection(doc, selectionRange)
 
     set((state) => {
       const prev = state.states[documentId]
       const next: EditorState = {
         documentId,
         selection,
-        cursor: range.to,
+        selectionRange,
+        cursor: selectionRange.to,
         viewport: prev?.viewport ?? { from: 0, to: doc.content.length },
         focusedParagraphId: selection?.paragraphIds[0] ?? prev?.focusedParagraphId,
       }
@@ -47,6 +57,34 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     return selection
   },
 
+  updateViewState: (documentId, viewState) => {
+    const doc = useDocumentStore.getState().documents[documentId]
+    if (!doc) return
+    const selectionRange = clampRange(viewState.selectionRange, doc.content.length)
+
+    set((state) => {
+      const prev = state.states[documentId]
+      const sameSelectionRange =
+        prev?.selectionRange.from === selectionRange.from &&
+        prev.selectionRange.to === selectionRange.to
+      let selection: Selection | null = null
+      if (sameSelectionRange) {
+        selection = prev.selection
+      } else if (selectionRange.from !== selectionRange.to) {
+        selection = extractSelection(doc, selectionRange)
+      }
+      const next: EditorState = {
+        documentId,
+        selection,
+        selectionRange,
+        cursor: Math.max(0, Math.min(viewState.cursor, doc.content.length)),
+        viewport: viewState.viewport,
+        focusedParagraphId: selection?.paragraphIds[0] ?? prev?.focusedParagraphId,
+      }
+      return { states: { ...state.states, [documentId]: next } }
+    })
+  },
+
   clearSelection: (documentId) => {
     set((state) => {
       const prev = state.states[documentId]
@@ -54,7 +92,11 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
       return {
         states: {
           ...state.states,
-          [documentId]: { ...prev, selection: null },
+          [documentId]: {
+            ...prev,
+            selection: null,
+            selectionRange: { from: prev.cursor, to: prev.cursor },
+          },
         },
       }
     })
@@ -64,3 +106,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     return get().states[documentId]?.selection ?? null
   },
 }))
+
+function clampRange(range: { from: number; to: number }, docLength: number) {
+  const from = Math.max(0, Math.min(range.from, docLength))
+  const to = Math.max(0, Math.min(range.to, docLength))
+  return from <= to ? { from, to } : { from: to, to: from }
+}

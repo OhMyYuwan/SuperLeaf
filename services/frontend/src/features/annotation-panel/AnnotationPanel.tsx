@@ -20,6 +20,7 @@ import { useAnnotationStore, type AnnotationItem } from '../../stores/annotation
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useUserStore } from '../../stores/userStore'
+import { useDocumentStore } from '../../stores/documentStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
 import { EvaluationPanel } from './EvaluationPanel'
@@ -74,6 +75,7 @@ export function AnnotationPanel({
   const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const definitions = useWorkflowStore((s) => s.definitions)
   const tree = useFilesystemStore((s) => s.tree)
+  const documents = useDocumentStore((s) => s.documents)
   const [showArchived, setShowArchived] = useState(false)
   const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
 
@@ -186,6 +188,7 @@ export function AnnotationPanel({
         userMessage: contentWithoutMentions,
         threadHistory: [],
         attachedFiles,
+        documentFormat: documents[documentId]?.format,
       })
 
       // Fire the workflow; the run store will append to this card's thread.
@@ -325,6 +328,7 @@ function AnnotationCard({
   const isRunning = useWorkflowStore((s) => s.running[item.workflowId])
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
+  const documentFormat = useDocumentStore((s) => s.documents[item.documentId]?.format)
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -416,6 +420,7 @@ function AnnotationCard({
         agentName: m.agentName ?? item.agentName,
       })),
       attachedFiles,
+      documentFormat,
     })
 
     await runWorkflow(

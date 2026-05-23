@@ -18,12 +18,15 @@
  *
  * Duplicate-id filtering: events carry a UUID `id`. We remember the last
  * 128 ids to ignore replays that may happen during a transient reconnect.
+ * Events also carry a best-effort per-project `seq`; the bridge can use gaps
+ * as a signal to reload authoritative project state.
  */
 
 import { BACKEND_BASE, getClientId } from './backendApi'
 
 export interface ProjectEvent {
   id: string
+  seq?: number
   type: string
   ts: string
   project_id: string
@@ -32,6 +35,7 @@ export interface ProjectEvent {
 }
 
 type Handler = (event: ProjectEvent) => void
+type ReconnectHandler = () => void
 
 const SEEN_CAP = 128
 
@@ -39,10 +43,12 @@ class Stream {
   private es: EventSource | null = null
   private projectId: string | null = null
   private handler: Handler | null = null
+  private reconnectListeners: Set<ReconnectHandler> = new Set()
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private backoffMs = 1000
   private seen: string[] = []
   private stopped = true
+  private hadDisconnectSinceLastHydrate = false
 
   start(projectId: string, handler: Handler): void {
     if (this.projectId === projectId && this.es && this.es.readyState !== EventSource.CLOSED) {
@@ -54,6 +60,13 @@ class Stream {
     this.projectId = projectId
     this.handler = handler
     this.connect()
+  }
+
+  /** Register a callback that fires when the SSE stream reconnects after a
+   *  disconnect. Returns an unsubscribe function. */
+  onReconnect(fn: ReconnectHandler): () => void {
+    this.reconnectListeners.add(fn)
+    return () => this.reconnectListeners.delete(fn)
   }
 
   stop(): void {
@@ -112,6 +125,7 @@ class Stream {
       'annotation.updated',
       'annotation.deleted',
       'doc.updated',
+      'project.tree.changed',
     ]
     for (const t of KNOWN) {
       es.addEventListener(t, onMessage as EventListener)
@@ -122,6 +136,11 @@ class Stream {
     })
     es.addEventListener('ylw.hello', () => {
       this.backoffMs = 1000
+      // If we had a prior disconnect, notify listeners so they can hydrate
+      // immediately rather than waiting for the next focus event.
+      if (this.hadDisconnectSinceLastHydrate) {
+        for (const fn of this.reconnectListeners) fn()
+      }
     })
 
     es.onerror = () => {
@@ -130,10 +149,24 @@ class Stream {
       es.close()
       this.es = null
       if (this.stopped) return
+      // Mark that we had a disconnect so the next focus/visibility event
+      // triggers a full hydrate to catch up on any missed SSE events.
+      this.hadDisconnectSinceLastHydrate = true
       const delay = this.backoffMs
       this.backoffMs = Math.min(this.backoffMs * 2, 30_000)
       this.reconnectTimer = setTimeout(() => this.connect(), delay)
     }
+  }
+
+  /** Returns true if the SSE stream has disconnected since the last hydrate.
+   *  Used by WorkspacePage to decide whether a focus-triggered hydrate is needed. */
+  needsHydrate(): boolean {
+    return this.hadDisconnectSinceLastHydrate
+  }
+
+  /** Called by annotationStore.hydrateForDoc after a successful hydrate. */
+  markHydrated(): void {
+    this.hadDisconnectSinceLastHydrate = false
   }
 }
 

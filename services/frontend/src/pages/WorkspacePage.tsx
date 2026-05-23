@@ -11,7 +11,7 @@
  * stale doc/file/annotation state from the prior project for one tick.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import { Topbar } from '../features/topbar'
@@ -39,10 +39,17 @@ import { useProjectStore } from '../stores/projectStore'
 import { useUserStore } from '../stores/userStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
+import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesystemApi'
+import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
-import type { DecorationSpec, DocChangeInfo } from '../features/latex-editor'
+import type { DecorationSpec, DocChangeInfo, EditorRestoreState } from '../features/latex-editor'
+import { collectLatexCitationCompletions } from '../features/latex-editor/latex-completion-data'
+import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
+const OUTLINE_COLLAPSED_HEIGHT = '44px'
+const DEFAULT_REVIEW_PROMPT =
+  '请直接用 Markdown 针对以下文本给出清晰、可执行的评审意见。不要输出 JSON，也不要拆分 annotations/suggestions/risks。'
 
 export function WorkspacePage() {
   const { projectId = '' } = useParams<{ projectId: string }>()
@@ -55,12 +62,17 @@ export function WorkspacePage() {
   const refreshFromBackend = useDocumentStore((s) => s.refreshFromBackend)
   const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
   const flushPendingSave = useDocumentStore((s) => s.flushPendingSave)
+  const upsertBackendDoc = useDocumentStore((s) => s.upsertFromBackendDoc)
   const saveStatusMap = useDocumentStore((s) => s.saveStatus)
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
+  const updateEditorViewState = useEditorStore((s) => s.updateViewState)
   const activeSelection = useEditorStore((s) =>
     activeDocumentId ? s.states[activeDocumentId]?.selection ?? null : null,
   )
+  const activeEditorRestoreState = activeDocumentId
+    ? useEditorStore.getState().states[activeDocumentId] ?? null
+    : null
 
   // Filesystem tree ----------------------------------------------------------
   const tree = useFilesystemStore((s) => s.tree)
@@ -76,6 +88,7 @@ export function WorkspacePage() {
   const moveEntity = useFilesystemStore((s) => s.moveEntity)
   const uploadFile = useFilesystemStore((s) => s.uploadFile)
   const uploadFolder = useFilesystemStore((s) => s.uploadFolder)
+  const uploadProjectZip = useFilesystemStore((s) => s.uploadProjectZip)
   const renameProject = useFilesystemStore((s) => s.renameProject)
   const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
   const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
@@ -114,7 +127,12 @@ export function WorkspacePage() {
   // UI-only state -----------------------------------------------------------
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null)
-  const [editorScrollTo, setEditorScrollTo] = useState<{ pos: number; to?: number; seq: number } | null>(null)
+  const [editorScrollTo, setEditorScrollTo] = useState<{
+    documentId: string
+    pos: number
+    to?: number
+    seq: number
+  } | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
   const [pendingComment, setPendingComment] = useState<{
     range: { from: number; to: number }
@@ -122,7 +140,9 @@ export function WorkspacePage() {
   } | null>(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false)
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
+  const loadingBibDocIds = useRef(new Set<string>())
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
 
@@ -150,6 +170,17 @@ export function WorkspacePage() {
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
+  const activeEditorScrollTo =
+    activeDocumentId && editorScrollTo?.documentId === activeDocumentId ? editorScrollTo : null
+  const citationCompletions = useMemo(() => {
+    const sources = Object.values(documents)
+      .filter(isCitationSourceDoc)
+      .map((doc) => ({
+        name: doc.metadata.title,
+        content: doc.content,
+      }))
+    return collectLatexCitationCompletions(sources)
+  }, [documents])
 
   const decorationSpecs: DecorationSpec[] = useMemo(() => {
     if (!activeDocumentId) return []
@@ -172,6 +203,29 @@ export function WorkspacePage() {
     if (!activeDocumentId) return
     void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
   }, [activeDocumentId, projectReady])
+
+  // Overleaf keeps bibliography keys in project metadata. Our project tree is
+  // backed by backend docs, so load `.bib` docs quietly into the document cache
+  // and derive citation metadata from their live content.
+  useEffect(() => {
+    if (!projectReady || !tree) return
+    const bibDocs = collectBibTreeDocs(tree.root)
+    for (const bibDoc of bibDocs) {
+      if (documents[bibDoc.id]) continue
+      if (loadingBibDocIds.current.has(bibDoc.id)) continue
+      loadingBibDocIds.current.add(bibDoc.id)
+      void filesystemApi.getDoc(bibDoc.id)
+        .then((doc) => {
+          upsertBackendDoc(doc)
+        })
+        .catch((err) => {
+          console.warn('[WorkspacePage] failed to load bibliography doc', bibDoc.name, err)
+        })
+        .finally(() => {
+          loadingBibDocIds.current.delete(bibDoc.id)
+        })
+    }
+  }, [documents, projectReady, tree, upsertBackendDoc])
 
   // Collaboration: connect/disconnect Yjs when the active document changes.
   const currentUser = useUserStore((s) => s.currentUser)
@@ -214,27 +268,42 @@ export function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDocumentId, projectReady])
 
-  // Poor-man's multi-device sync: when the tab regains focus or visibility,
-  // re-hydrate the active doc + its annotations so changes made on another
-  // device/browser show up. Overleaf does this via WebSocket reconnection
-  // catch-up; we'll add real-time in phase 2.
+  // Multi-device catch-up: when the tab regains focus or visibility, hydrate
+  // annotations only if the SSE stream had a disconnect since the last hydrate.
+  // SSE already delivers all incremental changes in real time, so a full
+  // hydrate on every focus is wasteful (causes 3 extra requests per window
+  // switch). We only need it to catch up on events missed during a disconnect.
+  // On reconnect we also hydrate immediately rather than waiting for the next
+  // focus, so the user never sees stale decorations after a network blip.
   useEffect(() => {
     if (!projectReady) return
-    if (!activeDocumentId) return
+    const hydrateIfNeeded = () => {
+      if (activeDocumentId && projectEventStream.needsHydrate()) {
+        void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      }
+    }
     const refresh = () => {
-      void refreshFromBackend(activeDocumentId)
-      void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      void loadTree()
+      if (activeDocumentId) void refreshFromBackend(activeDocumentId)
+      hydrateIfNeeded()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refresh()
     }
+    // Hydrate immediately on SSE reconnect — don't wait for the next focus.
+    const unsubReconnect = projectEventStream.onReconnect(() => {
+      if (activeDocumentId) {
+        void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+      }
+    })
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', onVisibility)
+      unsubReconnect()
     }
-  }, [activeDocumentId, projectReady, refreshFromBackend])
+  }, [activeDocumentId, loadTree, projectReady, refreshFromBackend])
 
   // Bootstrap on project switch ---------------------------------------------
   useEffect(() => {
@@ -324,7 +393,7 @@ export function WorkspacePage() {
       return
     }
     const selectionText = activeSelection.text
-    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    const userPrompt = instruction.trim() || DEFAULT_REVIEW_PROMPT
     runWorkflow(workflowId, {
       document_id: activeDocumentId,
       range_start: activeSelection.from,
@@ -350,7 +419,7 @@ export function WorkspacePage() {
       return
     }
     const selectionText = activeSelection.text
-    const userPrompt = instruction.trim() || '请针对以下文本给出评审意见。'
+    const userPrompt = instruction.trim() || DEFAULT_REVIEW_PROMPT
     executeDefinition(definitionId, {
       document_id: activeDocumentId,
       range_start: activeSelection.from,
@@ -395,6 +464,17 @@ export function WorkspacePage() {
     updateSelection(activeDocumentId, { from: info.from, to: info.to })
   }
 
+  const handleEditorViewStateChange = (documentId: string, state: EditorRestoreState) => {
+    updateEditorViewState(documentId, state)
+    setEditorScrollTo((prev) => {
+      if (!prev || prev.documentId !== documentId) return prev
+      const expectedTo = prev.to ?? prev.pos
+      return state.selectionRange.from === prev.pos && state.selectionRange.to === expectedTo
+        ? null
+        : prev
+    })
+  }
+
   const handleDecorationClick = (id: string) => {
     setActiveAnnotationId((prev) => (prev === id ? null : id))
   }
@@ -402,7 +482,7 @@ export function WorkspacePage() {
   const handlePreviewSourceJump = (jump: SourceJump) => {
     if (!activeDocumentId) return
     const to = jump.selectText ? jump.pos + jump.selectText.length : undefined
-    setEditorScrollTo({ pos: jump.pos, to, seq: Date.now() })
+    setEditorScrollTo({ documentId: activeDocumentId, pos: jump.pos, to, seq: Date.now() })
   }
 
   return (
@@ -416,7 +496,7 @@ export function WorkspacePage() {
       <main className="workspace">
         <PanelGroup
           orientation="horizontal"
-          style={{ height: '100%' }}
+          className="workspace-panel-group"
           onLayoutChanged={(layout) => handlePanelLayout(Object.values(layout))}
         >
           {leftPanelVisible && !leftCollapsed && (
@@ -424,30 +504,60 @@ export function WorkspacePage() {
               <Panel defaultSize={20} minSize={OUTER_PANEL_AUTO_COLLAPSE_PERCENT}>
                 <ErrorBoundary label="文件树">
                   <div className="panel left-panel">
-                  <FileTree
-                    tree={tree}
-                    activeDocId={activeDocumentId}
-                    activeFileId={activePreviewFile?.id ?? null}
-                    expandedFolderIds={expandedFolderIds}
-                    loading={treeLoading}
-                    error={treeError}
-                    onToggleFolder={toggleExpanded}
-                    onOpenDoc={handleOpenDoc}
-                    onOpenFile={handleOpenFile}
-                    onCreateFolder={createFolder}
-                    onCreateDoc={createDoc}
-                    onRenameEntity={renameEntity}
-                    onDeleteEntity={deleteEntity}
-                    onMoveEntity={moveEntity}
-                    onUploadFile={uploadFile}
-                    onUploadFolder={uploadFolder}
-                    onRenameProject={renameProject}
-                  />
-                  <OutlineList
-                    sections={activeDoc ? activeDoc.structure.sections : null}
-                    docId={activeDocumentId}
-                    onSectionClick={(sec) => setEditorScrollTo({ pos: sec.range.from, seq: Date.now() })}
-                  />
+                    <PanelGroup
+                      key={outlineCollapsed ? 'left-outline-collapsed' : 'left-outline-open'}
+                      orientation="vertical"
+                      className="left-panel-split"
+                    >
+                      <Panel
+                        defaultSize={outlineCollapsed ? undefined : '54%'}
+                        minSize={outlineCollapsed ? '160px' : '32%'}
+                      >
+                        <FileTree
+                          tree={tree}
+                          activeDocId={activeDocumentId}
+                          activeFileId={activePreviewFile?.id ?? null}
+                          expandedFolderIds={expandedFolderIds}
+                          loading={treeLoading}
+                          error={treeError}
+                          onToggleFolder={toggleExpanded}
+                          onOpenDoc={handleOpenDoc}
+                          onOpenFile={handleOpenFile}
+                          onCreateFolder={createFolder}
+                          onCreateDoc={createDoc}
+                          onRenameEntity={renameEntity}
+                          onDeleteEntity={deleteEntity}
+                          onMoveEntity={moveEntity}
+                          onUploadFile={uploadFile}
+                          onUploadFolder={uploadFolder}
+                          onUploadProjectZip={uploadProjectZip}
+                          onRenameProject={renameProject}
+                        />
+                      </Panel>
+                      {!outlineCollapsed && (
+                        <PanelResizeHandle className="resize-handle vertical" />
+                      )}
+                      <Panel
+                        defaultSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '46%'}
+                        minSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '28%'}
+                        maxSize={outlineCollapsed ? OUTLINE_COLLAPSED_HEIGHT : '68%'}
+                      >
+                        <OutlineList
+                          sections={activeDoc ? activeDoc.structure.sections : null}
+                          docId={activeDocumentId}
+                          collapsed={outlineCollapsed}
+                          onToggleCollapsed={() => setOutlineCollapsed((v) => !v)}
+                          onSectionClick={(sec) => {
+                            if (!activeDocumentId) return
+                            setEditorScrollTo({
+                              documentId: activeDocumentId,
+                              pos: sec.range.from,
+                              seq: Date.now(),
+                            })
+                          }}
+                        />
+                      </Panel>
+                    </PanelGroup>
                   </div>
                 </ErrorBoundary>
               </Panel>
@@ -475,11 +585,15 @@ export function WorkspacePage() {
 
           <Panel defaultSize={50} minSize={36}>
             <div className="panel editor-panel">
-              <div style={{ display: 'flex', alignItems: 'center' }}>
+              <div className="editor-toolbar-shell">
                 <EditorToolbar doc={activeDoc} selection={activeSelection} />
                 <CollaborationStatus />
               </div>
-              <PanelGroup orientation="horizontal" style={{ height: 'calc(100% - 48px)' }}>
+              <PanelGroup
+                orientation="horizontal"
+                className="editor-content-split"
+                style={{ flex: 1, minHeight: 0, height: 'auto' }}
+              >
                 {annotationColumnVisible && (
                   <>
                     <Panel defaultSize={22} minSize={16}>
@@ -509,10 +623,13 @@ export function WorkspacePage() {
                           decorations={decorationSpecs}
                           activeAnnotationId={activeAnnotationId}
                           hoveredAnnotationId={hoveredAnnotationId}
-                          scrollTo={editorScrollTo}
+                          scrollTo={activeEditorScrollTo}
+                          restoreState={activeEditorRestoreState}
+                          citationCompletions={citationCompletions}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}
+                          onViewStateChange={handleEditorViewStateChange}
                           onDecorationClick={handleDecorationClick}
                           onAddComment={(p) => {
                             setPendingComment(p)
@@ -587,9 +704,14 @@ export function WorkspacePage() {
                   onUpdateDefinition={updateDefinition}
                   onDeleteDefinition={deleteDefinition}
                   onReloadWorkflows={loadWorkflows}
-                  onJumpToRange={(range) =>
-                    setEditorScrollTo({ pos: range.from, seq: Date.now() })
-                  }
+                  onJumpToRange={(range) => {
+                    if (!activeDocumentId) return
+                    setEditorScrollTo({
+                      documentId: activeDocumentId,
+                      pos: range.from,
+                      seq: Date.now(),
+                    })
+                  }}
                 />
                     </ErrorBoundary>
                   </Panel>
@@ -601,4 +723,24 @@ export function WorkspacePage() {
       </main>
     </div>
   )
+}
+
+function collectBibTreeDocs(folder: TreeFolder): TreeDoc[] {
+  return [
+    ...folder.docs.filter((doc) => isBibDocumentName(doc.name)),
+    ...folder.folders.flatMap((child) => collectBibTreeDocs(child)),
+  ]
+}
+
+function isCitationSourceDoc(doc: Document): boolean {
+  const title = doc.metadata.title.toLowerCase()
+  return (
+    isBibDocumentName(title) ||
+    /\\bibitem(?:\[[^\]]*])?\{[^}]+\}/.test(doc.content) ||
+    /@[A-Za-z]+\s*[{(]\s*[^,\s{}()]+,/.test(doc.content)
+  )
+}
+
+function isBibDocumentName(name: string): boolean {
+  return name.toLowerCase().endsWith('.bib')
 }

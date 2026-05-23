@@ -21,6 +21,8 @@ import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import { setLatexCompletionDataEffect } from './latex-language'
+import type { LatexCitationCompletion, LatexCompletionData } from './latex-completion-data'
 import { collaborationExtensions } from './collaboration-extensions'
 import {
   annotationDecorationsExtension,
@@ -48,12 +50,25 @@ export interface SelectionInfo {
   coords: { x: number; y: number } | null
 }
 
+export interface EditorRestoreState {
+  cursor: number
+  selectionRange: { from: number; to: number }
+  viewport: {
+    from: number
+    to: number
+    firstVisibleLine?: number
+  }
+}
+
 export interface LatexEditorProps {
+  documentId: string
   value: string
   format: EditorFormat
   onChange: (value: string) => void
   onSelectionChange?: (info: SelectionInfo) => void
   onDocChange?: (changes: DocChangeInfo[]) => void
+  restoreState?: EditorRestoreState | null
+  onViewStateChange?: (documentId: string, state: EditorRestoreState) => void
   decorations?: DecorationSpec[]
   activeDecorationId?: string | null
   /** When set, the matching decoration flashes (used for panel hover preview). */
@@ -68,14 +83,18 @@ export interface LatexEditorProps {
   yText?: Y.Text
   awareness?: Awareness
   collaborating?: boolean
+  citationCompletions?: LatexCitationCompletion[]
 }
 
 export function LatexEditor({
+  documentId,
   value,
   format,
   onChange,
   onSelectionChange,
   onDocChange,
+  restoreState,
+  onViewStateChange,
   decorations,
   activeDecorationId,
   panelHoverId,
@@ -86,16 +105,30 @@ export function LatexEditor({
   yText,
   awareness,
   collaborating,
+  citationCompletions,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const documentIdRef = useRef(documentId)
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelectionChange)
   const onDocChangeRef = useRef(onDocChange)
+  const onViewStateRef = useRef(onViewStateChange)
+  const restoreStateRef = useRef(restoreState)
   const onDecorationClickRef = useRef(onDecorationClick)
+  const viewStateFrameRef = useRef<number | null>(null)
   const languageCompartment = useMemo(() => new Compartment(), [])
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
+  const completionData = useMemo<LatexCompletionData>(
+    () => ({ citations: citationCompletions ?? [] }),
+    [citationCompletions],
+  )
+  const completionDataRef = useRef(completionData)
   const [sourceJumpFlash, setSourceJumpFlash] = useState(false)
+
+  useEffect(() => {
+    documentIdRef.current = documentId
+  }, [documentId])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -110,23 +143,70 @@ export function LatexEditor({
   }, [onDocChange])
 
   useEffect(() => {
+    onViewStateRef.current = onViewStateChange
+  }, [onViewStateChange])
+
+  useEffect(() => {
+    if (restoreState) {
+      restoreStateRef.current = restoreState
+    } else if (!restoreStateRef.current) {
+      restoreStateRef.current = null
+    }
+  }, [restoreState])
+
+  useEffect(() => {
     onDecorationClickRef.current = onDecorationClick
   }, [onDecorationClick])
+
+  const emitViewState = (view: EditorView) => {
+    const state = buildEditorViewState(view)
+    restoreStateRef.current = state
+    onViewStateRef.current?.(documentIdRef.current, state)
+  }
+
+  const emitCachedViewState = (view: EditorView) => {
+    const cached = restoreStateRef.current
+    if (!cached) {
+      emitViewState(view)
+      return
+    }
+    const selection = view.state.selection.main
+    const state: EditorRestoreState = {
+      ...cached,
+      cursor: selection.head,
+      selectionRange: {
+        from: selection.from,
+        to: selection.to,
+      },
+    }
+    restoreStateRef.current = state
+    onViewStateRef.current?.(documentIdRef.current, state)
+  }
+
+  const scheduleViewStateEmit = (view: EditorView) => {
+    if (!onViewStateRef.current || viewStateFrameRef.current != null) return
+    viewStateFrameRef.current = window.requestAnimationFrame(() => {
+      viewStateFrameRef.current = null
+      emitViewState(view)
+    })
+  }
 
   useEffect(() => {
     if (!containerRef.current) return
 
     const isCollab = !!(collaborating && yText && awareness)
+    const initialDoc = isCollab ? yText!.toString() : value
 
     const startState = EditorState.create({
       // In collab mode, use Y.Text's current content as the initial doc.
       // y-codemirror.next only observes future changes — it does NOT push
       // existing Y.Text content into the editor on init.
-      doc: isCollab ? yText!.toString() : value,
+      doc: initialDoc,
+      selection: selectionSpecFromRestore(restoreStateRef.current, initialDoc.length),
       extensions: [
         ...baseExtensions({ includeHistory: !isCollab }),
         ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
-        languageCompartment.of(languageFor(format)),
+        languageCompartment.of(languageFor(format, completionData)),
         shortcutsCompartment.of(shortcutKeymapFor(format)),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
@@ -161,6 +241,14 @@ export function LatexEditor({
               coords,
             })
           }
+          if (
+            update.docChanged ||
+            update.selectionSet ||
+            update.viewportChanged ||
+            update.geometryChanged
+          ) {
+            scheduleViewStateEmit(update.view)
+          }
         }),
       ],
     })
@@ -172,7 +260,21 @@ export function LatexEditor({
 
     viewRef.current = view
 
+    const handleScroll = () => emitViewState(view)
+    view.scrollDOM.addEventListener('scroll', handleScroll, { passive: true })
+    const restoreFrame = window.requestAnimationFrame(() => {
+      restoreEditorViewPosition(view, restoreStateRef.current)
+      emitViewState(view)
+    })
+
     return () => {
+      view.scrollDOM.removeEventListener('scroll', handleScroll)
+      window.cancelAnimationFrame(restoreFrame)
+      if (viewStateFrameRef.current != null) {
+        window.cancelAnimationFrame(viewStateFrameRef.current)
+        viewStateFrameRef.current = null
+      }
+      emitCachedViewState(view)
       view.destroy()
       viewRef.current = null
     }
@@ -199,11 +301,21 @@ export function LatexEditor({
     if (!view) return
     view.dispatch({
       effects: [
-        languageCompartment.reconfigure(languageFor(format)),
+        languageCompartment.reconfigure(languageFor(format, completionDataRef.current)),
         shortcutsCompartment.reconfigure(shortcutKeymapFor(format)),
       ],
     })
   }, [format, languageCompartment, shortcutsCompartment])
+
+  // Push project-level completion metadata into the LaTeX language extension.
+  useEffect(() => {
+    completionDataRef.current = completionData
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: setLatexCompletionDataEffect.of(completionData),
+    })
+  }, [completionData])
 
   // Push decoration specs into the editor.
   useEffect(() => {
@@ -274,4 +386,68 @@ function extractChanges(changeSet: ChangeSet): DocChangeInfo[] {
     out.push({ from: fromA, to: toA, insertLen: inserted.length })
   })
   return out
+}
+
+function buildEditorViewState(view: EditorView): EditorRestoreState {
+  const selection = view.state.selection.main
+  return {
+    cursor: selection.head,
+    selectionRange: {
+      from: selection.from,
+      to: selection.to,
+    },
+    viewport: {
+      from: view.viewport.from,
+      to: view.viewport.to,
+      firstVisibleLine: getFirstVisibleLine(view),
+    },
+  }
+}
+
+function restoreEditorViewPosition(view: EditorView, restoreState?: EditorRestoreState | null) {
+  if (!restoreState) return
+  const selection = selectionSpecFromRestore(restoreState, view.state.doc.length)
+  const firstVisibleLine = restoreState.viewport?.firstVisibleLine
+
+  if (firstVisibleLine != null) {
+    const lineNo = Math.max(1, Math.min(firstVisibleLine, view.state.doc.lines))
+    const line = view.state.doc.line(lineNo)
+    view.dispatch({
+      selection,
+      effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 0 }),
+    })
+    return
+  }
+
+  view.dispatch({
+    selection,
+    effects: EditorView.scrollIntoView(selection.head ?? selection.anchor, { y: 'center' }),
+  })
+}
+
+function selectionSpecFromRestore(
+  restoreState: EditorRestoreState | null | undefined,
+  docLength: number,
+): { anchor: number; head?: number } {
+  if (!restoreState) return { anchor: 0 }
+  const from = clampPosition(restoreState.selectionRange.from, docLength)
+  const to = clampPosition(restoreState.selectionRange.to, docLength)
+  if (from !== to) return { anchor: from, head: to }
+  return { anchor: clampPosition(restoreState.cursor, docLength) }
+}
+
+function getFirstVisibleLine(view: EditorView): number | undefined {
+  try {
+    const { top } = view.scrollDOM.getBoundingClientRect()
+    const distanceFromDocumentTop = top - view.documentTop
+    const block = view.lineBlockAtHeight(distanceFromDocumentTop)
+    const pos = clampPosition(block.from, view.state.doc.length)
+    return view.state.doc.lineAt(pos).number
+  } catch {
+    return undefined
+  }
+}
+
+function clampPosition(pos: number, docLength: number) {
+  return Math.max(0, Math.min(pos, docLength))
 }

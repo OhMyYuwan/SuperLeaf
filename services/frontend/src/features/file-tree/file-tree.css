@@ -1,10 +1,27 @@
 .left-panel {
   padding: 14px;
-  gap: 14px;
+  gap: 0;
+}
+
+.left-panel-split {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.left-panel .resize-handle.vertical {
+  width: 100%;
+  height: 4px;
+  min-height: 4px;
+  margin: 5px 0;
+  cursor: row-resize;
+  border-radius: 999px;
 }
 
 .panel-section {
   flex: 1;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -22,9 +39,82 @@
 
 .file-list,
 .outline-list {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.tree-list,
+.outline-list {
+  scrollbar-color: rgba(226, 232, 240, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.tree-list::-webkit-scrollbar,
+.outline-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tree-list::-webkit-scrollbar-track,
+.tree-list::-webkit-scrollbar-corner,
+.outline-list::-webkit-scrollbar-track,
+.outline-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.tree-list::-webkit-scrollbar-thumb,
+.outline-list::-webkit-scrollbar-thumb {
+  background: rgba(226, 232, 240, 0.24);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+.tree-list::-webkit-scrollbar-thumb:hover,
+.outline-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 232, 240, 0.38);
+  background-clip: content-box;
+}
+
+.outline-list {
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.outline-section.collapsed {
+  justify-content: center;
+}
+
+.outline-section-title {
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.outline-title-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.outline-collapse-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.9);
+  cursor: pointer;
+}
+.outline-collapse-btn:hover {
+  background: rgba(59, 130, 246, 0.28);
+  color: #dbeafe;
 }
 
 .file-item,
@@ -148,9 +238,14 @@
   gap: 4px;
 }
 .tree-actions.inline {
-  margin-left: auto;
+  width: 0;
+  max-width: 0;
+  margin-left: 0;
+  gap: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  pointer-events: none;
+  transition: opacity 0.15s ease, max-width 0.15s ease;
 }
 
 .tree-action-btn {
@@ -171,13 +266,47 @@
 
 .tree-list {
   overflow-x: hidden;
+  overflow-x: clip;
   overflow-y: auto;
+  overscroll-behavior-x: none;
+}
+
+.tree-list::-webkit-scrollbar {
+  width: 8px;
+  height: 0;
+}
+
+.tree-list::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
+}
+
+.tree-list::-webkit-scrollbar-track:horizontal,
+.tree-list::-webkit-scrollbar-thumb:horizontal {
+  background: transparent;
+  border: 0;
+}
+
+.tree-list .tree-folder-block,
+.tree-list .tree-root-drop-target,
+.tree-list .file-item {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tree-folder-row:hover .tree-actions.inline,
 .tree-doc-row:hover .tree-actions.inline,
-.tree-file-row:hover .tree-actions.inline {
+.tree-file-row:hover .tree-actions.inline,
+.tree-folder-row:focus-within .tree-actions.inline,
+.tree-doc-row:focus-within .tree-actions.inline,
+.tree-file-row:focus-within .tree-actions.inline {
+  width: auto;
+  max-width: 180px;
+  margin-left: auto;
+  gap: 4px;
+  overflow: visible;
   opacity: 1;
+  pointer-events: auto;
 }
 
 .tree-toggle-btn,
@@ -238,7 +367,7 @@
 }
 
 /* Drag-and-drop visual feedback */
-.tree-folder-block.drag-over {
+.tree-folder-block:not(.root).drag-over {
   background: rgba(59, 130, 246, 0.1);
   outline: 1px dashed rgba(59, 130, 246, 0.6);
   outline-offset: -1px;

@@ -65,7 +65,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               role="tab"
               aria-selected={activeTab === 'account'}
             >
-              账户
+              GitHub 账户
             </button>
             <button
               className={activeTab === 'providers' ? 'active' : ''}
@@ -73,7 +73,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               role="tab"
               aria-selected={activeTab === 'providers'}
             >
-              Provider
+              Agent
             </button>
           </div>
 

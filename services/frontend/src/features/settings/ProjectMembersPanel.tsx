@@ -24,27 +24,34 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
   const isOwner = currentUserId === projectOwnerId
 
   useEffect(() => {
-    loadMembers()
-  }, [projectId])
+    let cancelled = false
 
-  const loadMembers = async () => {
-    try {
-      setLoading(true)
-      const data = await projectMemberApi.list(projectId)
-      setMembers(data)
-    } catch (err) {
-      console.error('Failed to load members:', err)
-      showToast('加载成员列表失败', { level: 'error' })
-    } finally {
-      setLoading(false)
+    const loadMembers = async () => {
+      try {
+        setLoading(true)
+        const data = await projectMemberApi.list(projectId)
+        if (cancelled) return
+        setMembers(data)
+      } catch (err) {
+        if (cancelled) return
+        console.error('Failed to load members:', err)
+        showToast('加载成员列表失败', { level: 'error' })
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
-  }
+
+    void loadMembers()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
 
   const handleRemove = async (userId: string, userName: string) => {
     if (!confirm(`确定移除成员 "${userName}"？`)) return
     try {
       await projectMemberApi.remove(projectId, userId)
-      setMembers(members.filter(m => m.user_id !== userId))
+      setMembers((current) => current.filter((member) => member.user_id !== userId))
       showToast('成员已移除', { level: 'success' })
     } catch (err) {
       console.error('Failed to remove member:', err)
@@ -55,7 +62,10 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
   const handleAdd = async (body: ProjectMemberAddIn) => {
     try {
       const newMember = await projectMemberApi.add(projectId, body)
-      setMembers([...members, newMember])
+      setMembers((current) => {
+        if (current.some((member) => member.id === newMember.id)) return current
+        return [...current, newMember]
+      })
       setShowForm(false)
       showToast('成员已添加', { level: 'success' })
     } catch (err: any) {

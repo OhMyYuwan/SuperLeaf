@@ -62,9 +62,9 @@ async def _snapshot_active_docs(base_url: str) -> None:
     # and check if collab-server has them.
     db = SessionLocal()
     try:
-        from ..models import Doc
-        from sqlalchemy import text as sql_text
         from datetime import datetime, timedelta
+
+        from ..models import Doc, Project
 
         cutoff = datetime.utcnow() - timedelta(minutes=5)
         recent_docs = (
@@ -84,7 +84,15 @@ async def _snapshot_active_docs(base_url: str) -> None:
                     if not new_text or new_text == doc.content:
                         continue
                     # Update via service to get version bump + snapshot.
-                    svc = ProjectFsService(db, project_id=doc.project_id)
+                    project = db.get(Project, doc.project_id)
+                    if project is None:
+                        logger.debug(
+                            "[collab-snapshot] skipped doc %s; project %s not found",
+                            doc.id,
+                            doc.project_id,
+                        )
+                        continue
+                    svc = ProjectFsService(db, project)
                     svc.update_doc_content(
                         doc.id,
                         new_text,

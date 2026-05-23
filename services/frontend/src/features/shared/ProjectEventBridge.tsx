@@ -22,8 +22,15 @@ import {
 } from '../../stores/annotationStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useCollaborationStore } from '../../stores/collaborationStore'
+import {
+  useFilesystemStore,
+  type ProjectTreeChangePayload,
+} from '../../stores/filesystemStore'
 import type { AnnotationDto } from '../../services/annotationEvaluationApi'
 import { projectEventStream, type ProjectEvent } from '../../services/projectEventStream'
+
+let treeReloadTimer: ReturnType<typeof setTimeout> | null = null
+let lastProjectEventSeq: number | null = null
 
 export function ProjectEventBridge() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
@@ -32,8 +39,11 @@ export function ProjectEventBridge() {
   useEffect(() => {
     if (!currentProjectId) {
       projectEventStream.stop()
+      clearScheduledTreeReload()
+      resetProjectEventSeq()
       return
     }
+    resetProjectEventSeq()
     projectEventStream.start(currentProjectId, (evt: ProjectEvent) => {
       try {
         dispatch(evt, currentUserId)
@@ -43,6 +53,8 @@ export function ProjectEventBridge() {
     })
     return () => {
       projectEventStream.stop()
+      clearScheduledTreeReload()
+      resetProjectEventSeq()
     }
   }, [currentProjectId, currentUserId])
 
@@ -51,6 +63,9 @@ export function ProjectEventBridge() {
 
 function dispatch(evt: ProjectEvent, currentUserId: string): void {
   const p = evt.payload as Record<string, unknown>
+  if (hasProjectEventSeqGap(evt)) {
+    scheduleTreeReload()
+  }
 
   // Agent-private events: skip if the annotation is private and belongs to another user.
   // Special case: if an annotation.updated event makes a previously-global annotation
@@ -131,10 +146,40 @@ function dispatch(evt: ProjectEvent, currentUserId: string): void {
       void useDocumentStore.getState().refreshFromBackend(docId)
       return
     }
+    case 'project.tree.changed': {
+      const applied = useFilesystemStore.getState().applyRemoteTreeChange(p as ProjectTreeChangePayload)
+      if (!applied) scheduleTreeReload()
+      return
+    }
     default:
       // Unknown event types are ignored; the server may add more.
       return
   }
+}
+
+function scheduleTreeReload(): void {
+  if (treeReloadTimer) clearTimeout(treeReloadTimer)
+  treeReloadTimer = setTimeout(() => {
+    treeReloadTimer = null
+    void useFilesystemStore.getState().loadTree()
+  }, 150)
+}
+
+function clearScheduledTreeReload(): void {
+  if (!treeReloadTimer) return
+  clearTimeout(treeReloadTimer)
+  treeReloadTimer = null
+}
+
+function resetProjectEventSeq(): void {
+  lastProjectEventSeq = null
+}
+
+function hasProjectEventSeqGap(evt: ProjectEvent): boolean {
+  if (typeof evt.seq !== 'number') return false
+  const previous = lastProjectEventSeq
+  lastProjectEventSeq = previous === null ? evt.seq : Math.max(previous, evt.seq)
+  return previous !== null && evt.seq > previous + 1
 }
 
 function annotationFromDto(d: AnnotationDto): AnnotationItem {

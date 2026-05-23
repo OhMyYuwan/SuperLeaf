@@ -13,8 +13,13 @@
 .mention-input-text {
   width: 100%;
   box-sizing: border-box;
-  font-family: inherit;
-  font-size: inherit;
+  /* font shorthand resets all sub-properties to inherit, matching the mirror
+     div which also uses `font: inherit`. This prevents any per-character width
+     drift between the two layers that would misalign the caret. */
+  font: inherit;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
   color: inherit;
   background: var(--bg-input, transparent);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
@@ -22,7 +27,6 @@
   padding: 6px 8px;
   resize: vertical;
   outline: none;
-  line-height: 1.5;
 }
 
 .mention-input-stack .mention-input-textarea {
@@ -32,13 +36,29 @@
   /* Make the textarea text invisible — the mirror behind shows the styled
      copy, including colored mention spans. The caret stays visible because
      it's drawn separately by the browser. */
-  color: transparent;
-  caret-color: #e5e7eb;
+  color: var(--mention-input-color, transparent);
+  caret-color: var(--mention-caret-color, #e5e7eb);
+}
+
+.mention-input-stack.without-mirror .mention-input-textarea {
+  color: var(--mention-input-color, inherit);
 }
 
 .mention-input-stack .mention-input-textarea::selection {
   background: rgba(90, 143, 255, 0.35);
-  color: transparent;
+  color: var(--mention-selection-color, transparent);
+}
+
+.mention-input-stack.without-mirror .mention-input-textarea::selection {
+  color: var(--mention-selection-color, inherit);
+}
+
+.mention-input-stack .mention-input-textarea::placeholder {
+  color: var(--mention-native-placeholder-color, transparent);
+}
+
+.mention-input-stack.without-mirror .mention-input-textarea::placeholder {
+  color: var(--mention-native-placeholder-color, var(--text-muted, rgba(255, 255, 255, 0.45)));
 }
 
 .mention-input-mirror {
@@ -49,14 +69,25 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-wrap: break-word;
-  font-family: inherit;
-  font-size: inherit;
-  color: #e5e7eb;
+  /* Use font shorthand so every font sub-property (weight, variant, stretch,
+     feature-settings, kerning …) inherits identically to the textarea which
+     gets `font: inherit` from the global App.css reset. Individual properties
+     like font-family/font-size alone are not enough — the remaining sub-
+     properties default differently on div vs form elements in some browsers,
+     causing per-character width drift and cursor misalignment. */
+  font: inherit;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
+  color: var(--mention-text-color, #e5e7eb);
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 6px 8px;
-  line-height: 1.5;
   overflow: hidden;
+}
+
+.mention-input-placeholder {
+  color: var(--mention-placeholder-color, var(--text-muted, rgba(255, 255, 255, 0.45)));
 }
 
 /* Inline mention chips inside the mirror layer. */
@@ -72,9 +103,9 @@
 }
 
 .mention-input-mirror .mention-tag-file {
-  background: rgba(34, 197, 94, 0.22);
-  color: #86efac;
-  border-color: rgba(34, 197, 94, 0.4);
+  background: var(--mention-file-bg, rgba(34, 197, 94, 0.22));
+  color: var(--mention-file-color, #86efac);
+  border-color: var(--mention-file-border, rgba(34, 197, 94, 0.4));
 }
 
 .mention-input-mirror .mention-tag-workflow {

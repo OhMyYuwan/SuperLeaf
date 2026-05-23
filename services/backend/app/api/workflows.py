@@ -16,6 +16,7 @@ from ..models import CachedWorkflow, NativeAgent, Project, Provider, User, Workf
 from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
 from ..services.agent_orchestrator import WorkflowOrchestrator
 from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
+from ..services.agent_workspace_service import AgentWorkspaceService
 from ..services.attached_files import (
     collect_image_attachments,
     normalize_attached_files,
@@ -536,6 +537,7 @@ def _run_native_agent(
             if attached_files:
                 body.inputs["attached_files"] = attached_files
             skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+            workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
             runner = NativeAgentRunner(
                 NativeAgentRuntimeConfig(
                     agent_id=agent.id,
@@ -545,8 +547,10 @@ def _run_native_agent(
                     model=agent.model,
                     instructions=agent.instructions,
                     skills=skills,
+                    workspace_root=str(workspace_root),
                     temperature=float((agent.runtime_config or {}).get("temperature", 0.2)),
                     max_tokens=int((agent.runtime_config or {}).get("max_tokens", 4000)),
+                    max_tool_rounds=int((agent.runtime_config or {}).get("max_tool_rounds", 8)),
                 )
             )
             payload = NativeRunPayload(

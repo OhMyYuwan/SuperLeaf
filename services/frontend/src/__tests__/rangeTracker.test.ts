@@ -21,9 +21,19 @@ describe('rangeTracker', () => {
       expect(mapRange(range, c)).toEqual({ from: 14, to: 24 })
     })
 
-    it('case 3: change engulfs entire range → null', () => {
+    it('case 3: replacement engulfs entire range → follows inserted text', () => {
       const c: DocChange = { from: 8, to: 22, insertLen: 1 }
-      expect(mapRange(range, c)).toBeNull()
+      expect(mapRange(range, c)).toEqual({ from: 8, to: 9 })
+    })
+
+    it('case 3b: deletion engulfs entire range → collapses at deletion boundary', () => {
+      const c: DocChange = { from: 10, to: 20, insertLen: 0 }
+      expect(mapRange(range, c)).toEqual({ from: 10, to: 10 })
+    })
+
+    it('case 3c: replacement of exact range → highlights replacement text', () => {
+      const c: DocChange = { from: 10, to: 20, insertLen: 5 }
+      expect(mapRange(range, c)).toEqual({ from: 10, to: 15 })
     })
 
     it('case 4: change inside range → expand range', () => {
@@ -50,7 +60,7 @@ describe('rangeTracker', () => {
       expect(mapRange(range, c)).toEqual({ from: 10, to: 16 })
     })
 
-    it('case 5b: left overlap that collapses range → null', () => {
+    it('case 5b: left overlap leaves the remaining tail highlighted', () => {
       const c: DocChange = { from: 5, to: 19, insertLen: 0 }
       // newFrom = 5 + 0 = 5, shift = 0 - 14 = -14, newTo = 20 + (-14) = 6
       // 6 > 5 → { from: 5, to: 6 }
@@ -60,6 +70,12 @@ describe('rangeTracker', () => {
     it('case 6: right overlap → truncate at change start', () => {
       const c: DocChange = { from: 15, to: 25, insertLen: 3 }
       expect(mapRange(range, c)).toEqual({ from: 10, to: 15 })
+    })
+
+    it('tracks collapsed anchors like cursor positions', () => {
+      const anchor: Range = { from: 10, to: 10 }
+      expect(mapRange(anchor, { from: 10, to: 10, insertLen: 3 })).toEqual({ from: 13, to: 13 })
+      expect(mapRange(anchor, { from: 7, to: 12, insertLen: 0 })).toEqual({ from: 7, to: 7 })
     })
   })
 
@@ -73,13 +89,21 @@ describe('rangeTracker', () => {
       expect(mapRangeThrough(range, changes)).toEqual({ from: 15, to: 27 })
     })
 
-    it('returns null if any change destroys the range', () => {
+    it('keeps replacement ranges mapped through later edits', () => {
       const range: Range = { from: 10, to: 20 }
       const changes: DocChange[] = [
         { from: 5, to: 25, insertLen: 1 }, // engulfs
-        { from: 0, to: 0, insertLen: 3 },  // would shift, but already null
+        { from: 0, to: 0, insertLen: 3 },  // collapsed anchor shifts right
       ]
-      expect(mapRangeThrough(range, changes)).toBeNull()
+      expect(mapRangeThrough(range, changes)).toEqual({ from: 8, to: 9 })
+    })
+
+    it('collapses multiline deleted selections to the deletion boundary', () => {
+      const range: Range = { from: 10, to: 30 }
+      const changes: DocChange[] = [
+        { from: 10, to: 30, insertLen: 0 },
+      ]
+      expect(mapRangeThrough(range, changes)).toEqual({ from: 10, to: 10 })
     })
   })
 })

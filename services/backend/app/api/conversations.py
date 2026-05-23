@@ -8,6 +8,7 @@ hitting Dify, and so the chat stays coherent if the Dify side resets.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, Conversation, Message, Project, User
+from ..models import Conversation, Doc, Message, Project, User
 from ..schemas import (
     ConversationCreateIn,
     ConversationOut,
@@ -26,14 +27,28 @@ from ..schemas import (
     MessageOut,
     MessageSendIn,
 )
-from ..services.dify_client import DifyError
-from ..services.nanobot_client import NanobotError
-from ..services.provider_service import ProviderService
+from ..services.agent_registry_service import AgentRegistryService, ResolvedAgent
+from ..services.agent_workspace_service import AgentWorkspaceService
 from ..services.attached_files import (
     collect_image_attachments,
     normalize_attached_files,
     render_attached_files_block,
 )
+from ..services.conversation_session_service import (
+    conversation_session_messages_from_rows,
+    delete_conversation_session,
+    render_session_messages_for_prompt,
+    write_conversation_session,
+)
+from ..services.dify_client import DifyError
+from ..services.nanobot_client import NanobotError
+from ..services.native_agent_runner import (
+    NativeAgentRunner,
+    NativeAgentRuntimeConfig,
+    NativeRunPayload,
+)
+from ..services.provider_service import ProviderService
+from ..secrets_vault import decrypt
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -52,6 +67,86 @@ def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") 
         message_count=message_count,
         last_message_preview=last_preview,
     )
+
+
+def _panel_reply_contract(
+    *,
+    doc_format: str = "",
+    target_text: str = "",
+    user_message: str = "",
+) -> str:
+    label, fence = _infer_source_format(
+        doc_format=doc_format,
+        sample=f"{target_text}\n{user_message}",
+    )
+    return "\n".join(
+        [
+            "[REPLY FORMAT]",
+            "- 主要回答直接用 Markdown。",
+            "- 不要输出 JSON，也不要把内容拆成 annotations/suggestions/risks 或多张批注。",
+            f"- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持{label}源格式，围栏语言建议：{fence}.",
+            "[END REPLY FORMAT]",
+        ]
+    )
+
+
+def _infer_source_format(*, doc_format: str, sample: str) -> tuple[str, str]:
+    if _looks_like_latex(sample):
+        return " LaTeX ", "latex"
+    if _looks_like_markdown(sample):
+        return " Markdown ", "markdown"
+    fmt = (doc_format or "").strip().lower()
+    if fmt == "tex":
+        return " LaTeX ", "latex"
+    if fmt == "md":
+        return " Markdown ", "markdown"
+    return "纯文本", "text"
+
+
+def _looks_like_latex(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\\(?:begin|end|section|subsection|subsubsection|paragraph|cite|ref|label|textbf|emph|item)\b",
+            text,
+        )
+        or re.search(r"\\[a-zA-Z]+\s*\{", text)
+        or re.search(r"\$(?:\\.|[^$\n])+\$", text)
+    )
+
+
+def _looks_like_markdown(text: str) -> bool:
+    return bool(
+        re.search(r"^#{1,6}\s+\S", text, re.M)
+        or re.search(r"^>\s+\S", text, re.M)
+        or re.search(r"^ {0,3}(?:[-*+]|\d+\.)\s+\S", text, re.M)
+        or re.search(r"\[[^\]]+\]\([^)]+\)", text)
+        or re.search(r"(?:^|\n)```", text)
+        or re.search(r"\*\*[^*\n][\s\S]*?\*\*", text)
+    )
+
+
+def _resolve_agent(
+    db: Session,
+    workflow_id: str,
+    *,
+    project: Project,
+    user: User,
+    require_enabled: bool = True,
+) -> ResolvedAgent | None:
+    return AgentRegistryService(db).resolve(
+        workflow_id,
+        project_id=project.id,
+        user_id=user.id,
+        require_enabled=require_enabled,
+    )
+
+
+def _agent_name(resolved: ResolvedAgent) -> str:
+    if resolved.native_agent is not None:
+        return resolved.native_agent.name
+    if resolved.cached_workflow is not None:
+        return resolved.cached_workflow.name
+    return resolved.workflow_id
 
 
 @router.get("", response_model=list[ConversationOut])
@@ -106,15 +201,15 @@ def create_conversation(
     project: Project = Depends(get_current_project),
     user: User = Depends(get_current_user),
 ) -> ConversationOut:
-    cw = db.get(CachedWorkflow, body.workflow_id)
-    if cw is None:
+    resolved = _resolve_agent(db, body.workflow_id, project=project, user=user)
+    if resolved is None:
         raise HTTPException(404, "Agent (workflow) not found")
     conv = Conversation(
         project_id=project.id,
         user_id=user.id,
         document_id=body.document_id,
         workflow_id=body.workflow_id,
-        title=body.title or cw.name,
+        title=body.title or _agent_name(resolved),
     )
     db.add(conv)
     db.commit()
@@ -167,6 +262,7 @@ def delete_conversation(
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(c)
     db.commit()
+    delete_conversation_session(conversation_id)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageOut])
@@ -207,16 +303,15 @@ async def send_message(
     conv = db.get(Conversation, conversation_id)
     if conv is None or conv.project_id != project.id or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
-    cw = db.get(CachedWorkflow, conv.workflow_id)
-    if cw is None or cw.user_id != user.id:
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None:
         raise HTTPException(404, "Agent (workflow) gone")
 
-    svc = ProviderService(db)
-    provider = svc.get(cw.provider_id, user_id=user.id)
-    if provider is None:
-        raise HTTPException(404, "Provider for this agent is gone")
-
-    client = svc.make_client(provider)
+    provider = resolved.provider
+    cw = resolved.cached_workflow
+    if resolved.source != "native" and cw is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    client = ProviderService(db).make_client(provider) if resolved.source != "native" else None
 
     # Persist user message immediately so the UI can echo even if Dify fails.
     user_msg = Message(
@@ -238,6 +333,24 @@ async def send_message(
 
     user_msg_payload = MessageOut.model_validate(user_msg).model_dump(mode="json")
 
+    def _conversation_message_rows() -> list[Message]:
+        return (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+
+    def _sync_conversation_session() -> None:
+        write_conversation_session(conv, _conversation_message_rows())
+
+    all_message_rows = _conversation_message_rows()
+    _sync_conversation_session()
+    history_rows = [row for row in all_message_rows if row.id != user_msg.id]
+    session_context = render_session_messages_for_prompt(
+        conversation_session_messages_from_rows(history_rows)
+    )
+
     # Build the prompt that actually goes to the agent. When the user has a
     # selection active, weave it into the query so the agent can see the
     # discussed text + its neighbouring context. We do this here (not in the
@@ -247,11 +360,25 @@ async def send_message(
     before = str(body.inputs.get("before") or "").strip()
     after = str(body.inputs.get("after") or "").strip()
     section_title = str(body.inputs.get("section_title") or "").strip()
+    document = db.get(Doc, conv.document_id)
+    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
     attached_files = normalize_attached_files(body.inputs.get("attached_files"))
     image_attachments = collect_image_attachments(attached_files)
 
     has_selection = bool(target_text) and (
         body.range_start is not None and body.range_end is not None
+    )
+
+    prompt_parts: list[str] = []
+    if session_context:
+        prompt_parts.append(session_context)
+
+    prompt_parts.append(
+        _panel_reply_contract(
+            doc_format=doc_format,
+            target_text=target_text,
+            user_message=body.content,
+        )
     )
 
     if has_selection:
@@ -267,16 +394,15 @@ async def send_message(
         if after:
             context_parts.append(f"下文：\n{after}")
         context_parts.append("[END DISCUSSION CONTEXT]")
-        agent_query = "\n\n".join(context_parts)
-    else:
-        agent_query = ""
+        prompt_parts.append("\n\n".join(context_parts))
 
     attached_block = render_attached_files_block(attached_files)
     if attached_block:
-        agent_query = f"{agent_query}\n\n{attached_block}" if agent_query else attached_block
+        prompt_parts.append(attached_block)
 
-    if agent_query:
-        agent_query = f"{agent_query}\n\n用户消息：{body.content}"
+    if prompt_parts:
+        prompt_parts.append(f"[CURRENT USER MESSAGE]\n{body.content}")
+        agent_query = "\n\n".join(prompt_parts)
     else:
         agent_query = body.content
 
@@ -288,7 +414,60 @@ async def send_message(
         external_conv_id = conv.external_conversation_id
 
         try:
-            if provider.kind == "nanobot":
+            if resolved.source == "native":
+                agent = resolved.native_agent
+                if agent is None:
+                    raise TypeError("Native Agent resolution is missing agent row")
+                native_conversation_id = external_conv_id or f"ylw-native-conv-{conversation_id}"
+                native_inputs = dict(body.inputs or {})
+                for prepared_key in (
+                    "target_text",
+                    "before",
+                    "after",
+                    "section_title",
+                    "attached_files",
+                ):
+                    native_inputs.pop(prepared_key, None)
+                native_inputs["instruction"] = agent_query
+                skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+                workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
+                runner = NativeAgentRunner(
+                    NativeAgentRuntimeConfig(
+                        agent_id=agent.id,
+                        agent_name=agent.name,
+                        provider_endpoint=provider.endpoint,
+                        api_key=decrypt(provider.api_key_enc),
+                        model=agent.model,
+                        instructions=agent.instructions,
+                        skills=skills,
+                        workspace_root=str(workspace_root),
+                        temperature=float((agent.runtime_config or {}).get("temperature", 0.2)),
+                        max_tokens=int((agent.runtime_config or {}).get("max_tokens", 4000)),
+                        max_tool_rounds=int((agent.runtime_config or {}).get("max_tool_rounds", 8)),
+                    )
+                )
+                payload = NativeRunPayload(
+                    document_id=conv.document_id,
+                    range_start=body.range_start or 0,
+                    range_end=body.range_end or 0,
+                    inputs=native_inputs,
+                    query="",
+                    conversation_id=native_conversation_id,
+                )
+                async for evt in runner.stream(payload):
+                    kind = str(evt.get("event") or "")
+                    data = evt.get("data") or {}
+                    if kind == "native.agent.output.delta" and isinstance(data, dict):
+                        delta = data.get("delta")
+                        if isinstance(delta, str):
+                            agent_text_parts.append(delta)
+                            yield {
+                                "event": "ylw.msg.delta",
+                                "data": json.dumps({"delta": delta}),
+                            }
+                    yield {"event": kind, "data": json.dumps(data)}
+                external_conv_id = native_conversation_id
+            elif provider.kind == "nanobot":
                 from ..services.nanobot_client import NanobotClient
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
@@ -359,6 +538,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
+            _sync_conversation_session()
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
         except Exception as e:  # noqa: BLE001
@@ -372,6 +552,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
+            _sync_conversation_session()
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
 
@@ -388,6 +569,7 @@ async def send_message(
         conv.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(agent_msg)
+        _sync_conversation_session()
 
         yield {
             "event": "ylw.msg.finished",
@@ -428,4 +610,11 @@ def inject_message(
     conv.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(msg)
+    rows = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    write_conversation_session(conv, rows)
     return MessageOut.model_validate(msg)

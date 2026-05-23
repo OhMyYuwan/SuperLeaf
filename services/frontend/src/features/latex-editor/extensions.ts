@@ -32,6 +32,7 @@ import { markdown } from '@codemirror/lang-markdown'
 
 import { latex } from './latex-language'
 import type { LatexCompletionData } from './latex-completion-data'
+import { overleafLikeSearch } from './search-panel'
 import { overleafDark } from './theme'
 
 export type EditorFormat = 'tex' | 'md' | 'txt'
@@ -134,6 +135,7 @@ export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[]
     indentOnInput(),
     bracketMatching(),
     closeBrackets(),
+    overleafLikeSearch(),
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),

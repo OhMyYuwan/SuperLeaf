@@ -66,6 +66,29 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  scrollbar-color: rgba(148, 163, 184, 0.46) transparent;
+  scrollbar-width: thin;
+}
+
+.tab-content-wrapper::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-track,
+.tab-content-wrapper::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  background-clip: content-box;
 }
 
 .tab-header-row {

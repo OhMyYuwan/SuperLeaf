@@ -444,6 +444,49 @@ class ProjectArchiveStatusOut(BaseModel):
     remote_configured: bool = False
 
 
+class CommitMetaOut(BaseModel):
+    sha: str
+    short_sha: str
+    message: str
+    author_name: str
+    author_email: str
+    date: str
+    insertions: int
+    deletions: int
+    files_changed: int
+
+
+class FileEntryOut(BaseModel):
+    path: str
+    blob_sha: str
+    size: int
+
+
+class FileDiffOut(BaseModel):
+    path: str
+    status: str
+    insertions: int
+    deletions: int
+    patch: str | None
+
+
+class CommitDiffOut(BaseModel):
+    from_sha: str
+    to_sha: str
+    files: list[FileDiffOut]
+    total_insertions: int
+    total_deletions: int
+    files_changed: int
+
+
+class MajorVersionCreateIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2048)
+
+
+class MajorVersionRestoreIn(BaseModel):
+    message: str | None = Field(default=None, max_length=512)
+
+
 class GitHubAccountOut(BaseModel):
     connected: bool
     login: str = ""

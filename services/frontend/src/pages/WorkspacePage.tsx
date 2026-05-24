@@ -43,7 +43,7 @@ import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesy
 import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo, EditorRestoreState } from '../features/latex-editor'
-import { collectLatexCitationCompletions } from '../features/latex-editor/latex-completion-data'
+import { collectLatexCitationCompletions, collectLatexFilePaths, collectLatexLabels } from '../features/latex-editor/latex-completion-data'
 import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
@@ -180,6 +180,18 @@ export function WorkspacePage() {
         content: doc.content,
       }))
     return collectLatexCitationCompletions(sources)
+  }, [documents])
+
+  const filePathCompletions = useMemo(() => {
+    if (!tree) return []
+    return collectLatexFilePaths(tree.root)
+  }, [tree])
+
+  const labelCompletions = useMemo(() => {
+    const sources = Object.values(documents)
+      .filter((doc) => doc.format === 'tex')
+      .map((doc) => ({ name: doc.metadata.title, content: doc.content }))
+    return collectLatexLabels(sources)
   }, [documents])
 
   const decorationSpecs: DecorationSpec[] = useMemo(() => {
@@ -626,6 +638,8 @@ export function WorkspacePage() {
                           scrollTo={activeEditorScrollTo}
                           restoreState={activeEditorRestoreState}
                           citationCompletions={citationCompletions}
+                          filePathCompletions={filePathCompletions}
+                          labelCompletions={labelCompletions}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}

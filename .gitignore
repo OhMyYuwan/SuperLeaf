@@ -65,5 +65,6 @@ assets/default-project-template/
 logs/
 
 # External support repositories are maintained separately.
+SuperLeaf.Skills/
 YuwanLabWriter.Skills/
 supports/

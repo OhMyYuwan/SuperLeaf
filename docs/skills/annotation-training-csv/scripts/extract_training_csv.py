@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert YuwanLabWriter annotation training exports to compact CSV.
+"""Convert SuperLeaf annotation training exports to compact CSV.
 
 Default output columns are intentionally minimal:
 
@@ -36,7 +36,7 @@ META_COLUMNS = [
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Extract compact CSV rows from YuwanLabWriter annotation training exports.",
+        description="Extract compact CSV rows from SuperLeaf annotation training exports.",
     )
     parser.add_argument(
         "input",

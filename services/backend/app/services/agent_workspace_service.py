@@ -220,7 +220,7 @@ def _agent_md(name: str, content: str) -> str:
     body = content.strip()
     if body:
         return body + "\n"
-    return f"# {name}\n\nYou are a native YuwanLabWriter Agent. Use the Skills in `.agents/skills/` when they are relevant.\n"
+    return f"# {name}\n\nYou are a native SuperLeaf Agent. Use the Skills in `.agents/skills/` when they are relevant.\n"
 
 
 def _ignore_unsafe_files(directory: str, names: list[str]) -> set[str]:

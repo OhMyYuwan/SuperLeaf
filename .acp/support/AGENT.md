@@ -1,7 +1,7 @@
 ```yaml
 role: quick_entry
 project:
-  name: YuwanLabWriter
+  name: SuperLeaf
   description: Local-Web LaTeX-first research writing IDE with backend-managed native Agents, Skill Marketplace, and multi-Agent review over Dify / Nanobot providers
 acp_version: "1.0.0"
 profiles:
@@ -38,10 +38,10 @@ primary_capabilities:
   - workflow-orchestration
   - real-time-editing
   - build-tooling
-agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and supports/YuwanLabWriter.MCPs for MCP preset data. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
+agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
 ```
 
-# YuwanLabWriter Agent Guide
+# SuperLeaf Agent Guide
 
 ## ACP Configuration
 
@@ -61,7 +61,7 @@ acp:
 
 ## Project Overview
 
-YuwanLabWriter is a local-Web research writing IDE with a LaTeX-first editing
+SuperLeaf is a local-Web research writing IDE with a LaTeX-first editing
 surface plus a multi-Agent review/polishing/workflow layer.
 
 **Version history:**
@@ -111,7 +111,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
   Provider models, can install/attach Skills, and execute only user-assigned
   Skills. Skill sources include private upload, server-shared local Skills,
   and official marketplace entries from
-  `OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json`.
+  `OhMyYuwan/SuperLeaf.Skills/main/marketplace.json`.
 
 ## Working Rules
 
@@ -143,7 +143,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
 │   └── capability/capabilities.yaml
 ├── docs/                                    (public user docs + GitHub Pages)
 ├── supports/
-│   └── YuwanLabWriter.MCPs/                 (MCP catalog presets, golden tests, contributor docs)
+│   └── SuperLeaf.MCPs/                 (MCP catalog presets, golden tests, contributor docs)
 └── services/
     ├── collab-server/                       (Node.js Yjs WebSocket server)
     │   ├── package.json                     (yjs, y-protocols, y-leveldb, ws)
@@ -177,7 +177,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │           ├── native_agent_service.py  (native Agent + Skill CRUD)
     │           ├── native_agent_runner.py   (provider-backed native Agent runtime)
     │           ├── mcp_tool_service.py      (on-demand stdio MCP bridge)
-    │           ├── mcp_catalog_service.py   (supports/YuwanLabWriter.MCPs loader + probe)
+    │           ├── mcp_catalog_service.py   (remote SuperLeaf.MCPs catalog loader + probe)
     │           ├── skill_marketplace_service.py / skill_content_crypto.py
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
     │           ├── project_archive_service.py / github_service.py
@@ -261,7 +261,7 @@ Services are organized under `services/`:
 - **native-agent-skills** — native Agent credentials, Agent CRUD/runtime,
   encrypted Skill content, local Skill library, Skill Marketplace sync/install,
   AgentSkill assignment, and MCP catalog-driven tools from
-  `supports/YuwanLabWriter.MCPs`.
+  the remote `OhMyYuwan/SuperLeaf.MCPs` catalog.
 - **workflow-integration** — provider clients (Dify + Nanobot) + provider registry + single-agent run lifecycle.
 - **workflow-orchestration** — V2.2 self-hosted multi-agent orchestrator + definition API + visual canvas + templates. Canonical baseline.
 - **real-time-editing** — Yjs CRDT collaborative editing: collab-server (Node.js WebSocket + LevelDB), y-codemirror.next binding, awareness (remote cursors), periodic snapshot to DB.

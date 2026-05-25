@@ -1,1 +1,1 @@
-"""YuwanLabWriter backend application."""
+"""SuperLeaf backend application."""

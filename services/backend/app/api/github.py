@@ -146,7 +146,7 @@ def _callback_html(message: str, *, success: bool) -> str:
   </head>
   <body>
     <strong>{message}</strong>
-    <p>可以关闭这个窗口，回到 YuwanLabWriter。</p>
+    <p>可以关闭这个窗口，回到 SuperLeaf。</p>
     <script>
       if (window.opener) {{
         window.opener.postMessage({{ type: 'yuwanlab.github.connected', success: {str(success).lower()} }}, window.location.origin);

@@ -1,4 +1,4 @@
-# LOAD RULES for YuwanLabWriter
+# LOAD RULES for SuperLeaf
 #
 # Staged context loading. Bootstrap reads minimal_context first, then expands
 # only when the active task requires deeper context. forbidden_paths are
@@ -517,10 +517,10 @@ rules:
     native-agent-skills:
       mcp-catalog:
         start_with:
-          - supports/YuwanLabWriter.MCPs/README.md
-          - supports/YuwanLabWriter.MCPs/docs/README.md
-          - supports/YuwanLabWriter.MCPs/docs/adding-mcp.md
-          - supports/YuwanLabWriter.MCPs/catalog.json
+          - supports/SuperLeaf.MCPs/README.md
+          - supports/SuperLeaf.MCPs/docs/README.md
+          - supports/SuperLeaf.MCPs/docs/adding-mcp.md
+          - supports/SuperLeaf.MCPs/catalog.json
           - backend/app/services/mcp_catalog_service.py
           - backend/app/services/mcp_tool_service.py
           - backend/app/api/native_agents.py
@@ -528,8 +528,8 @@ rules:
           - frontend/src/stores/nativeAgentStore.ts
           - frontend/src/services/backendApi.ts
         expand_when:
-          - adding or revising an MCP preset under supports/YuwanLabWriter.MCPs/presets
-          - adding or revising MCP golden tests under supports/YuwanLabWriter.MCPs/golden-tests
+          - adding or revising an MCP preset under supports/SuperLeaf.MCPs/presets
+          - adding or revising MCP golden tests under supports/SuperLeaf.MCPs/golden-tests
           - changing MCP catalog schema, probe, golden-test, or runtime tool-call behavior
           - changing TeamTab MCP subtab, preset rendering, or custom MCP UX
       backend-routes:

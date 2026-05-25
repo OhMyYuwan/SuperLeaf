@@ -5,7 +5,7 @@ nav_order: 3
 
 # 安装
 
-YuwanLabWriter 是本地三服务应用：浏览器前端、FastAPI 后端、Yjs 协作服务器。开发和本地使用都从仓库根目录的 `start.sh` 进入。
+SuperLeaf 是本地三服务应用：浏览器前端、FastAPI 后端、Yjs 协作服务器。开发和本地使用都从仓库根目录的 `start.sh` 进入。
 
 {: .note }
 第一次安装建议先只跑本地单机流程：Frontend + Backend + Collab Server。Provider、原生 Agent 和 Skill 可以在首次启动后再配置。
@@ -37,8 +37,8 @@ Linux 上请使用系统包管理器安装 Node.js 20、Python 3.11、`latexmk` 
 ## 拉取仓库
 
 ```bash
-git clone https://github.com/OhMyYuwan/YuwanLabWriter.git
-cd YuwanLabWriter
+git clone https://github.com/OhMyYuwan/SuperLeaf.git
+cd SuperLeaf
 ```
 
 如果你使用个人开发分支：
@@ -89,7 +89,7 @@ git checkout YuwanZ
 
 ## 本地数据位置
 
-YuwanLabWriter 的运行数据默认在用户目录下：
+SuperLeaf 的运行数据默认在用户目录下。为兼容改名前的本地安装，当前版本仍沿用旧的 `~/.yuwanlab/` 路径：
 
 | 路径 | 内容 |
 |---|---|

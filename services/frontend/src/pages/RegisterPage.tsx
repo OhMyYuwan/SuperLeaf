@@ -45,7 +45,7 @@ export function RegisterPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-brand">YuwanLabWriter</div>
+        <div className="auth-brand">SuperLeaf</div>
         <h1 className="auth-title">注册</h1>
         <p className="auth-subtle">
           首位注册的用户将成为系统管理员，并继承已有的项目与服务凭据。

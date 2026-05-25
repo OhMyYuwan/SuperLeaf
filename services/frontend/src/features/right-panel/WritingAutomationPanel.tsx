@@ -16,6 +16,12 @@ import {
 import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 
+const WRITE_MODE_OPTIONS: Array<{ value: WritingMode; label: string; detail: string }> = [
+  { value: 'draft', label: '全文起草', detail: '整体替换 / 起草到空白' },
+  { value: 'polish-paragraphs', label: '逐段润色', detail: '按段落循环替换' },
+  { value: 'append', label: '追加段落', detail: '输出加到文末' },
+]
+
 export function WritingAutomationPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const tree = useFilesystemStore((s) => s.tree)
@@ -93,11 +99,11 @@ export function WritingAutomationPanel() {
       </div>
 
       <div className="automation-status-grid">
-        <div>
+        <div className="automation-status-card automation-status-card-document">
           <span><FileText size={12} /> 当前文档</span>
           <strong>{activeDoc?.metadata.title || '未打开文档'}</strong>
         </div>
-        <div>
+        <div className="automation-status-card automation-status-card-metric">
           <span>{isPolish ? '可润色段落' : '文档字数'}</span>
           <strong>{isPolish ? polishParagraphCount : docCharCount}</strong>
         </div>
@@ -133,18 +139,27 @@ export function WritingAutomationPanel() {
         </label>
       </div>
 
-      <label className="automation-field narrow">
-        <span>写入模式</span>
-        <select
-          value={mode}
-          onChange={(event) => setMode(event.target.value as WritingMode)}
-          disabled={running}
-        >
-          <option value="draft">全文起草（整体替换 / 起草到空白）</option>
-          <option value="polish-paragraphs">逐段润色（按段落循环替换）</option>
-          <option value="append">追加段落（输出加到文末）</option>
-        </select>
-      </label>
+      <fieldset className="automation-field automation-mode-field">
+        <legend>写入模式</legend>
+        <div className="automation-mode-picker">
+          {WRITE_MODE_OPTIONS.map((option) => (
+            <label key={option.value} className="automation-mode-option">
+              <input
+                type="radio"
+                name="writing-automation-mode"
+                value={option.value}
+                checked={mode === option.value}
+                onChange={() => setMode(option.value)}
+                disabled={running}
+              />
+              <span className="automation-mode-option-body">
+                <span className="automation-mode-title">{option.label}</span>
+                <span className="automation-mode-detail">{option.detail}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       {mode === 'draft' && docHasContent && (
         <div className="automation-message">注意：原内容会被 Agent 输出整体覆盖。</div>

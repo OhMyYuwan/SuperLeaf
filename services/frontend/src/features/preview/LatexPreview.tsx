@@ -292,7 +292,6 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
           pdfScrollTopRef.current = event.currentTarget.scrollTop
         }}
         onDoubleClick={handlePdfDoubleClick}
-        title="双击 PDF 文本跳转到源码"
       >
         {!pdfUrl && !compiling && (
           <div className="latex-preview-empty">

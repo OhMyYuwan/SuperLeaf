@@ -1,10 +1,8 @@
 # LOAD RULES for SuperLeaf
 #
-# Staged context loading. Bootstrap reads minimal_context first, then expands
-# only when the active task requires deeper context. forbidden_paths are
-# absolute boundaries; protected_paths require explicit confirmation before
-# modification.
-# Refreshed 2026-05-25 for REQ-0163 (MCP support catalog routing).
+# Staged context loading. Start narrow, expand by route, and avoid scanning
+# generated or private state unless the task explicitly requires it.
+# Refreshed 2026-05-25 for REQ-0182.
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -17,594 +15,615 @@ bootstrap:
 
 loading:
   kernel_history: on_demand
-  broad_scan: forbidden_by_default
+  broad_scan: allowed_after_bootstrap_when_requested
   preferred_routing: capability_first
+  search_first_with:
+    - rg
+    - rg --files
+  path_rule: all application paths are rooted at services/, not bare backend/ or frontend/.
 
 minimal_context:
   - .acp/version.yaml
   - .acp/support/AGENT.md
+  - .acp/support/PROJECT_MAP.yaml
 
 rules:
   forbidden_paths:
+    - .git/
     - reference/
     - referenceold/
-    - .git/
     - services/frontend/node_modules/
     - services/frontend/dist/
+    - services/frontend/.vite/
+    - services/collab-server/node_modules/
+    - services/collab-server/dist/
     - services/backend/.venv/
     - services/backend/**/__pycache__/
-
-  protected_paths:
-    - .acp/version.yaml
-    - .acp/support/LOAD_RULES.yaml
-    - .acp/support/CHANGE_POLICY.yaml
-    - .acp/capability/capabilities.yaml
-    - .acp/support/PROJECT_MAP.yaml
-    - .acp/support/AGENT.md
-    - frontend/package.json
-    - frontend/package-lock.json
-    - frontend/vite.config.ts
-    - frontend/tsconfig.json
-    - frontend/tsconfig.app.json
-    - frontend/tsconfig.node.json
-    - frontend/index.html
-    - backend/pyproject.toml
-    - backend/app/database.py
-    - backend/app/settings.py
-    - backend/app/secrets_vault.py
-    # V2.2 additions — orchestrator + multimodal bridge require boundary awareness.
-    - backend/app/services/agent_orchestrator.py
-    - backend/app/services/attached_files.py
-    - backend/app/services/nanobot_client.py
-    - ../.gitignore
-    - ../start.sh
-    - ../scripts/dify.sh
+    - services/backend/.pytest_cache/
 
   private_paths:
     - .acp/kernel/
 
+  ignored_external_repos:
+    - supports/SuperLeaf.MCPs/
+    - supports/SuperLeaf.Skills/
+
+  protected_paths:
+    - .acp/version.yaml
+    - .acp/support/AGENT.md
+    - .acp/support/PROJECT_MAP.yaml
+    - .acp/support/LOAD_RULES.yaml
+    - .acp/support/CHANGE_POLICY.yaml
+    - .acp/capability/capabilities.yaml
+    - .gitignore
+    - start.sh
+    - services/backend/pyproject.toml
+    - services/backend/uv.lock
+    - services/backend/app/settings.py
+    - services/backend/app/database.py
+    - services/backend/app/secrets_vault.py
+    - services/backend/app/models.py
+    - services/backend/app/schemas.py
+    - services/frontend/package.json
+    - services/frontend/package-lock.json
+    - services/frontend/vite.config.ts
+    - services/frontend/tsconfig.json
+    - services/frontend/tsconfig.app.json
+    - services/frontend/tsconfig.node.json
+    - services/frontend/index.html
+    - services/frontend/eslint.config.js
+    - services/collab-server/package.json
+    - services/collab-server/package-lock.json
+    - services/collab-server/tsconfig.json
+
+  high_attention_paths:
+    - services/backend/app/services/agent_orchestrator.py
+    - services/backend/app/services/attached_files.py
+    - services/backend/app/services/nanobot_client.py
+    - services/backend/app/services/mcp_tool_service.py
+    - services/backend/app/services/project_archive_service.py
+    - services/frontend/src/features/right-panel/TeamTab.tsx
+    - services/frontend/src/features/latex-editor/LatexEditor.tsx
+    - services/frontend/src/stores/documentStore.ts
+    - services/frontend/src/stores/projectStore.ts
+
   route_expansion:
     project-foundation:
-      _root:
+      support-layer:
         start_with:
-          - .acp/version.yaml
           - .acp/support/AGENT.md
           - .acp/support/PROJECT_MAP.yaml
+          - .acp/support/LOAD_RULES.yaml
+          - .acp/support/CHANGE_POLICY.yaml
+          - .acp/capability/capabilities.yaml
         expand_when:
-          - touching capabilities.yaml or change-policy
-          - resolving a kernel-binding question
-      planning-docs:
+          - changing agent routing, capability ownership, or protected-path policy
+          - adding/removing top-level modules
+          - product rename or repository rename work
+      public-docs:
         start_with:
+          - docs/index.md
           - docs/README.md
           - docs/architecture/overview.md
+          - docs/getting-started/install.md
           - docs/providers/README.md
-          - docs/TODO.md
+          - docs/agents/README.md
+          - docs/troubleshooting/README.md
         expand_when:
-          - revising plan implies architecture change
-          - updating public docs or GitHub Pages navigation
-      dify-launcher:
+          - user-facing docs or GitHub Pages navigation changes
+          - feature behavior needs handbook documentation
+      root-tooling:
         start_with:
-          - ../scripts/dify.sh
+          - README.md
+          - start.sh
+          - .gitignore
         expand_when:
-          - Dify-stack behavior or port mapping must change
-          - adding new Dify service profiles
-
-    frontend-workspace:
-      shell:
-        start_with:
-          - frontend/src/App.tsx
-          - frontend/src/App.css
-          - frontend/index.html
-        expand_when:
-          - layout change touches editor mounting or settings dialog
-          - shell needs new stores or bootstrap order change
-
-    frontend-topbar:
-      bar:
-        start_with:
-          - frontend/src/features/topbar/Topbar.tsx
-          - frontend/src/features/topbar/ViewControl.tsx
-          - frontend/src/features/topbar/NotificationBell.tsx
-          - frontend/src/features/topbar/PresenceIndicator.tsx
-          - frontend/src/features/topbar/topbar.css
-        expand_when:
-          - new top-bar action or shortcut
-          - view-control behavior change
-
-    frontend-workspace-center:
-      editor-column:
-        start_with:
-          - frontend/src/features/workspace-center/EditorColumn.tsx
-          - frontend/src/features/workspace-center/EditorToolbar.tsx
-        expand_when:
-          - editor mounting or toolbar UX change
-          - selection toolbar add-comment flow change
-      annotation-column:
-        start_with:
-          - frontend/src/features/workspace-center/AnnotationColumn.tsx
-        expand_when:
-          - AnnotationPanel integration change
-      preview-column:
-        start_with:
-          - frontend/src/features/workspace-center/PreviewColumn.tsx
-        expand_when:
-          - format-switch logic change
-
-    frontend-file-tree:
-      tree:
-        start_with:
-          - frontend/src/features/file-tree/FileTree.tsx
-          - frontend/src/stores/filesystemStore.ts
-        expand_when:
-          - CRUD / drag behavior change
-          - new tree node kinds
-      outline:
-        start_with:
-          - frontend/src/features/file-tree/OutlineList.tsx
-          - frontend/src/services/documentParser.ts
-        expand_when:
-          - outline extraction or scroll-sync change
-
-    frontend-preview:
-      latex:
-        start_with:
-          - frontend/src/features/preview/LatexPreview.tsx
-          - frontend/src/stores/compileStore.ts
-        expand_when:
-          - PDF rendering or compile trigger change
-      markdown:
-        start_with:
-          - frontend/src/features/preview/MarkdownPreview.tsx
-        expand_when:
-          - markdown plugin / math support change
-
-    frontend-settings:
-      dialog:
-        start_with:
-          - frontend/src/features/settings/SettingsDialog.tsx
-          - frontend/src/features/settings/settings.css
-        expand_when:
-          - adding new provider kinds or fields
-          - surfacing probe details or new status states
-
-    frontend-stores:
-      document:
-        start_with:
-          - frontend/src/stores/documentStore.ts
-        expand_when:
-          - persistence / backend sync integration change
-          - Document schema change requires migration
-      editor:
-        start_with:
-          - frontend/src/stores/editorStore.ts
-          - frontend/src/services/selectionContext.ts
-        expand_when:
-          - selection shape or multi-document focus change
-      settings:
-        start_with:
-          - frontend/src/stores/settingsStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - provider lifecycle or backend endpoint change
-      native-agent:
-        start_with:
-          - frontend/src/stores/nativeAgentStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - native Agent or Skill client-state lifecycle change
-          - Skill Marketplace sync/install/delete/share behavior change
-      automation:
-        start_with:
-          - frontend/src/stores/automationStore.ts
-          - frontend/src/features/right-panel/AutomationTab.tsx
-        expand_when:
-          - automation state or schedule UI change
-      workflow:
-        start_with:
-          - frontend/src/stores/workflowStore.ts
-          - frontend/src/services/outputParser.ts
-        expand_when:
-          - new SSE event surface
-          - annotation ingestion logic change
-      annotation:
-        start_with:
-          - frontend/src/stores/annotationStore.ts
-        expand_when:
-          - card status machine change
-          - thread / user-comment semantics change
-      filesystem:
-        start_with:
-          - frontend/src/stores/filesystemStore.ts
-          - frontend/src/services/filesystemApi.ts
-        expand_when:
-          - tree schema or CRUD contract change
-      conversation:
-        start_with:
-          - frontend/src/stores/conversationStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - SSE message streaming shape change
-      compile:
-        start_with:
-          - frontend/src/stores/compileStore.ts
-        expand_when:
-          - compile contract or PDF url handling change
-      view:
-        start_with:
-          - frontend/src/stores/viewStore.ts
-        expand_when:
-          - layout persistence or responsive behavior change
-
-    frontend-annotations:
-      panel:
-        start_with:
-          - frontend/src/features/annotation-panel/AnnotationPanel.tsx
-          - frontend/src/features/annotation-panel/CommentComposer.tsx
-          - frontend/src/stores/annotationStore.ts
-        expand_when:
-          - card actions or composer behavior change
-          - continue-query flow change
-      decorations:
-        start_with:
-          - frontend/src/features/latex-editor/annotation-decorations.ts
-          - frontend/src/features/latex-editor/LatexEditor.tsx
-          - frontend/src/App.css
-        expand_when:
-          - decoration styles or click handling change
-          - new decoration kinds introduced
-
-    frontend-right-panel:
-      panel-shell:
-        start_with:
-          - frontend/src/features/right-panel/RightPanel.tsx
-          - frontend/src/features/right-panel/right-panel.css
-        expand_when:
-          - tab set or panel composition change
-      discussion:
-        start_with:
-          - frontend/src/features/right-panel/DiscussionTab.tsx
-          - frontend/src/stores/conversationStore.ts
-          - frontend/src/features/shared/MentionInput.tsx
-        expand_when:
-          - discussion UI or mention routing change
-      team:
-        start_with:
-          - frontend/src/features/right-panel/TeamTab.tsx
-          - frontend/src/stores/settingsStore.ts
-          - frontend/src/stores/nativeAgentStore.ts
-          - frontend/src/stores/workflowStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - team UX, provider CRUD shell, native Agent, or Skill management change
-      automation:
-        start_with:
-          - frontend/src/features/right-panel/AutomationTab.tsx
-          - frontend/src/stores/automationStore.ts
-        expand_when:
-          - automation CRUD or schedule display change
-      workflow-tab:
-        start_with:
-          - frontend/src/features/right-panel/WorkflowTab.tsx
-          - frontend/src/stores/workflowStore.ts
-        expand_when:
-          - inline agent-workflow invocation change
-      workflow-definitions:
-        start_with:
-          - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
-          - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
-          - frontend/src/features/right-panel/workflow-canvas/
-        expand_when:
-          - definition CRUD, editor layout, or test-run UX change
-      run-history:
-        start_with:
-          - frontend/src/features/right-panel/RunHistoryTab.tsx
-        expand_when:
-          - history listing or replay UX change
-
-    frontend-feature-workflow-canvas:
-      canvas:
-        start_with:
-          - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
-        expand_when:
-          - canvas interactions or edge rule change
-      palette:
-        start_with:
-          - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
-        expand_when:
-          - available node type change (NOTE: new type = Request)
-      inspector:
-        start_with:
-          - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
-        expand_when:
-          - per-node config field change
-      nodes:
-        start_with:
-          - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
-        expand_when:
-          - node visual rendering change
-      graph-conversion:
-        start_with:
-          - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
-          - frontend/src/features/right-panel/workflow-canvas/health.ts
-        expand_when:
-          - graph persistence or validation change
-
-    frontend-conversations:
-      store:
-        start_with:
-          - frontend/src/stores/conversationStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - message send/stream/persist logic change
-      api:
-        start_with:
-          - backend/app/api/conversations.py
-          - backend/app/services/attached_files.py
-        expand_when:
-          - attached-files weaving or conversation persistence change
-
-    frontend-mention-system:
-      parser:
-        start_with:
-          - frontend/src/services/mentions.ts
-        expand_when:
-          - new candidate kind
-          - prompt assembly or file resolution change
-      input-component:
-        start_with:
-          - frontend/src/features/shared/MentionInput.tsx
-          - frontend/src/features/shared/fileSizeGate.ts
-          - frontend/src/features/shared/mention-input.css
-        expand_when:
-          - dropdown UX, overlay highlight, or size-gate threshold change
-      backend-contract:
-        start_with:
-          - backend/app/services/attached_files.py
-        expand_when:
-          - per-file cap, total budget, or rendered block format change
-
-    latex-editor:
-      shell:
-        start_with:
-          - frontend/src/features/latex-editor/LatexEditor.tsx
-          - frontend/src/features/latex-editor/index.ts
-        expand_when:
-          - public API change
-      extensions:
-        start_with:
-          - frontend/src/features/latex-editor/extensions.ts
-        expand_when:
-          - keymap or command change
-      language:
-        start_with:
-          - frontend/src/features/latex-editor/latex-language.ts
-        expand_when:
-          - migrating to Lezer LaTeX grammar
-      theme:
-        start_with:
-          - frontend/src/features/latex-editor/theme.ts
-        expand_when:
-          - workspace shell theme change
-      decorations:
-        start_with:
-          - frontend/src/features/latex-editor/annotation-decorations.ts
-        expand_when:
-          - decoration kind or rendering change
-
-    latex-compile:
-      backend:
-        start_with:
-          - backend/app/services/latex_compiler.py
-          - backend/app/api/compile.py
-        expand_when:
-          - compile flags, output format, or error extraction change
-      frontend:
-        start_with:
-          - frontend/src/features/preview/LatexPreview.tsx
-          - frontend/src/stores/compileStore.ts
-        expand_when:
-          - PDF rendering or compile triggering change
-
-    domain-model:
-      document:
-        start_with:
-          - frontend/src/types/document.ts
-        expand_when:
-          - editor or agent slices need new fields
-      editor:
-        start_with:
-          - frontend/src/types/editor.ts
-        expand_when:
-          - selection / context contract change
-      agent:
-        start_with:
-          - frontend/src/types/agent.ts
-        expand_when:
-          - agent I/O schema change
-          - new annotation or risk type
-      workflow:
-        start_with:
-          - frontend/src/types/workflow.ts
-        expand_when:
-          - new workflow node type
-          - execution-trace shape change
-      collaboration:
-        start_with:
-          - frontend/src/types/collaboration.ts
-        expand_when:
-          - new collaboration mode
-          - discussion schema change
-      history:
-        start_with:
-          - frontend/src/types/history.ts
-        expand_when:
-          - versioning or audit field change (V3 Phase 3)
-      ui:
-        start_with:
-          - frontend/src/types/ui.ts
-        expand_when:
-          - new panel view-model contract
-      actions:
-        start_with:
-          - frontend/src/types/actions.ts
-        expand_when:
-          - new user-action variant
+          - launcher, repo hygiene, ignored files, or setup instructions change
 
     backend-service:
       app-entry:
         start_with:
-          - backend/app/main.py
-          - backend/app/settings.py
+          - services/backend/app/main.py
+          - services/backend/app/settings.py
+          - services/backend/app/api/__init__.py
         expand_when:
-          - middleware or lifespan hook change
-      api-routes:
+          - middleware, CORS, lifespan, router aggregation, or env defaults change
+      models-and-schemas:
         start_with:
-          - backend/app/api/__init__.py
-          - backend/app/api/workflows.py
-          - backend/app/api/native_agents.py
+          - services/backend/app/models.py
+          - services/backend/app/schemas.py
+          - services/backend/app/migrations.py
+          - services/backend/app/database.py
         expand_when:
-          - adding new routes or changing existing ones
-      services:
+          - table, relationship, migration, or API payload shape changes
+      auth-users:
         start_with:
-          - backend/app/services/provider_service.py
-          - backend/app/services/native_agent_service.py
-          - backend/app/services/skill_marketplace_service.py
-          - backend/app/services/dify_client.py
-          - backend/app/services/nanobot_client.py
+          - services/backend/app/api/auth.py
+          - services/backend/app/api/users.py
+          - services/backend/app/services/auth_service.py
+          - services/backend/app/services/user_service.py
+          - services/frontend/src/stores/userStore.ts
+          - services/frontend/src/services/authApi.ts
         expand_when:
-          - provider client, native Agent/Skill, or registry invariant change
-      models:
+          - login/session/current-user/authorization behavior changes
+      providers:
         start_with:
-          - backend/app/models.py
-          - backend/app/schemas.py
+          - services/backend/app/api/providers.py
+          - services/backend/app/services/provider_service.py
+          - services/backend/app/services/dify_client.py
+          - services/backend/app/services/nanobot_client.py
+          - services/frontend/src/features/settings/SettingsDialog.tsx
+          - services/frontend/src/stores/settingsStore.ts
         expand_when:
-          - new tables or I/O schemas
+          - provider kinds, model probing, API key handling, or provider UI changes
       secrets:
         start_with:
-          - backend/app/secrets_vault.py
+          - services/backend/app/secrets_vault.py
+          - services/backend/app/settings.py
         expand_when:
-          - key rotation policy change
+          - Fernet key storage, rotation, encryption/decryption, or secret path changes
+
+    frontend-workspace:
+      shell:
+        start_with:
+          - services/frontend/src/App.tsx
+          - services/frontend/src/App.css
+          - services/frontend/src/main.tsx
+          - services/frontend/src/router.tsx
+          - services/frontend/src/pages/WorkspacePage.tsx
+          - services/frontend/src/features/shared/ErrorBoundary.tsx
+        expand_when:
+          - workspace layout, routing, app bootstrap, error boundary, or global provider changes
+      project-list:
+        start_with:
+          - services/frontend/src/pages/ProjectListPage.tsx
+          - services/frontend/src/pages/components/ProjectCard.tsx
+          - services/frontend/src/pages/components/ProjectTableRow.tsx
+          - services/frontend/src/pages/components/ProjectFormDialog.tsx
+          - services/frontend/src/pages/components/DeleteProjectDialog.tsx
+          - services/frontend/src/stores/projectStore.ts
+          - services/frontend/src/services/projectsApi.ts
+        expand_when:
+          - project create/list/delete/open behavior changes
+      shared-ui:
+        start_with:
+          - services/frontend/src/features/shared/AgentMarkdown.tsx
+          - services/frontend/src/features/shared/TagPill.tsx
+          - services/frontend/src/features/shared/toast.tsx
+          - services/frontend/src/features/shared/ErrorBoundary.tsx
+        expand_when:
+          - cross-panel rendering, toast, tag, markdown, or error handling changes
+
+    frontend-topbar:
+      topbar:
+        start_with:
+          - services/frontend/src/features/topbar/Topbar.tsx
+          - services/frontend/src/features/topbar/ViewControl.tsx
+          - services/frontend/src/features/topbar/UserMenu.tsx
+          - services/frontend/src/features/topbar/topbar.css
+        expand_when:
+          - topbar actions, user menu, view controls, or layout changes
+      notifications-presence:
+        start_with:
+          - services/frontend/src/features/topbar/NotificationBell.tsx
+          - services/frontend/src/features/topbar/PresenceIndicator.tsx
+          - services/frontend/src/features/topbar/notification-bell.css
+          - services/frontend/src/features/topbar/presence-indicator.css
+          - services/backend/app/api/notifications.py
+          - services/backend/app/services/event_bus.py
+        expand_when:
+          - notifications, unread counts, online presence, or project events change
+
+    frontend-file-tree:
+      tree:
+        start_with:
+          - services/frontend/src/features/file-tree/FileTree.tsx
+          - services/frontend/src/stores/filesystemStore.ts
+          - services/frontend/src/services/filesystemApi.ts
+          - services/backend/app/api/filesystem.py
+          - services/backend/app/services/project_fs_service.py
+        expand_when:
+          - file/folder CRUD, upload/download, drag/drop, rename, or tree schema changes
+      outline:
+        start_with:
+          - services/frontend/src/features/file-tree/OutlineList.tsx
+          - services/frontend/src/services/documentParser.ts
+          - services/frontend/src/__tests__/documentParser.test.ts
+        expand_when:
+          - outline extraction, heading parsing, or scroll-sync changes
+
+    frontend-workspace-center:
+      editor-column:
+        start_with:
+          - services/frontend/src/features/workspace-center/EditorColumn.tsx
+          - services/frontend/src/features/workspace-center/EditorToolbar.tsx
+          - services/frontend/src/features/latex-editor/LatexEditor.tsx
+          - services/frontend/src/stores/editorStore.ts
+          - services/frontend/src/services/selectionContext.ts
+        expand_when:
+          - editor mount, selection context, toolbar, or editor state changes
+      annotation-column:
+        start_with:
+          - services/frontend/src/features/workspace-center/AnnotationColumn.tsx
+          - services/frontend/src/features/annotation-panel/AnnotationPanel.tsx
+          - services/frontend/src/stores/annotationStore.ts
+        expand_when:
+          - annotation column layout or card integration changes
+      preview-column:
+        start_with:
+          - services/frontend/src/features/workspace-center/PreviewColumn.tsx
+          - services/frontend/src/features/preview/LatexPreview.tsx
+          - services/frontend/src/features/preview/MarkdownPreview.tsx
+          - services/frontend/src/stores/compileStore.ts
+        expand_when:
+          - preview layout, format switching, compile trigger, or PDF/Markdown rendering changes
+
+    latex-editor:
+      core:
+        start_with:
+          - services/frontend/src/features/latex-editor/LatexEditor.tsx
+          - services/frontend/src/features/latex-editor/extensions.ts
+          - services/frontend/src/features/latex-editor/theme.ts
+        expand_when:
+          - CodeMirror setup, keymaps, editor theme, or editor API changes
+      language-tools:
+        start_with:
+          - services/frontend/src/features/latex-editor/latex-language.ts
+          - services/frontend/src/features/latex-editor/latex-completion-data.ts
+          - services/frontend/src/features/latex-editor/latex-snippets.ts
+          - services/frontend/src/features/latex-editor/latex-folding.ts
+          - services/frontend/src/features/latex-editor/search-panel.ts
+          - services/frontend/src/__tests__/latexLanguageCompletion.test.ts
+          - services/frontend/src/__tests__/latexSnippets.test.ts
+          - services/frontend/src/__tests__/latexFolding.test.ts
+        expand_when:
+          - LaTeX parsing, completion, snippet, folding, or search behavior changes
+      decorations:
+        start_with:
+          - services/frontend/src/features/latex-editor/annotation-decorations.ts
+          - services/frontend/src/__tests__/annotationDecorations.test.ts
+          - services/frontend/src/App.css
+        expand_when:
+          - annotation decoration style, mapping, or click behavior changes
+      collaboration-binding:
+        start_with:
+          - services/frontend/src/features/latex-editor/collaboration-extensions.ts
+          - services/frontend/src/stores/collaborationStore.ts
+          - services/frontend/src/services/collaborationProvider.ts
+        expand_when:
+          - Yjs CodeMirror binding, awareness, or collaborative text sync changes
+
+    frontend-preview:
+      latex:
+        start_with:
+          - services/frontend/src/features/preview/LatexPreview.tsx
+          - services/frontend/src/features/preview/latex-preview.css
+          - services/frontend/src/stores/compileStore.ts
+          - services/backend/app/api/compile.py
+          - services/backend/app/services/latex_compiler.py
+        expand_when:
+          - compile contract, PDF serving, PDF.js rendering, download, or error extraction changes
+      markdown:
+        start_with:
+          - services/frontend/src/features/preview/MarkdownPreview.tsx
+          - services/frontend/src/features/preview/markdownAssets.ts
+          - services/frontend/src/services/previewSourceMap.ts
+          - services/frontend/src/features/preview/markdown-preview.css
+          - services/frontend/src/__tests__/markdownAssets.test.ts
+        expand_when:
+          - Markdown rendering, asset rewriting, source mapping, or math display changes
+
+    frontend-annotations:
+      panel:
+        start_with:
+          - services/frontend/src/features/annotation-panel/AnnotationPanel.tsx
+          - services/frontend/src/features/annotation-panel/CommentComposer.tsx
+          - services/frontend/src/features/annotation-panel/ReviewStatusToggle.tsx
+          - services/frontend/src/features/annotation-panel/annotation-panel.css
+          - services/frontend/src/stores/annotationStore.ts
+          - services/frontend/src/__tests__/annotationStore.test.ts
+        expand_when:
+          - card actions, continue flow, review state, or composer behavior changes
+      evaluation:
+        start_with:
+          - services/frontend/src/features/annotation-panel/EvaluationPanel.tsx
+          - services/frontend/src/services/annotationEvaluationApi.ts
+          - services/frontend/src/services/evaluationContext.ts
+          - services/backend/app/api/annotation_evaluations.py
+          - services/backend/app/services/evaluation_service.py
+          - services/backend/app/services/annotation_training_export_service.py
+        expand_when:
+          - annotation scoring, review state, or training export changes
+      backend-persistence:
+        start_with:
+          - services/backend/app/services/annotation_service.py
+          - services/backend/app/api/conversations.py
+          - services/backend/app/services/operation_service.py
+        expand_when:
+          - annotation persistence, conversation-origin annotations, or operation audit changes
+
+    frontend-mention-system:
+      parser:
+        start_with:
+          - services/frontend/src/services/mentions.ts
+          - services/frontend/src/__tests__/mentionsAttachedFiles.test.ts
+        expand_when:
+          - mention syntax, candidate kinds, or attached-file parsing changes
+      input-components:
+        start_with:
+          - services/frontend/src/features/shared/MentionInput.tsx
+          - services/frontend/src/features/shared/MentionCodeMirrorInput.tsx
+          - services/frontend/src/features/shared/fileSizeGate.ts
+          - services/frontend/src/features/shared/mention-input.css
+          - services/frontend/src/features/shared/mention-codemirror-input.css
+        expand_when:
+          - dropdown UI, CodeMirror mention input, size gate, or keyboard behavior changes
+      backend-contract:
+        start_with:
+          - services/backend/app/services/attached_files.py
+          - services/backend/app/services/native_agent_runner.py
+          - services/backend/app/services/agent_orchestrator.py
+        expand_when:
+          - attached-file prompt rendering, budget rules, or multimodal bridge changes
+
+    frontend-right-panel:
+      shell:
+        start_with:
+          - services/frontend/src/features/right-panel/RightPanel.tsx
+          - services/frontend/src/features/right-panel/right-panel.css
+        expand_when:
+          - right-panel tabs, versions subnav, or panel-level composition changes
+      discussion:
+        start_with:
+          - services/frontend/src/features/right-panel/DiscussionTab.tsx
+          - services/frontend/src/stores/conversationStore.ts
+          - services/backend/app/api/conversations.py
+          - services/backend/app/services/conversation_session_service.py
+        expand_when:
+          - chat lifecycle, SSE message streaming, session handling, or discussion UI changes
+      team:
+        start_with:
+          - services/frontend/src/features/right-panel/TeamTab.tsx
+          - services/frontend/src/stores/nativeAgentStore.ts
+          - services/frontend/src/stores/settingsStore.ts
+          - services/frontend/src/stores/workflowStore.ts
+          - services/frontend/src/services/backendApi.ts
+        expand_when:
+          - Provider, native Agent, Skill, MCP, or Workflow management UI changes
+      workflow-definitions:
+        start_with:
+          - services/frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+          - services/frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+          - services/frontend/src/features/right-panel/WorkflowTab.tsx
+          - services/frontend/src/features/right-panel/templates/index.ts
+          - services/frontend/src/features/right-panel/templates/debate.json
+          - services/frontend/src/features/right-panel/templates/consensus.json
+          - services/frontend/src/stores/workflowStore.ts
+        expand_when:
+          - workflow CRUD, template, run, or inline workflow invocation changes
+      automation:
+        start_with:
+          - services/frontend/src/features/right-panel/AutomationTab.tsx
+          - services/frontend/src/features/right-panel/AnnotationAutomationPanel.tsx
+          - services/frontend/src/features/right-panel/WritingAutomationPanel.tsx
+          - services/frontend/src/stores/automationStore.ts
+          - services/frontend/src/stores/writingStore.ts
+        expand_when:
+          - automation schedule, writing automation, or annotation automation changes
+      run-history:
+        start_with:
+          - services/frontend/src/features/right-panel/RunHistoryTab.tsx
+          - services/frontend/src/stores/workflowStore.ts
+        expand_when:
+          - workflow run history display or replay metadata changes
+      project-archive:
+        start_with:
+          - services/frontend/src/features/right-panel/ProjectArchiveTab.tsx
+          - services/frontend/src/features/history/MajorVersionList.tsx
+          - services/frontend/src/features/history/MajorVersionDiffModal.tsx
+          - services/frontend/src/features/history/MajorVersionCreateDialog.tsx
+          - services/frontend/src/stores/majorVersionStore.ts
+          - services/frontend/src/services/majorVersionApi.ts
+          - services/backend/app/api/archives.py
+          - services/backend/app/api/major_versions.py
+          - services/backend/app/services/project_archive_service.py
+        expand_when:
+          - project-level major versions, server archive repo, GitHub archive push/import, restore, diff, or download changes
+
+    workflow-orchestration:
+      orchestrator:
+        start_with:
+          - services/backend/app/services/agent_orchestrator.py
+          - services/backend/app/api/workflows.py
+          - services/backend/app/services/attached_files.py
+        expand_when:
+          - existing agent + loop execution behavior changes
+          - SSE event shape, loop membership, or nested workflow changes
+          - new node type or scheduler change requires an explicit focused Request
+      canvas:
+        start_with:
+          - services/frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+          - services/frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+          - services/frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+          - services/frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+          - services/frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+          - services/frontend/src/features/right-panel/workflow-canvas/health.ts
+        expand_when:
+          - visual workflow authoring, graph conversion, node validation, palette, or inspector changes
+      tests:
+        start_with:
+          - services/backend/test_workflow_execution.py
+          - services/backend/test_nested_workflow.py
+          - services/backend/test_loop_membership_routing.py
+          - services/backend/test_branch_merge.py
+        expand_when:
+          - backend workflow behavior changes need regression coverage
 
     workflow-integration:
-      dify-client:
+      dify:
         start_with:
-          - backend/app/services/dify_client.py
+          - services/backend/app/services/dify_client.py
+          - services/backend/app/api/workflows.py
+          - services/frontend/src/stores/workflowStore.ts
         expand_when:
-          - Dify API version change
-          - new endpoint or event type
-      nanobot-client:
+          - Dify endpoint, SSE event parsing, workflow run trigger, or provider response changes
+      nanobot:
         start_with:
-          - backend/app/services/nanobot_client.py
+          - services/backend/app/services/nanobot_client.py
+          - services/backend/app/services/attached_files.py
+          - services/frontend/src/stores/settingsStore.ts
         expand_when:
-          - Nanobot API change
-          - multimodal content-block shape change
-      provider-registry:
+          - OpenAI-compatible request shape, multimodal blocks, session_id, or Nanobot provider UI changes
+      github:
         start_with:
-          - backend/app/services/provider_service.py
-          - frontend/src/stores/settingsStore.ts
+          - services/backend/app/api/github.py
+          - services/backend/app/services/github_service.py
+          - services/frontend/src/features/settings/SettingsDialog.tsx
+          - services/frontend/src/services/backendApi.ts
         expand_when:
-          - provider lifecycle change
-          - new provider kinds
-      workflow-run:
-        start_with:
-          - backend/app/api/workflows.py
-          - frontend/src/stores/workflowStore.ts
-          - frontend/src/services/outputParser.ts
-        expand_when:
-          - run trigger contract change
-          - annotation streaming contract change
+          - GitHub auth, device flow, import, push, or repo URL parsing changes
 
     native-agent-skills:
+      backend-routes:
+        start_with:
+          - services/backend/app/api/native_agents.py
+          - services/backend/app/schemas.py
+        expand_when:
+          - native Agent credentials, Skill, Agent, marketplace, MCP, or official badge API changes
+      backend-services:
+        start_with:
+          - services/backend/app/services/native_agent_service.py
+          - services/backend/app/services/native_agent_runner.py
+          - services/backend/app/services/agent_registry_service.py
+          - services/backend/app/services/agent_workspace_service.py
+          - services/backend/app/services/skill_content_crypto.py
+          - services/backend/app/services/skill_marketplace_service.py
+          - services/backend/app/services/skill_npx_installer.py
+          - services/backend/app/services/skill_recipe_metadata.py
+          - services/backend/app/models.py
+        expand_when:
+          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, or registry behavior changes
+      frontend-management:
+        start_with:
+          - services/frontend/src/features/right-panel/TeamTab.tsx
+          - services/frontend/src/features/right-panel/right-panel.css
+          - services/frontend/src/stores/nativeAgentStore.ts
+          - services/frontend/src/services/backendApi.ts
+        expand_when:
+          - Agent panel, Skill panel, MCP panel, marketplace search, official badge, or AgentSkill assignment UI changes
+      skill-market:
+        start_with:
+          - supports/SuperLeaf.Skills/README.md
+          - supports/SuperLeaf.Skills/marketplace.json
+          - supports/SuperLeaf.Skills/external-skills.json
+          - supports/SuperLeaf.Skills/scripts/build_marketplace.py
+          - supports/SuperLeaf.Skills/scripts/validate_marketplace.py
+          - services/backend/app/services/skill_marketplace_service.py
+        expand_when:
+          - adding official/external Skill entries or changing Skill marketplace schema
       mcp-catalog:
         start_with:
           - supports/SuperLeaf.MCPs/README.md
           - supports/SuperLeaf.MCPs/docs/README.md
           - supports/SuperLeaf.MCPs/docs/adding-mcp.md
+          - supports/SuperLeaf.MCPs/docs/verification.md
           - supports/SuperLeaf.MCPs/catalog.json
-          - backend/app/services/mcp_catalog_service.py
-          - backend/app/services/mcp_tool_service.py
-          - backend/app/api/native_agents.py
-          - frontend/src/features/right-panel/TeamTab.tsx
-          - frontend/src/stores/nativeAgentStore.ts
-          - frontend/src/services/backendApi.ts
+          - services/backend/app/services/mcp_config_service.py
+          - services/backend/app/services/mcp_catalog_service.py
+          - services/backend/app/services/mcp_tool_service.py
+          - services/backend/app/api/native_agents.py
+          - services/frontend/src/features/right-panel/TeamTab.tsx
+          - services/frontend/src/stores/nativeAgentStore.ts
         expand_when:
-          - adding or revising an MCP preset under supports/SuperLeaf.MCPs/presets
-          - adding or revising MCP golden tests under supports/SuperLeaf.MCPs/golden-tests
-          - changing MCP catalog schema, probe, golden-test, or runtime tool-call behavior
-          - changing TeamTab MCP subtab, preset rendering, or custom MCP UX
-      backend-routes:
-        start_with:
-          - backend/app/api/native_agents.py
-          - backend/app/schemas.py
-        expand_when:
-          - native Agent credential, Skill, Agent, or marketplace endpoint change
-      backend-services:
-        start_with:
-          - backend/app/services/native_agent_service.py
-          - backend/app/services/native_agent_runner.py
-          - backend/app/services/agent_registry_service.py
-          - backend/app/services/skill_content_crypto.py
-          - backend/app/services/skill_marketplace_service.py
-          - backend/app/models.py
-        expand_when:
-          - encrypted native credential storage change
-          - Skill content encryption or marketplace sync change
-          - Agent runtime Skill loading change
-      frontend-management:
-        start_with:
-          - frontend/src/features/right-panel/TeamTab.tsx
-          - frontend/src/features/right-panel/right-panel.css
-          - frontend/src/stores/nativeAgentStore.ts
-          - frontend/src/services/backendApi.ts
-        expand_when:
-          - AgentSkill picker, Skill library, Skill Market, or sharing dialog change
+          - adding/revising MCP presets, env schema, transport config, connectivity/functionality tests, or tool-call behavior
 
-    workflow-orchestration:
-      orchestrator:
+    collaboration:
+      project-members:
         start_with:
-          - backend/app/services/agent_orchestrator.py
+          - services/backend/app/api/projects.py
+          - services/backend/app/services/project_member_service.py
+          - services/backend/app/services/event_bus.py
+          - services/frontend/src/features/settings/ProjectMembersPanel.tsx
+          - services/frontend/src/stores/projectStore.ts
         expand_when:
-          - bug fix or feature within agent + loop model
-          - NEW node type / run-loop change — escalate to Request
-      definition-api:
+          - member roles, invites, shared project list, or collaboration permissions change
+      realtime-editing:
         start_with:
-          - backend/app/api/workflows.py
+          - services/collab-server/src/index.ts
+          - services/collab-server/src/ws-handler.ts
+          - services/collab-server/src/persistence.ts
+          - services/frontend/src/services/collaborationProvider.ts
+          - services/frontend/src/stores/collaborationStore.ts
+          - services/backend/app/services/collab_snapshot_service.py
         expand_when:
-          - definition CRUD, validation, or execute endpoint change
-      canvas:
+          - Yjs sync, awareness, persistence, WebSocket auth, or DB snapshot behavior changes
+      project-events:
         start_with:
-          - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+          - services/frontend/src/features/shared/ProjectEventBridge.tsx
+          - services/frontend/src/services/projectEventStream.ts
+          - services/backend/app/services/event_bus.py
+          - services/backend/app/api/projects.py
         expand_when:
-          - visual authoring change
-      templates:
+          - SSE project event shape, self-origin filtering, or online presence changes
+
+    project-archive-and-history:
+      document-history:
         start_with:
-          - frontend/src/features/right-panel/templates/
+          - services/backend/app/api/versions.py
+          - services/backend/app/services/version_service.py
+          - services/backend/app/services/diff_service.py
+          - services/backend/app/services/operation_service.py
+          - services/frontend/src/features/history/HistoryTab.tsx
+          - services/frontend/src/features/history/DiffModal.tsx
+          - services/frontend/src/features/history/OperationsView.tsx
+          - services/frontend/src/stores/historyStore.ts
+          - services/frontend/src/services/versionApi.ts
+          - services/frontend/src/services/operationApi.ts
         expand_when:
-          - adding or editing template JSON (Debate / Consensus etc)
+          - document snapshots, labels, restore, diff, highlights, or operation timeline changes
+      major-versions:
+        start_with:
+          - services/backend/app/api/major_versions.py
+          - services/backend/app/api/archives.py
+          - services/backend/app/services/project_archive_service.py
+          - services/frontend/src/features/right-panel/ProjectArchiveTab.tsx
+          - services/frontend/src/features/history/MajorVersionList.tsx
+          - services/frontend/src/features/history/MajorVersionDiffModal.tsx
+          - services/frontend/src/stores/majorVersionStore.ts
+          - services/frontend/src/services/majorVersionApi.ts
+        expand_when:
+          - server-side project archive snapshots, GitHub archive binding/push/import, compare, restore, or ZIP download changes
 
     build-tooling:
-      vite:
+      frontend:
         start_with:
-          - frontend/vite.config.ts
+          - services/frontend/package.json
+          - services/frontend/package-lock.json
+          - services/frontend/vite.config.ts
+          - services/frontend/tsconfig.json
+          - services/frontend/eslint.config.js
         expand_when:
-          - adding a Vite plugin
-      typescript:
+          - frontend dependency, build, lint, Vite, TS, or public asset behavior changes
+      backend:
         start_with:
-          - frontend/tsconfig.app.json
+          - services/backend/pyproject.toml
+          - services/backend/uv.lock
+          - services/backend/app/settings.py
         expand_when:
-          - shared paths or strictness change
-      lint-style:
+          - backend dependency, uv environment, config, or runtime setting changes
+      collab-server:
         start_with:
-          - frontend/eslint.config.js
+          - services/collab-server/package.json
+          - services/collab-server/package-lock.json
+          - services/collab-server/tsconfig.json
+          - services/collab-server/src/index.ts
         expand_when:
-          - adding a lint plugin or Tailwind plugin
-      backend-pyproject:
-        start_with:
-          - backend/pyproject.toml
-        expand_when:
-          - adding Python deps or ruff rules
+          - collab server dependency, build, or start command changes
 
   expansion_discipline:
     must_justify: true
-    must_not_cross: forbidden_paths
-    prefer: read_protected_then_confirm_before_edit
+    must_not_cross:
+      - forbidden_paths
+      - private_paths
+    prefer: read_start_points_then_expand_by_imports_or_tests
+    before_editing_protected_paths: create Request and Plan, then keep edits narrowly scoped.

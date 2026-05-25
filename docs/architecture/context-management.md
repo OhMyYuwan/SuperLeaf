@@ -176,7 +176,7 @@ class Message(Base):
 ### 1. 会话切换逻辑
 
 ```python
-# src/backend/app/api/conversations.py
+# services/backend/app/api/conversations.py
 
 @router.post("/{conversation_id}/messages")
 async def send_message(

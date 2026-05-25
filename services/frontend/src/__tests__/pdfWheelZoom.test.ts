@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  calculateFitWidthZoom,
   calculateWheelZoom,
   clampPdfZoom,
   PDF_ZOOM_MAX,
@@ -30,6 +31,14 @@ describe('PDF wheel zoom calculations', () => {
     expect(calculateWheelZoom(PDF_ZOOM_MIN, 1000).nextZoom).toBe(PDF_ZOOM_MIN)
     expect(clampPdfZoom(99)).toBe(PDF_ZOOM_MAX)
     expect(clampPdfZoom(0)).toBe(PDF_ZOOM_MIN)
+  })
+
+  it('computes fit-width zoom from the PDF page width and viewport width', () => {
+    expect(calculateFitWidthZoom(700, 560)).toBeCloseTo(0.8)
+    expect(calculateFitWidthZoom(700, 875)).toBeCloseTo(1.25)
+    expect(calculateFitWidthZoom(700, 4000)).toBe(PDF_ZOOM_MAX)
+    expect(calculateFitWidthZoom(700, 20)).toBe(PDF_ZOOM_MIN)
+    expect(calculateFitWidthZoom(0, 560)).toBe(1)
   })
 
   it('computes scroll compensation around the pointer anchor from the current viewport', () => {

@@ -47,6 +47,11 @@ export function clampPdfZoom(zoom: number): number {
   return Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, zoom))
 }
 
+export function calculateFitWidthZoom(pageWidth: number, viewportWidth: number): number {
+  if (pageWidth <= 0 || viewportWidth <= 0) return 1
+  return clampPdfZoom(viewportWidth / pageWidth)
+}
+
 export function calculateWheelZoom(currentZoom: number, deltaY: number): WheelZoomResult {
   const previousZoom = clampPdfZoom(currentZoom)
   if (deltaY === 0) {

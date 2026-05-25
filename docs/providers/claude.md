@@ -6,7 +6,7 @@ nav_order: 4
 
 # Claude Provider
 
-当前版本不推荐使用单独的 `claude-direct` 路径作为首选接入方式。更稳妥的做法是通过 Nanobot、OpenAI-compatible 网关或 Dify 把 Claude 类模型暴露为统一 Provider，再在 YuwanLabWriter 中创建原生 Agent。
+当前版本不推荐使用单独的 `claude-direct` 路径作为首选接入方式。更稳妥的做法是通过 Nanobot、OpenAI-compatible 网关或 Dify 把 Claude 类模型暴露为统一 Provider，再在 SuperLeaf 中创建原生 Agent。
 
 ## 推荐接入方式
 
@@ -18,7 +18,7 @@ nav_order: 4
 
 ## 为什么推荐网关方式
 
-YuwanLabWriter 的原生 Agent 运行时关心的是：
+SuperLeaf 的原生 Agent 运行时关心的是：
 
 - endpoint
 - API key
@@ -32,7 +32,7 @@ YuwanLabWriter 的原生 Agent 运行时关心的是：
 
 1. 在你的网关或 Nanobot 中配置 Claude 模型。
 2. 确认它提供 OpenAI-compatible `/v1` 接口。
-3. 在 YuwanLabWriter 中添加 `nanobot` 或兼容 Provider。
+3. 在 SuperLeaf 中添加 `nanobot` 或兼容 Provider。
 4. 测连并同步模型。
 5. 创建原生 Agent，选择 Claude 类模型。
 6. 装配需要的 Skill。

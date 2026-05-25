@@ -26,7 +26,7 @@ export function Topbar({
     <header className="topbar">
       <div className="topbar-brand">
         <div className="brand-row">
-          <Link to="/projects" className="brand" title="返回项目列表">YuwanLabWriter</Link>
+          <Link to="/projects" className="brand" title="返回项目列表">SuperLeaf</Link>
           {projectName && (
             <>
               <span className="brand-sep" aria-hidden>/</span>

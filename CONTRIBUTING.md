@@ -1,6 +1,6 @@
-# Contributing to YuwanLabWriter
+# Contributing to SuperLeaf
 
-Thanks for your interest in improving YuwanLabWriter. This project is a local-first academic writing editor with a React frontend, FastAPI backend, and Yjs collaboration server.
+Thanks for your interest in improving SuperLeaf. This project is a local-first academic writing editor with a React frontend, FastAPI backend, and Yjs collaboration server.
 
 ## Ways to Contribute
 
@@ -86,8 +86,8 @@ Requirements:
 Set up and run all services:
 
 ```bash
-git clone https://github.com/YuwanZ/YuwanLabWriter.git
-cd YuwanLabWriter
+git clone https://github.com/OhMyYuwan/SuperLeaf.git
+cd SuperLeaf
 ./start.sh install
 ./start.sh up
 ./start.sh status
@@ -148,4 +148,3 @@ Document local provider setup
 ## Licensing
 
 By contributing, you agree that your contributions are licensed under the project license shown in `LICENSE`, currently AGPL-3.0-only, unless a separate written agreement applies.
-

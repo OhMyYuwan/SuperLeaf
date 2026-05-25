@@ -61,7 +61,7 @@ research drafting.
 | Model | 从后端同步到的模型里选一个 |
 | 指令 | “你是一名严谨的学术写作审稿助手，请指出表达不清、逻辑跳跃和可改进的论证。” |
 
-原生 Agent 是 YuwanLabWriter 后端管理的 Agent。它不会把所有 Skill 自动带入上下文，运行时只能读取你给它勾选的 Skill。
+原生 Agent 是 SuperLeaf 后端管理的 Agent。它不会把所有 Skill 自动带入上下文，运行时只能读取你给它勾选的 Skill。
 
 ## 5. 安装或上传 Skill
 

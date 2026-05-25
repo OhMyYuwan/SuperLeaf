@@ -296,7 +296,7 @@ Suggested output pages:
 
 
 def _export_readme() -> str:
-    return """# YuwanLabWriter Annotation Training Export
+    return """# SuperLeaf Annotation Training Export
 
 This package contains annotation evaluation samples for building an LLM wiki.
 

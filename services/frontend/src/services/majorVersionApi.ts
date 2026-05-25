@@ -2,14 +2,15 @@
  * majorVersionApi — typed client for project-level major version (git commit) routes.
  *
  * Backend: src/backend/app/api/major_versions.py
- * Working repo: ~/.yuwanlab/archives/{project_id}/
+ * Server archive repo: ~/.yuwanlab/archives/{project_id}/ on the backend host.
  *
  * Major versions are full-project git commits, complementary to the per-document
- * fine-grained version history. Users can also operate on the working repo
- * directly via terminal for advanced git operations (branch/reset/push).
+ * fine-grained version history. End users should treat this git repo as a
+ * server-side archive implementation detail and use the UI to compare, restore,
+ * push, or download snapshots.
  */
 
-import { http } from './backendApi'
+import { BACKEND_BASE, http } from './backendApi'
 
 export interface CommitMeta {
   sha: string
@@ -101,6 +102,34 @@ export const majorVersionApi = {
       `/api/projects/${encodeURIComponent(projectId)}/major-versions/${encodeURIComponent(sha)}/files/${encodeURI(path)}`,
     ),
 
+  downloadUrl: (projectId: string, sha: string) =>
+    `${BACKEND_BASE}/api/projects/${encodeURIComponent(projectId)}/major-versions/${encodeURIComponent(sha)}/download`,
+
+  download: async (projectId: string, sha: string): Promise<void> => {
+    const response = await fetch(majorVersionApi.downloadUrl(projectId, sha), {
+      method: 'GET',
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      const detail = await response.text()
+      throw new Error(detail || `下载失败：HTTP ${response.status}`)
+    }
+    const blob = await response.blob()
+    const disposition = response.headers.get('Content-Disposition') ?? ''
+    const filename = filenameFromDisposition(disposition) ?? `superleaf-${sha.slice(0, 7)}.zip`
+    const url = URL.createObjectURL(blob)
+    try {
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  },
+
   restore: (projectId: string, sha: string, message?: string) =>
     http<MajorVersionSnapshot>(
       `/api/projects/${encodeURIComponent(projectId)}/major-versions/${encodeURIComponent(sha)}/restore`,
@@ -109,4 +138,11 @@ export const majorVersionApi = {
         body: JSON.stringify({ message: message ?? null }),
       },
     ),
+}
+
+function filenameFromDisposition(disposition: string): string | null {
+  const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8?.[1]) return decodeURIComponent(utf8[1].replace(/^"|"$/g, ''))
+  const ascii = disposition.match(/filename="?([^"]+)"?/i)
+  return ascii?.[1] ?? null
 }

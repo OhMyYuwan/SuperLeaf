@@ -5,14 +5,14 @@
  *   - short SHA + commit message (truncated)
  *   - author name + relative timestamp
  *   - +N / -N stats
- *   - actions: 对比 (diff with parent) / 恢复 (restore via append-only commit)
+ *   - actions: 对比 (diff with parent) / 下载 ZIP / 恢复 (restore via append-only commit)
  */
 
 import { useEffect, useState } from 'react'
-import { GitCommit, GitCompare, RefreshCw, Loader2, RotateCcw } from 'lucide-react'
+import { Download, GitCommit, GitCompare, RefreshCw, Loader2, RotateCcw } from 'lucide-react'
 
 import { useMajorVersionStore } from '../../stores/majorVersionStore'
-import type { CommitMeta } from '../../services/majorVersionApi'
+import { majorVersionApi, type CommitMeta } from '../../services/majorVersionApi'
 
 interface MajorVersionListProps {
   projectId: string
@@ -31,6 +31,7 @@ export function MajorVersionList({ projectId, onDiffClick, onRestore }: MajorVer
   const error = errorMap[projectId] ?? null
 
   const [restoring, setRestoring] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
 
   useEffect(() => {
     if (projectId) loadCommits(projectId)
@@ -53,6 +54,18 @@ export function MajorVersionList({ projectId, onDiffClick, onRestore }: MajorVer
       alert(errMsg)
     } finally {
       setRestoring(null)
+    }
+  }
+
+  const handleDownload = async (commit: CommitMeta) => {
+    setDownloading(commit.sha)
+    try {
+      await majorVersionApi.download(projectId, commit.sha)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : '下载失败'
+      alert(errMsg)
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -103,6 +116,19 @@ export function MajorVersionList({ projectId, onDiffClick, onRestore }: MajorVer
                 title="与父提交对比"
               >
                 <GitCompare size={12} /> 对比
+              </button>
+              <button
+                className="small-btn"
+                onClick={() => void handleDownload(commit)}
+                disabled={downloading === commit.sha}
+                title="下载这个大版本的完整项目 ZIP"
+              >
+                {downloading === commit.sha ? (
+                  <Loader2 size={12} className="spin" />
+                ) : (
+                  <Download size={12} />
+                )}{' '}
+                下载
               </button>
               <button
                 className="small-btn"

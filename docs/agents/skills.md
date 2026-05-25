@@ -28,6 +28,8 @@ https://github.com/OhMyYuwan/SuperLeaf.Skills
 https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.json
 ```
 
+本地 `supports/SuperLeaf.Skills` 只是开发 checkout。它是独立仓库，不属于 SuperLeaf 主仓库提交内容。
+
 ## 安装市场 Skill
 
 1. 打开 **团队管理 → Skill**。

@@ -14,7 +14,7 @@
   </a>
 </div>
 
-SuperLeaf 是一个本地部署的 LaTeX/Markdown 协作编辑器，集成了 AI 工作流、后端原生 Agent、Skill 市场和实时多人协作功能。
+SuperLeaf 是一个本地部署的 LaTeX/Markdown 协作编辑器，集成了 AI 工作流、后端原生 Agent、Skill/MCP 市场、项目级归档版本和实时多人协作功能。
 
 ## ✨ 核心特性
 
@@ -22,8 +22,9 @@ SuperLeaf 是一个本地部署的 LaTeX/Markdown 协作编辑器，集成了 AI
 - **🤝 实时协作** - 基于 Yjs CRDT 的多人实时编辑，远程光标、在线用户显示
 - **🤖 AI 工作流** - 集成 Dify、Nanobot 等 Provider，支持后端原生 Agent 和自定义多 Agent 工作流
 - **🧩 Skill 系统** - 支持官方 Skill Market、私有 Skill、本地共享 Skill，并可按 Agent 装配
+- **🔌 MCP 工具** - 支持拥有的 MCP、自定义 MCP、官方/外部 MCP 市场，Agent 只使用用户启用的工具
 - **💬 智能批注** - AI 生成的批注系统，支持接受/拒绝、评价、持续对话
-- **📊 版本历史** - 文档快照、操作追踪、差异对比
+- **📊 版本历史** - 文档快照、操作追踪、差异对比，以及服务器端项目大版本归档和 ZIP 下载
 - **🔒 隐私优先** - Provider key、GitHub token、原生 Agent 凭证和 Skill 内容加密存储；Agent 资产按用户隔离
 
 ## 🚀 快速开始
@@ -69,12 +70,15 @@ cd SuperLeaf
 - [安装指南](docs/getting-started/install.md)
 - [首次启动](docs/getting-started/first-run.md)
 - [编辑器功能](docs/editor/)
-- [原生 Agent 与 Skill](docs/agents/)
+- [原生 Agent、Skill 与 MCP](docs/agents/)
+- [MCP 使用与市场](docs/agents/mcps.md)
+- [版本历史与项目归档](docs/versioning/)
 - [实时协作](docs/collaboration/)
 - [工作流系统](docs/workflows/)
 - [批注训练数据与 CSV Skill](docs/annotation-training-data.md)
 - [Provider 配置](docs/providers/)
 - [架构总览](docs/architecture/overview.md)
+- [开发导航与 Project Map](docs/development/)
 - [故障排查](docs/troubleshooting/)
 - [TODO / Roadmap](docs/TODO.md)
 
@@ -95,7 +99,8 @@ SuperLeaf/
 │   ├── backend/           # FastAPI + SQLite
 │   └── collab-server/     # Node.js + Yjs WebSocket
 ├── docs/                  # 用户文档（GitHub Pages）
-├── .acp/                  # ACP 项目治理
+├── .acp/                  # ACP 项目治理；kernel 私有，support 可提交
+├── supports/              # 独立支撑仓库 checkout，不属于主仓库提交内容
 └── start.sh               # 开发环境启动脚本
 ```
 
@@ -109,7 +114,27 @@ SuperLeaf/
 - **前端**: React 19, TypeScript, CodeMirror 6, Yjs, Zustand, Tailwind CSS
 - **后端**: FastAPI, SQLAlchemy, SQLite, Cryptography
 - **协作**: Yjs, y-protocols, LevelDB
-- **AI 集成**: Dify, Nanobot, 后端原生 Agent, Skill Market
+- **AI 集成**: Dify, Nanobot, 后端原生 Agent, Skill Market, MCP 工具调用
+
+## 🧩 Skill 与 MCP 支撑仓库
+
+Skill 和 MCP 的官方/外部 catalog 不直接维护在主仓库里，而是作为独立支撑仓库维护：
+
+| 支撑仓库 | 用途 | 默认运行时入口 |
+|---|---|---|
+| [`OhMyYuwan/SuperLeaf.Skills`](https://github.com/OhMyYuwan/SuperLeaf.Skills) | Skill Market catalog 与 Skill 包 | `https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.json` |
+| [`OhMyYuwan/SuperLeaf.MCPs`](https://github.com/OhMyYuwan/SuperLeaf.MCPs) | MCP Market catalog、preset、连通性/功能性测试 | `https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json` |
+
+本地 `supports/` 目录只作为开发/offline checkout 使用，并被主仓库忽略。不要把 `supports/` 下的独立仓库内容提交进 SuperLeaf 主仓库。
+
+## 🗂️ 版本与归档
+
+SuperLeaf 有两层版本：
+
+- **文档历史**：数据库中的单文档快照、标签、diff 和恢复。
+- **项目大版本**：后端服务机器上的服务器端 git archive，用于保存整个项目树的原子快照。
+
+项目大版本可以对比、恢复，也可以按 commit 下载完整 ZIP。这里的 git archive 是服务器端实现细节，不代表用户电脑里的本地 git 仓库。更多说明见 [版本历史与项目归档](docs/versioning/)。
 
 ## 🤝 多人协作
 
@@ -138,6 +163,18 @@ git merge develop
 ```
 
 详细的开发流程、代码规范和提交指南请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 🧭 开发导航
+
+代码修改前，优先查看 ACP 支持层：
+
+| 文件 | 作用 |
+|---|---|
+| [`.acp/support/PROJECT_MAP.yaml`](.acp/support/PROJECT_MAP.yaml) | 当前仓库结构、模块边界、能力到模块的映射 |
+| [`.acp/support/LOAD_RULES.yaml`](.acp/support/LOAD_RULES.yaml) | 按任务类型列出应先读取的入口文件与扩展条件 |
+| [`.acp/support/CHANGE_POLICY.yaml`](.acp/support/CHANGE_POLICY.yaml) | 受保护路径、高风险变更和禁止操作 |
+
+更详细的维护说明见 [开发导航与 Project Map](docs/development/)。
 
 ## 🧭 开发协议
 

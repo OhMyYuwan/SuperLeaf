@@ -22,6 +22,9 @@ nav_external_links:
   - title: Skill Market Catalog
     url: https://github.com/OhMyYuwan/SuperLeaf.Skills
     opens_in_new_tab: true
+  - title: MCP Market Catalog
+    url: https://github.com/OhMyYuwan/SuperLeaf.MCPs
+    opens_in_new_tab: true
 
 # 搜索配置
 search_enabled: true

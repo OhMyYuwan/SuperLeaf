@@ -400,3 +400,365 @@
   text-decoration: line-through;
   text-decoration-color: rgba(239, 68, 68, 0.6);
 }
+
+/* ============================================================
+ * Major version (project-level git commit) UI
+ * ============================================================ */
+
+.major-version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.major-version-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s ease;
+}
+
+.major-version-item:hover {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.major-version-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.major-version-icon {
+  flex-shrink: 0;
+  color: rgba(96, 165, 250, 0.85);
+}
+
+.major-version-sha {
+  flex-shrink: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+}
+
+.major-version-message {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.major-version-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+  padding-left: 22px;
+}
+
+.major-version-author {
+  font-weight: 500;
+}
+
+.major-version-stats {
+  font-family: ui-monospace, monospace;
+}
+
+.major-version-ins {
+  color: #86efac;
+}
+
+.major-version-del {
+  color: #fca5a5;
+}
+
+.major-version-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 22px;
+}
+
+/* ----- create dialog ----- */
+
+.major-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.major-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 90;
+  width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 22px 22px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  color: #e5e7eb;
+  background: #0f172a;
+  box-shadow: 0 40px 80px -32px rgba(2, 6, 23, 0.9), 0 0 0 1px rgba(15, 23, 42, 0.4);
+  transform: translate(-50%, -50%);
+}
+
+.major-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.major-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.major-dialog-desc {
+  margin: 0 0 14px;
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.major-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.major-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.82);
+}
+
+.major-dialog-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: #e5e7eb;
+  background: rgba(2, 6, 23, 0.66);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.major-dialog-field textarea:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.major-dialog-hint {
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 11px;
+}
+
+.major-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ----- multi-file diff modal ----- */
+
+.major-diff-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+.major-diff-summary {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.85);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.major-diff-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0;
+  overflow: hidden;
+}
+
+.major-diff-filelist {
+  overflow-y: auto;
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+  display: flex;
+  flex-direction: column;
+  padding: 6px 4px;
+  gap: 2px;
+}
+
+.major-diff-fileitem {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  color: #e5e7eb;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.major-diff-fileitem:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.major-diff-fileitem.is-selected {
+  background: rgba(59, 130, 246, 0.18);
+  color: #dbeafe;
+}
+
+.major-diff-filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+.major-diff-fileeach {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.status-added {
+  color: #86efac;
+}
+
+.status-deleted {
+  color: #fca5a5;
+}
+
+.status-modified {
+  color: #fde68a;
+}
+
+.major-diff-patch {
+  overflow: auto;
+  padding: 0;
+}
+
+.major-diff-patch-content {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(226, 232, 240, 0.92);
+  white-space: pre;
+}
+
+.patch-line {
+  padding: 0 4px;
+  white-space: pre;
+}
+
+.patch-header {
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.patch-hunk {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.patch-add {
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+}
+
+.patch-del {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+}
+
+.patch-meta {
+  color: rgba(148, 163, 184, 0.55);
+  font-size: 11px;
+}
+
+/* ----- working dir hint banner ----- */
+
+.major-version-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  font-size: 11.5px;
+  color: rgba(191, 219, 254, 0.92);
+  line-height: 1.5;
+}
+
+.major-version-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, monospace;
+}
+
+.major-version-hint-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #dbeafe;
+}
+
+.major-version-hint-note {
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.major-version-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}

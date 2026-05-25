@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,45 @@ class ExportStats:
     doc_count: int
     file_count: int
     byte_count: int
+
+
+@dataclass(frozen=True)
+class CommitMeta:
+    sha: str
+    short_sha: str
+    message: str
+    author_name: str
+    author_email: str
+    date: str  # ISO 8601
+    insertions: int
+    deletions: int
+    files_changed: int
+
+
+@dataclass(frozen=True)
+class FileEntry:
+    path: str
+    blob_sha: str
+    size: int
+
+
+@dataclass(frozen=True)
+class FileDiff:
+    path: str
+    status: str  # A (added), M (modified), D (deleted), R (renamed)
+    insertions: int
+    deletions: int
+    patch: str | None  # unified diff, None for binary
+
+
+@dataclass(frozen=True)
+class CommitDiff:
+    from_sha: str
+    to_sha: str
+    files: list[FileDiff]
+    total_insertions: int
+    total_deletions: int
+    files_changed: int
 
 
 class ProjectArchiveService:
@@ -281,6 +321,329 @@ class ProjectArchiveService:
         if check and result.returncode != 0:
             raise ArchiveError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
+
+    def list_commits(self, *, limit: int = 50) -> list[CommitMeta]:
+        """List recent commits from the archive repo."""
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            return []
+
+        # git log format: sha|short_sha|author_name|author_email|date|message
+        result = self._git(
+            repo_path,
+            "log",
+            f"-{limit}",
+            "--format=%H|%h|%an|%ae|%aI|%s",
+            "--shortstat",
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+
+        commits: list[CommitMeta] = []
+        lines = result.stdout.strip().split("\n")
+        i = 0
+        while i < len(lines):
+            if not lines[i].strip():
+                i += 1
+                continue
+
+            parts = lines[i].split("|", 5)
+            if len(parts) < 6:
+                i += 1
+                continue
+
+            sha, short_sha, author_name, author_email, date, message = parts
+            insertions = 0
+            deletions = 0
+            files_changed = 0
+
+            # Next line might be shortstat
+            if i + 1 < len(lines) and "changed" in lines[i + 1]:
+                stat_line = lines[i + 1].strip()
+                # Parse: " 3 files changed, 45 insertions(+), 12 deletions(-)"
+                import re
+                if m := re.search(r"(\d+) files? changed", stat_line):
+                    files_changed = int(m.group(1))
+                if m := re.search(r"(\d+) insertions?\(\+\)", stat_line):
+                    insertions = int(m.group(1))
+                if m := re.search(r"(\d+) deletions?\(-\)", stat_line):
+                    deletions = int(m.group(1))
+                i += 2
+            else:
+                i += 1
+
+            commits.append(
+                CommitMeta(
+                    sha=sha,
+                    short_sha=short_sha,
+                    message=message,
+                    author_name=author_name,
+                    author_email=author_email,
+                    date=date,
+                    insertions=insertions,
+                    deletions=deletions,
+                    files_changed=files_changed,
+                )
+            )
+
+        return commits
+
+    def get_commit_diff(self, sha: str, *, against: str | None = None) -> CommitDiff:
+        """Get diff between two commits. If against is None, compare with parent."""
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            raise ArchiveError("No git repository found")
+
+        # Determine comparison target
+        if against is None:
+            # Get parent commit
+            result = self._git(repo_path, "rev-parse", f"{sha}^", check=False)
+            if result.returncode != 0:
+                # No parent (first commit), compare against empty tree
+                against = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            else:
+                against = result.stdout.strip()
+
+        # Get file-level stats
+        result = self._git(
+            repo_path,
+            "diff",
+            "--numstat",
+            against,
+            sha,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ArchiveError(f"Failed to get diff: {result.stderr}")
+
+        files: list[FileDiff] = []
+        total_insertions = 0
+        total_deletions = 0
+
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t", 2)
+            if len(parts) < 3:
+                continue
+
+            insertions_str, deletions_str, path = parts
+            insertions = 0 if insertions_str == "-" else int(insertions_str)
+            deletions = 0 if deletions_str == "-" else int(deletions_str)
+            total_insertions += insertions
+            total_deletions += deletions
+
+            # Determine status (A/M/D/R)
+            status_result = self._git(
+                repo_path,
+                "diff",
+                "--name-status",
+                against,
+                sha,
+                "--",
+                path,
+                check=False,
+            )
+            status = "M"  # default
+            if status_result.returncode == 0 and status_result.stdout.strip():
+                status = status_result.stdout.strip().split("\t")[0][0]
+
+            # Get patch (skip for binary files)
+            patch_result = self._git(
+                repo_path,
+                "diff",
+                against,
+                sha,
+                "--",
+                path,
+                check=False,
+            )
+            patch = patch_result.stdout if patch_result.returncode == 0 else None
+            if patch and "Binary files" in patch:
+                patch = None
+
+            files.append(
+                FileDiff(
+                    path=path,
+                    status=status,
+                    insertions=insertions,
+                    deletions=deletions,
+                    patch=patch,
+                )
+            )
+
+        return CommitDiff(
+            from_sha=against,
+            to_sha=sha,
+            files=files,
+            total_insertions=total_insertions,
+            total_deletions=total_deletions,
+            files_changed=len(files),
+        )
+
+    def list_commit_files(self, sha: str) -> list[FileEntry]:
+        """List all files in a commit."""
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            raise ArchiveError("No git repository found")
+
+        result = self._git(
+            repo_path,
+            "ls-tree",
+            "-r",
+            "-l",
+            sha,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ArchiveError(f"Failed to list files: {result.stderr}")
+
+        files: list[FileEntry] = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            # Format: <mode> <type> <object> <size> <path>
+            parts = line.split(None, 4)
+            if len(parts) < 5:
+                continue
+
+            _, _, blob_sha, size_str, path = parts
+            size = 0 if size_str == "-" else int(size_str)
+
+            files.append(FileEntry(path=path, blob_sha=blob_sha, size=size))
+
+        return files
+
+    def read_commit_file(self, sha: str, rel_path: str) -> bytes:
+        """Read a file from a specific commit."""
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            raise ArchiveError("No git repository found")
+
+        result = self._git(
+            repo_path,
+            "show",
+            f"{sha}:{rel_path}",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ArchiveError(f"Failed to read file: {result.stderr}")
+
+        return result.stdout.encode("utf-8")
+
+    def restore_to_commit(
+        self, sha: str, *, message: str | None = None
+    ) -> ProjectArchiveSnapshot:
+        """
+        Safe restore: replay commit content back into the DB and create a new
+        commit. Append-only — never modifies git history.
+        """
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            raise ArchiveError("No git repository found")
+
+        # Verify commit exists
+        result = self._git(repo_path, "rev-parse", "--verify", f"{sha}^{{commit}}", check=False)
+        if result.returncode != 0:
+            raise ArchiveError(f"Commit not found: {sha}")
+
+        # Get original commit message for the restore message
+        orig_msg_result = self._git(repo_path, "log", "-1", "--format=%s", sha, check=False)
+        orig_message = orig_msg_result.stdout.strip() if orig_msg_result.returncode == 0 else ""
+        short_sha = sha[:7]
+
+        if message is None or not message.strip():
+            message = f"Restore from {short_sha}: {orig_message}" if orig_message else f"Restore from {short_sha}"
+
+        # List files in target commit
+        files = self.list_commit_files(sha)
+        commit_files = {f.path: f for f in files}
+
+        # Build current path → entity mapping (mirror of _export_project_tree)
+        self._import_tree_to_db(commit_files, sha)
+
+        # Create a new commit with the restored content
+        return self.create_snapshot(message)
+
+    def _import_tree_to_db(self, commit_files: dict, sha: str) -> None:
+        """
+        Restore commit content back into the DB by matching paths against the
+        current project tree. Mirror of _export_project_tree.
+        """
+        from . import version_service
+
+        folders = self.db.query(Folder).filter(Folder.project_id == self.project.id).all()
+        docs = self.db.query(Doc).filter(Doc.project_id == self.project.id).all()
+        files = self.db.query(FileBlob).filter(FileBlob.project_id == self.project.id).all()
+
+        folder_by_id = {folder.id: folder for folder in folders}
+
+        def folder_parts(folder_id: str | None) -> list[str]:
+            parts: list[str] = []
+            seen: set[str] = set()
+            current = folder_id
+            while current and current not in seen:
+                seen.add(current)
+                folder = folder_by_id.get(current)
+                if folder is None:
+                    break
+                parts.append(_safe_name(folder.name))
+                current = folder.parent_folder_id
+            parts.reverse()
+            return parts
+
+        # Build path → entity mapping from current DB
+        doc_by_path: dict[str, Doc] = {}
+        file_by_path: dict[str, FileBlob] = {}
+
+        for doc in docs:
+            rel = "/".join([*folder_parts(doc.folder_id), _safe_name(doc.name)])
+            doc_by_path[rel] = doc
+
+        for file in files:
+            rel = "/".join([*folder_parts(file.folder_id), _safe_name(file.name)])
+            file_by_path[rel] = file
+
+        # Restore content from commit
+        for path in commit_files.keys():
+            # Skip the auto-generated archive readme
+            if path == "YUWANLAB_ARCHIVE.md":
+                continue
+
+            content = self.read_commit_file(sha, path)
+
+            if path in doc_by_path:
+                doc = doc_by_path[path]
+                try:
+                    text_content = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Skip docs that can't be decoded as text
+                    continue
+                if doc.content != text_content:
+                    doc.content = text_content
+                    doc.version += 1
+                    doc.updated_at = datetime.utcnow()
+                    # Trigger version snapshot for Layer 1 history
+                    version_service.snapshot(
+                        self.db,
+                        doc.id,
+                        text_content.encode("utf-8"),
+                        origin="restore",
+                        actor=self.user.id,
+                    )
+            elif path in file_by_path:
+                file = file_by_path[path]
+                if file.blob != content:
+                    file.blob = content
+                    file.size_bytes = len(content)
+
+        self.db.commit()
 
 
 def _safe_name(name: str) -> str:

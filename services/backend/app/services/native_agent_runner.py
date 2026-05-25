@@ -18,6 +18,7 @@ from .agent_workspace_service import (
     list_agent_workspace_files,
     read_agent_workspace_file,
 )
+from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
 
 
@@ -42,6 +43,7 @@ class NativeAgentRuntimeConfig:
     temperature: float = 0.2
     max_tokens: int = 4000
     max_tool_rounds: int = 8
+    runtime_config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -117,6 +119,8 @@ class NativeAgentRunner:
             "Your only readable workspace is `.agents/` for this Agent.",
             "Use list_agent_files and read_agent_file when you need Skill files.",
             "Never claim to read files outside `.agents/`.",
+            "If MCP tools are available, call them only when the user explicitly asks for external retrieval, academic search, paper lookup, citation lookup, or source-backed evidence.",
+            "Do not use MCP tools for ordinary editing, rewriting, style review, or summarization unless the user asks to search or verify external sources.",
         ]
         if not is_write_mode:
             parts.append("Do not propose direct file mutations. Return review output only.")
@@ -225,7 +229,9 @@ class NativeAgentRunner:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        tools = _workspace_tools()
+        mcp_refs = await discover_mcp_tools(self.config.runtime_config)
+        mcp_tool_map = {ref.function_name: ref for ref in mcp_refs}
+        tools = _workspace_tools() + [ref.definition for ref in mcp_refs]
 
         for _round in range(max(1, self.config.max_tool_rounds)):
             tool_acc = _ToolAccumulator()
@@ -258,7 +264,7 @@ class NativeAgentRunner:
             }
             messages.append(assistant_message)
             for call in tool_calls:
-                result = self._execute_workspace_tool(call)
+                result = await self._execute_tool(call, mcp_tool_map)
                 yield {
                     "event": "native.agent.tool",
                     "data": {
@@ -279,7 +285,7 @@ class NativeAgentRunner:
             "data": {"delta": "\n\n[Tool limit reached while reading Agent workspace.]"},
         }
 
-    def _execute_workspace_tool(self, call: dict[str, Any]) -> str:
+    async def _execute_tool(self, call: dict[str, Any], mcp_tool_map: dict[str, McpToolRef]) -> str:
         fn = call.get("function") if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "")
         args_raw = fn.get("arguments") or "{}"
@@ -300,8 +306,12 @@ class NativeAgentRunner:
                 path = str(args.get("path") or "")
                 content = read_agent_workspace_file(root, path)
                 return content
+            if name in mcp_tool_map:
+                return await call_mcp_tool(mcp_tool_map[name], args)
         except AgentWorkspaceError as exc:
             return f"ERROR: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            return f"ERROR: {type(exc).__name__}: {exc}"
         return f"ERROR: unknown tool {name}"
 
 

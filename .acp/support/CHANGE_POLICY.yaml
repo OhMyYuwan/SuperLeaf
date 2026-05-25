@@ -52,6 +52,25 @@ auto_allow:
       - docs/*.tex
       - docs/*.md
 
+  # Routine MCP catalog maintenance. Governance files still route through
+  # require_confirmation; catalog entries are intended to be contributed and
+  # verified independently of app code.
+  - operation: edit
+    paths:
+      - supports/YuwanLabWriter.MCPs/README.md
+      - supports/YuwanLabWriter.MCPs/docs/**/*.md
+      - supports/YuwanLabWriter.MCPs/catalog.json
+      - supports/YuwanLabWriter.MCPs/presets/**/*.json
+      - supports/YuwanLabWriter.MCPs/golden-tests/**/*.json
+      - supports/YuwanLabWriter.MCPs/reports/**/*.json
+
+  - operation: create
+    paths:
+      - supports/YuwanLabWriter.MCPs/docs/**/*.md
+      - supports/YuwanLabWriter.MCPs/presets/**/*.json
+      - supports/YuwanLabWriter.MCPs/golden-tests/**/*.json
+      - supports/YuwanLabWriter.MCPs/reports/**/*.json
+
 require_confirmation:
   # Editing protected support / governance files.
   - operation: edit

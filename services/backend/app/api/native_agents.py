@@ -6,13 +6,21 @@ left for a follow-up request.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, object_session
 
 from ..database import get_session
-from ..models import NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Project, Skill, User
+from ..models import NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, NativeMcpServer, Project, Skill, User
 from ..schemas import (
     AgentWorkspaceFileOut,
+    McpGoldenTestIn,
+    McpProbeIn,
+    NativeMcpServerIn,
+    NativeMcpServerOut,
+    NativeMcpServerPatch,
     NativeAgentCredentialIn,
     NativeAgentCredentialOut,
     NativeAgentCredentialPatch,
@@ -30,6 +38,8 @@ from ..schemas import (
     SkillRecipeIn,
 )
 from ..services.agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
+from ..services.mcp_catalog_service import McpCatalogError, McpCatalogService
+from ..services.mcp_config_service import McpConfigService, env_keys
 from ..services.native_agent_service import NativeAgentService
 from ..services.skill_marketplace_service import (
     MarketplaceEntry,
@@ -41,6 +51,13 @@ from .deps import get_current_project, get_current_user, require_write_access
 
 
 router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
+
+OFFICIAL_BADGE_STYLES = {"metal", "minimal"}
+_official_badge_style_override: str | None = None
+
+
+class OfficialBadgeUiPatch(BaseModel):
+    style: str = Field(pattern="^(metal|minimal)$")
 
 
 def _credential_out(row: NativeAgentCredential) -> NativeAgentCredentialOut:
@@ -76,8 +93,255 @@ def _install_out(row: NativeAgentSkillInstall) -> NativeAgentSkillInstallOut:
     return NativeAgentSkillInstallOut.model_validate(row, from_attributes=True)
 
 
+def _mcp_server_out(row: NativeMcpServer) -> NativeMcpServerOut:
+    return NativeMcpServerOut(
+        id=row.id,
+        user_id=row.user_id,
+        preset_id=row.preset_id,
+        source=row.source,
+        name=row.name,
+        description=row.description,
+        transport=row.transport,
+        command=row.command,
+        args=list(row.args or []),
+        env_keys=env_keys(row.env_enc),
+        allowed_tools=list(row.allowed_tools or []),
+        is_enabled=row.is_enabled,
+        status=row.status,
+        status_detail=row.status_detail,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _marketplace_entry_out(entry: MarketplaceEntry) -> SkillMarketplaceEntryOut:
     return SkillMarketplaceEntryOut(**entry.__dict__)
+
+
+def _normalized_official_badge_style(value: str | None) -> str:
+    cleaned = (value or "").strip().lower()
+    return cleaned if cleaned in OFFICIAL_BADGE_STYLES else "metal"
+
+
+def _official_badge_toggle_enabled() -> bool:
+    raw = os.environ.get("YLW_OFFICIAL_BADGE_STYLE_TOGGLE_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _official_badge_ui_payload() -> dict:
+    configured = _normalized_official_badge_style(os.environ.get("YLW_OFFICIAL_BADGE_STYLE"))
+    style = _official_badge_style_override or configured
+    return {
+        "style": style,
+        "allowed_styles": ["metal", "minimal"],
+        "toggle_enabled": _official_badge_toggle_enabled(),
+        "source": "runtime_override" if _official_badge_style_override else "env",
+    }
+
+
+@router.get("/ui/official-badge")
+def get_official_badge_ui(
+    user: User = Depends(get_current_user),
+) -> dict:
+    return _official_badge_ui_payload()
+
+
+@router.patch("/ui/official-badge")
+def update_official_badge_ui(
+    body: OfficialBadgeUiPatch,
+    user: User = Depends(get_current_user),
+) -> dict:
+    if not _official_badge_toggle_enabled():
+        raise HTTPException(403, "Official badge style toggle is disabled by backend configuration")
+    global _official_badge_style_override
+    _official_badge_style_override = _normalized_official_badge_style(body.style)
+    return _official_badge_ui_payload()
+
+
+@router.get("/mcp/catalog")
+def get_mcp_catalog(
+    user: User = Depends(get_current_user),
+) -> dict:
+    try:
+        return McpCatalogService().catalog()
+    except McpCatalogError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@router.post("/mcp/probe")
+async def probe_mcp_server(
+    body: McpProbeIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    svc = McpCatalogService()
+    try:
+        preset = svc.preset(body.preset_id) if body.preset_id else None
+        if body.server is not None:
+            server = body.server.model_dump()
+        elif preset is not None:
+            server = svc.server_config_from_preset(
+                preset,
+                env=body.env,
+                allowed_tools=body.allowed_tools,
+            )
+        else:
+            raise HTTPException(400, "preset_id or server is required")
+        return await svc.probe(server, preset=preset)
+    except McpCatalogError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/mcp/golden-test")
+async def run_mcp_golden_test(
+    body: McpGoldenTestIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    svc = McpCatalogService()
+    try:
+        server = body.server.model_dump() if body.server is not None else None
+        return await svc.golden_test(
+            preset_id=body.preset_id,
+            test_id=body.test_id,
+            server=server,
+            env=body.env,
+        )
+    except McpCatalogError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/mcp/servers", response_model=list[NativeMcpServerOut])
+def list_mcp_servers(
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[NativeMcpServerOut]:
+    return [_mcp_server_out(row) for row in McpConfigService(db).list_servers(user_id=user.id)]
+
+
+@router.post("/mcp/servers", response_model=NativeMcpServerOut, status_code=201)
+def create_mcp_server(
+    body: NativeMcpServerIn,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> NativeMcpServerOut:
+    svc = McpConfigService(db)
+    try:
+        if body.source == "catalog" or body.preset_id:
+            row = svc.ensure_preset_server(body.preset_id, user_id=user.id, env=body.env)
+            patch: dict = {}
+            for key in ("name", "description", "transport", "command", "args", "allowed_tools", "is_enabled"):
+                value = getattr(body, key)
+                if value not in ("", [], None):
+                    patch[key] = value
+            if patch:
+                row = svc.update_server(row.id, user_id=user.id, patch=patch) or row
+        else:
+            row = svc.create_custom_server(
+                user_id=user.id,
+                name=body.name,
+                description=body.description,
+                transport=body.transport,
+                command=body.command,
+                args=body.args,
+                env=body.env,
+                allowed_tools=body.allowed_tools,
+                is_enabled=body.is_enabled,
+            )
+        return _mcp_server_out(row)
+    except (McpCatalogError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/mcp/servers/from-preset/{preset_id}", response_model=NativeMcpServerOut, status_code=201)
+def ensure_mcp_preset_server(
+    preset_id: str,
+    body: NativeMcpServerIn | None = None,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> NativeMcpServerOut:
+    try:
+        env = body.env if body is not None else None
+        return _mcp_server_out(McpConfigService(db).ensure_preset_server(preset_id, user_id=user.id, env=env))
+    except McpCatalogError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.patch("/mcp/servers/{server_id}", response_model=NativeMcpServerOut)
+def update_mcp_server(
+    server_id: str,
+    body: NativeMcpServerPatch,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> NativeMcpServerOut:
+    row = McpConfigService(db).update_server(
+        server_id,
+        user_id=user.id,
+        patch=body.model_dump(exclude_unset=True),
+    )
+    if row is None:
+        raise HTTPException(404, "MCP server not found")
+    return _mcp_server_out(row)
+
+
+@router.delete("/mcp/servers/{server_id}", status_code=204)
+def delete_mcp_server(
+    server_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> None:
+    McpConfigService(db).delete_server(server_id, user_id=user.id)
+
+
+@router.post("/mcp/servers/{server_id}/probe")
+async def probe_saved_mcp_server(
+    server_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict:
+    config_svc = McpConfigService(db)
+    row = config_svc.get_server(server_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(404, "MCP server not found")
+    catalog_svc = McpCatalogService()
+    try:
+        preset = catalog_svc.preset(row.preset_id) if row.preset_id else None
+        result = await catalog_svc.probe(config_svc.to_runtime_server(row), preset=preset)
+        detail = f"{len(result.get('tools') or [])} tools"
+        warnings = result.get("warnings") or []
+        if warnings:
+            detail = f"{detail}; {'; '.join(str(item) for item in warnings)}"
+        config_svc.mark_probe(
+            server_id,
+            user_id=user.id,
+            status=str(result.get("status") or "unknown"),
+            detail=detail,
+        )
+        return result
+    except McpCatalogError as exc:
+        config_svc.mark_probe(server_id, user_id=user.id, status="error", detail=str(exc))
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/mcp/servers/{server_id}/golden-test")
+async def run_saved_mcp_golden_test(
+    server_id: str,
+    body: dict | None = None,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict:
+    config_svc = McpConfigService(db)
+    row = config_svc.get_server(server_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(404, "MCP server not found")
+    if not row.preset_id:
+        raise HTTPException(400, "golden test requires a catalog preset")
+    try:
+        return await McpCatalogService().golden_test(
+            preset_id=row.preset_id,
+            test_id=str((body or {}).get("test_id") or ""),
+            server=config_svc.to_runtime_server(row),
+        )
+    except McpCatalogError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/credentials", response_model=list[NativeAgentCredentialOut])

@@ -7,7 +7,12 @@ import {
   type NativeAgentCredentialDraft,
   type NativeAgentCredentialPatch,
   type NativeAgentDraft,
+  type McpCatalog,
+  type McpProbeResult,
   type NativeAgentPatch,
+  type NativeMcpServerConfig,
+  type NativeMcpServerConfigDraft,
+  type NativeMcpServerConfigPatch,
   type NativeAgentSkillInstall,
   type NativeAgentSkillRecipe,
   type Skill,
@@ -24,6 +29,13 @@ interface NativeAgentState {
   marketplace: SkillMarketplace | null
   marketplaceLoading: boolean
   marketplaceError: string | null
+  mcpCatalog: McpCatalog | null
+  mcpCatalogLoading: boolean
+  mcpCatalogError: string | null
+  mcpServers: NativeMcpServerConfig[]
+  mcpServersLoading: boolean
+  mcpServersLoaded: boolean
+  mcpServersError: string | null
   agents: NativeAgent[]
   loading: boolean
   loaded: boolean
@@ -40,6 +52,13 @@ interface NativeAgentState {
   unpublishSkill: (id: string) => Promise<Skill | null>
   removeSkill: (id: string) => Promise<boolean>
   loadMarketplace: () => Promise<SkillMarketplace | null>
+  loadMcpCatalog: () => Promise<McpCatalog | null>
+  loadMcpServers: () => Promise<NativeMcpServerConfig[] | null>
+  createMcpServer: (draft: NativeMcpServerConfigDraft) => Promise<NativeMcpServerConfig | null>
+  ensureMcpPresetServer: (presetId: string, env?: Record<string, string>) => Promise<NativeMcpServerConfig | null>
+  updateMcpServer: (id: string, patch: NativeMcpServerConfigPatch) => Promise<NativeMcpServerConfig | null>
+  deleteMcpServer: (id: string) => Promise<boolean>
+  probeMcpServer: (id: string) => Promise<McpProbeResult | null>
   installMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   updateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   uninstallMarketplaceSkill: (id: string) => Promise<boolean>
@@ -55,6 +74,13 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
   marketplace: null,
   marketplaceLoading: false,
   marketplaceError: null,
+  mcpCatalog: null,
+  mcpCatalogLoading: false,
+  mcpCatalogError: null,
+  mcpServers: [],
+  mcpServersLoading: false,
+  mcpServersLoaded: false,
+  mcpServersError: null,
   agents: [],
   loading: false,
   loaded: false,
@@ -192,6 +218,86 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
       return marketplace
     } catch (err) {
       set({ marketplaceLoading: false, marketplaceError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  loadMcpCatalog: async () => {
+    set({ mcpCatalogLoading: true, mcpCatalogError: null })
+    try {
+      const catalog = await nativeAgentApi.mcp.catalog()
+      set({ mcpCatalog: catalog, mcpCatalogLoading: false, mcpCatalogError: null })
+      return catalog
+    } catch (err) {
+      set({ mcpCatalogLoading: false, mcpCatalogError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  loadMcpServers: async () => {
+    set({ mcpServersLoading: true, mcpServersError: null })
+    try {
+      const mcpServers = await nativeAgentApi.mcp.servers()
+      set({ mcpServers, mcpServersLoading: false, mcpServersLoaded: true, mcpServersError: null })
+      return mcpServers
+    } catch (err) {
+      set({ mcpServersLoading: false, mcpServersLoaded: true, mcpServersError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  createMcpServer: async (draft) => {
+    try {
+      const row = await nativeAgentApi.mcp.createServer(draft)
+      set({ mcpServers: mergeById(get().mcpServers, row), mcpServersError: null })
+      return row
+    } catch (err) {
+      set({ mcpServersError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  ensureMcpPresetServer: async (presetId, env) => {
+    try {
+      const row = await nativeAgentApi.mcp.ensurePresetServer(presetId, { env })
+      set({ mcpServers: mergeById(get().mcpServers, row), mcpServersError: null })
+      return row
+    } catch (err) {
+      set({ mcpServersError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  updateMcpServer: async (id, patch) => {
+    try {
+      const row = await nativeAgentApi.mcp.updateServer(id, patch)
+      set({ mcpServers: mergeById(get().mcpServers, row), mcpServersError: null })
+      return row
+    } catch (err) {
+      set({ mcpServersError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  deleteMcpServer: async (id) => {
+    try {
+      await nativeAgentApi.mcp.deleteServer(id)
+      set({ mcpServers: get().mcpServers.filter((item) => item.id !== id), mcpServersError: null })
+      return true
+    } catch (err) {
+      set({ mcpServersError: toErrorMessage(err) })
+      return false
+    }
+  },
+
+  probeMcpServer: async (id) => {
+    try {
+      const result = await nativeAgentApi.mcp.probeServer(id)
+      const refreshed = await nativeAgentApi.mcp.servers()
+      set({ mcpServers: refreshed, mcpServersError: null })
+      return result
+    } catch (err) {
+      set({ mcpServersError: toErrorMessage(err) })
       return null
     }
   },

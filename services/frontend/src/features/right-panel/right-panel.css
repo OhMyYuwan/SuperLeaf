@@ -2043,19 +2043,38 @@
   min-width: 58px;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid rgba(250, 204, 21, 0.72);
   border-radius: 999px;
-  color: #451a03;
-  background:
-    linear-gradient(135deg, #fff7ed 0%, #facc15 48%, #b45309 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
 }
 
-.official-badge svg {
+.official-badge.metal {
+  border: 1px solid rgba(250, 204, 21, 0.72);
+  color: #451a03;
+  background:
+    linear-gradient(135deg, #fff7ed 0%, #facc15 48%, #b45309 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
+}
+
+.official-badge.metal svg {
   color: #78350f;
+  stroke-width: 2.35;
+}
+
+.official-badge.minimal {
+  border: 1px solid rgba(250, 204, 21, 0.78);
+  color: #facc15;
+  background: transparent;
+  box-shadow:
+    0 0 10px rgba(250, 204, 21, 0.32),
+    inset 0 0 0 1px rgba(250, 204, 21, 0.12);
+  text-shadow: 0 0 8px rgba(250, 204, 21, 0.46);
+}
+
+.official-badge.minimal svg {
+  color: #facc15;
+  filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.52));
   stroke-width: 2.35;
 }
 

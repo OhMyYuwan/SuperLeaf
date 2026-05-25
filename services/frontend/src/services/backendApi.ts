@@ -517,6 +517,15 @@ export interface McpGoldenTestResult {
   raw_preview?: string
 }
 
+export type OfficialBadgeStyle = 'metal' | 'minimal'
+
+export interface OfficialBadgeUiSettings {
+  style: OfficialBadgeStyle
+  allowed_styles: OfficialBadgeStyle[]
+  toggle_enabled: boolean
+  source: 'env' | 'runtime_override' | string
+}
+
 export interface AgentWorkspaceFile {
   path: string
   type: 'file' | 'directory' | string
@@ -552,6 +561,9 @@ export interface NativeAgentPatch {
 }
 
 export const nativeAgentApi = {
+  ui: {
+    officialBadge: () => http<OfficialBadgeUiSettings>('/api/native-agent/ui/official-badge'),
+  },
   credentials: {
     list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
     create: (draft: NativeAgentCredentialDraft) =>

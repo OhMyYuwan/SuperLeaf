@@ -230,13 +230,7 @@ class McpCatalogService:
 
 def _default_catalog_root() -> Path:
     supports_root = Path(__file__).resolve().parents[4] / "supports"
-    preferred = supports_root / "SuperLeaf.MCPs"
-    if preferred.exists():
-        return preferred
-    legacy = supports_root / "YuwanLabWriter.MCPs"
-    if legacy.exists():
-        return legacy
-    return preferred
+    return supports_root / "SuperLeaf.MCPs"
 
 
 def _read_json(path: Path) -> dict[str, Any]:

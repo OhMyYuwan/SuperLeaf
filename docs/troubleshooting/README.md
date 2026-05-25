@@ -5,7 +5,7 @@ nav_order: 10
 
 # 故障排查
 
-按症状定位问题。优先确认服务是否启动，再看 Provider、Skill Market、LaTeX 和协作链路。
+按症状定位问题。优先确认服务是否启动，再看 Provider、Skill/MCP Market、版本归档、LaTeX 和协作链路。
 
 ## 服务启动失败
 
@@ -82,6 +82,25 @@ https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.js
 
 这类错误只影响市场同步，不影响已经安装的本地 Skill。
 
+## MCP Market 或 MCP 测试失败
+
+默认 MCP catalog：
+
+```text
+https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json
+```
+
+常见错误：
+
+| 错误 | 处理 |
+|---|---|
+| MCP 市场为空 | 后端无法访问 catalog raw URL，检查网络和 `YLW_MCP_CATALOG_URL` |
+| 连通性失败 | command/args/env 配置错误，或缺少 `uvx` / `npx` / Python 依赖 |
+| 功能性失败 | MCP 能启动，但目标 API 不可用、限流、缺 API key 或返回结构变化 |
+| Agent 不调用 MCP | 确认该 MCP 已添加到“拥有的 MCP”，并在 Agent 配置中启用 |
+
+如果功能性检查显示 rate limit，优先给该 MCP 配置 API key 后重试。
+
 ## 上传 Skill 失败
 
 检查：
@@ -119,6 +138,17 @@ latexmk -version
 - 后端 `/api/auth/collab-token` 是否可访问。
 
 如果协作文档出现旧内容，重启 collab-server 后再打开项目，让后端重新 seed 文档内容。
+
+## 项目大版本下载失败
+
+项目大版本 ZIP 由后端从服务器端 archive repo 生成。排查顺序：
+
+1. 确认项目至少保存过一个大版本 commit。
+2. 确认 Backend 可以运行 `git`。
+3. 确认该 commit 仍存在于服务器归档路径。
+4. 查看后端日志中 `/major-versions/{sha}/download` 的错误。
+
+注意这里的归档路径在运行 Backend 的机器上，不是浏览器所在电脑的本地仓库。
 
 ## 数据和密钥在哪里
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to YuwanLabWriter should be documented in this file.
+All notable changes to SuperLeaf should be documented in this file.
 
 This project currently has not published a stable release. Until then, changes are grouped under `Unreleased`.
 

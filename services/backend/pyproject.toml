@@ -1,7 +1,7 @@
 [project]
-name = "yuwanlab-backend"
+name = "superleaf-backend"
 version = "0.0.1"
-description = "YuwanLabWriter backend — FastAPI proxy to Dify + local persistence."
+description = "SuperLeaf backend — FastAPI proxy to Dify + local persistence."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",

@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement for YuwanLabWriter
+about: Suggest an improvement for SuperLeaf
 title: "[Feature]: "
 labels: enhancement
 assignees: ""

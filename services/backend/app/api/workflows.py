@@ -203,7 +203,7 @@ class RunBody(BaseModel):
     range_start: int = Field(ge=0)
     range_end: int = Field(ge=0)
     inputs: dict = Field(default_factory=dict)
-    user: str = Field(default="yuwanlab-local")
+    user: str = Field(default="superleaf-local")
     # Chat-mode fields. Ignored for workflow-mode apps.
     query: str = ""
     conversation_id: str = ""

@@ -5,7 +5,7 @@ nav_order: 7
 
 # 工作流
 
-YuwanLabWriter 支持两类智能运行方式：
+SuperLeaf 支持两类智能运行方式：
 
 1. **单 Agent 运行**：选择一个 Provider 同步来的 workflow，或一个后端原生 Agent。
 2. **Workflow Definition**：在本地定义多节点图，让多个 Agent 按顺序或循环协作。
@@ -16,7 +16,7 @@ YuwanLabWriter 支持两类智能运行方式：
 |---|---|---|
 | Provider | 后端 `providers` 表 | 连接外部模型服务 |
 | CachedWorkflow | 后端从 Provider 同步的投影 | 运行外部已有 Agent/workflow |
-| NativeAgent | 后端 `native_agents` 表 | 在 YuwanLabWriter 内管理模型、指令和 Skill |
+| NativeAgent | 后端 `native_agents` 表 | 在 SuperLeaf 内管理模型、指令和 Skill |
 | Skill | 后端 `skills` 表 | 给原生 Agent 增加任务专长 |
 | WorkflowDefinition | 后端 `workflow_definitions` 表 | 自定义多 Agent 编排 |
 

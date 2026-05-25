@@ -515,7 +515,7 @@ async def send_message(
                 async for evt in client.run_streaming(
                     mode=mode,
                     inputs=body.inputs,
-                    user=f"yuwanlab-conv-{conversation_id[:8]}",
+                    user=f"superleaf-conv-{conversation_id[:8]}",
                     query=agent_query,
                     conversation_id=external_conv_id,
                 ):

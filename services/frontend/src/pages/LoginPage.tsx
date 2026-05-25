@@ -48,7 +48,7 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-brand">YuwanLabWriter</div>
+        <div className="auth-brand">SuperLeaf</div>
         <h1 className="auth-title">登录</h1>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="auth-label">

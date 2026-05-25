@@ -1,4 +1,4 @@
-# CHANGE POLICY for YuwanLabWriter
+# CHANGE POLICY for SuperLeaf
 #
 # Concrete authorization rules for mutation work.
 # Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh — orchestrator,
@@ -57,19 +57,19 @@ auto_allow:
   # verified independently of app code.
   - operation: edit
     paths:
-      - supports/YuwanLabWriter.MCPs/README.md
-      - supports/YuwanLabWriter.MCPs/docs/**/*.md
-      - supports/YuwanLabWriter.MCPs/catalog.json
-      - supports/YuwanLabWriter.MCPs/presets/**/*.json
-      - supports/YuwanLabWriter.MCPs/golden-tests/**/*.json
-      - supports/YuwanLabWriter.MCPs/reports/**/*.json
+      - supports/SuperLeaf.MCPs/README.md
+      - supports/SuperLeaf.MCPs/docs/**/*.md
+      - supports/SuperLeaf.MCPs/catalog.json
+      - supports/SuperLeaf.MCPs/presets/**/*.json
+      - supports/SuperLeaf.MCPs/golden-tests/**/*.json
+      - supports/SuperLeaf.MCPs/reports/**/*.json
 
   - operation: create
     paths:
-      - supports/YuwanLabWriter.MCPs/docs/**/*.md
-      - supports/YuwanLabWriter.MCPs/presets/**/*.json
-      - supports/YuwanLabWriter.MCPs/golden-tests/**/*.json
-      - supports/YuwanLabWriter.MCPs/reports/**/*.json
+      - supports/SuperLeaf.MCPs/docs/**/*.md
+      - supports/SuperLeaf.MCPs/presets/**/*.json
+      - supports/SuperLeaf.MCPs/golden-tests/**/*.json
+      - supports/SuperLeaf.MCPs/reports/**/*.json
 
 require_confirmation:
   # Editing protected support / governance files.

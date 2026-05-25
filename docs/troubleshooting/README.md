@@ -52,7 +52,7 @@ curl http://localhost:8000/api/health
 | 服务只监听 localhost | 局域网访问时要绑定 `0.0.0.0` |
 | CORS 与浏览器无关 | Provider 请求由后端发出，主要看后端网络 |
 
-YuwanLabWriter 不会把明文 key 返回前端。保存后只能看到 `has_api_key`。
+SuperLeaf 不会把明文 key 返回前端。保存后只能看到 `has_api_key`。
 
 ## 原生 Agent 没有模型
 
@@ -68,7 +68,7 @@ YuwanLabWriter 不会把明文 key 返回前端。保存后只能看到 `has_api
 默认市场 catalog：
 
 ```text
-https://raw.githubusercontent.com/OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json
+https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.json
 ```
 
 常见错误：
@@ -131,4 +131,4 @@ latexmk -version
 | `~/.yuwanlab/collab-data/` | Yjs LevelDB 数据 |
 
 {: .warning }
-不要把 `~/.yuwanlab/secrets.key` 提交到 GitHub。它能解密本机数据库里的敏感字段。
+为兼容改名前的本地安装，SuperLeaf 当前仍沿用旧的 `~/.yuwanlab/` 数据目录。不要把 `~/.yuwanlab/secrets.key` 提交到 GitHub。它能解密本机数据库里的敏感字段。

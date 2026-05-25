@@ -1377,7 +1377,7 @@ function McpManagementPanel({
                   <div className="mcp-row-actions">
                     {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
                     {configured ? (
-                      <span className="native-pill neutral">已拥有</span>
+                      <span className="native-pill neutral">已添加</span>
                     ) : (
                       <button
                         className="ghost-btn small"

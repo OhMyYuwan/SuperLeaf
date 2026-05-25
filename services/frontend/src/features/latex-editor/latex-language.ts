@@ -162,6 +162,12 @@ export function latexCompletionSource(context: CompletionContext): CompletionRes
   const citationResult = citationCompletion(context)
   if (citationResult) return citationResult
 
+  const filePathResult = filePathCompletion(context)
+  if (filePathResult) return filePathResult
+
+  const labelResult = labelCompletion(context)
+  if (labelResult) return labelResult
+
   // Match a structured environment being opened: \begin{fig...
   const beginEnv = context.matchBefore(/\\begin\{[A-Za-z*]*$/)
   if (beginEnv) {
@@ -275,6 +281,94 @@ function citationToCompletion(citation: LatexCitationCompletion): Completion {
     info: citation.info,
     apply: citation.key,
     boost: 80,
+  }
+}
+
+const GRAPHIC_COMMANDS = /\\includegraphics(?:\[[^\]]*])?\{([^{}]*)$/
+const INCLUDE_COMMANDS = /\\(?:input|include|subfile)\{([^{}]*)$/
+const BIB_COMMANDS = /\\(?:bibliography|addbibresource)\{([^{}]*)$/
+
+function filePathCompletion(context: CompletionContext): CompletionResult | null {
+  const completionData = context.state.field(latexCompletionDataState, false)
+  const filePaths = completionData?.filePaths ?? []
+  if (filePaths.length === 0) return null
+
+  const line = context.state.doc.lineAt(context.pos)
+  const beforeCursor = context.state.sliceDoc(line.from, context.pos)
+
+  let match: RegExpExecArray | null
+  let kind: 'graphic' | 'include' | 'bib'
+
+  match = GRAPHIC_COMMANDS.exec(beforeCursor)
+  if (match) { kind = 'graphic' }
+  else {
+    match = INCLUDE_COMMANDS.exec(beforeCursor)
+    if (match) { kind = 'include' }
+    else {
+      match = BIB_COMMANDS.exec(beforeCursor)
+      if (match) { kind = 'bib' }
+      else { return null }
+    }
+  }
+
+  const query = match[1] ?? ''
+  const fromOffset = line.from + match.index + match[0].length - query.length
+
+  const candidates = filePaths.filter((fp) => fp.kind === kind)
+  const normalizedQuery = query.toLowerCase()
+  const options: Completion[] = candidates
+    .filter((fp) => !normalizedQuery || fp.path.toLowerCase().includes(normalizedQuery))
+    .map((fp) => ({
+      label: fp.path,
+      type: 'file',
+      boost: fp.path.toLowerCase().startsWith(normalizedQuery) ? 90 : 60,
+    }))
+
+  if (options.length === 0 && !context.explicit) return null
+
+  return {
+    from: fromOffset,
+    to: context.pos,
+    options,
+    filter: false,
+    update: (_current, _from, _to, nextContext) => filePathCompletion(nextContext),
+  }
+}
+
+const REF_COMMANDS = /\\(?:ref|eqref|pageref|autoref|cref|Cref|nameref)\{([^{}]*)$/
+
+function labelCompletion(context: CompletionContext): CompletionResult | null {
+  const completionData = context.state.field(latexCompletionDataState, false)
+  const labels = completionData?.labels ?? []
+  if (labels.length === 0) return null
+
+  const line = context.state.doc.lineAt(context.pos)
+  const beforeCursor = context.state.sliceDoc(line.from, context.pos)
+
+  const match = REF_COMMANDS.exec(beforeCursor)
+  if (!match) return null
+
+  const query = match[1] ?? ''
+  const fromOffset = line.from + match.index + match[0].length - query.length
+  const normalizedQuery = query.toLowerCase()
+
+  const options: Completion[] = labels
+    .filter((l) => !normalizedQuery || l.key.toLowerCase().includes(normalizedQuery))
+    .map((l) => ({
+      label: l.key,
+      type: 'reference',
+      detail: l.source,
+      boost: l.key.toLowerCase().startsWith(normalizedQuery) ? 90 : 60,
+    }))
+
+  if (options.length === 0 && !context.explicit) return null
+
+  return {
+    from: fromOffset,
+    to: context.pos,
+    options,
+    filter: false,
+    update: (_current, _from, _to, nextContext) => labelCompletion(nextContext),
   }
 }
 

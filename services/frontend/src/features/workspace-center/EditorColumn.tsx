@@ -18,7 +18,7 @@ import {
   type EditorRestoreState,
   type SelectionInfo,
 } from '../latex-editor'
-import type { LatexCitationCompletion } from '../latex-editor/latex-completion-data'
+import type { LatexCitationCompletion, LatexFilePathCompletion, LatexLabelCompletion } from '../latex-editor/latex-completion-data'
 import { useCollaborationStore } from '../../stores/collaborationStore'
 
 interface EditorColumnProps {
@@ -34,6 +34,8 @@ interface EditorColumnProps {
   onViewStateChange?: (documentId: string, state: EditorRestoreState) => void
   onDecorationClick: (id: string) => void
   citationCompletions?: LatexCitationCompletion[]
+  filePathCompletions?: LatexFilePathCompletion[]
+  labelCompletions?: LatexLabelCompletion[]
   onAddComment?: (params: {
     range: { from: number; to: number }
     targetText: string
@@ -53,6 +55,8 @@ export function EditorColumn({
   onViewStateChange,
   onDecorationClick,
   citationCompletions,
+  filePathCompletions,
+  labelCompletions,
   onAddComment,
 }: EditorColumnProps) {
   const [toolbar, setToolbar] = useState<{
@@ -103,6 +107,8 @@ export function EditorColumn({
             onViewStateChange={onViewStateChange}
             onDecorationClick={onDecorationClick}
             citationCompletions={citationCompletions}
+            filePathCompletions={filePathCompletions}
+            labelCompletions={labelCompletions}
             toolbar={toolbar}
             onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
@@ -127,6 +133,8 @@ function EditorWithCollab({
   onViewStateChange,
   onDecorationClick,
   citationCompletions,
+  filePathCompletions,
+  labelCompletions,
   toolbar,
   onAddComment,
 }: {
@@ -142,6 +150,8 @@ function EditorWithCollab({
   onViewStateChange?: (documentId: string, state: EditorRestoreState) => void
   onDecorationClick: (id: string) => void
   citationCompletions?: LatexCitationCompletion[]
+  filePathCompletions?: LatexFilePathCompletion[]
+  labelCompletions?: LatexLabelCompletion[]
   toolbar: { x: number; y: number } | null
   onAddComment?: () => void
 }) {
@@ -167,6 +177,8 @@ function EditorWithCollab({
       panelHoverId={hoveredAnnotationId ?? null}
       onDecorationClick={onDecorationClick}
       citationCompletions={citationCompletions}
+      filePathCompletions={filePathCompletions}
+      labelCompletions={labelCompletions}
       scrollTo={scrollTo}
       yText={isCollab ? provider!.yText : undefined}
       awareness={isCollab ? provider!.awareness : undefined}

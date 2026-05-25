@@ -22,7 +22,7 @@ import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
 import { setLatexCompletionDataEffect } from './latex-language'
-import type { LatexCitationCompletion, LatexCompletionData } from './latex-completion-data'
+import type { LatexCitationCompletion, LatexCompletionData, LatexFilePathCompletion, LatexLabelCompletion } from './latex-completion-data'
 import { collaborationExtensions } from './collaboration-extensions'
 import {
   annotationDecorationsExtension,
@@ -84,6 +84,8 @@ export interface LatexEditorProps {
   awareness?: Awareness
   collaborating?: boolean
   citationCompletions?: LatexCitationCompletion[]
+  filePathCompletions?: LatexFilePathCompletion[]
+  labelCompletions?: LatexLabelCompletion[]
 }
 
 export function LatexEditor({
@@ -106,6 +108,8 @@ export function LatexEditor({
   awareness,
   collaborating,
   citationCompletions,
+  filePathCompletions,
+  labelCompletions,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -120,8 +124,8 @@ export function LatexEditor({
   const languageCompartment = useMemo(() => new Compartment(), [])
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
   const completionData = useMemo<LatexCompletionData>(
-    () => ({ citations: citationCompletions ?? [] }),
-    [citationCompletions],
+    () => ({ citations: citationCompletions ?? [], filePaths: filePathCompletions ?? [], labels: labelCompletions ?? [] }),
+    [citationCompletions, filePathCompletions, labelCompletions],
   )
   const completionDataRef = useRef(completionData)
   const [sourceJumpFlash, setSourceJumpFlash] = useState(false)

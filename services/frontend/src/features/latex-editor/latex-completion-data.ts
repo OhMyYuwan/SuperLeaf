@@ -8,8 +8,20 @@ export interface LatexCitationCompletion {
   year?: string
 }
 
+export interface LatexFilePathCompletion {
+  path: string
+  kind: 'include' | 'graphic' | 'bib'
+}
+
+export interface LatexLabelCompletion {
+  key: string
+  source?: string
+}
+
 export interface LatexCompletionData {
   citations: LatexCitationCompletion[]
+  filePaths: LatexFilePathCompletion[]
+  labels: LatexLabelCompletion[]
 }
 
 export interface LatexCitationSource {
@@ -31,7 +43,7 @@ export interface CitationArgumentContext {
   existingKeys: string[]
 }
 
-const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [] }
+const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [], filePaths: [], labels: [] }
 const IGNORED_BIB_TYPES = new Set(['comment', 'preamble', 'string'])
 const NO_MATCH = Number.NEGATIVE_INFINITY
 
@@ -41,6 +53,8 @@ export function normalizeLatexCompletionData(
   if (!data) return EMPTY_COMPLETION_DATA
   return {
     citations: normalizeCitationCompletions(data.citations ?? []),
+    filePaths: data.filePaths ?? [],
+    labels: data.labels ?? [],
   }
 }
 
@@ -415,4 +429,66 @@ function skipWhitespace(text: string, start: number): number {
 function readUntil(text: string, start: number, target: string): number {
   const index = text.indexOf(target, start)
   return index < 0 ? text.length : index
+}
+
+const GRAPHIC_EXTENSIONS = /\.(eps|jpe?g|gif|png|tiff?|pdf|svg)$/i
+const INCLUDE_EXTENSIONS = /\.(?:tex|txt)$/i
+const BIB_EXTENSIONS = /\.bib$/i
+
+export interface FilePathTreeFolder {
+  name: string
+  folders: FilePathTreeFolder[]
+  docs: { name: string }[]
+  files: { name: string }[]
+}
+
+export function collectLatexFilePaths(root: FilePathTreeFolder): LatexFilePathCompletion[] {
+  const out: LatexFilePathCompletion[] = []
+
+  const walk = (folder: FilePathTreeFolder, prefix: string) => {
+    for (const doc of folder.docs) {
+      const path = prefix ? `${prefix}/${doc.name}` : doc.name
+      if (INCLUDE_EXTENSIONS.test(doc.name)) {
+        out.push({ path: path.replace(/\.tex$/, ''), kind: 'include' })
+      }
+      if (BIB_EXTENSIONS.test(doc.name)) {
+        out.push({ path: path.replace(/\.bib$/, ''), kind: 'bib' })
+      }
+    }
+    for (const file of folder.files) {
+      const path = prefix ? `${prefix}/${file.name}` : file.name
+      if (GRAPHIC_EXTENSIONS.test(file.name)) {
+        out.push({ path, kind: 'graphic' })
+      }
+    }
+    for (const child of folder.folders) {
+      const childPrefix = prefix ? `${prefix}/${child.name}` : child.name
+      walk(child, childPrefix)
+    }
+  }
+
+  walk(root, '')
+  return out
+}
+
+export interface LatexLabelSource {
+  name: string
+  content: string
+}
+
+export function collectLatexLabels(sources: LatexLabelSource[]): LatexLabelCompletion[] {
+  const byKey = new Map<string, LatexLabelCompletion>()
+  const labelRegex = /\\label\{([^}]+)\}/g
+
+  for (const source of sources) {
+    let match: RegExpExecArray | null
+    while ((match = labelRegex.exec(source.content)) !== null) {
+      const key = match[1].trim()
+      if (key && !byKey.has(key)) {
+        byKey.set(key, { key, source: source.name })
+      }
+    }
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key))
 }

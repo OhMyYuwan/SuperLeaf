@@ -8,6 +8,8 @@
   width: 100%;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .left-panel .resize-handle.vertical {
@@ -23,9 +25,11 @@
   flex: 1;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-x: hidden;
 }
 
 .section-title {

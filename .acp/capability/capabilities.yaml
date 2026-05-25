@@ -1,4 +1,4 @@
-# Capability Map for YuwanLabWriter
+# Capability Map for SuperLeaf
 #
 # Each capability is a semantic surface, not a directory. Slices are the
 # narrowest authority boundaries; routing fields below are the contract that
@@ -580,7 +580,7 @@ capabilities:
       credentials, native Agent CRUD/runtime, local Skill library, Skill
       Marketplace sync/install, Skill content encryption, share visibility, and
       AgentSkill assignment. Also owns the app-side consumption of
-      `supports/YuwanLabWriter.MCPs` for catalog-driven MCP preset discovery,
+      `supports/SuperLeaf.MCPs` for catalog-driven MCP preset discovery,
       probe, golden tests, and runtime tool calls.
     slices:
       - id: backend-routes
@@ -614,15 +614,15 @@ capabilities:
           - frontend/src/stores/nativeAgentStore.ts
           - frontend/src/services/backendApi.ts
       - id: mcp-catalog
-        summary: Maintained MCP support catalog under supports/YuwanLabWriter.MCPs plus app-side catalog loader/probe/golden-test integration.
+        summary: Maintained MCP support catalog under supports/SuperLeaf.MCPs plus app-side catalog loader/probe/golden-test integration.
         route_here_when: Work adds, verifies, downgrades, documents, or removes an MCP preset; changes preset schema fields; edits MCP golden tests; or changes how the app consumes the catalog.
         bridge_when: A catalog change needs new frontend controls or backend transport behavior — coordinate with frontend-management and backend-services in the same Request.
         primary_paths:
-          - supports/YuwanLabWriter.MCPs/README.md
-          - supports/YuwanLabWriter.MCPs/docs/
-          - supports/YuwanLabWriter.MCPs/catalog.json
-          - supports/YuwanLabWriter.MCPs/presets/
-          - supports/YuwanLabWriter.MCPs/golden-tests/
+          - supports/SuperLeaf.MCPs/README.md
+          - supports/SuperLeaf.MCPs/docs/
+          - supports/SuperLeaf.MCPs/catalog.json
+          - supports/SuperLeaf.MCPs/presets/
+          - supports/SuperLeaf.MCPs/golden-tests/
           - backend/app/services/mcp_catalog_service.py
           - backend/app/services/mcp_tool_service.py
           - backend/app/api/native_agents.py

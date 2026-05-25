@@ -1,21 +1,32 @@
 # PROJECT MAP for SuperLeaf
 #
-# Structural map of the repository rooted at `services/`. Update whenever a module is
-# added or removed; this file is the agent's structural index, not a wishlist.
-# Refreshed 2026-05-25 for REQ-0163 (MCP support catalog routing).
+# Structural index for agents. Keep this file route-focused: it should answer
+# "where do I start reading?" rather than describe every implementation detail.
+# Refreshed 2026-05-25 for REQ-0182 after the SuperLeaf rename, MCP/Skill
+# support repository split, and project archive download work.
 
 project:
   name: SuperLeaf
   root: .
-  source_of_truth: services
+  source_of_truth:
+    - services/backend
+    - services/frontend
+    - services/collab-server
   branch_strategy:
     personal: YuwanZ
     team: develop
     public: main
-  privacy_rule: .acp/kernel/ MUST stay out of git. Public user docs live in docs/.
+  privacy_rule: .acp/kernel/ MUST stay out of git. Public docs live in docs/.
+  support_repo_rule: supports/ contains independent repositories and must not be tracked by the main SuperLeaf repository.
+  runtime_names_to_preserve:
+    - YLW_ env prefix
+    - ~/.yuwanlab
+    - yuwanlab.db
+    - yuwanlab-archive
+    - yuwanlab runtime/lab identifiers
 
 modules:
-  # ── Governance layer ─────────────────────────────────────────────
+  # ── ACP governance ──────────────────────────────────────────────
   - id: acp-version
     path: .acp
     kind: governance
@@ -23,19 +34,10 @@ modules:
     entry_files:
       - .acp/version.yaml
 
-  - id: acp-kernel
-    path: .acp/kernel
-    kind: governance
-    description: Append-only Request / Plan / Change lineage.
-    entry_files:
-      - .acp/kernel/requests/
-      - .acp/kernel/plans/
-      - .acp/kernel/changes/
-
   - id: acp-support
     path: .acp/support
     kind: guidance
-    description: Routing, loading, and policy documents read at bootstrap.
+    description: Agent bootstrap, project map, load rules, and mutation policy.
     entry_files:
       - .acp/support/AGENT.md
       - .acp/support/PROJECT_MAP.yaml
@@ -44,31 +46,43 @@ modules:
 
   - id: acp-capability
     path: .acp/capability
-    kind: semantic
-    description: Capability + slice definitions (semantic surface).
+    kind: semantic-routing
+    description: Capability and slice definitions used for Request routing.
     entry_files:
       - .acp/capability/capabilities.yaml
 
-  # ── Planning docs ────────────────────────────────────────────────
-  - id: docs-planning
+  - id: acp-kernel
+    path: .acp/kernel
+    kind: private-history
+    description: Private append-only Request / Plan / Change records. Never stage or commit.
+    entry_files:
+      - .acp/kernel/requests/
+      - .acp/kernel/plans/
+      - .acp/kernel/changes/
+
+  # ── Product docs and support repositories ───────────────────────
+  - id: public-docs
     path: docs
     kind: documentation
-    description: Product / architecture / milestone planning documents. Git-ignored.
+    description: GitHub Pages product, provider, architecture, editor, collaboration, Skill, workflow, and troubleshooting docs.
     entry_files:
-      - docs/v1_executive_plan.tex
-      - docs/v2_executive_plan.md
-      - docs/v2_executive_plan.tex
-      - docs/v2_1_amendment_dify.md
-      - docs/v3_executive_plan.md
-      - docs/architecture_data_flow.md
-      - docs/doubao_v1_optimized.tex
-      - docs/doubao.tex
-      - docs/figma.md
+      - docs/index.md
+      - docs/README.md
+      - docs/_config.yml
+      - docs/architecture/overview.md
+      - docs/architecture/context-management.md
+      - docs/agents/README.md
+      - docs/agents/skills.md
+      - docs/collaboration/README.md
+      - docs/editor/README.md
+      - docs/providers/README.md
+      - docs/workflows/README.md
+      - docs/troubleshooting/README.md
 
   - id: support-mcps
     path: supports/SuperLeaf.MCPs
-    kind: support-catalog
-    description: Maintained MCP catalog consumed by Native Agents; stores verified MCP presets, transport configs, env schema, tool policy, risk labels, golden tests, and contributor docs.
+    kind: external-support-repo
+    description: Independent MCP catalog repository. Runtime default is the remote OhMyYuwan/SuperLeaf.MCPs raw catalog; local checkout is a dev/offline fallback.
     entry_files:
       - supports/SuperLeaf.MCPs/README.md
       - supports/SuperLeaf.MCPs/docs/README.md
@@ -77,640 +91,474 @@ modules:
       - supports/SuperLeaf.MCPs/catalog.json
       - supports/SuperLeaf.MCPs/presets/
       - supports/SuperLeaf.MCPs/golden-tests/
-    note: |
-      This catalog is data, not frontend-specific code. At runtime the app
-      fetches the official catalog from `OhMyYuwan/SuperLeaf.MCPs` via
-      `YLW_MCP_CATALOG_URL`; local `supports/` checkouts are development /
-      offline fallbacks only. The backend exposes the catalog through
-      backend/app/services/mcp_catalog_service.py and TeamTab's MCP subtab.
-      Add a new preset in the external MCPs repository first, then wire app
-      code only if the generic catalog schema is insufficient. The `supports/`
-      directory must not be committed to the main SuperLeaf repository.
+    owning_runtime:
+      - services/backend/app/services/mcp_catalog_service.py
+      - services/backend/app/services/mcp_tool_service.py
+      - services/backend/app/api/native_agents.py
+      - services/frontend/src/features/right-panel/TeamTab.tsx
+      - services/frontend/src/stores/nativeAgentStore.ts
 
-  # ── Backend (FastAPI proxy + SQLite persistence) ─────────────────
-  - id: backend
-    path: backend
-    kind: service
-    description: FastAPI proxy to Dify / Nanobot + local SQLite persistence. uv-managed, Python 3.11+.
+  - id: support-skills
+    path: supports/SuperLeaf.Skills
+    kind: external-support-repo
+    description: Independent Skill marketplace repository. Runtime default is the remote OhMyYuwan/SuperLeaf.Skills raw marketplace; local checkout is not part of main-repo source.
     entry_files:
-      - backend/pyproject.toml
-      - backend/app/main.py
+      - supports/SuperLeaf.Skills/README.md
+      - supports/SuperLeaf.Skills/marketplace.json
+      - supports/SuperLeaf.Skills/external-skills.json
+      - supports/SuperLeaf.Skills/scripts/build_marketplace.py
+      - supports/SuperLeaf.Skills/scripts/validate_marketplace.py
+      - supports/SuperLeaf.Skills/skills/
+    owning_runtime:
+      - services/backend/app/services/skill_marketplace_service.py
+      - services/backend/app/services/skill_npx_installer.py
+      - services/backend/app/services/native_agent_service.py
+      - services/backend/app/api/native_agents.py
+      - services/frontend/src/features/right-panel/TeamTab.tsx
+      - services/frontend/src/stores/nativeAgentStore.ts
 
-  - id: backend-app-core
-    path: backend/app
-    kind: service-core
-    description: App entrypoint, settings, database, encrypted secrets vault.
+  # ── Backend service ─────────────────────────────────────────────
+  - id: backend-service
+    path: services/backend
+    kind: python-service
+    description: FastAPI + SQLAlchemy + SQLite backend. uv-managed, Python 3.11+.
     entry_files:
-      - backend/app/__init__.py
-      - backend/app/main.py
-      - backend/app/settings.py
-      - backend/app/database.py
-      - backend/app/secrets_vault.py
-      - backend/app/models.py
-      - backend/app/schemas.py
-    note: |
-      `models.py` now declares tables: Provider, CachedWorkflow,
-      WorkflowRun, WorkflowDefinition, Project/Folder/Doc/FileBlob,
-      Conversation, Message, Blob, DocumentVersion, DocumentLabel,
-      Operation, AnnotationEvaluation, AnnotationReviewState, Annotation,
-      ProjectMember, Notification.
-      User/Session tables handle auth; ProjectMember enables Overleaf-style
-      multi-user collaboration with role-based access (owner/editor/viewer).
-      Privacy isolation: WorkflowDefinition, WorkflowRun, Conversation,
-      Annotation, AnnotationEvaluation, AnnotationReviewState all carry
-      `user_id` — Agent assets are personal, not shared across collaborators.
+      - services/backend/pyproject.toml
+      - services/backend/uv.lock
+      - services/backend/app/main.py
+      - services/backend/app/settings.py
+      - services/backend/app/database.py
+      - services/backend/app/migrations.py
+      - services/backend/app/models.py
+      - services/backend/app/schemas.py
+      - services/backend/app/secrets_vault.py
 
   - id: backend-api
-    path: backend/app/api
+    path: services/backend/app/api
     kind: api-routes
-    description: HTTP routes — health, auth, users, providers, native Agent credentials/skills/agents/marketplace/MCP/UI settings, projects (incl. members + online presence + SSE events), GitHub/archive, workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
+    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, workflows, conversations, archive/major versions, document versions, compile, notifications, and annotations.
     entry_files:
-      - backend/app/api/__init__.py
-      - backend/app/api/health.py
-      - backend/app/api/auth.py
-      - backend/app/api/users.py
-      - backend/app/api/providers.py
-      - backend/app/api/native_agents.py
-      - backend/app/api/projects.py
-      - backend/app/api/github.py
-      - backend/app/api/archives.py
-      - backend/app/api/workflows.py
-      - backend/app/api/workflow_test_cases.py
-      - backend/app/api/filesystem.py
-      - backend/app/api/conversations.py
-      - backend/app/api/compile.py
-      - backend/app/api/versions.py
-      - backend/app/api/annotation_evaluations.py
-      - backend/app/api/notifications.py
-      - backend/app/api/deps.py
-    note: |
-      `native_agents.py` also exposes `/api/native-agent/ui/official-badge`;
-      the frontend reads this route to render official Skill/MCP badges.
-      Badge style is backend-controlled through `YLW_OFFICIAL_BADGE_STYLE`
-      (`metal` or `minimal`); there is no frontend style switcher.
+      - services/backend/app/api/__init__.py
+      - services/backend/app/api/health.py
+      - services/backend/app/api/auth.py
+      - services/backend/app/api/users.py
+      - services/backend/app/api/providers.py
+      - services/backend/app/api/native_agents.py
+      - services/backend/app/api/projects.py
+      - services/backend/app/api/filesystem.py
+      - services/backend/app/api/github.py
+      - services/backend/app/api/archives.py
+      - services/backend/app/api/major_versions.py
+      - services/backend/app/api/workflows.py
+      - services/backend/app/api/workflow_test_cases.py
+      - services/backend/app/api/conversations.py
+      - services/backend/app/api/compile.py
+      - services/backend/app/api/versions.py
+      - services/backend/app/api/annotation_evaluations.py
+      - services/backend/app/api/notifications.py
+      - services/backend/app/api/deps.py
 
   - id: backend-services
-    path: backend/app/services
+    path: services/backend/app/services
     kind: domain-services
-    description: Provider clients (Dify / Nanobot), self-hosted multi-agent orchestrator, native Agent registry/runtime, Skill Marketplace + encrypted Skill content services, project filesystem/archive service, LaTeX compiler wrapper, attached-files normalizer, event bus (SSE fan-out + presence tracking), auth service, annotation/evaluation/training-export service, project member service, GitHub service, user/stat/version/operation services, diff service, collab snapshot service.
+    description: Provider clients, native Agent runtime, Skill/MCP services, workflow orchestrator, project filesystem/archive/history services, collaboration snapshots, GitHub integration, auth, events, annotations, and compile.
     entry_files:
-      - backend/app/services/__init__.py
-      - backend/app/services/dify_client.py
-      - backend/app/services/nanobot_client.py
-      - backend/app/services/provider_service.py
-      - backend/app/services/agent_registry_service.py
-      - backend/app/services/agent_orchestrator.py
-      - backend/app/services/native_agent_runner.py
-      - backend/app/services/native_agent_service.py
-      - backend/app/services/mcp_tool_service.py
-      - backend/app/services/mcp_catalog_service.py
-      - backend/app/services/skill_content_crypto.py
-      - backend/app/services/skill_marketplace_service.py
-      - backend/app/services/project_fs_service.py
-      - backend/app/services/project_archive_service.py
-      - backend/app/services/latex_compiler.py
-      - backend/app/services/attached_files.py
-      - backend/app/services/github_service.py
-      - backend/app/services/event_bus.py
-      - backend/app/services/auth_service.py
-      - backend/app/services/annotation_service.py
-      - backend/app/services/evaluation_service.py
-      - backend/app/services/annotation_training_export_service.py
-      - backend/app/services/project_member_service.py
-      - backend/app/services/project_service.py
-      - backend/app/services/user_service.py
-      - backend/app/services/stats_service.py
-      - backend/app/services/version_service.py
-      - backend/app/services/operation_service.py
-      - backend/app/services/diff_service.py
-      - backend/app/services/collab_snapshot_service.py
-    note: |
-      `agent_orchestrator.py` (≈1267 lines) is the V2.2 self-hosted
-      multi-agent + loop runner; canonical baseline since REQ-0015.
-      `native_agent_service.py`, `native_agent_runner.py`, and
-      `agent_registry_service.py` implement backend-managed native Agents
-      that bind to Provider models and can read only user-assigned Skills.
-      `mcp_tool_service.py` and `mcp_catalog_service.py` implement the
-      on-demand stdio MCP bridge plus catalog/probe/golden-test support for
-      tools declared by the remote `OhMyYuwan/SuperLeaf.MCPs` catalog.
-      `skill_marketplace_service.py` reads the official Skill catalog from
-      the configured marketplace URL; `skill_content_crypto.py` encrypts local
-      Skill content at rest.
-      `event_bus.py` provides in-memory SSE fan-out with per-subscriber
-      asyncio.Queue and online-user presence tracking.
-      `project_member_service.py` handles multi-user collaboration:
-      add/remove members, role checks (owner/editor/viewer), shared
-      project listing.
-      `evaluation_service.py` manages annotation evaluations + review
-      states with user_id scoping for privacy isolation.
-      `annotation_service.py` persists annotation cards with user_id
-      ownership — each collaborator only sees their own Agent outputs.
-      `collab_snapshot_service.py` periodically snapshots Yjs-managed
-      document text from collab-server into Doc.content + version history.
+      - services/backend/app/services/provider_service.py
+      - services/backend/app/services/dify_client.py
+      - services/backend/app/services/nanobot_client.py
+      - services/backend/app/services/agent_orchestrator.py
+      - services/backend/app/services/agent_registry_service.py
+      - services/backend/app/services/native_agent_service.py
+      - services/backend/app/services/native_agent_runner.py
+      - services/backend/app/services/agent_workspace_service.py
+      - services/backend/app/services/mcp_config_service.py
+      - services/backend/app/services/mcp_catalog_service.py
+      - services/backend/app/services/mcp_tool_service.py
+      - services/backend/app/services/skill_content_crypto.py
+      - services/backend/app/services/skill_marketplace_service.py
+      - services/backend/app/services/skill_npx_installer.py
+      - services/backend/app/services/skill_recipe_metadata.py
+      - services/backend/app/services/project_service.py
+      - services/backend/app/services/project_fs_service.py
+      - services/backend/app/services/project_archive_service.py
+      - services/backend/app/services/project_member_service.py
+      - services/backend/app/services/github_service.py
+      - services/backend/app/services/auth_service.py
+      - services/backend/app/services/user_service.py
+      - services/backend/app/services/event_bus.py
+      - services/backend/app/services/conversation_session_service.py
+      - services/backend/app/services/attached_files.py
+      - services/backend/app/services/annotation_service.py
+      - services/backend/app/services/evaluation_service.py
+      - services/backend/app/services/annotation_training_export_service.py
+      - services/backend/app/services/latex_compiler.py
+      - services/backend/app/services/version_service.py
+      - services/backend/app/services/operation_service.py
+      - services/backend/app/services/diff_service.py
+      - services/backend/app/services/collab_snapshot_service.py
+      - services/backend/app/services/stats_service.py
 
-  # ── Collab Server (Node.js Yjs WebSocket) ───────────────────────
-  - id: collab-server
-    path: ../src/collab-server
-    kind: service
-    description: |
-      Independent Node.js process providing Yjs CRDT-based real-time
-      collaborative editing via WebSocket. Uses y-protocols sync +
-      awareness, LevelDB persistence, and authenticates via FastAPI
-      /api/auth/verify. Listens on port 4444.
+  - id: backend-tests
+    path: services/backend
+    kind: tests
+    description: Standalone backend workflow/native-agent tests and historical workflow test reports.
     entry_files:
-      - ../src/collab-server/package.json
-      - ../src/collab-server/tsconfig.json
-      - ../src/collab-server/src/index.ts
-      - ../src/collab-server/src/ws-handler.ts
-      - ../src/collab-server/src/persistence.ts
+      - services/backend/test_workflow_execution.py
+      - services/backend/test_nested_workflow.py
+      - services/backend/test_branch_merge.py
+      - services/backend/test_native_agent_skill_sync.py
+      - services/backend/test_conversation_history.py
+      - services/backend/WORKFLOW_COMPLETE_TEST_REPORT.md
+      - services/backend/WORKFLOW_TEST_RESULTS.md
 
-  # ── Frontend application ─────────────────────────────────────────
-  - id: frontend
-    path: frontend
-    kind: application
-    description: Vite + React 19 + TypeScript writing IDE. Deployed locally via start.sh.
+  # ── Frontend application ────────────────────────────────────────
+  - id: frontend-app
+    path: services/frontend
+    kind: react-app
+    description: Vite + React 19 + TypeScript frontend shell.
     entry_files:
-      - frontend/package.json
-      - frontend/index.html
-      - frontend/vite.config.ts
-      - frontend/tsconfig.json
+      - services/frontend/package.json
+      - services/frontend/package-lock.json
+      - services/frontend/index.html
+      - services/frontend/vite.config.ts
+      - services/frontend/tsconfig.json
+      - services/frontend/tsconfig.app.json
+      - services/frontend/tsconfig.node.json
+      - services/frontend/eslint.config.js
 
-  - id: frontend-app-shell
-    path: frontend/src
+  - id: frontend-shell
+    path: services/frontend/src
     kind: application-shell
-    description: React entry, App.tsx workspace shell, top-level layout composition.
+    description: App composition, routing, auth gate, global CSS, and project pages.
     entry_files:
-      - frontend/src/main.tsx
-      - frontend/src/App.tsx
-      - frontend/src/router.tsx
-      - frontend/src/router/ProtectedRoute.tsx
-      - frontend/src/App.css
-      - frontend/src/index.css
-      - frontend/src/pages/LoginPage.tsx
-      - frontend/src/pages/RegisterPage.tsx
-      - frontend/src/pages/ProjectListPage.tsx
-      - frontend/src/pages/WorkspacePage.tsx
-
-  - id: frontend-types
-    path: frontend/src/types
-    kind: domain-model
-    description: TypeScript domain contracts for all 8 layers (Document → Editor → Agent → Workflow → Collaboration → History → UI → Actions).
-    entry_files:
-      - frontend/src/types/document.ts
-      - frontend/src/types/editor.ts
-      - frontend/src/types/agent.ts
-      - frontend/src/types/workflow.ts
-      - frontend/src/types/collaboration.ts
-      - frontend/src/types/history.ts
-      - frontend/src/types/ui.ts
-      - frontend/src/types/actions.ts
-    note: |
-      Runtime types for WorkflowDefinition / Provider / Message / etc
-      currently live in `services/backendApi.ts`. Unification with
-      `types/*` is a V3 Phase 2 task (B2).
-
-  - id: frontend-stores
-    path: frontend/src/stores
-    kind: state
-    description: Zustand stores — covering document, editor, settings, native Agent/Skill management, automation, workflow, annotation, filesystem, conversation, compile, view, project, user, collaboration, plus user-scoped storage and reset utilities.
-    entry_files:
-      - frontend/src/stores/documentStore.ts
-      - frontend/src/stores/editorStore.ts
-      - frontend/src/stores/settingsStore.ts
-      - frontend/src/stores/nativeAgentStore.ts
-      - frontend/src/stores/automationStore.ts
-      - frontend/src/stores/workflowStore.ts
-      - frontend/src/stores/annotationStore.ts
-      - frontend/src/stores/filesystemStore.ts
-      - frontend/src/stores/conversationStore.ts
-      - frontend/src/stores/compileStore.ts
-      - frontend/src/stores/viewStore.ts
-      - frontend/src/stores/historyStore.ts
-      - frontend/src/stores/projectStore.ts
-      - frontend/src/stores/userStore.ts
-      - frontend/src/stores/collaborationStore.ts
-      - frontend/src/stores/_userScopedStorage.ts
-      - frontend/src/stores/_reset.ts
-      - frontend/src/stores/seedData.ts
+      - services/frontend/src/main.tsx
+      - services/frontend/src/App.tsx
+      - services/frontend/src/App.css
+      - services/frontend/src/index.css
+      - services/frontend/src/router.tsx
+      - services/frontend/src/router/ProtectedRoute.tsx
+      - services/frontend/src/pages/LoginPage.tsx
+      - services/frontend/src/pages/RegisterPage.tsx
+      - services/frontend/src/pages/ProjectListPage.tsx
+      - services/frontend/src/pages/WorkspacePage.tsx
+      - services/frontend/src/pages/components/ProjectCard.tsx
+      - services/frontend/src/pages/components/ProjectTableRow.tsx
+      - services/frontend/src/pages/components/ProjectFormDialog.tsx
+      - services/frontend/src/pages/components/DeleteProjectDialog.tsx
+      - services/frontend/src/pages/auth.css
+      - services/frontend/src/pages/project-list.css
+      - services/frontend/src/lib/uuid.ts
 
   - id: frontend-services
-    path: frontend/src/services
-    kind: service-layer
-    description: Frontend business logic — typed backend API client (incl. nativeAgentApi, githubApi, projectMemberApi, conversationApi), parsers, selection context, output parser, mention system, range tracker, filesystem API, auth API, projects API, training export API, annotation/evaluation API, agent quality/evaluation context, operation/stats/version APIs, project event stream (SSE client), collaboration provider (Yjs WebSocket).
+    path: services/frontend/src/services
+    kind: client-services
+    description: Typed API clients, parsers, context builders, mention/range logic, collaboration provider, SSE client, and major-version download client.
     entry_files:
-      - frontend/src/services/backendApi.ts
-      - frontend/src/services/filesystemApi.ts
-      - frontend/src/services/documentParser.ts
-      - frontend/src/services/selectionContext.ts
-      - frontend/src/services/outputParser.ts
-      - frontend/src/services/mentions.ts
-      - frontend/src/services/rangeTracker.ts
-      - frontend/src/services/authApi.ts
-      - frontend/src/services/projectsApi.ts
-      - frontend/src/services/trainingExportApi.ts
-      - frontend/src/services/annotationEvaluationApi.ts
-      - frontend/src/services/agentQuality.ts
-      - frontend/src/services/evaluationContext.ts
-      - frontend/src/services/operationApi.ts
-      - frontend/src/services/statsApi.ts
-      - frontend/src/services/versionApi.ts
-      - frontend/src/services/projectEventStream.ts
-      - frontend/src/services/collaborationProvider.ts
+      - services/frontend/src/services/backendApi.ts
+      - services/frontend/src/services/authApi.ts
+      - services/frontend/src/services/projectsApi.ts
+      - services/frontend/src/services/filesystemApi.ts
+      - services/frontend/src/services/documentParser.ts
+      - services/frontend/src/services/selectionContext.ts
+      - services/frontend/src/services/outputParser.ts
+      - services/frontend/src/services/mentions.ts
+      - services/frontend/src/services/rangeTracker.ts
+      - services/frontend/src/services/previewSourceMap.ts
+      - services/frontend/src/services/majorVersionApi.ts
+      - services/frontend/src/services/versionApi.ts
+      - services/frontend/src/services/operationApi.ts
+      - services/frontend/src/services/statsApi.ts
+      - services/frontend/src/services/annotationEvaluationApi.ts
+      - services/frontend/src/services/trainingExportApi.ts
+      - services/frontend/src/services/projectEventStream.ts
+      - services/frontend/src/services/collaborationProvider.ts
+      - services/frontend/src/services/agentQuality.ts
+      - services/frontend/src/services/evaluationContext.ts
+
+  - id: frontend-stores
+    path: services/frontend/src/stores
+    kind: state
+    description: Zustand stores for projects, users, documents, editor, files, collaboration, providers, native Agents/Skills/MCPs, workflows, conversations, annotations, history, major versions, compile, view, writing, and reset/user-scoped storage.
+    entry_files:
+      - services/frontend/src/stores/projectStore.ts
+      - services/frontend/src/stores/userStore.ts
+      - services/frontend/src/stores/documentStore.ts
+      - services/frontend/src/stores/editorStore.ts
+      - services/frontend/src/stores/filesystemStore.ts
+      - services/frontend/src/stores/collaborationStore.ts
+      - services/frontend/src/stores/settingsStore.ts
+      - services/frontend/src/stores/nativeAgentStore.ts
+      - services/frontend/src/stores/workflowStore.ts
+      - services/frontend/src/stores/conversationStore.ts
+      - services/frontend/src/stores/annotationStore.ts
+      - services/frontend/src/stores/automationStore.ts
+      - services/frontend/src/stores/historyStore.ts
+      - services/frontend/src/stores/majorVersionStore.ts
+      - services/frontend/src/stores/compileStore.ts
+      - services/frontend/src/stores/viewStore.ts
+      - services/frontend/src/stores/writingStore.ts
+      - services/frontend/src/stores/recentDocStore.ts
+      - services/frontend/src/stores/_userScopedStorage.ts
+      - services/frontend/src/stores/_reset.ts
+      - services/frontend/src/stores/seedData.ts
+
+  - id: frontend-types
+    path: services/frontend/src/types
+    kind: domain-types
+    description: Frontend domain contracts. Some runtime API types still live in backendApi.ts until contract unification.
+    entry_files:
+      - services/frontend/src/types/document.ts
+      - services/frontend/src/types/editor.ts
+      - services/frontend/src/types/agent.ts
+      - services/frontend/src/types/collaboration.ts
+      - services/frontend/src/types/history.ts
+      - services/frontend/src/types/ui.ts
+      - services/frontend/src/types/actions.ts
 
   - id: frontend-tests
-    path: frontend/src/__tests__
+    path: services/frontend/src/__tests__
     kind: tests
-    description: Vitest unit tests for parser, selection context, and output parser.
+    description: Vitest tests for parsing, editor utilities, annotation decorations/store, automation store, mentions, markdown assets, and range tracking.
     entry_files:
-      - frontend/src/__tests__/documentParser.test.ts
-      - frontend/src/__tests__/selectionContext.test.ts
-      - frontend/src/__tests__/outputParser.test.ts
+      - services/frontend/src/__tests__/documentParser.test.ts
+      - services/frontend/src/__tests__/selectionContext.test.ts
+      - services/frontend/src/__tests__/outputParser.test.ts
+      - services/frontend/src/__tests__/annotationDecorations.test.ts
+      - services/frontend/src/__tests__/annotationStore.test.ts
+      - services/frontend/src/__tests__/automationStore.test.ts
+      - services/frontend/src/__tests__/mentionsAttachedFiles.test.ts
+      - services/frontend/src/__tests__/rangeTracker.test.ts
+      - services/frontend/src/__tests__/markdownAssets.test.ts
 
   - id: frontend-feature-latex-editor
-    path: frontend/src/features/latex-editor
+    path: services/frontend/src/features/latex-editor
     kind: feature-module
-    description: Self-contained CodeMirror 6 LaTeX editor module + annotation decoration plugin + Yjs collaboration extensions.
+    description: CodeMirror 6 LaTeX editor, search panel, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, and annotation decorations.
     entry_files:
-      - frontend/src/features/latex-editor/index.ts
-      - frontend/src/features/latex-editor/LatexEditor.tsx
-      - frontend/src/features/latex-editor/extensions.ts
-      - frontend/src/features/latex-editor/collaboration-extensions.ts
-      - frontend/src/features/latex-editor/latex-language.ts
-      - frontend/src/features/latex-editor/theme.ts
-      - frontend/src/features/latex-editor/annotation-decorations.ts
-
-  - id: frontend-feature-settings
-    path: frontend/src/features/settings
-    kind: feature-module
-    description: Provider registry UI + Project settings dialog (member management panel) — Radix Dialog for add/probe/activate/delete providers and invite/remove project collaborators.
-    entry_files:
-      - frontend/src/features/settings/index.ts
-      - frontend/src/features/settings/SettingsDialog.tsx
-      - frontend/src/features/settings/ProjectSettingsDialog.tsx
-      - frontend/src/features/settings/ProjectMembersPanel.tsx
-      - frontend/src/features/settings/settings.css
-
-  - id: frontend-feature-annotation-panel
-    path: frontend/src/features/annotation-panel
-    kind: feature-module
-    description: Annotation card panel — renders annotations / suggestions / risks / user-comments; hosts CommentComposer and continue composer; integrates with mention system for @-mention routing to agents / workflows / files.
-    entry_files:
-      - frontend/src/features/annotation-panel/index.ts
-      - frontend/src/features/annotation-panel/AnnotationPanel.tsx
-      - frontend/src/features/annotation-panel/CommentComposer.tsx
-      - frontend/src/features/annotation-panel/EvaluationPanel.tsx
-      - frontend/src/features/annotation-panel/ReviewStatusToggle.tsx
-      - frontend/src/features/annotation-panel/annotation-panel.css
-
-  - id: frontend-feature-right-panel
-    path: frontend/src/features/right-panel
-    kind: feature-module
-    description: |
-      Right-side tabbed panel — Discussion, Team management (Agent / Skill /
-      Workflow subtabs), Automation, Run history, and Versions (project archive
-      + document history). Hosts the workflow-canvas and Skill management
-      subsurfaces.
-    entry_files:
-      - frontend/src/features/right-panel/RightPanel.tsx
-      - frontend/src/features/right-panel/DiscussionTab.tsx
-      - frontend/src/features/right-panel/TeamTab.tsx
-      - frontend/src/features/right-panel/AutomationTab.tsx
-      - frontend/src/features/right-panel/ProjectArchiveTab.tsx
-      - frontend/src/features/right-panel/WorkflowTab.tsx
-      - frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
-      - frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
-      - frontend/src/features/right-panel/RunHistoryTab.tsx
-      - frontend/src/features/right-panel/templates/debate.json
-      - frontend/src/features/right-panel/templates/consensus.json
-      - frontend/src/features/right-panel/discussion.css
-      - frontend/src/features/right-panel/project-archive.css
-      - frontend/src/features/right-panel/right-panel.css
-
-  - id: frontend-feature-workflow-canvas
-    path: frontend/src/features/right-panel/workflow-canvas
-    kind: feature-module
-    description: Visual workflow canvas (react-flow / @xyflow/react) for building multi-agent workflows. Supports agent (atomic) + loop (container) nodes with arbitrary nesting. Includes test-run panel.
-    entry_files:
-      - frontend/src/features/right-panel/workflow-canvas/index.ts
-      - frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
-      - frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
-      - frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
-      - frontend/src/features/right-panel/workflow-canvas/nodes.tsx
-      - frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
-      - frontend/src/features/right-panel/workflow-canvas/health.ts
-      - frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
-
-  - id: frontend-feature-file-tree
-    path: frontend/src/features/file-tree
-    kind: feature-module
-    description: Left-column project tree + outline list (Overleaf-style). Reads from `filesystemStore`; supports rename / create / delete / drag-and-drop.
-    entry_files:
-      - frontend/src/features/file-tree/index.ts
-      - frontend/src/features/file-tree/FileTree.tsx
-      - frontend/src/features/file-tree/OutlineList.tsx
-      - frontend/src/features/file-tree/file-tree.css
-
-  - id: frontend-feature-preview
-    path: frontend/src/features/preview
-    kind: feature-module
-    description: Right-column preview renderers — LaTeX (PDF via latexmk + PDF.js) and Markdown (markdown-it + KaTeX).
-    entry_files:
-      - frontend/src/features/preview/index.ts
-      - frontend/src/features/preview/LatexPreview.tsx
-      - frontend/src/features/preview/MarkdownPreview.tsx
-      - frontend/src/features/preview/latex-preview.css
-      - frontend/src/features/preview/markdown-preview.css
-
-  - id: frontend-feature-history
-    path: frontend/src/features/history
-    kind: feature-module
-    description: Version history and operation timeline UI — document snapshots, diff modal, operation highlights, and history styling.
-    entry_files:
-      - frontend/src/features/history/HistoryTab.tsx
-      - frontend/src/features/history/OperationsView.tsx
-      - frontend/src/features/history/DiffModal.tsx
-      - frontend/src/features/history/highlights-extension.ts
-      - frontend/src/features/history/highlights-from-diff.ts
-      - frontend/src/features/history/history.css
-
-  - id: frontend-feature-topbar
-    path: frontend/src/features/topbar
-    kind: feature-module
-    description: Top bar — app title, view controls, NotificationBell (unread count + dropdown), PresenceIndicator (online collaborator avatars), UserMenu.
-    entry_files:
-      - frontend/src/features/topbar/index.ts
-      - frontend/src/features/topbar/Topbar.tsx
-      - frontend/src/features/topbar/ViewControl.tsx
-      - frontend/src/features/topbar/UserMenu.tsx
-      - frontend/src/features/topbar/NotificationBell.tsx
-      - frontend/src/features/topbar/PresenceIndicator.tsx
-      - frontend/src/features/topbar/topbar.css
-      - frontend/src/features/topbar/notification-bell.css
-      - frontend/src/features/topbar/presence-indicator.css
+      - services/frontend/src/features/latex-editor/LatexEditor.tsx
+      - services/frontend/src/features/latex-editor/SelectionToolbar.tsx
+      - services/frontend/src/features/latex-editor/extensions.ts
+      - services/frontend/src/features/latex-editor/search-panel.ts
+      - services/frontend/src/features/latex-editor/latex-language.ts
+      - services/frontend/src/features/latex-editor/latex-completion-data.ts
+      - services/frontend/src/features/latex-editor/latex-snippets.ts
+      - services/frontend/src/features/latex-editor/latex-folding.ts
+      - services/frontend/src/features/latex-editor/collaboration-extensions.ts
+      - services/frontend/src/features/latex-editor/annotation-decorations.ts
+      - services/frontend/src/features/latex-editor/theme.ts
 
   - id: frontend-feature-workspace-center
-    path: frontend/src/features/workspace-center
+    path: services/frontend/src/features/workspace-center
     kind: feature-module
-    description: Center workspace column composition — editor + toolbar + annotation column + preview column. Hosts the editor mount and integrates annotation decorations + selection sync.
+    description: |
+      Center workspace layout: editor column, toolbar, annotation column, and
+      preview column.
     entry_files:
-      - frontend/src/features/workspace-center/index.ts
-      - frontend/src/features/workspace-center/EditorColumn.tsx
-      - frontend/src/features/workspace-center/EditorToolbar.tsx
-      - frontend/src/features/workspace-center/AnnotationColumn.tsx
-      - frontend/src/features/workspace-center/PreviewColumn.tsx
-      - frontend/src/features/workspace-center/workspace-center.css
+      - services/frontend/src/features/workspace-center/EditorColumn.tsx
+      - services/frontend/src/features/workspace-center/EditorToolbar.tsx
+      - services/frontend/src/features/workspace-center/AnnotationColumn.tsx
+      - services/frontend/src/features/workspace-center/PreviewColumn.tsx
+      - services/frontend/src/features/workspace-center/workspace-center.css
+
+  - id: frontend-feature-file-tree
+    path: services/frontend/src/features/file-tree
+    kind: feature-module
+    description: Project file tree and outline list.
+    entry_files:
+      - services/frontend/src/features/file-tree/FileTree.tsx
+      - services/frontend/src/features/file-tree/OutlineList.tsx
+      - services/frontend/src/features/file-tree/file-tree.css
+
+  - id: frontend-feature-preview
+    path: services/frontend/src/features/preview
+    kind: feature-module
+    description: LaTeX PDF preview, Markdown preview, markdown asset rewriting, and preview styling.
+    entry_files:
+      - services/frontend/src/features/preview/LatexPreview.tsx
+      - services/frontend/src/features/preview/MarkdownPreview.tsx
+      - services/frontend/src/features/preview/markdownAssets.ts
+      - services/frontend/src/features/preview/latex-preview.css
+      - services/frontend/src/features/preview/markdown-preview.css
+
+  - id: frontend-feature-annotations
+    path: services/frontend/src/features/annotation-panel
+    kind: feature-module
+    description: Annotation cards, comment composer, evaluation panel, review status toggle, and annotation styling.
+    entry_files:
+      - services/frontend/src/features/annotation-panel/AnnotationPanel.tsx
+      - services/frontend/src/features/annotation-panel/CommentComposer.tsx
+      - services/frontend/src/features/annotation-panel/EvaluationPanel.tsx
+      - services/frontend/src/features/annotation-panel/ReviewStatusToggle.tsx
+      - services/frontend/src/features/annotation-panel/annotation-panel.css
+
+  - id: frontend-feature-right-panel
+    path: services/frontend/src/features/right-panel
+    kind: feature-module
+    description: |
+      Right panel tabs: Discussion, Team management, Workflow, Automation, Run
+      History, Versions/project archive, and writing automation.
+    entry_files:
+      - services/frontend/src/features/right-panel/RightPanel.tsx
+      - services/frontend/src/features/right-panel/DiscussionTab.tsx
+      - services/frontend/src/features/right-panel/TeamTab.tsx
+      - services/frontend/src/features/right-panel/WorkflowTab.tsx
+      - services/frontend/src/features/right-panel/WorkflowDefinitionsPanel.tsx
+      - services/frontend/src/features/right-panel/WorkflowDefinitionEditor.tsx
+      - services/frontend/src/features/right-panel/AutomationTab.tsx
+      - services/frontend/src/features/right-panel/AnnotationAutomationPanel.tsx
+      - services/frontend/src/features/right-panel/WritingAutomationPanel.tsx
+      - services/frontend/src/features/right-panel/RunHistoryTab.tsx
+      - services/frontend/src/features/right-panel/ProjectArchiveTab.tsx
+      - services/frontend/src/features/right-panel/templates/debate.json
+      - services/frontend/src/features/right-panel/templates/consensus.json
+      - services/frontend/src/features/right-panel/right-panel.css
+      - services/frontend/src/features/right-panel/discussion.css
+      - services/frontend/src/features/right-panel/project-archive.css
+
+  - id: frontend-feature-workflow-canvas
+    path: services/frontend/src/features/right-panel/workflow-canvas
+    kind: feature-module
+    description: React Flow workflow canvas for agent and loop nodes, graph conversion, node health, palette, inspector, and node rendering.
+    entry_files:
+      - services/frontend/src/features/right-panel/workflow-canvas/WorkflowCanvas.tsx
+      - services/frontend/src/features/right-panel/workflow-canvas/NodePalette.tsx
+      - services/frontend/src/features/right-panel/workflow-canvas/NodeInspector.tsx
+      - services/frontend/src/features/right-panel/workflow-canvas/nodes.tsx
+      - services/frontend/src/features/right-panel/workflow-canvas/graphConversion.ts
+      - services/frontend/src/features/right-panel/workflow-canvas/health.ts
+      - services/frontend/src/features/right-panel/workflow-canvas/workflow-canvas.css
+
+  - id: frontend-feature-history
+    path: services/frontend/src/features/history
+    kind: feature-module
+    description: Document history, major version list/download/diff, diff modals, operation timeline, highlights, and history CSS.
+    entry_files:
+      - services/frontend/src/features/history/HistoryTab.tsx
+      - services/frontend/src/features/history/OperationsView.tsx
+      - services/frontend/src/features/history/DiffModal.tsx
+      - services/frontend/src/features/history/MajorVersionList.tsx
+      - services/frontend/src/features/history/MajorVersionCreateDialog.tsx
+      - services/frontend/src/features/history/MajorVersionDiffModal.tsx
+      - services/frontend/src/features/history/highlights-extension.ts
+      - services/frontend/src/features/history/highlights-from-diff.ts
+      - services/frontend/src/features/history/history.css
+
+  - id: frontend-feature-settings
+    path: services/frontend/src/features/settings
+    kind: feature-module
+    description: Provider settings, project settings, and project member management.
+    entry_files:
+      - services/frontend/src/features/settings/SettingsDialog.tsx
+      - services/frontend/src/features/settings/ProjectSettingsDialog.tsx
+      - services/frontend/src/features/settings/ProjectMembersPanel.tsx
+      - services/frontend/src/features/settings/settings.css
 
   - id: frontend-feature-shared
-    path: frontend/src/features/shared
+    path: services/frontend/src/features/shared
     kind: feature-module
-    description: Cross-surface UI utilities — shared MentionInput, file-size confirmation gate, toast notification host, ProjectEventBridge (SSE → zustand dispatcher), CollaborationStatus (Yjs connection indicator + peer avatars).
+    description: Shared markdown rendering, mention inputs, tags, toast host, project event bridge, collaboration status, error boundary, and file size gate.
     entry_files:
-      - frontend/src/features/shared/AgentMarkdown.tsx
-      - frontend/src/features/shared/agent-markdown.css
-      - frontend/src/features/shared/TagPill.tsx
-      - frontend/src/features/shared/tag-pill.css
-      - frontend/src/features/shared/MentionInput.tsx
-      - frontend/src/features/shared/fileSizeGate.ts
-      - frontend/src/features/shared/mention-input.css
-      - frontend/src/features/shared/toast.tsx
-      - frontend/src/features/shared/ProjectEventBridge.tsx
-      - frontend/src/features/shared/CollaborationStatus.tsx
-      - frontend/src/features/shared/collaboration-status.css
+      - services/frontend/src/features/shared/AgentMarkdown.tsx
+      - services/frontend/src/features/shared/MentionInput.tsx
+      - services/frontend/src/features/shared/MentionCodeMirrorInput.tsx
+      - services/frontend/src/features/shared/TagPill.tsx
+      - services/frontend/src/features/shared/toast.tsx
+      - services/frontend/src/features/shared/ProjectEventBridge.tsx
+      - services/frontend/src/features/shared/CollaborationStatus.tsx
+      - services/frontend/src/features/shared/ErrorBoundary.tsx
+      - services/frontend/src/features/shared/fileSizeGate.ts
 
-  - id: frontend-build-tooling
-    path: frontend
-    kind: build-tooling
-    description: Vite, TypeScript, ESLint, Tailwind, PostCSS configuration for the frontend.
+  - id: frontend-feature-topbar
+    path: services/frontend/src/features/topbar
+    kind: feature-module
+    description: Top bar, view controls, user menu, notification bell, presence indicator, and topbar CSS.
     entry_files:
-      - frontend/vite.config.ts
-      - frontend/tsconfig.json
-      - frontend/tsconfig.app.json
-      - frontend/tsconfig.node.json
-      - frontend/eslint.config.js
-      - frontend/tailwind.config.js
+      - services/frontend/src/features/topbar/Topbar.tsx
+      - services/frontend/src/features/topbar/ViewControl.tsx
+      - services/frontend/src/features/topbar/UserMenu.tsx
+      - services/frontend/src/features/topbar/NotificationBell.tsx
+      - services/frontend/src/features/topbar/PresenceIndicator.tsx
+      - services/frontend/src/features/topbar/topbar.css
 
-  - id: frontend-public
-    path: frontend/public
-    kind: static-assets
-    description: Static assets served as-is by Vite (favicon, icon sprite).
+  # ── Collaboration server ────────────────────────────────────────
+  - id: collab-server
+    path: services/collab-server
+    kind: node-service
+    description: Yjs WebSocket collaboration server on port 4444 with y-protocols sync/awareness and LevelDB persistence.
     entry_files:
-      - frontend/public/favicon.svg
-      - frontend/public/icons.svg
+      - services/collab-server/package.json
+      - services/collab-server/package-lock.json
+      - services/collab-server/tsconfig.json
+      - services/collab-server/src/index.ts
+      - services/collab-server/src/ws-handler.ts
+      - services/collab-server/src/persistence.ts
+      - services/collab-server/src/y-leveldb.d.ts
 
-  # ── Repo-root tooling (outside src/) ─────────────────────────────
+  # ── Root tooling and static assets ──────────────────────────────
   - id: repo-root
-    path: ../
-    kind: tooling
-    description: Repo-root tooling, metadata, and the Dify launcher wrapper.
+    path: .
+    kind: repo-tooling
+    description: Root metadata, launcher, support policy, and default assets.
     entry_files:
-      - ../.gitignore
-      - ../start.sh
-      - ../scripts/dify.sh
-      - ../README.md
+      - README.md
+      - CHANGELOG.md
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - SUPPORT.md
+      - CODE_OF_CONDUCT.md
+      - LICENSE
+      - NOTICE
+      - start.sh
+      - .gitignore
+      - assets/default-project-template.zip
+      - assets/github-header-banner.png
 
 capability_routes:
   project-foundation:
     primary_module: acp-support
     supporting_modules:
-      - acp-kernel
-      - acp-capability
       - acp-version
-      - docs-planning
+      - acp-capability
+      - public-docs
       - repo-root
 
-  frontend-workspace:
-    primary_module: frontend-app-shell
+  backend-service:
+    primary_module: backend-service
     supporting_modules:
-      - frontend
+      - backend-api
+      - backend-services
+      - backend-tests
+
+  frontend-workspace:
+    primary_module: frontend-shell
+    supporting_modules:
+      - frontend-app
       - frontend-feature-topbar
       - frontend-feature-workspace-center
-      - frontend-public
+      - frontend-feature-file-tree
+      - frontend-feature-right-panel
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
 
   frontend-right-panel:
     primary_module: frontend-feature-right-panel
     supporting_modules:
+      - frontend-feature-history
       - frontend-feature-workflow-canvas
+      - frontend-feature-shared
       - frontend-stores
       - frontend-services
 
   native-agent-skills:
     primary_module: backend-api
     supporting_modules:
+      - backend-services
+      - support-skills
       - support-mcps
-      - backend-services
-      - backend-app-core
       - frontend-feature-right-panel
       - frontend-stores
       - frontend-services
-    note: |
-      Backend-managed native Agent and Skill surface. Routes live in
-      backend/app/api/native_agents.py; services handle encrypted native
-      credentials, Skill content encryption, marketplace sync, local library
-      visibility/share state, and runtime AgentSkill loading. Frontend entry is
-      TeamTab's Agent / Skill subtabs, backed by nativeAgentStore and
-      nativeAgentApi in backendApi.ts. MCP catalog/preset work routes through
-      support-mcps plus backend `mcp_catalog_service.py` /
-      `mcp_tool_service.py`; frontend entry is TeamTab's MCP subtab.
-      Official Skill/MCP badge style is read from
-      `/api/native-agent/ui/official-badge` and controlled by backend env
-      `YLW_OFFICIAL_BADGE_STYLE` (`metal` or `minimal`); do not add frontend
-      badge-style toggles unless a future Request explicitly changes this
-      ownership boundary.
-
-  frontend-file-tree:
-    primary_module: frontend-feature-file-tree
-    supporting_modules:
-      - frontend-stores
-      - frontend-services
-
-  frontend-preview:
-    primary_module: frontend-feature-preview
-    supporting_modules:
-      - frontend-feature-workspace-center
-      - frontend-stores
-
-  frontend-topbar:
-    primary_module: frontend-feature-topbar
-    supporting_modules:
-      - frontend-app-shell
-      - frontend-stores
-      - frontend-services
-
-  collaboration:
-    primary_module: backend-api
-    supporting_modules:
-      - backend-app-core
-      - backend-services
-      - frontend-feature-settings
-      - frontend-feature-topbar
-      - frontend-stores
-      - frontend-services
-      - frontend-feature-shared
-      - collab-server
-    note: |
-      Multi-user collaboration surface: ProjectMember model + service,
-      role-based access control (owner/editor/viewer), project sharing API,
-      in-app notifications (invite events), SSE-based online presence
-      tracking, PresenceIndicator avatars, NotificationBell dropdown.
-      Frontend ProjectEventBridge dispatches real-time events into stores.
-      Privacy principle: Agent/workflow assets are personal — each user's
-      workflow definitions, runs, conversations, annotations, evaluations,
-      and review states are isolated by user_id. Collaborators share the
-      document but never see each other's Agent interactions.
-
-  real-time-editing:
-    primary_module: collab-server
-    supporting_modules:
-      - backend-api
-      - backend-services
-      - frontend-feature-latex-editor
-      - frontend-stores
-      - frontend-services
-      - frontend-feature-shared
-    note: |
-      Yjs CRDT-based real-time collaborative editing (Phase 1).
-      Architecture: independent Node.js collab-server (:4444) running
-      y-protocols sync + awareness over WebSocket, with LevelDB persistence.
-      Frontend uses y-codemirror.next to bind Y.Text to CodeMirror 6.
-      Backend provides /api/auth/verify for WebSocket auth,
-      /api/auth/collab-token for frontend token retrieval,
-      /api/internal/docs/{id}/content for initial doc seeding,
-      and collab_snapshot_service for periodic text → DB snapshots.
-      Awareness protocol shows remote cursors + selections with user colors.
-      Annotation positions still tracked via mapRangeThrough (Phase 2 will
-      migrate to Y.RelativePosition).
-
-  agent-privacy:
-    primary_module: backend-api
-    supporting_modules:
-      - backend-app-core
-      - backend-services
-      - frontend-feature-shared
-    note: |
-      Agent privacy isolation (principle: "Agent 和 workflow 属于个人隐私资产").
-      6 tables carry user_id: WorkflowDefinition, WorkflowRun, Conversation,
-      Annotation, AnnotationEvaluation, AnnotationReviewState.
-      All list/get/mutate endpoints filter by current user. Startup migration
-      backfills existing rows to project owner. SSE events include user_id;
-      ProjectEventBridge filters out events from other users.
-
-  frontend-workspace-center:
-    primary_module: frontend-feature-workspace-center
-    supporting_modules:
-      - frontend-feature-latex-editor
-      - frontend-feature-annotation-panel
-      - frontend-feature-preview
-
-  frontend-settings:
-    primary_module: frontend-feature-settings
-    supporting_modules:
-      - frontend-app-shell
-      - frontend-stores
-      - frontend-services
-
-  frontend-annotations:
-    primary_module: frontend-feature-annotation-panel
-    supporting_modules:
-      - frontend-feature-latex-editor
-      - frontend-feature-shared
-      - frontend-stores
-      - frontend-services
-      - frontend-types
-
-  frontend-conversations:
-    primary_module: frontend-feature-right-panel
-    supporting_modules:
-      - frontend-feature-shared
-      - frontend-stores
-      - frontend-services
-
-  frontend-mention-system:
-    primary_module: frontend-feature-shared
-    supporting_modules:
-      - frontend-services
-      - frontend-feature-annotation-panel
-      - frontend-feature-right-panel
-
-  frontend-stores:
-    primary_module: frontend-stores
-    supporting_modules:
-      - frontend-services
-      - frontend-types
-
-  latex-editor:
-    primary_module: frontend-feature-latex-editor
-    supporting_modules:
-      - frontend-feature-workspace-center
-      - frontend-types
-
-  latex-compile:
-    primary_module: backend-services
-    supporting_modules:
-      - backend-api
-      - frontend-feature-preview
-      - frontend-stores
-
-  domain-model:
-    primary_module: frontend-types
-    supporting_modules:
-      - frontend-app-shell
-      - frontend-feature-latex-editor
-      - frontend-stores
-
-  backend-service:
-    primary_module: backend-app-core
-    supporting_modules:
-      - backend
-      - backend-api
-      - backend-services
-
-  workflow-integration:
-    primary_module: backend-services
-    supporting_modules:
-      - backend-api
-      - frontend-feature-settings
-      - frontend-stores
-      - repo-root
 
   workflow-orchestration:
     primary_module: backend-services
@@ -719,9 +567,101 @@ capability_routes:
       - frontend-feature-workflow-canvas
       - frontend-feature-right-panel
       - frontend-stores
+      - frontend-services
+
+  workflow-integration:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-settings
+      - frontend-feature-right-panel
+      - frontend-stores
+      - frontend-services
+
+  project-archive-and-history:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-history
+      - frontend-feature-right-panel
+      - frontend-stores
+      - frontend-services
+
+  collaboration:
+    primary_module: collab-server
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-feature-latex-editor
+      - frontend-feature-topbar
+      - frontend-feature-settings
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
+
+  latex-editor:
+    primary_module: frontend-feature-latex-editor
+    supporting_modules:
+      - frontend-feature-workspace-center
+      - frontend-feature-history
+      - frontend-stores
+      - frontend-services
+
+  latex-compile:
+    primary_module: backend-services
+    supporting_modules:
+      - backend-api
+      - frontend-feature-preview
+      - frontend-feature-workspace-center
+      - frontend-stores
+      - frontend-services
+
+  frontend-annotations:
+    primary_module: frontend-feature-annotations
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-feature-latex-editor
+      - frontend-feature-shared
+      - frontend-stores
+      - frontend-services
+
+  frontend-mention-system:
+    primary_module: frontend-feature-shared
+    supporting_modules:
+      - frontend-services
+      - backend-services
+      - frontend-feature-annotations
+      - frontend-feature-right-panel
+
+  frontend-file-tree:
+    primary_module: frontend-feature-file-tree
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-stores
+      - frontend-services
+
+  frontend-preview:
+    primary_module: frontend-feature-preview
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-feature-workspace-center
+      - frontend-stores
+      - frontend-services
+
+  frontend-settings:
+    primary_module: frontend-feature-settings
+    supporting_modules:
+      - backend-api
+      - backend-services
+      - frontend-stores
+      - frontend-services
 
   build-tooling:
-    primary_module: frontend-build-tooling
+    primary_module: frontend-app
     supporting_modules:
-      - frontend
-      - backend
+      - backend-service
+      - collab-server
+      - repo-root

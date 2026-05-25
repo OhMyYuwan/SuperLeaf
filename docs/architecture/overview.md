@@ -27,7 +27,9 @@ SuperLeaf 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
               │  • Awareness     │──▶  • SSE 事件流    │
               │  • LevelDB 持久  │  │  • SQLite 存储   │
               └──────────────────┘  │  • Agent/Skill   │
+                                    │  • MCP 工具桥接  │
                                     │  • Agent 编排    │
+                                    │  • 项目归档      │
                                     │  • LaTeX 编译    │
                                     └──────────────────┘
 ```
@@ -57,9 +59,34 @@ SuperLeaf 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
 选中文字 → 运行 workflow / 原生 Agent → Backend agent_orchestrator 或 NativeAgentRunner
     → 调用 Provider (Nanobot/Dify)
     → 仅加载用户给该 Agent 装配的 Skill
+    → 必要时调用用户启用的 MCP 工具
     → 解析输出 → 创建 Annotation → SSE 通知前端
     → 前端 annotationStore 更新 → 编辑器高亮装饰
 ```
+
+### MCP 工具调用
+
+```
+MCP Market catalog (SuperLeaf.MCPs)
+    → 用户添加到“拥有的 MCP”
+    → 填写 env / command / args
+    → 连通性检查 + 功能性检查
+    → Agent 运行时只暴露用户启用的 MCP 工具
+    → Backend mcp_tool_service 通过 stdio 调用外部 MCP server
+```
+
+MCP catalog 默认来自 `OhMyYuwan/SuperLeaf.MCPs`。本地 `supports/SuperLeaf.MCPs` 只作为开发/offline fallback。
+
+### 项目大版本
+
+```
+当前项目树 (Docs + FileBlob)
+    → Backend 导出到服务器端 archive repo
+    → git commit 形成项目大版本
+    → 可对比 / 恢复 / 下载 ZIP / 推送到 GitHub archive branch
+```
+
+这里的 archive repo 位于运行 Backend 的机器上，不是用户电脑里的本地 Git 工作区。
 
 ### 认证
 
@@ -95,6 +122,7 @@ Project
 - **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider；运行时只能读取用户装配的 Skill
 - **Skill**：原生 Agent 可引用的私有、共享或市场 Skill；内容加密存储，市场索引来自官方 `SuperLeaf.Skills` catalog
 - **SkillHidden**：用户本地 Skill 库隐藏/移除状态
+- **NativeMcpServer**：用户拥有的 MCP 配置，来自市场 preset 或自定义输入；存储 command、args、env 和启用状态
 - **WorkflowDefinition**：用户自定义的多节点工作流
 - **WorkflowRun**：工作流运行记录
 - **Annotation**：批注卡片（锚定到文档位置）
@@ -106,6 +134,8 @@ Project
 
 - **User / Session**：用户认证
 - **Notification**：站内通知
+- **ProjectArchiveBinding**：项目大版本的服务器端归档仓库和 GitHub 绑定设置
+- **ProjectArchiveSnapshot**：一次项目级 archive commit 元数据
 
 ### Provider / Agent 配置边界
 
@@ -129,7 +159,7 @@ Provider 和原生 Agent 的日常变化不应推动 schema 变化。新增 prov
 
 ## 安全设计
 
-- API Key、GitHub token、原生 Agent 凭证和 Skill 内容使用 Fernet 对称加密存储，密钥文件权限 600
+- API Key、GitHub token、原生 Agent 凭证、Skill 内容和敏感 MCP env 使用 Fernet 对称加密存储，密钥文件权限 600
 - 用户密码使用 bcrypt 哈希
 - Session 基于 cookie，httpOnly
 - CORS 白名单限制（默认只允许 localhost + 私有网段）

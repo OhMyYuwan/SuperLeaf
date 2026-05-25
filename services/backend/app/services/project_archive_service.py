@@ -75,6 +75,12 @@ class CommitDiff:
     files_changed: int
 
 
+@dataclass(frozen=True)
+class ArchiveDownload:
+    filename: str
+    content: bytes
+
+
 class ProjectArchiveService:
     def __init__(self, db: Session, project: Project, user: User) -> None:
         self.db = db
@@ -322,6 +328,28 @@ class ProjectArchiveService:
             raise ArchiveError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
 
+    def _git_bytes(self, repo_path: Path, *args: str, check: bool = True):
+        env = os.environ.copy()
+        env.setdefault("LC_ALL", "C")
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_path,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if check and result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise ArchiveError(stderr or f"git {' '.join(args)} failed")
+        return result
+
+    def _resolve_commit(self, repo_path: Path, sha: str) -> str:
+        result = self._git(repo_path, "rev-parse", "--verify", f"{sha}^{{commit}}", check=False)
+        if result.returncode != 0:
+            raise ArchiveError(f"Commit not found: {sha}")
+        return result.stdout.strip()
+
     def list_commits(self, *, limit: int = 50) -> list[CommitMeta]:
         """List recent commits from the archive repo."""
         binding = self.ensure_binding()
@@ -525,16 +553,45 @@ class ProjectArchiveService:
         if not (repo_path / ".git").exists():
             raise ArchiveError("No git repository found")
 
-        result = self._git(
+        commit_sha = self._resolve_commit(repo_path, sha)
+        result = self._git_bytes(
             repo_path,
             "show",
-            f"{sha}:{rel_path}",
+            f"{commit_sha}:{rel_path}",
             check=False,
         )
         if result.returncode != 0:
-            raise ArchiveError(f"Failed to read file: {result.stderr}")
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise ArchiveError(f"Failed to read file: {stderr}")
 
-        return result.stdout.encode("utf-8")
+        return result.stdout
+
+    def archive_commit_zip(self, sha: str) -> ArchiveDownload:
+        """Return a binary ZIP archive for a specific project archive commit."""
+        binding = self.ensure_binding()
+        repo_path = Path(binding.local_repo_path)
+        if not (repo_path / ".git").exists():
+            raise ArchiveError("No git repository found")
+
+        commit_sha = self._resolve_commit(repo_path, sha)
+        short_sha = self._git(repo_path, "rev-parse", "--short", commit_sha).stdout.strip() or commit_sha[:7]
+        prefix = f"{_safe_name(self.project.name)}-{short_sha}/"
+        result = self._git_bytes(
+            repo_path,
+            "archive",
+            "--format=zip",
+            f"--prefix={prefix}",
+            commit_sha,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise ArchiveError(f"Failed to archive commit: {stderr}")
+
+        return ArchiveDownload(
+            filename=f"{_safe_name(self.project.name)}-{short_sha}.zip",
+            content=result.stdout,
+        )
 
     def restore_to_commit(
         self, sha: str, *, message: str | None = None
@@ -548,25 +605,22 @@ class ProjectArchiveService:
         if not (repo_path / ".git").exists():
             raise ArchiveError("No git repository found")
 
-        # Verify commit exists
-        result = self._git(repo_path, "rev-parse", "--verify", f"{sha}^{{commit}}", check=False)
-        if result.returncode != 0:
-            raise ArchiveError(f"Commit not found: {sha}")
+        commit_sha = self._resolve_commit(repo_path, sha)
 
         # Get original commit message for the restore message
-        orig_msg_result = self._git(repo_path, "log", "-1", "--format=%s", sha, check=False)
+        orig_msg_result = self._git(repo_path, "log", "-1", "--format=%s", commit_sha, check=False)
         orig_message = orig_msg_result.stdout.strip() if orig_msg_result.returncode == 0 else ""
-        short_sha = sha[:7]
+        short_sha = commit_sha[:7]
 
         if message is None or not message.strip():
             message = f"Restore from {short_sha}: {orig_message}" if orig_message else f"Restore from {short_sha}"
 
         # List files in target commit
-        files = self.list_commit_files(sha)
+        files = self.list_commit_files(commit_sha)
         commit_files = {f.path: f for f in files}
 
         # Build current path → entity mapping (mirror of _export_project_tree)
-        self._import_tree_to_db(commit_files, sha)
+        self._import_tree_to_db(commit_files, commit_sha)
 
         # Create a new commit with the restored content
         return self.create_snapshot(message)

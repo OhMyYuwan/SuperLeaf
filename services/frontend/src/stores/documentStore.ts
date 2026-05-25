@@ -85,11 +85,16 @@ export const useDocumentStore = create<DocumentState>()(
           debounceTimers[id] = undefined
         }
         set((state) => {
-          const { [id]: _doc, ...documents } = state.documents
-          const { [id]: _status, ...saveStatus } = state.saveStatus
-          const { [id]: _savedAt, ...lastSavedAt } = state.lastSavedAt
-          const { [id]: _saveError, ...saveError } = state.saveError
-          const { [id]: _collab, ...collaborating } = state.collaborating
+          const documents = { ...state.documents }
+          const saveStatus = { ...state.saveStatus }
+          const lastSavedAt = { ...state.lastSavedAt }
+          const saveError = { ...state.saveError }
+          const collaborating = { ...state.collaborating }
+          delete documents[id]
+          delete saveStatus[id]
+          delete lastSavedAt[id]
+          delete saveError[id]
+          delete collaborating[id]
           return {
             documents,
             saveStatus,
@@ -161,12 +166,18 @@ export const useDocumentStore = create<DocumentState>()(
 
       upsertFromBackendDoc: (doc) => {
         const normalized = fromBackendDoc(doc)
-        set((state) => ({
-          documents: { ...state.documents, [normalized.id]: normalized },
-          saveStatus: { ...state.saveStatus, [normalized.id]: 'saved' },
-          lastSavedAt: { ...state.lastSavedAt, [normalized.id]: Date.now() },
-          saveError: { ...state.saveError, [normalized.id]: null },
-        }))
+        set((state) => {
+          // `lastSavedAt` is used as the auto-compile trigger token. Use the
+          // backend content timestamp so focus refreshes of the same document
+          // do not look like fresh saves.
+          const savedAt = backendUpdatedAtMs(doc, state.lastSavedAt[normalized.id] ?? 0)
+          return {
+            documents: { ...state.documents, [normalized.id]: normalized },
+            saveStatus: { ...state.saveStatus, [normalized.id]: 'saved' },
+            lastSavedAt: { ...state.lastSavedAt, [normalized.id]: savedAt },
+            saveError: { ...state.saveError, [normalized.id]: null },
+          }
+        })
       },
 
       loadBackendDoc: async (id) => {
@@ -215,12 +226,13 @@ export const useDocumentStore = create<DocumentState>()(
           // Don't call upsertFromBackendDoc — it would replace the local
           // document and clobber any edits the user made while the request
           // was in flight. Just bump the bookkeeping state.
+          const savedAt = backendUpdatedAtMs(saved, Date.now())
           set((state) => ({
             saveStatus: {
               ...state.saveStatus,
               [id]: state.documents[id]?.content === existing.content ? 'saved' : 'dirty',
             },
-            lastSavedAt: { ...state.lastSavedAt, [id]: Date.now() },
+            lastSavedAt: { ...state.lastSavedAt, [id]: savedAt },
             saveError: { ...state.saveError, [id]: null },
             documents: state.documents[id]
               ? {
@@ -265,6 +277,11 @@ export const useDocumentStore = create<DocumentState>()(
     },
   ),
 )
+
+function backendUpdatedAtMs(doc: BackendDoc, fallback: number): number {
+  const parsed = Date.parse(doc.updated_at)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
 
 function fromBackendDoc(doc: BackendDoc): Document {
   const format = doc.format as DocumentFormat

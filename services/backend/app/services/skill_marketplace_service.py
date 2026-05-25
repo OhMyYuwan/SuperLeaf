@@ -22,11 +22,6 @@ from ..settings import settings
 from .skill_recipe_metadata import build_npx_install_command, build_recipe_tags, recipe_meta_from_tags
 
 
-LEGACY_SKILL_MARKETPLACE_URL = (
-    "https://raw.githubusercontent.com/OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json"
-)
-
-
 class SkillMarketplaceError(RuntimeError):
     pass
 
@@ -162,12 +157,7 @@ class SkillMarketplaceService:
     def _fetch_catalog(self) -> dict:
         if not self.catalog_url:
             raise SkillMarketplaceError("Skill marketplace URL is not configured")
-        try:
-            return json.loads(self._fetch_text(self.catalog_url))
-        except SkillMarketplaceError as exc:
-            if self.catalog_url == settings.skill_marketplace_url and "HTTP 404" in str(exc):
-                return json.loads(self._fetch_text(LEGACY_SKILL_MARKETPLACE_URL))
-            raise
+        return json.loads(self._fetch_text(self.catalog_url))
 
     def _fetch_external_catalog_entries(self) -> list[dict]:
         try:

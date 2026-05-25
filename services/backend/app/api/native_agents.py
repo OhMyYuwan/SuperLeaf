@@ -6,7 +6,10 @@ left for a follow-up request.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, object_session
 
 from ..database import get_session
@@ -48,6 +51,13 @@ from .deps import get_current_project, get_current_user, require_write_access
 
 
 router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
+
+OFFICIAL_BADGE_STYLES = {"metal", "minimal"}
+_official_badge_style_override: str | None = None
+
+
+class OfficialBadgeUiPatch(BaseModel):
+    style: str = Field(pattern="^(metal|minimal)$")
 
 
 def _credential_out(row: NativeAgentCredential) -> NativeAgentCredentialOut:
@@ -106,6 +116,46 @@ def _mcp_server_out(row: NativeMcpServer) -> NativeMcpServerOut:
 
 def _marketplace_entry_out(entry: MarketplaceEntry) -> SkillMarketplaceEntryOut:
     return SkillMarketplaceEntryOut(**entry.__dict__)
+
+
+def _normalized_official_badge_style(value: str | None) -> str:
+    cleaned = (value or "").strip().lower()
+    return cleaned if cleaned in OFFICIAL_BADGE_STYLES else "metal"
+
+
+def _official_badge_toggle_enabled() -> bool:
+    raw = os.environ.get("YLW_OFFICIAL_BADGE_STYLE_TOGGLE_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _official_badge_ui_payload() -> dict:
+    configured = _normalized_official_badge_style(os.environ.get("YLW_OFFICIAL_BADGE_STYLE"))
+    style = _official_badge_style_override or configured
+    return {
+        "style": style,
+        "allowed_styles": ["metal", "minimal"],
+        "toggle_enabled": _official_badge_toggle_enabled(),
+        "source": "runtime_override" if _official_badge_style_override else "env",
+    }
+
+
+@router.get("/ui/official-badge")
+def get_official_badge_ui(
+    user: User = Depends(get_current_user),
+) -> dict:
+    return _official_badge_ui_payload()
+
+
+@router.patch("/ui/official-badge")
+def update_official_badge_ui(
+    body: OfficialBadgeUiPatch,
+    user: User = Depends(get_current_user),
+) -> dict:
+    if not _official_badge_toggle_enabled():
+        raise HTTPException(403, "Official badge style toggle is disabled by backend configuration")
+    global _official_badge_style_override
+    _official_badge_style_override = _normalized_official_badge_style(body.style)
+    return _official_badge_ui_payload()
 
 
 @router.get("/mcp/catalog")

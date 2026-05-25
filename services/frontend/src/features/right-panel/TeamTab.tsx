@@ -8,7 +8,7 @@
  * 后续 W7 会让这里直接挂"私聊"入口，所以预留 onChatWithAgent 钩子。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   CheckCircle2,
@@ -39,6 +39,7 @@ import type {
   NativeMcpServerConfig,
   NativeMcpServerConfigDraft,
   NativeMcpServerConfigPatch,
+  OfficialBadgeStyle,
   Provider,
   ProviderDraft,
   ProviderModel,
@@ -85,6 +86,8 @@ interface TeamTabProps {
 }
 
 type SubTab = 'agents' | 'skills' | 'mcps' | 'workflows'
+
+const OfficialBadgeStyleContext = createContext<OfficialBadgeStyle>('metal')
 
 export function TeamTab({
   workflows,
@@ -150,6 +153,7 @@ export function TeamTab({
   const [onlyTrainingCandidates, setOnlyTrainingCandidates] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [officialBadgeStyle, setOfficialBadgeStyle] = useState<OfficialBadgeStyle>('metal')
   const configuredMcpCount = useMemo(
     () => mcpServers.length + nativeAgents.reduce((sum, agent) => sum + mcpServersFromRuntime(agent.runtime_config).length, 0),
     [mcpServers.length, nativeAgents],
@@ -158,6 +162,18 @@ export function TeamTab({
   useEffect(() => {
     if (!loaded) load()
   }, [loaded, load])
+
+  useEffect(() => {
+    let cancelled = false
+    nativeAgentApi.ui.officialBadge()
+      .then((settings) => {
+        if (!cancelled) setOfficialBadgeStyle(settings.style)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if ((subTab === 'skills' || subTab === 'agents' || subTab === 'mcps') && !nativeLoaded) void loadNativeAgents()
@@ -203,33 +219,34 @@ export function TeamTab({
   }
 
   return (
-    <div className="tab-content-wrapper">
-      <div className="team-subtabs">
-        <button
-          className={subTab === 'agents' ? 'active' : ''}
-          onClick={() => setSubTab('agents')}
-        >
-          Agent（{activeCount}）
-        </button>
-        <button
-          className={subTab === 'skills' ? 'active' : ''}
-          onClick={() => setSubTab('skills')}
-        >
-          Skill（{nativeSkills.length}）
-        </button>
-        <button
-          className={subTab === 'mcps' ? 'active' : ''}
-          onClick={() => setSubTab('mcps')}
-        >
-          MCP（{mcpCatalog?.presets.length ?? configuredMcpCount}）
-        </button>
-        <button
-          className={subTab === 'workflows' ? 'active' : ''}
-          onClick={() => setSubTab('workflows')}
-        >
-          工作流（{definitions.length}）
-        </button>
-      </div>
+    <OfficialBadgeStyleContext.Provider value={officialBadgeStyle}>
+      <div className="tab-content-wrapper">
+        <div className="team-subtabs">
+          <button
+            className={subTab === 'agents' ? 'active' : ''}
+            onClick={() => setSubTab('agents')}
+          >
+            Agent（{activeCount}）
+          </button>
+          <button
+            className={subTab === 'skills' ? 'active' : ''}
+            onClick={() => setSubTab('skills')}
+          >
+            Skill（{nativeSkills.length}）
+          </button>
+          <button
+            className={subTab === 'mcps' ? 'active' : ''}
+            onClick={() => setSubTab('mcps')}
+          >
+            MCP（{mcpCatalog?.presets.length ?? configuredMcpCount}）
+          </button>
+          <button
+            className={subTab === 'workflows' ? 'active' : ''}
+            onClick={() => setSubTab('workflows')}
+          >
+            工作流（{definitions.length}）
+          </button>
+        </div>
 
       {subTab === 'agents' && (
         <>
@@ -376,7 +393,8 @@ export function TeamTab({
           onDeleteDefinition={onDeleteDefinition}
         />
       )}
-    </div>
+      </div>
+    </OfficialBadgeStyleContext.Provider>
   )
 }
 
@@ -889,8 +907,9 @@ function OfficialSkillBadge() {
 }
 
 function OfficialBadge({ ariaLabel, title }: { ariaLabel: string; title: string }) {
+  const style = useContext(OfficialBadgeStyleContext)
   return (
-    <span className="official-badge" aria-label={ariaLabel} title={title}>
+    <span className={`official-badge ${style}`} aria-label={ariaLabel} title={title}>
       <Medal size={12} />
       官方
     </span>

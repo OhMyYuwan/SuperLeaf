@@ -119,7 +119,7 @@ modules:
   - id: backend-api
     path: backend/app/api
     kind: api-routes
-    description: HTTP routes — health, auth, users, providers, native Agent credentials/skills/agents/marketplace, projects (incl. members + online presence + SSE events), GitHub/archive, workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
+    description: HTTP routes — health, auth, users, providers, native Agent credentials/skills/agents/marketplace/MCP/UI settings, projects (incl. members + online presence + SSE events), GitHub/archive, workflows, workflow test cases, filesystem, conversations, compile, versions, annotations/evaluations, notifications.
     entry_files:
       - backend/app/api/__init__.py
       - backend/app/api/health.py
@@ -139,6 +139,11 @@ modules:
       - backend/app/api/annotation_evaluations.py
       - backend/app/api/notifications.py
       - backend/app/api/deps.py
+    note: |
+      `native_agents.py` also exposes `/api/native-agent/ui/official-badge`;
+      the frontend reads this route to render official Skill/MCP badges.
+      Badge style is backend-controlled through `YLW_OFFICIAL_BADGE_STYLE`
+      (`metal` or `minimal`); there is no frontend style switcher.
 
   - id: backend-services
     path: backend/app/services
@@ -542,6 +547,11 @@ capability_routes:
       nativeAgentApi in backendApi.ts. MCP catalog/preset work routes through
       support-mcps plus backend `mcp_catalog_service.py` /
       `mcp_tool_service.py`; frontend entry is TeamTab's MCP subtab.
+      Official Skill/MCP badge style is read from
+      `/api/native-agent/ui/official-badge` and controlled by backend env
+      `YLW_OFFICIAL_BADGE_STYLE` (`metal` or `minimal`); do not add frontend
+      badge-style toggles unless a future Request explicitly changes this
+      ownership boundary.
 
   frontend-file-tree:
     primary_module: frontend-feature-file-tree

@@ -2,7 +2,7 @@
  * MajorVersionCreateDialog — modal for creating a new major version (git commit).
  *
  * The user must enter a commit message; the entire project tree is exported
- * into the working repo and committed as a single atomic snapshot.
+ * into the server-side archive repo and committed as a single atomic snapshot.
  */
 
 import { useState } from 'react'
@@ -67,7 +67,7 @@ export function MajorVersionCreateDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="major-dialog-desc">
-            把当前项目的所有文档和文件作为一个原子快照提交到本地 git 仓库。
+            把当前项目的所有文档和文件作为一个原子快照提交到服务器归档仓库。
           </Dialog.Description>
 
           <div className="major-dialog-body">

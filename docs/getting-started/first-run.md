@@ -5,7 +5,7 @@ nav_order: 4
 
 # 首次启动
 
-这一页带你完成第一条端到端路径：创建项目、写一段 LaTeX、配置 Provider、创建原生 Agent、装配 Skill，并让 Agent 生成一条批注。
+这一页带你完成第一条端到端路径：创建项目、写一段 LaTeX、配置 Provider、创建原生 Agent、装配 Skill，并让 Agent 生成一条批注。MCP 工具是可选增强，建议先跑通基础链路后再添加。
 
 ## 1. 打开工作区
 
@@ -73,6 +73,17 @@ research drafting.
 
 安装完成后，回到 Agent 编辑表单，在 **AgentSkill** 区域勾选需要的 Skill。
 
+## 5.1 可选：添加 MCP 工具
+
+如果这个 Agent 需要检索论文、访问外部工具或调用本机服务，可以进入 **团队管理 → MCP**：
+
+- 在 **MCP 市场** 里添加 preset。
+- 或在 **拥有的 MCP** 里添加自定义 MCP。
+- 填写必要 env 后运行 **连通性** 和 **功能性** 检查。
+- 回到 Agent 编辑表单，只启用这个 Agent 需要的 MCP。
+
+首次烟测可以先跳过 MCP，避免把 Provider、Skill 和工具问题混在一起排查。
+
 ## 6. 运行第一轮批注
 
 1. 在编辑器里选中一段文字。
@@ -96,6 +107,7 @@ research drafting.
 - 一个可用 Provider
 - 一个原生 Agent
 - 至少一个装配到 Agent 的 Skill
+- 可选：一个通过连通性/功能性检查并启用到 Agent 的 MCP
 - 一条由 Agent 产生的批注
 
 如果任何一步失败，请看 [故障排查](../troubleshooting/)。

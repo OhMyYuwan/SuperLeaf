@@ -52,6 +52,9 @@ interface DiscussionTabProps {
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
+const USER_MESSAGE_PREVIEW_CHAR_LIMIT = 260
+const USER_MESSAGE_PREVIEW_LINE_LIMIT = 6
+
 export function DiscussionTab({ workflows, documentId, activeSelection, onJumpToRange }: DiscussionTabProps) {
   const conversations = useConversationStore((s) => s.conversations)
   const messages = useConversationStore((s) => s.messages)
@@ -490,6 +493,8 @@ function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
     <div className={`message-bubble ${message.role}`}>
       {message.role === 'agent' ? (
         <AgentMarkdown source={message.content} className="message-content" />
+      ) : message.role === 'user' ? (
+        <UserMessageContent content={message.content} />
       ) : (
         <div className="message-content">{message.content}</div>
       )}
@@ -506,6 +511,46 @@ function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
       )}
     </div>
   )
+}
+
+function UserMessageContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const preview = useMemo(() => createUserMessagePreview(content), [content])
+  const collapsible = preview !== content
+
+  if (!collapsible) {
+    return <div className="message-content">{content}</div>
+  }
+
+  return (
+    <button
+      type="button"
+      className={`message-content user-message-content ${
+        expanded ? 'is-expanded' : 'is-collapsed'
+      }`}
+      onClick={() => setExpanded((value) => !value)}
+      aria-expanded={expanded}
+      aria-label={expanded ? '收起完整输入' : '展开完整输入'}
+      title={expanded ? '收起完整输入' : '展开完整输入'}
+    >
+      {expanded ? content : preview}
+    </button>
+  )
+}
+
+function createUserMessagePreview(content: string): string {
+  const lines = content.split(/\r\n|\r|\n/)
+  const lineLimited =
+    lines.length > USER_MESSAGE_PREVIEW_LINE_LIMIT
+      ? lines.slice(0, USER_MESSAGE_PREVIEW_LINE_LIMIT).join('\n')
+      : content
+  const chars = Array.from(lineLimited)
+  const charLimited =
+    chars.length > USER_MESSAGE_PREVIEW_CHAR_LIMIT
+      ? chars.slice(0, USER_MESSAGE_PREVIEW_CHAR_LIMIT).join('')
+      : lineLimited
+  const preview = charLimited.trimEnd()
+  return preview === content ? content : `${preview}…`
 }
 
 function formatTime(iso: string): string {

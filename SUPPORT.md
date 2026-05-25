@@ -1,6 +1,6 @@
 # Support
 
-YuwanLabWriter is an open source project. Support is provided on a best-effort basis by maintainers and contributors.
+SuperLeaf is an open source project. Support is provided on a best-effort basis by maintainers and contributors.
 
 ## Where to Get Help
 
@@ -29,5 +29,5 @@ Before opening an issue, check:
 
 ## Project Boundaries
 
-Maintainers can help with YuwanLabWriter setup, configuration, bugs, and documented workflows. They generally cannot provide private deployment operations, academic writing review, third-party provider account support, or debugging for heavily modified forks unless a maintainer chooses to do so.
+Maintainers can help with SuperLeaf setup, configuration, bugs, and documented workflows. They generally cannot provide private deployment operations, academic writing review, third-party provider account support, or debugging for heavily modified forks unless a maintainer chooses to do so.
 

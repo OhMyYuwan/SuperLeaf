@@ -38,7 +38,7 @@ _DEFAULT_MAIN_TEX = r"""\documentclass[11pt]{article}
 \usepackage{hyperref}
 \graphicspath{{assets/}}
 
-\title{Welcome to YuwanLabWriter}
+\title{Welcome to SuperLeaf}
 \author{}
 \date{}
 
@@ -50,7 +50,7 @@ _DEFAULT_MAIN_TEX = r"""\documentclass[11pt]{article}
 \end{center}
 
 \section{Start Writing}
-Welcome to YuwanLabWriter, a LaTeX-first research writing workspace for
+Welcome to SuperLeaf, a LaTeX-first research writing workspace for
 drafting, reviewing, and polishing academic work with native Agent support.
 
 \section{What You Can Do Here}
@@ -69,11 +69,11 @@ draft.
 \end{document}
 """
 
-_DEFAULT_MAIN_MD = """![YuwanLabWriter banner](assets/github-header-banner.png)
+_DEFAULT_MAIN_MD = """![SuperLeaf banner](assets/github-header-banner.png)
 
-# Welcome to YuwanLabWriter
+# Welcome to SuperLeaf
 
-YuwanLabWriter is a local-first research writing workspace built for drafting,
+SuperLeaf is a local-first research writing workspace built for drafting,
 reviewing, and polishing academic documents with native Agent support.
 
 ## Start Here

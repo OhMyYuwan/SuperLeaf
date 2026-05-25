@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible problem in YuwanLabWriter
+about: Report a reproducible problem in SuperLeaf
 title: "[Bug]: "
 labels: bug
 assignees: ""

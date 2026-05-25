@@ -24,7 +24,7 @@ def create_app() -> FastAPI:
     init_db()
 
     app = FastAPI(
-        title="YuwanLabWriter Backend",
+        title="SuperLeaf Backend",
         description="FastAPI proxy to Dify + local document/annotation/history persistence.",
         version="0.0.1",
         lifespan=lifespan,

@@ -277,10 +277,10 @@ class ProjectArchiveService:
 
         readme = (
             f"# {self.project.name}\n\n"
-            "This branch is maintained by YuwanLabWriter as project-level archive snapshots.\n"
+            "This branch is maintained by SuperLeaf as project-level archive snapshots.\n"
             "The editor database remains the working source of truth.\n"
         ).encode("utf-8")
-        _write_file(repo_path / "YUWANLAB_ARCHIVE.md", readme)
+        _write_file(repo_path / "SUPERLEAF_ARCHIVE.md", readme)
         byte_count += len(readme)
         return ExportStats(doc_count=len(docs), file_count=len(files), byte_count=byte_count)
 
@@ -304,7 +304,7 @@ class ProjectArchiveService:
         text = (message or "").strip()
         if text:
             return text
-        return f"YuwanLabWriter snapshot: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        return f"SuperLeaf snapshot: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
 
     def _git(self, repo_path: Path, *args: str, check: bool = True):
         env = os.environ.copy()
@@ -613,7 +613,7 @@ class ProjectArchiveService:
         # Restore content from commit
         for path in commit_files.keys():
             # Skip the auto-generated archive readme
-            if path == "YUWANLAB_ARCHIVE.md":
+            if path in {"SUPERLEAF_ARCHIVE.md", "YUWANLAB_ARCHIVE.md"}:
                 continue
 
             content = self.read_commit_file(sha, path)

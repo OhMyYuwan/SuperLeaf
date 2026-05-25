@@ -1019,7 +1019,7 @@ wheels = [
 ]
 
 [[package]]
-name = "yuwanlab-backend"
+name = "superleaf-backend"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

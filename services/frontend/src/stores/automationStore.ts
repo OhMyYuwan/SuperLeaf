@@ -332,7 +332,7 @@ function buildAutomationQuery(args: {
     attachedFiles,
   } = args
   return [
-    '你正在执行 YuwanLabWriter 自动审稿模式。',
+    '你正在执行 SuperLeaf 自动审稿模式。',
     '这是无人值守的连续审稿任务：请把本次任务视为同一个自动化 session 中的一步。',
     targetKind === 'agent'
       ? '如果你支持会话记忆，请延续之前对全文的理解；不要把每个段落当成全新论文。'

@@ -6,7 +6,7 @@ has_children: true
 
 # 原生 Agent
 
-原生 Agent 是由 YuwanLabWriter 后端直接管理的 Agent。它把 Provider、模型、系统指令、运行参数和 Skill 组合成一个可运行助手。
+原生 Agent 是由 SuperLeaf 后端直接管理的 Agent。它把 Provider、模型、系统指令、运行参数和 Skill 组合成一个可运行助手。
 
 与外部 Provider 同步出来的 workflow 不同，原生 Agent 的配置完全存储在本地数据库里，适合长期沉淀“我的审稿助手”“我的摘要助手”“我的格式检查助手”。
 
@@ -22,7 +22,7 @@ has_children: true
 
 ## 为什么要有原生 Agent
 
-外部 workflow 适合接入现成服务；原生 Agent 适合在 YuwanLabWriter 内部沉淀可复用助手：
+外部 workflow 适合接入现成服务；原生 Agent 适合在 SuperLeaf 内部沉淀可复用助手：
 
 - 不需要每添加一个 Agent 就改数据库表结构。
 - 新 Provider、新模型、新 Agent 都是普通数据写入。

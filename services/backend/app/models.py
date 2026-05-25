@@ -279,10 +279,10 @@ class NativeAgent(Base):
 class NativeMcpServer(Base):
     """User-scoped MCP server configuration.
 
-    Catalog presets live under supports/YuwanLabWriter.MCPs. This table stores
-    the user's configured instance of a preset or a custom MCP server, including
-    encrypted env values. Agents reference rows here instead of duplicating
-    command/env details in their runtime_config.
+    Catalog presets are loaded from the configured SuperLeaf.MCPs catalog URL.
+    This table stores the user's configured instance of a preset or a custom MCP
+    server, including encrypted env values. Agents reference rows here instead
+    of duplicating command/env details in their runtime_config.
     """
 
     __tablename__ = "native_mcp_servers"

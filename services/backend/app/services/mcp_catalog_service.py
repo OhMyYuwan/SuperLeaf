@@ -1,11 +1,15 @@
-"""Catalog loader and validation helpers for YuwanLabWriter MCP presets."""
+"""Catalog loader and validation helpers for SuperLeaf MCP presets."""
 
 from __future__ import annotations
 
 import json
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
+from ..settings import settings
 from .mcp_tool_service import call_mcp_tool, discover_mcp_tools
 
 
@@ -14,22 +18,68 @@ class McpCatalogError(RuntimeError):
 
 
 class McpCatalogService:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, catalog_url: str | None = None) -> None:
         self.root = root or _default_catalog_root()
+        self.catalog_url = (
+            "" if root is not None and catalog_url is None else (catalog_url or settings.mcp_catalog_url)
+        )
+        self.catalog_url = self.catalog_url.strip()
 
     def catalog(self) -> dict[str, Any]:
-        catalog_path = self.root / "catalog.json"
+        remote_error = ""
+        if self.catalog_url:
+            try:
+                return self._catalog_from_url(self.catalog_url)
+            except McpCatalogError as exc:
+                remote_error = str(exc)
+
+        try:
+            catalog = self._catalog_from_root(self.root)
+        except McpCatalogError as exc:
+            if remote_error:
+                raise McpCatalogError(
+                    f"Remote MCP catalog failed: {remote_error}; local fallback failed: {exc}"
+                ) from exc
+            raise
+        if remote_error:
+            warnings = list(catalog.get("warnings") or [])
+            warnings.append(f"Remote MCP catalog unavailable, using local fallback: {remote_error}")
+            catalog["warnings"] = warnings
+        return catalog
+
+    def _catalog_from_root(self, root: Path) -> dict[str, Any]:
+        catalog_path = root / "catalog.json"
         if not catalog_path.exists():
             raise McpCatalogError(f"MCP catalog not found: {catalog_path}")
         payload = _read_json(catalog_path)
         presets: list[dict[str, Any]] = []
         for rel in payload.get("presets", []):
-            preset = self._load_preset(str(rel))
+            preset = self._load_local_preset(root, str(rel))
             presets.append(preset)
         return {
-            "catalog_root": str(self.root),
-            "id": payload.get("id", "yuwanlabwriter-mcps"),
-            "name": payload.get("name", "YuwanLabWriter MCPs"),
+            "catalog_source": "local",
+            "catalog_root": str(root),
+            "id": payload.get("id", "superleaf-mcps"),
+            "name": payload.get("name", "SuperLeaf MCPs"),
+            "version": payload.get("version", ""),
+            "updated_at": payload.get("updated_at", ""),
+            "registries": list(payload.get("registries") or []),
+            "presets": presets,
+        }
+
+    def _catalog_from_url(self, catalog_url: str) -> dict[str, Any]:
+        payload = _read_json_url(catalog_url)
+        base_url = _url_dir(catalog_url)
+        presets: list[dict[str, Any]] = []
+        for rel in payload.get("presets", []):
+            preset = self._load_remote_preset(base_url, str(rel))
+            presets.append(preset)
+        return {
+            "catalog_source": "remote",
+            "catalog_url": catalog_url,
+            "catalog_root": base_url,
+            "id": payload.get("id", "superleaf-mcps"),
+            "name": payload.get("name", "SuperLeaf MCPs"),
             "version": payload.get("version", ""),
             "updated_at": payload.get("updated_at", ""),
             "registries": list(payload.get("registries") or []),
@@ -148,24 +198,45 @@ class McpCatalogService:
             }
         return _evaluate_golden_result(preset_id=preset_id, test=test, raw=raw)
 
-    def _load_preset(self, rel_path: str) -> dict[str, Any]:
-        preset_path = self.root / rel_path
+    def _load_local_preset(self, root: Path, rel_path: str) -> dict[str, Any]:
+        preset_path = root / rel_path
         preset = _read_json(preset_path)
         preset["_catalog_path"] = rel_path
+        preset["_catalog_source"] = "local"
+        preset["_catalog_root"] = str(root)
+        return preset
+
+    def _load_remote_preset(self, base_url: str, rel_path: str) -> dict[str, Any]:
+        preset_url = urllib.parse.urljoin(base_url, rel_path)
+        preset = _read_json_url(preset_url)
+        preset["_catalog_path"] = rel_path
+        preset["_catalog_source"] = "remote"
+        preset["_catalog_root"] = base_url
         return preset
 
     def _golden_tests_for_preset(self, preset: dict[str, Any]) -> list[dict[str, Any]]:
         verification = preset.get("verification") if isinstance(preset.get("verification"), dict) else {}
         tests: list[dict[str, Any]] = []
         for rel in verification.get("golden_tests", []):
-            path = self.root / str(rel)
+            if preset.get("_catalog_source") == "remote":
+                test_url = urllib.parse.urljoin(str(preset.get("_catalog_root") or ""), str(rel))
+                tests.append(_read_json_url(test_url))
+                continue
+            path = Path(str(preset.get("_catalog_root") or self.root)) / str(rel)
             if path.exists():
                 tests.append(_read_json(path))
         return tests
 
 
 def _default_catalog_root() -> Path:
-    return Path(__file__).resolve().parents[4] / "supports" / "YuwanLabWriter.MCPs"
+    supports_root = Path(__file__).resolve().parents[4] / "supports"
+    preferred = supports_root / "SuperLeaf.MCPs"
+    if preferred.exists():
+        return preferred
+    legacy = supports_root / "YuwanLabWriter.MCPs"
+    if legacy.exists():
+        return legacy
+    return preferred
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -176,6 +247,27 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise McpCatalogError(f"MCP catalog file must be a JSON object: {path}")
     return payload
+
+
+def _read_json_url(url: str) -> dict[str, Any]:
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise McpCatalogError(f"Failed to read MCP catalog URL {url}: HTTP {exc.code}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise McpCatalogError(f"Failed to read MCP catalog URL {url}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise McpCatalogError(f"MCP catalog URL must return a JSON object: {url}")
+    return payload
+
+
+def _url_dir(url: str) -> str:
+    return url.rsplit("/", 1)[0] + "/"
 
 
 def _expected_tools(preset: dict[str, Any]) -> list[str]:

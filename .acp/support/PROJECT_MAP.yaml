@@ -2,7 +2,7 @@
 #
 # Structural map of the repository rooted at `services/`. Update whenever a module is
 # added or removed; this file is the agent's structural index, not a wishlist.
-# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
+# Refreshed 2026-05-25 for REQ-0163 (MCP support catalog routing).
 
 project:
   name: YuwanLabWriter
@@ -64,6 +64,24 @@ modules:
       - docs/doubao_v1_optimized.tex
       - docs/doubao.tex
       - docs/figma.md
+
+  - id: support-mcps
+    path: supports/YuwanLabWriter.MCPs
+    kind: support-catalog
+    description: Maintained MCP catalog consumed by Native Agents; stores verified MCP presets, transport configs, env schema, tool policy, risk labels, golden tests, and contributor docs.
+    entry_files:
+      - supports/YuwanLabWriter.MCPs/README.md
+      - supports/YuwanLabWriter.MCPs/docs/README.md
+      - supports/YuwanLabWriter.MCPs/docs/adding-mcp.md
+      - supports/YuwanLabWriter.MCPs/docs/verification.md
+      - supports/YuwanLabWriter.MCPs/catalog.json
+      - supports/YuwanLabWriter.MCPs/presets/
+      - supports/YuwanLabWriter.MCPs/golden-tests/
+    note: |
+      This catalog is data, not frontend-specific code. The app consumes it
+      through backend/app/services/mcp_catalog_service.py and exposes it in
+      TeamTab's MCP subtab. Add a new preset here first, then wire app code
+      only if the generic catalog schema is insufficient.
 
   # ── Backend (FastAPI proxy + SQLite persistence) ─────────────────
   - id: backend
@@ -135,6 +153,8 @@ modules:
       - backend/app/services/agent_orchestrator.py
       - backend/app/services/native_agent_runner.py
       - backend/app/services/native_agent_service.py
+      - backend/app/services/mcp_tool_service.py
+      - backend/app/services/mcp_catalog_service.py
       - backend/app/services/skill_content_crypto.py
       - backend/app/services/skill_marketplace_service.py
       - backend/app/services/project_fs_service.py
@@ -161,6 +181,9 @@ modules:
       `native_agent_service.py`, `native_agent_runner.py`, and
       `agent_registry_service.py` implement backend-managed native Agents
       that bind to Provider models and can read only user-assigned Skills.
+      `mcp_tool_service.py` and `mcp_catalog_service.py` implement the
+      on-demand stdio MCP bridge plus catalog/probe/golden-test support for
+      tools declared under `supports/YuwanLabWriter.MCPs`.
       `skill_marketplace_service.py` reads the official Skill catalog from
       the configured marketplace URL; `skill_content_crypto.py` encrypts local
       Skill content at rest.
@@ -504,6 +527,7 @@ capability_routes:
   native-agent-skills:
     primary_module: backend-api
     supporting_modules:
+      - support-mcps
       - backend-services
       - backend-app-core
       - frontend-feature-right-panel
@@ -515,7 +539,9 @@ capability_routes:
       credentials, Skill content encryption, marketplace sync, local library
       visibility/share state, and runtime AgentSkill loading. Frontend entry is
       TeamTab's Agent / Skill subtabs, backed by nativeAgentStore and
-      nativeAgentApi in backendApi.ts.
+      nativeAgentApi in backendApi.ts. MCP catalog/preset work routes through
+      support-mcps plus backend `mcp_catalog_service.py` /
+      `mcp_tool_service.py`; frontend entry is TeamTab's MCP subtab.
 
   frontend-file-tree:
     primary_module: frontend-feature-file-tree

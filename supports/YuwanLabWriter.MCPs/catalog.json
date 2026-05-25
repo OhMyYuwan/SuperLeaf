@@ -1,0 +1,10 @@
+{
+  "id": "yuwanlabwriter-mcps",
+  "name": "YuwanLabWriter MCPs",
+  "version": "0.1.0",
+  "updated_at": "2026-05-25",
+  "presets": [
+    "presets/academic_research/semantic-scholar.json",
+    "presets/academic_research/paper-search.json"
+  ]
+}

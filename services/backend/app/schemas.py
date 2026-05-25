@@ -295,6 +295,74 @@ class NativeAgentOut(BaseModel):
         from_attributes = True
 
 
+class McpServerConfigIn(BaseModel):
+    id: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=256)
+    enabled: bool = True
+    transport: str = Field(default="stdio", max_length=64)
+    command: str = Field(default="", max_length=512)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
+class NativeMcpServerIn(BaseModel):
+    preset_id: str = Field(default="", max_length=128)
+    source: str = Field(default="custom", pattern="^(catalog|custom)$")
+    name: str = Field(default="", max_length=128)
+    description: str = ""
+    transport: str = Field(default="stdio", max_length=32)
+    command: str = Field(default="", max_length=256)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    allowed_tools: list[str] = Field(default_factory=list)
+    is_enabled: bool = True
+
+
+class NativeMcpServerPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    transport: str | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    allowed_tools: list[str] | None = None
+    is_enabled: bool | None = None
+
+
+class NativeMcpServerOut(BaseModel):
+    id: str
+    user_id: str
+    preset_id: str
+    source: str
+    name: str
+    description: str
+    transport: str
+    command: str
+    args: list[str]
+    env_keys: list[str] = Field(default_factory=list)
+    allowed_tools: list[str]
+    is_enabled: bool
+    status: str
+    status_detail: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpProbeIn(BaseModel):
+    preset_id: str = Field(default="", max_length=256)
+    server: McpServerConfigIn | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    allowed_tools: list[str] | None = None
+
+
+class McpGoldenTestIn(BaseModel):
+    preset_id: str = Field(min_length=1, max_length=256)
+    test_id: str = Field(default="", max_length=256)
+    server: McpServerConfigIn | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+
+
 class WorkflowTestCaseIn(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     prompt: str = ""

@@ -1,0 +1,22 @@
+{
+  "id": "rag-evaluation-ragas",
+  "name": "RAGAS exact metadata search",
+  "preset_id": "semantic_scholar",
+  "tool": "search_papers",
+  "arguments": {
+    "query": "RAGAS retrieval augmented generation evaluation",
+    "limit": 3
+  },
+  "expect_title_contains": [
+    "RAGAs"
+  ],
+  "expect_year": 2023,
+  "expect_fields": [
+    "paperId",
+    "title",
+    "abstract",
+    "year",
+    "citationCount",
+    "authors"
+  ]
+}

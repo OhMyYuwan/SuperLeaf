@@ -4,7 +4,7 @@
 # only when the active task requires deeper context. forbidden_paths are
 # absolute boundaries; protected_paths require explicit confirmation before
 # modification.
-# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
+# Refreshed 2026-05-25 for REQ-0163 (MCP support catalog routing).
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -515,6 +515,23 @@ rules:
           - annotation streaming contract change
 
     native-agent-skills:
+      mcp-catalog:
+        start_with:
+          - supports/YuwanLabWriter.MCPs/README.md
+          - supports/YuwanLabWriter.MCPs/docs/README.md
+          - supports/YuwanLabWriter.MCPs/docs/adding-mcp.md
+          - supports/YuwanLabWriter.MCPs/catalog.json
+          - backend/app/services/mcp_catalog_service.py
+          - backend/app/services/mcp_tool_service.py
+          - backend/app/api/native_agents.py
+          - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
+        expand_when:
+          - adding or revising an MCP preset under supports/YuwanLabWriter.MCPs/presets
+          - adding or revising MCP golden tests under supports/YuwanLabWriter.MCPs/golden-tests
+          - changing MCP catalog schema, probe, golden-test, or runtime tool-call behavior
+          - changing TeamTab MCP subtab, preset rendering, or custom MCP UX
       backend-routes:
         start_with:
           - backend/app/api/native_agents.py

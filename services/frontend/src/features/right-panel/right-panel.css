@@ -2112,6 +2112,184 @@
   color: rgba(148, 163, 184, 0.7);
 }
 
+.mcp-picker-field {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-field-note {
+  margin: -2px 0 0;
+  color: rgba(148, 163, 184, 0.76);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mcp-server-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.mcp-server-card.selected {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.mcp-server-toggle,
+.mcp-custom-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.mcp-custom-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.mcp-server-toggle input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.mcp-server-toggle span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcp-server-toggle strong {
+  overflow: hidden;
+  color: #e5e7eb;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-server-toggle small {
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mcp-server-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mcp-server-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-server-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
+.mcp-server-grid span {
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mcp-server-grid small {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.mcp-config-editor,
+.mcp-custom-form {
+  grid-column: 1 / -1;
+}
+
+.mcp-editor-actions {
+  grid-column: 1 / -1;
+}
+
+.mcp-preset-meta,
+.mcp-card-actions,
+.mcp-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcp-preset-meta {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+}
+
+.mcp-card-actions {
+  justify-content: flex-end;
+}
+
+.mcp-management-panel,
+.mcp-library-section {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-library-section {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.18);
+}
+
+.mcp-catalog-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-catalog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.mcp-catalog-row .mcp-check-result {
+  grid-column: 1 / -1;
+}
+
+.mcp-check-result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mcp-check-result.ok {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.mcp-check-result.warn {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.mcp-check-result.error {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.mcp-add-btn {
+  justify-content: center;
+}
+
 .skill-management-panel {
   display: grid;
   gap: 8px;

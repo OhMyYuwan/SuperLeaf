@@ -1,0 +1,75 @@
+{
+  "id": "semantic_scholar",
+  "name": "Semantic Scholar",
+  "description": "Reliable paper metadata, citation lookup, references, and BibTeX export through the Semantic Scholar API.",
+  "category": "academic_research",
+  "capabilities": [
+    "paper_search",
+    "paper_details",
+    "citation_lookup",
+    "reference_lookup",
+    "bibtex_export"
+  ],
+  "source": {
+    "type": "github",
+    "repo": "akapet00/semantic-scholar-mcp",
+    "url": "https://github.com/akapet00/semantic-scholar-mcp"
+  },
+  "transport": {
+    "type": "stdio",
+    "command": "uvx",
+    "args": [
+      "--from",
+      "git+https://github.com/akapet00/semantic-scholar-mcp",
+      "semantic-scholar-mcp"
+    ]
+  },
+  "env_schema": [
+    {
+      "name": "SEMANTIC_SCHOLAR_API_KEY",
+      "label": "Semantic Scholar API Key",
+      "required": false,
+      "required_for_reliable_use": true,
+      "secret": true,
+      "description": "Recommended for stable rate limits. Human acceptance for built-in search should use an API key."
+    }
+  ],
+  "tool_policy": {
+    "default_allowed_tools": [
+      "search_papers",
+      "get_paper_details",
+      "get_paper_citations",
+      "get_paper_references",
+      "export_bibtex"
+    ],
+    "recommended_tools": [
+      "search_papers",
+      "get_paper_details",
+      "get_paper_citations",
+      "get_paper_references",
+      "export_bibtex"
+    ],
+    "dangerous_tools": []
+  },
+  "risk": {
+    "level": "low",
+    "flags": [
+      "network_access",
+      "secret_required"
+    ],
+    "reasons": [
+      "Queries external academic metadata APIs.",
+      "API key is recommended for reliable rate limits."
+    ]
+  },
+  "verification": {
+    "status": "verified",
+    "grade": "citation_metadata",
+    "golden_tests": [
+      "golden-tests/academic_research/rag-evaluation.json"
+    ],
+    "known_limitations": [
+      "Without SEMANTIC_SCHOLAR_API_KEY, Semantic Scholar may rate-limit /paper/search."
+    ]
+  }
+}

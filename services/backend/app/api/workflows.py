@@ -23,6 +23,7 @@ from ..services.attached_files import (
     render_attached_files_block,
 )
 from ..services.dify_client import DifyError
+from ..services.mcp_config_service import McpConfigService
 from ..services.nanobot_client import NanobotError
 from ..services.native_agent_runner import (
     NativeAgentRunner,
@@ -538,6 +539,10 @@ def _run_native_agent(
                 body.inputs["attached_files"] = attached_files
             skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
             workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
+            runtime_config = McpConfigService(db).resolve_runtime_config(
+                user_id=user.id,
+                runtime_config=agent.runtime_config or {},
+            )
             runner = NativeAgentRunner(
                 NativeAgentRuntimeConfig(
                     agent_id=agent.id,
@@ -548,9 +553,10 @@ def _run_native_agent(
                     instructions=agent.instructions,
                     skills=skills,
                     workspace_root=str(workspace_root),
-                    temperature=float((agent.runtime_config or {}).get("temperature", 0.2)),
-                    max_tokens=int((agent.runtime_config or {}).get("max_tokens", 4000)),
-                    max_tool_rounds=int((agent.runtime_config or {}).get("max_tool_rounds", 8)),
+                    temperature=float(runtime_config.get("temperature", 0.2)),
+                    max_tokens=int(runtime_config.get("max_tokens", 4000)),
+                    max_tool_rounds=int(runtime_config.get("max_tool_rounds", 8)),
+                    runtime_config=runtime_config,
                 )
             )
             payload = NativeRunPayload(

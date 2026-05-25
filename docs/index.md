@@ -5,7 +5,7 @@ nav_order: 1
 ---
 
 <div class="ylw-hero">
-  <h1>YuwanLabWriter 文档</h1>
+  <h1>SuperLeaf 文档</h1>
   <p>一个本地部署的学术写作 IDE：LaTeX/Markdown 编辑、实时协作、后端原生 Agent、Skill Market、多 Agent 工作流和批注训练数据在同一个工作区里闭环。</p>
   <div class="ylw-badge-row">
     <span class="ylw-badge">React 19</span>

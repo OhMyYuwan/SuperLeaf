@@ -5,7 +5,7 @@ nav_order: 6
 
 # 编辑器
 
-编辑器是 YuwanLabWriter 的主工作区，面向 LaTeX/Markdown 写作、批注审阅、PDF 预览和多人协作。
+编辑器是 SuperLeaf 的主工作区，面向 LaTeX/Markdown 写作、批注审阅、PDF 预览和多人协作。
 
 ## 布局
 

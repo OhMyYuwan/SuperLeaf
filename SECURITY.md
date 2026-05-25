@@ -1,6 +1,6 @@
 # Security Policy
 
-YuwanLabWriter handles local documents, collaboration state, user accounts, provider credentials, and AI workflow traffic. Please report security issues privately and avoid publishing exploit details before maintainers have had time to respond.
+SuperLeaf handles local documents, collaboration state, user accounts, provider credentials, and AI workflow traffic. Please report security issues privately and avoid publishing exploit details before maintainers have had time to respond.
 
 ## Supported Versions
 

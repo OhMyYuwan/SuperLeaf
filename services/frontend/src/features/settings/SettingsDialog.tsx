@@ -196,7 +196,7 @@ function GitHubAccountSettings() {
       setDeviceAuth(result)
       setMessage(`请在 GitHub 输入验证码 ${result.user_code}，授权完成后这里会自动连接。`)
       const url = result.verification_uri_complete || result.verification_uri
-      if (url) window.open(url, 'yuwanlab-github-device', 'width=720,height=760')
+      if (url) window.open(url, 'superleaf-github-device', 'width=720,height=760')
     } catch (err) {
       setError(err instanceof Error ? err.message : '启动 GitHub 验证失败')
     } finally {
@@ -239,7 +239,7 @@ function GitHubAccountSettings() {
       <div className="settings-section-head">
         <div>
           <h3><GitBranch size={14} /> GitHub 账户</h3>
-          <p>授权绑定到当前 YuwanLabWriter 用户，直到 GitHub 权限失效或你主动断开。</p>
+          <p>授权绑定到当前 SuperLeaf 用户，直到 GitHub 权限失效或你主动断开。</p>
         </div>
         {account?.connected ? (
           <button className="ghost-btn small danger" onClick={() => void disconnect()} disabled={busy}>

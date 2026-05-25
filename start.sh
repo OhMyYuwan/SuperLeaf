@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# YuwanLabWriter local dev launcher — daemonized process manager
+# SuperLeaf local dev launcher — daemonized process manager
 # All services run in background with logs written to ./logs/
 # PID tracking in ./logs/pids.json for stop/restart
 
@@ -299,7 +299,7 @@ print_banner() {
   cat <<EOF
 
 ${GREEN}┌──────────────────────────────────────────────────────┐
-│   YuwanLabWriter — Dev Process Manager               │
+│   SuperLeaf — Dev Process Manager               │
 │   backend :$BACKEND_PORT  ·  collab :$COLLAB_PORT  ·  frontend :$FRONTEND_PORT   │
 └──────────────────────────────────────────────────────┘${RESET}
 
@@ -384,7 +384,7 @@ case "${1:-help}" in
 
   -h|--help|help)
     cat <<USAGE
-YuwanLabWriter — Dev Process Manager
+SuperLeaf — Dev Process Manager
 
 Usage:
   ./start.sh              Start all services (daemonized)

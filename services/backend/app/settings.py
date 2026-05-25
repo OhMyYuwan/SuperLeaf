@@ -13,6 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # The legacy YLW_ prefix and ~/.yuwanlab data dir are intentionally kept so
+    # existing local deployments survive the SuperLeaf rename without migration.
     model_config = SettingsConfigDict(env_prefix="YLW_", env_file=".env", extra="ignore")
 
     database_url: str = Field(default="")
@@ -46,7 +48,11 @@ class Settings(BaseSettings):
     # Static Skill marketplace catalog. The default reads the official GitHub
     # repository main branch directly; GitHub Pages is optional for browsing.
     # Override with YLW_SKILL_MARKETPLACE_URL for local previews or private deployments.
-    skill_marketplace_url: str = "https://raw.githubusercontent.com/OhMyYuwan/YuwanLabWriter.Skills/main/marketplace.json"
+    skill_marketplace_url: str = "https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.json"
+
+    # Static MCP catalog. Runtime reads the standalone SuperLeaf.MCPs repository
+    # by default; local supports/ checkouts are only development/offline fallbacks.
+    mcp_catalog_url: str = "https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json"
 
     def resolved_database_url(self) -> str:
         if self.database_url:

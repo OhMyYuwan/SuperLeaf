@@ -172,7 +172,7 @@ class LatexCompilerService:
         result.duration_ms = int((time.time() - started) * 1000)
         if placeholder_warnings:
             warning_log = "\n".join(
-                ["", "YuwanLabWriter missing-graphics placeholders:"]
+                ["", "SuperLeaf missing-graphics placeholders:"]
                 + [f"- {w}" for w in placeholder_warnings]
             )
             result.log = (result.log + warning_log)[-20000:]

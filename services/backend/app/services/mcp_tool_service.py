@@ -210,7 +210,7 @@ class _McpSession:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "YuwanLabWriter", "version": "0.1.0"},
+                "clientInfo": {"name": "SuperLeaf", "version": "0.1.0"},
             },
         )
         await self._notify("notifications/initialized", {})

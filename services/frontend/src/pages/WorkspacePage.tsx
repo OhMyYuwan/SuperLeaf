@@ -49,6 +49,18 @@ import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
 const OUTLINE_COLLAPSED_HEIGHT = '44px'
+const WORKSPACE_PANEL_SIZES = {
+  outer: {
+    left: { defaultSize: 16, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+    center: { defaultSize: 64, minSize: 40 },
+    right: { defaultSize: 20, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+  },
+  inner: {
+    annotation: { defaultSize: 12, minSize: 12 },
+    editor: { defaultSize: 44, minSize: 24 },
+    preview: { defaultSize: 44, minSize: 24 },
+  },
+} as const
 const DEFAULT_REVIEW_PROMPT =
   '请直接用 Markdown 针对以下文本给出清晰、可执行的评审意见。不要输出 JSON，也不要拆分 annotations/suggestions/risks。'
 
@@ -546,7 +558,10 @@ export function WorkspacePage() {
         >
           {leftPanelVisible && !leftCollapsed && (
             <>
-              <Panel defaultSize={20} minSize={OUTER_PANEL_AUTO_COLLAPSE_PERCENT}>
+              <Panel
+                defaultSize={WORKSPACE_PANEL_SIZES.outer.left.defaultSize}
+                minSize={WORKSPACE_PANEL_SIZES.outer.left.minSize}
+              >
                 <ErrorBoundary label="文件树">
                   <div className="panel left-panel">
                     <PanelGroup
@@ -628,7 +643,10 @@ export function WorkspacePage() {
             </button>
           )}
 
-          <Panel defaultSize={50} minSize={36}>
+          <Panel
+            defaultSize={WORKSPACE_PANEL_SIZES.outer.center.defaultSize}
+            minSize={WORKSPACE_PANEL_SIZES.outer.center.minSize}
+          >
             <div className="panel editor-panel">
               <div className="editor-toolbar-shell">
                 <EditorToolbar doc={activeDoc} selection={activeSelection} />
@@ -641,7 +659,10 @@ export function WorkspacePage() {
               >
                 {annotationColumnVisible && (
                   <>
-                    <Panel defaultSize={22} minSize={16}>
+                    <Panel
+                      defaultSize={WORKSPACE_PANEL_SIZES.inner.annotation.defaultSize}
+                      minSize={WORKSPACE_PANEL_SIZES.inner.annotation.minSize}
+                    >
                       <ErrorBoundary label="批注列">
                         <AnnotationColumn
                           documentId={activeDocumentId}
@@ -661,7 +682,10 @@ export function WorkspacePage() {
                 )}
                 {editorColumnVisible && (
                   <>
-                    <Panel defaultSize={40} minSize={20}>
+                    <Panel
+                      defaultSize={WORKSPACE_PANEL_SIZES.inner.editor.defaultSize}
+                      minSize={WORKSPACE_PANEL_SIZES.inner.editor.minSize}
+                    >
                       <ErrorBoundary label="编辑器">
                         <EditorColumn
                           doc={activeDoc}
@@ -693,7 +717,10 @@ export function WorkspacePage() {
                   </>
                 )}
                 {previewColumnVisible && (
-                  <Panel defaultSize={38} minSize={20}>
+                  <Panel
+                    defaultSize={WORKSPACE_PANEL_SIZES.inner.preview.defaultSize}
+                    minSize={WORKSPACE_PANEL_SIZES.inner.preview.minSize}
+                  >
                     <ErrorBoundary label="预览">
                       <PreviewColumn
                         doc={activeDoc}
@@ -727,7 +754,10 @@ export function WorkspacePage() {
               {!rightCollapsed && (
                 <>
                   <PanelResizeHandle className="resize-handle" />
-                  <Panel defaultSize={30} minSize={OUTER_PANEL_AUTO_COLLAPSE_PERCENT}>
+                  <Panel
+                    defaultSize={WORKSPACE_PANEL_SIZES.outer.right.defaultSize}
+                    minSize={WORKSPACE_PANEL_SIZES.outer.right.minSize}
+                  >
                     <ErrorBoundary label="右侧面板">
                       <RightPanel
                   workflows={workflows}

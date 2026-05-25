@@ -276,6 +276,37 @@ class NativeAgent(Base):
     )
 
 
+class NativeMcpServer(Base):
+    """User-scoped MCP server configuration.
+
+    Catalog presets live under supports/YuwanLabWriter.MCPs. This table stores
+    the user's configured instance of a preset or a custom MCP server, including
+    encrypted env values. Agents reference rows here instead of duplicating
+    command/env details in their runtime_config.
+    """
+
+    __tablename__ = "native_mcp_servers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    preset_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    source: Mapped[str] = mapped_column(String(32), default="custom")
+    name: Mapped[str] = mapped_column(String(128), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    transport: Mapped[str] = mapped_column(String(32), default="stdio")
+    command: Mapped[str] = mapped_column(String(256), default="")
+    args: Mapped[list] = mapped_column(JSON, default=list)
+    env_enc: Mapped[str] = mapped_column(Text, default="")
+    allowed_tools: Mapped[list] = mapped_column(JSON, default=list)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default="unknown")
+    status_detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class NativeAgentSkillInstall(Base):
     """Agent-scoped Skill folder installed through an npx recipe.
 

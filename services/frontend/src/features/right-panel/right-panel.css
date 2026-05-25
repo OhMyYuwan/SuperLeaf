@@ -66,6 +66,29 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  scrollbar-color: rgba(148, 163, 184, 0.46) transparent;
+  scrollbar-width: thin;
+}
+
+.tab-content-wrapper::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-track,
+.tab-content-wrapper::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+.tab-content-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  background-clip: content-box;
 }
 
 .tab-header-row {
@@ -831,6 +854,14 @@
 .ghost-btn.small:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.22);
 }
+.ghost-btn.small.success {
+  border-color: rgba(34, 197, 94, 0.42);
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.14);
+}
+.ghost-btn.small.success:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.2);
+}
 .ghost-btn.small.danger {
   color: #fca5a5;
 }
@@ -954,6 +985,7 @@
 }
 
 .automation-control-grid select,
+.automation-field select,
 .automation-field input,
 .automation-field textarea:not(.mention-input-textarea) {
   width: 100%;
@@ -968,7 +1000,14 @@
   outline: none;
 }
 
+.automation-control-grid select option,
+.automation-field select option {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
 .automation-control-grid select:focus,
+.automation-field select:focus,
 .automation-field input:focus,
 .automation-field textarea:not(.mention-input-textarea):focus {
   border-color: rgba(59, 130, 246, 0.55);
@@ -1990,6 +2029,55 @@
   background: rgba(248, 113, 113, 0.1);
 }
 
+.native-pill.neutral {
+  border-color: rgba(148, 163, 184, 0.22);
+  color: rgba(226, 232, 240, 0.82);
+  background: rgba(15, 23, 42, 0.64);
+}
+
+.official-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 58px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.official-badge.metal {
+  border: 1px solid rgba(250, 204, 21, 0.72);
+  color: #451a03;
+  background:
+    linear-gradient(135deg, #fff7ed 0%, #facc15 48%, #b45309 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
+}
+
+.official-badge.metal svg {
+  color: #78350f;
+  stroke-width: 2.35;
+}
+
+.official-badge.minimal {
+  border: 1px solid rgba(250, 204, 21, 0.78);
+  color: #facc15;
+  background: transparent;
+  box-shadow:
+    0 0 10px rgba(250, 204, 21, 0.32),
+    inset 0 0 0 1px rgba(250, 204, 21, 0.12);
+  text-shadow: 0 0 8px rgba(250, 204, 21, 0.46);
+}
+
+.official-badge.minimal svg {
+  color: #facc15;
+  filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.52));
+  stroke-width: 2.35;
+}
+
 .native-pill.toggle {
   cursor: pointer;
 }
@@ -2079,6 +2167,221 @@
 
 .skill-check small {
   color: rgba(148, 163, 184, 0.7);
+}
+
+.mcp-picker-field {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-field-note {
+  margin: -2px 0 0;
+  color: rgba(148, 163, 184, 0.76);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mcp-server-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.mcp-server-card.selected {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.mcp-server-toggle,
+.mcp-custom-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.mcp-custom-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.mcp-server-toggle input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.mcp-server-toggle span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcp-server-toggle strong {
+  overflow: hidden;
+  color: #e5e7eb;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-server-toggle small {
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mcp-server-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.mcp-server-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-server-grid label:has(textarea),
+.mcp-server-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
+.mcp-server-grid span {
+  min-height: 14px;
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mcp-server-grid input:not([type='checkbox']),
+.mcp-server-grid textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.72);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.mcp-server-grid input:not([type='checkbox']) {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.mcp-server-grid textarea {
+  padding: 7px 9px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.mcp-server-grid input:not([type='checkbox']):focus,
+.mcp-server-grid textarea:focus {
+  border-color: rgba(249, 115, 22, 0.58);
+}
+
+.mcp-server-grid small {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.mcp-config-editor,
+.mcp-custom-form {
+  grid-column: 1 / -1;
+}
+
+.mcp-editor-actions {
+  grid-column: 1 / -1;
+}
+
+.mcp-preset-meta,
+.mcp-card-actions,
+.mcp-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcp-preset-meta {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+}
+
+.mcp-card-actions {
+  justify-content: flex-end;
+}
+
+.mcp-management-panel,
+.mcp-library-section {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-library-section {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.18);
+}
+
+.mcp-catalog-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-catalog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.mcp-catalog-row.expanded {
+  border-color: rgba(249, 115, 22, 0.28);
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.mcp-catalog-row .mcp-check-result {
+  grid-column: 1 / -1;
+}
+
+.mcp-check-result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mcp-check-result.ok {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.mcp-check-result.warn {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.mcp-check-result.error {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.mcp-add-btn {
+  justify-content: center;
 }
 
 .skill-management-panel {

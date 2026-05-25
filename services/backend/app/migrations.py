@@ -59,6 +59,7 @@ def run_migrations(engine: Engine) -> None:
         _rebuild_native_agents_table(conn)
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
+        _rebuild_native_mcp_servers_table(conn)
         _encrypt_plaintext_skill_content(conn)
 
 
@@ -379,4 +380,95 @@ def _add_native_agent_skill_install_columns(conn) -> None:
             "CREATE INDEX IF NOT EXISTS ix_native_agent_skill_installs_skill_id "
             "ON native_agent_skill_installs(skill_id)"
         )
+    )
+
+
+def _rebuild_native_mcp_servers_table(conn) -> None:
+    """Drop the early preset unique constraint so custom MCPs can be many."""
+    if not _table_exists(conn, "native_mcp_servers"):
+        return
+    unique_preset_index = False
+    for row in conn.execute(text("PRAGMA index_list(native_mcp_servers)")).all():
+        # SQLite PRAGMA index_list: seq, name, unique, origin, partial.
+        if not row[2]:
+            continue
+        columns = [
+            info[2]
+            for info in conn.execute(text(f"PRAGMA index_info({row[1]})")).all()
+        ]
+        if columns == ["user_id", "preset_id"]:
+            unique_preset_index = True
+            break
+    if not unique_preset_index:
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_user_id ON native_mcp_servers(user_id)")
+        )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_preset_id ON native_mcp_servers(preset_id)")
+        )
+        return
+
+    conn.execute(text("DROP TABLE IF EXISTS native_mcp_servers__new"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE native_mcp_servers__new (
+                id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL,
+                preset_id VARCHAR(128) NOT NULL,
+                source VARCHAR(32) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                description TEXT NOT NULL,
+                transport VARCHAR(32) NOT NULL,
+                command VARCHAR(256) NOT NULL,
+                args JSON NOT NULL,
+                env_enc TEXT NOT NULL,
+                allowed_tools JSON NOT NULL,
+                is_enabled BOOLEAN NOT NULL,
+                status VARCHAR(16) NOT NULL,
+                status_detail TEXT NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            INSERT INTO native_mcp_servers__new (
+                id, user_id, preset_id, source, name, description, transport,
+                command, args, env_enc, allowed_tools, is_enabled, status,
+                status_detail, created_at, updated_at
+            )
+            SELECT
+                id,
+                COALESCE(user_id, ''),
+                COALESCE(preset_id, ''),
+                COALESCE(NULLIF(source, ''), 'custom'),
+                COALESCE(name, ''),
+                COALESCE(description, ''),
+                COALESCE(NULLIF(transport, ''), 'stdio'),
+                COALESCE(command, ''),
+                COALESCE(args, '[]'),
+                COALESCE(env_enc, ''),
+                COALESCE(allowed_tools, '[]'),
+                COALESCE(is_enabled, 1),
+                COALESCE(NULLIF(status, ''), 'unknown'),
+                COALESCE(status_detail, ''),
+                created_at,
+                updated_at
+            FROM native_mcp_servers
+            """
+        )
+    )
+    conn.execute(text("DROP TABLE native_mcp_servers"))
+    conn.execute(text("ALTER TABLE native_mcp_servers__new RENAME TO native_mcp_servers"))
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_user_id ON native_mcp_servers(user_id)")
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_preset_id ON native_mcp_servers(preset_id)")
     )

@@ -23,13 +23,17 @@ import { setUserScopeId } from './_userScopedStorage'
 // dynamic import.
 async function applyUserScope(userId: string | null): Promise<void> {
   setUserScopeId(userId)
-  const [{ useDocumentStore }, { useAnnotationStore }] = await Promise.all([
+  const [{ useDocumentStore }, { useAnnotationStore }, { useRecentDocStore }, { useEditorStore }] = await Promise.all([
     import('./documentStore'),
     import('./annotationStore'),
+    import('./recentDocStore'),
+    import('./editorStore'),
   ])
   await Promise.all([
     useDocumentStore.persist.rehydrate() ?? Promise.resolve(),
     useAnnotationStore.persist.rehydrate() ?? Promise.resolve(),
+    useRecentDocStore.persist.rehydrate() ?? Promise.resolve(),
+    useEditorStore.persist.rehydrate() ?? Promise.resolve(),
   ])
 }
 

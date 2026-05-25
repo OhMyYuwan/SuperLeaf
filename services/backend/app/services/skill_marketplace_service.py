@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import shlex
 import urllib.parse
 import urllib.request
 from urllib.error import HTTPError
@@ -59,7 +60,9 @@ class SkillMarketplaceService:
 
     def list_entries(self, *, user_id: str) -> list[MarketplaceEntry]:
         payload = self._fetch_catalog()
-        entries = [self._entry_from_raw(raw) for raw in payload.get("skills", [])]
+        raw_entries = list(payload.get("skills", []))
+        raw_entries.extend(self._fetch_external_catalog_entries())
+        entries = _dedupe_entries([self._entry_from_raw(raw) for raw in raw_entries])
         installed = self._installed_by_catalog_id(user_id=user_id)
         out: list[MarketplaceEntry] = []
         for entry in entries:
@@ -156,6 +159,15 @@ class SkillMarketplaceService:
             raise SkillMarketplaceError("Skill marketplace URL is not configured")
         return json.loads(self._fetch_text(self.catalog_url))
 
+    def _fetch_external_catalog_entries(self) -> list[dict]:
+        try:
+            payload = json.loads(self._fetch_text("external-skills.json"))
+        except SkillMarketplaceError as exc:
+            if "HTTP 404" in str(exc):
+                return []
+            raise
+        return [_external_entry_from_raw(raw) for raw in payload.get("skills", [])]
+
     def _fetch_text(self, url_or_path: str) -> str:
         url = urllib.parse.urljoin(self.catalog_url, url_or_path)
         req = urllib.request.Request(
@@ -236,6 +248,92 @@ def _version_key(value: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)  # type: ignore[return-value]
+
+
+def _dedupe_entries(entries: list[MarketplaceEntry]) -> list[MarketplaceEntry]:
+    out: list[MarketplaceEntry] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not entry.id or entry.id in seen:
+            continue
+        seen.add(entry.id)
+        out.append(entry)
+    return out
+
+
+def _external_entry_from_raw(raw: dict) -> dict:
+    author = str(raw.get("author_github") or raw.get("author") or "").strip()
+    skill_name = str(raw.get("skill_name") or raw.get("name") or "").strip()
+    install_command = str(raw.get("npx_command") or raw.get("install_command") or "").strip()
+    source_url, command_skill_name = _parse_npx_skill_add(install_command)
+    resolved_skill_name = command_skill_name or skill_name
+    return {
+        "id": str(raw.get("id") or f"{author}@{skill_name}").strip(),
+        "name": skill_name,
+        "display_name": str(raw.get("display_name") or skill_name).strip(),
+        "version": str(raw.get("version") or "1.0.0").strip(),
+        "author_github": author,
+        "description": str(raw.get("description") or "").strip(),
+        "tags": [str(tag).strip() for tag in raw.get("tags", []) if str(tag).strip()],
+        "license": str(raw.get("license") or "").strip(),
+        "path": "",
+        "entry": "npx",
+        "skill_url": "",
+        "entry_url": source_url,
+        "readme_url": "",
+        "checksum_sha256": "",
+        "repo_url": source_url,
+        "source_url": source_url,
+        "source_ref": str(raw.get("source_ref") or "").strip(),
+        "skill_name": resolved_skill_name,
+        "install_command": _normalize_npx_install_command(install_command),
+    }
+
+
+def _parse_npx_skill_add(command: str) -> tuple[str, str]:
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return "", ""
+    for idx in range(len(parts) - 2):
+        if parts[idx] != "skills" or parts[idx + 1] != "add":
+            continue
+        source_url = parts[idx + 2]
+        skill_name = ""
+        rest = parts[idx + 3 :]
+        for opt_idx, item in enumerate(rest):
+            if item == "--skill" and opt_idx + 1 < len(rest):
+                skill_name = rest[opt_idx + 1]
+                break
+            if item.startswith("--skill="):
+                skill_name = item.split("=", 1)[1]
+                break
+        return source_url, skill_name
+    return "", ""
+
+
+def _normalize_npx_install_command(command: str) -> str:
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return str(command or "").strip()
+    if not parts:
+        return ""
+    if parts[0] == "npx" and (len(parts) == 1 or parts[1] != "--yes"):
+        parts.insert(1, "--yes")
+    if "--agent" not in parts:
+        parts.extend(["--agent", "codex"])
+    if "--copy" not in parts:
+        parts.append("--copy")
+    if parts[-1] != "--yes":
+        parts.append("--yes")
+    return " ".join(_shell_quote(part) for part in parts)
+
+
+def _shell_quote(value: str) -> str:
+    if value and all(ch.isalnum() or ch in "/:._@=-" for ch in value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _repo_from_catalog(catalog_url: str, raw: dict) -> tuple[str, str]:

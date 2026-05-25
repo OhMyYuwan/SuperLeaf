@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Archive, GitBranch, Loader2, RefreshCw, Save, Upload } from 'lucide-react'
+import { Archive, GitBranch, Loader2, RefreshCw, Save, Terminal, Upload } from 'lucide-react'
 import {
   projectArchiveApi,
   type ProjectArchiveStatus,
 } from '../../services/backendApi'
 import { useProjectStore } from '../../stores/projectStore'
+import { useMajorVersionStore } from '../../stores/majorVersionStore'
+import { MajorVersionList } from '../history/MajorVersionList'
+import { MajorVersionDiffModal } from '../history/MajorVersionDiffModal'
 import './project-archive.css'
 
 export function ProjectArchiveTab() {
   const projectId = useProjectStore((s) => s.currentProjectId)
   const role = useProjectStore((s) => s.currentProjectRole)
   const loadProjects = useProjectStore((s) => s.load)
+  const loadCommits = useMajorVersionStore((s) => s.loadCommits)
+  const restoreCommit = useMajorVersionStore((s) => s.restore)
   const [status, setStatus] = useState<ProjectArchiveStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -21,6 +26,9 @@ export function ProjectArchiveTab() {
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [branch, setBranch] = useState('yuwanlab-archive')
+  const [diffOpen, setDiffOpen] = useState(false)
+  const [diffPair, setDiffPair] = useState<{ sha: string; against?: string } | null>(null)
+  const [pathCopied, setPathCopied] = useState(false)
 
   const isOwner = role === 'owner'
   const roleKnown = role !== null
@@ -63,10 +71,35 @@ export function ProjectArchiveTab() {
       setMessage('')
       setFeedback('本地大版本已保存。')
       await load()
+      // Refresh git-based commit list as well.
+      await loadCommits(projectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建项目大版本失败')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleRestore = async (sha: string, restoreMessage: string) => {
+    if (!projectId) return
+    await restoreCommit(projectId, sha, restoreMessage)
+    setFeedback(`已恢复到 ${sha.slice(0, 7)}（创建了新的恢复提交）。`)
+    await load()
+  }
+
+  const handleDiff = (sha: string, against?: string) => {
+    setDiffPair({ sha, against })
+    setDiffOpen(true)
+  }
+
+  const copyRepoPath = async () => {
+    if (!status?.binding.local_repo_path) return
+    try {
+      await navigator.clipboard.writeText(status.binding.local_repo_path)
+      setPathCopied(true)
+      setTimeout(() => setPathCopied(false), 1500)
+    } catch {
+      // ignore clipboard failure
     }
   }
 
@@ -200,41 +233,51 @@ export function ProjectArchiveTab() {
       <div className="archive-section archive-history">
         <div className="archive-section-head">
           <div>
-            <h3>本地大版本历史</h3>
-            <p>{status?.snapshots.length ?? 0} 个项目级快照</p>
+            <h3>本地大版本历史（git）</h3>
+            <p>每个 commit 都是整个项目的原子快照。可对比、可恢复（恢复 = 新增 commit，不破坏历史）。</p>
           </div>
         </div>
-        {!status || status.snapshots.length === 0 ? (
-          <div className="tab-empty">还没有项目大版本。点击“保存大版本”创建第一版。</div>
-        ) : (
-          <ul className="archive-snapshot-list">
-            {status.snapshots.map((snapshot) => (
-              <li key={snapshot.id}>
-                <div>
-                  <strong>{snapshot.message}</strong>
-                  <span>{formatTime(snapshot.created_at)}</span>
-                </div>
-                <code>{snapshot.commit_sha.slice(0, 10)}</code>
-                <span>{snapshot.doc_count} docs · {snapshot.file_count} files · {formatBytes(snapshot.byte_count)}</span>
-              </li>
-            ))}
-          </ul>
+
+        {status?.binding.local_repo_path && (
+          <div className="major-version-hint">
+            <div className="major-version-hint-row">
+              <Terminal size={12} />
+              <span className="major-version-hint-path">{status.binding.local_repo_path}</span>
+              <button className="small-btn" onClick={() => void copyRepoPath()}>
+                {pathCopied ? '已复制' : '复制路径'}
+              </button>
+            </div>
+            <span className="major-version-hint-note">
+              想做分支 / 回退 / 推送等高级操作，请在终端进入该目录直接使用 git 命令。
+            </span>
+          </div>
+        )}
+
+        {projectId && (
+          <MajorVersionList
+            projectId={projectId}
+            onDiffClick={handleDiff}
+            onRestore={handleRestore}
+          />
         )}
       </div>
+
+      {projectId && diffPair && (
+        <MajorVersionDiffModal
+          open={diffOpen}
+          onOpenChange={(open) => {
+            setDiffOpen(open)
+            if (!open) setDiffPair(null)
+          }}
+          projectId={projectId}
+          sha={diffPair.sha}
+          against={diffPair.against}
+        />
+      )}
     </div>
   )
 }
 
 function formatGithubUrl(owner: string, repo: string): string {
   return owner && repo ? `https://github.com/${owner}/${repo}` : ''
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString()
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }

@@ -389,6 +389,143 @@ export interface NativeAgentSkillInstall {
   installed_at: string | null
 }
 
+export interface NativeAgentMcpServer {
+  id: string
+  name: string
+  enabled: boolean
+  transport?: string
+  command: string
+  args: string[]
+  env?: Record<string, string>
+  allowed_tools?: string[]
+}
+
+export interface NativeMcpServerConfig {
+  id: string
+  user_id: string
+  preset_id: string
+  source: 'catalog' | 'custom' | string
+  name: string
+  description: string
+  transport: string
+  command: string
+  args: string[]
+  env_keys: string[]
+  allowed_tools: string[]
+  is_enabled: boolean
+  status: 'unknown' | 'ok' | 'error' | string
+  status_detail: string
+  created_at: string
+  updated_at: string
+}
+
+export interface NativeMcpServerConfigDraft {
+  preset_id?: string
+  source?: 'catalog' | 'custom'
+  name?: string
+  description?: string
+  transport?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  allowed_tools?: string[]
+  is_enabled?: boolean
+}
+
+export interface NativeMcpServerConfigPatch {
+  name?: string
+  description?: string
+  transport?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  allowed_tools?: string[]
+  is_enabled?: boolean
+}
+
+export interface McpPreset {
+  id: string
+  name: string
+  owner?: string
+  qualified_name?: string
+  registry?: 'official' | 'external' | string
+  official_recommended?: boolean
+  description: string
+  category: string
+  capabilities: string[]
+  source: Record<string, unknown>
+  transport: {
+    type: string
+    command: string
+    args: string[]
+  }
+  env_schema: Array<{
+    name: string
+    label?: string
+    required?: boolean
+    required_for_reliable_use?: boolean
+    secret?: boolean
+    description?: string
+  }>
+  tool_policy: {
+    default_allowed_tools?: string[]
+    recommended_tools?: string[]
+    dangerous_tools?: string[]
+  }
+  risk: {
+    level: string
+    flags?: string[]
+    reasons?: string[]
+  }
+  verification: {
+    status: string
+    grade?: string
+    golden_tests?: string[]
+    known_limitations?: string[]
+    not_for?: string[]
+  }
+}
+
+export interface McpCatalog {
+  catalog_root: string
+  id: string
+  name: string
+  version: string
+  updated_at: string
+  registries?: Array<{ id: string; name: string; description?: string }>
+  presets: McpPreset[]
+}
+
+export interface McpProbeResult {
+  status: string
+  server_id: string
+  server_name: string
+  tools: Array<{ name: string; function_name: string; description: string; parameters: Record<string, unknown> }>
+  missing_tools: string[]
+  warnings: string[]
+  requires_env: string[]
+}
+
+export interface McpGoldenTestResult {
+  status: string
+  passed: boolean
+  preset_id: string
+  test_id: string
+  matched?: Record<string, unknown>
+  warnings?: string[]
+  error?: string
+  raw_preview?: string
+}
+
+export type OfficialBadgeStyle = 'metal' | 'minimal'
+
+export interface OfficialBadgeUiSettings {
+  style: OfficialBadgeStyle
+  allowed_styles: OfficialBadgeStyle[]
+  toggle_enabled: boolean
+  source: 'env' | 'runtime_override' | string
+}
+
 export interface AgentWorkspaceFile {
   path: string
   type: 'file' | 'directory' | string
@@ -424,6 +561,9 @@ export interface NativeAgentPatch {
 }
 
 export const nativeAgentApi = {
+  ui: {
+    officialBadge: () => http<OfficialBadgeUiSettings>('/api/native-agent/ui/official-badge'),
+  },
   credentials: {
     list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
     create: (draft: NativeAgentCredentialDraft) =>
@@ -478,6 +618,46 @@ export const nativeAgentApi = {
     uninstall: (id: string) =>
       http<void>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/uninstall`, {
         method: 'DELETE',
+      }),
+  },
+  mcp: {
+    catalog: () => http<McpCatalog>('/api/native-agent/mcp/catalog'),
+    servers: () => http<NativeMcpServerConfig[]>('/api/native-agent/mcp/servers'),
+    createServer: (body: NativeMcpServerConfigDraft) =>
+      http<NativeMcpServerConfig>('/api/native-agent/mcp/servers', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ensurePresetServer: (presetId: string, body?: NativeMcpServerConfigDraft) =>
+      http<NativeMcpServerConfig>(`/api/native-agent/mcp/servers/from-preset/${encodeURIComponent(presetId)}`, {
+        method: 'POST',
+        body: JSON.stringify(body ?? {}),
+      }),
+    updateServer: (id: string, patch: NativeMcpServerConfigPatch) =>
+      http<NativeMcpServerConfig>(`/api/native-agent/mcp/servers/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    deleteServer: (id: string) =>
+      http<void>(`/api/native-agent/mcp/servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    probeServer: (id: string) =>
+      http<McpProbeResult>(`/api/native-agent/mcp/servers/${encodeURIComponent(id)}/probe`, {
+        method: 'POST',
+      }),
+    goldenTestServer: (id: string, body?: { test_id?: string }) =>
+      http<McpGoldenTestResult>(`/api/native-agent/mcp/servers/${encodeURIComponent(id)}/golden-test`, {
+        method: 'POST',
+        body: JSON.stringify(body ?? {}),
+      }),
+    probe: (body: { preset_id?: string; server?: NativeAgentMcpServer; env?: Record<string, string>; allowed_tools?: string[] }) =>
+      http<McpProbeResult>('/api/native-agent/mcp/probe', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    goldenTest: (body: { preset_id: string; test_id?: string; server?: NativeAgentMcpServer; env?: Record<string, string> }) =>
+      http<McpGoldenTestResult>('/api/native-agent/mcp/golden-test', {
+        method: 'POST',
+        body: JSON.stringify(body),
       }),
   },
   agents: {

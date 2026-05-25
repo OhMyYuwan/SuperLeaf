@@ -166,9 +166,10 @@ capabilities:
     name: Frontend Right Panel
     summary: |
       Right-side tabbed panel. Tabs: Discussion (doc-scoped chats with agents),
-      Team (Provider / native Agent / Skill / Workflow management),
+      Team (Provider / native Agent / Skill / MCP / Workflow management),
       Automation, Run History, and Versions (project archive + document
-      history). Workflow Definitions and Skill management now live inside Team
+      history). Workflow Definitions, Skill management, and MCP catalog
+      management now live inside Team
       subtabs.
       (Alias: `frontend-workspace/agent-panel` from REQ-0001..0013.)
     slices:
@@ -189,9 +190,9 @@ capabilities:
           - frontend/src/features/right-panel/DiscussionTab.tsx
           - frontend/src/features/right-panel/discussion.css
       - id: team
-        summary: TeamTab — provider CRUD, native Agent CRUD, AgentSkill assignment, local Skill library, Skill Marketplace search/install, and Workflow Definition management.
-        route_here_when: Work changes team-management UI, native Agent/Skill listings, Skill Market UX, or provider sync UX.
-        bridge_when: Native Agent / Skill backend contract changes — see native-agent-skills.
+        summary: TeamTab — provider CRUD, native Agent CRUD, AgentSkill assignment, local Skill library, Skill Marketplace search/install, MCP catalog/custom server management, and Workflow Definition management.
+        route_here_when: Work changes team-management UI, native Agent/Skill/MCP listings, Skill Market UX, MCP probe/golden-test UX, or provider sync UX.
+        bridge_when: Native Agent / Skill / MCP backend contract changes — see native-agent-skills.
         primary_paths:
           - frontend/src/features/right-panel/TeamTab.tsx
           - frontend/src/stores/nativeAgentStore.ts
@@ -575,37 +576,57 @@ capabilities:
   - id: native-agent-skills
     name: Native Agent & Skills
     summary: |
-      Backend-managed native Agents and Skills. Owns encrypted native Agent
+      Backend-managed native Agents, Skills, and MCP tools. Owns encrypted native Agent
       credentials, native Agent CRUD/runtime, local Skill library, Skill
       Marketplace sync/install, Skill content encryption, share visibility, and
-      AgentSkill assignment.
+      AgentSkill assignment. Also owns the app-side consumption of
+      `supports/YuwanLabWriter.MCPs` for catalog-driven MCP preset discovery,
+      probe, golden tests, and runtime tool calls.
     slices:
       - id: backend-routes
-        summary: /api/native-agent routes for credentials, skills, agents, and Skill Marketplace install/update/uninstall.
-        route_here_when: Work changes native Agent or Skill HTTP contracts, permission checks, marketplace endpoints, or response shape.
+        summary: /api/native-agent routes for credentials, skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
+        route_here_when: Work changes native Agent, Skill, or MCP HTTP contracts, permission checks, marketplace/catalog endpoints, or response shape.
         bridge_when: Frontend state or TeamTab UX must be updated with backend contract changes.
         primary_paths:
           - backend/app/api/native_agents.py
           - backend/app/schemas.py
       - id: backend-services
-        summary: NativeAgentService + runner/registry + Skill crypto/marketplace services.
-        route_here_when: Work changes encrypted credential handling, local Skill storage, visibility/share/delete semantics, marketplace sync, or runtime Skill loading.
+        summary: NativeAgentService + runner/registry + Skill crypto/marketplace services + MCP tool/catalog services.
+        route_here_when: Work changes encrypted credential handling, local Skill storage, visibility/share/delete semantics, marketplace sync, runtime Skill loading, MCP discovery, or MCP tool-call behavior.
         bridge_when: Provider model changes route through workflow-integration/provider-registry.
         primary_paths:
           - backend/app/services/native_agent_service.py
           - backend/app/services/native_agent_runner.py
           - backend/app/services/agent_registry_service.py
+          - backend/app/services/mcp_tool_service.py
+          - backend/app/services/mcp_catalog_service.py
           - backend/app/services/skill_content_crypto.py
           - backend/app/services/skill_marketplace_service.py
           - backend/app/models.py
           - backend/app/settings.py
       - id: frontend-management
-        summary: TeamTab Agent and Skill subtabs — AgentSkill capsules, local Skill library, Skill Market search/install, private upload, share/update/unshare flows.
-        route_here_when: Work changes the native Agent form, Skill management panel, marketplace search/install UX, local library rows, or sharing dialog.
+        summary: TeamTab Agent, Skill, and MCP subtabs — AgentSkill capsules, local Skill library, Skill Market search/install, MCP catalog listing, MCP probe/golden-test, custom MCP summaries, private upload, share/update/unshare flows.
+        route_here_when: Work changes the native Agent form, Skill management panel, MCP management panel, marketplace search/install UX, local library rows, or sharing dialog.
         bridge_when: Backend contract changes route through backend-routes first.
         primary_paths:
           - frontend/src/features/right-panel/TeamTab.tsx
           - frontend/src/features/right-panel/right-panel.css
+          - frontend/src/stores/nativeAgentStore.ts
+          - frontend/src/services/backendApi.ts
+      - id: mcp-catalog
+        summary: Maintained MCP support catalog under supports/YuwanLabWriter.MCPs plus app-side catalog loader/probe/golden-test integration.
+        route_here_when: Work adds, verifies, downgrades, documents, or removes an MCP preset; changes preset schema fields; edits MCP golden tests; or changes how the app consumes the catalog.
+        bridge_when: A catalog change needs new frontend controls or backend transport behavior — coordinate with frontend-management and backend-services in the same Request.
+        primary_paths:
+          - supports/YuwanLabWriter.MCPs/README.md
+          - supports/YuwanLabWriter.MCPs/docs/
+          - supports/YuwanLabWriter.MCPs/catalog.json
+          - supports/YuwanLabWriter.MCPs/presets/
+          - supports/YuwanLabWriter.MCPs/golden-tests/
+          - backend/app/services/mcp_catalog_service.py
+          - backend/app/services/mcp_tool_service.py
+          - backend/app/api/native_agents.py
+          - frontend/src/features/right-panel/TeamTab.tsx
           - frontend/src/stores/nativeAgentStore.ts
           - frontend/src/services/backendApi.ts
 

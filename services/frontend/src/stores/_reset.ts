@@ -17,7 +17,6 @@ import { useFilesystemStore } from './filesystemStore'
 import { useCompileStore } from './compileStore'
 import { useConversationStore } from './conversationStore'
 import { useWorkflowStore } from './workflowStore'
-import { useEditorStore } from './editorStore'
 
 export function resetProjectScopedStores(): void {
   useDocumentStore.setState({
@@ -75,8 +74,6 @@ export function resetProjectScopedStores(): void {
     currentRound: {},
     maxRounds: {},
   })
-
-  useEditorStore.setState({ states: {} })
 }
 
 export async function resetUserScopedStores(): Promise<void> {

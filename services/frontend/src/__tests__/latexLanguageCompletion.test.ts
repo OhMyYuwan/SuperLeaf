@@ -43,6 +43,8 @@ describe('latex language completion source', () => {
           year: '2021',
         },
       ],
+      filePaths: [],
+      labels: [],
     }
 
     const empty = complete('\\cite{', completionData)
@@ -67,6 +69,8 @@ describe('latex language completion source', () => {
           info: 'Attention Is All You Need\nVaswani et al. · 2017',
         },
       ],
+      filePaths: [],
+      labels: [],
     })
     const option = result.options[0]
 

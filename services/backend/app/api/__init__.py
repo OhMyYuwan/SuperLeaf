@@ -11,6 +11,7 @@ from . import (
     filesystem,
     github,
     health,
+    major_versions,
     native_agents,
     notifications,
     projects,
@@ -37,6 +38,7 @@ api_router.include_router(conversations.router)
 api_router.include_router(versions.router)
 api_router.include_router(annotation_evaluations.router)
 api_router.include_router(archives.router)
+api_router.include_router(major_versions.router)
 api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
 api_router.include_router(notifications.router)

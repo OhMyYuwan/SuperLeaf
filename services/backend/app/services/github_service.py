@@ -198,7 +198,7 @@ class GitHubService:
         req = urllib.request.Request(
             "https://github.com/login/oauth/access_token",
             data=data,
-            headers={"Accept": "application/json", "User-Agent": "YuwanLabWriter"},
+            headers={"Accept": "application/json", "User-Agent": "SuperLeaf"},
             method="POST",
         )
         try:
@@ -272,7 +272,7 @@ class GitHubService:
             headers={
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {token}",
-                "User-Agent": "YuwanLabWriter",
+                "User-Agent": "SuperLeaf",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
@@ -288,7 +288,7 @@ class GitHubService:
         req = urllib.request.Request(
             url,
             data=data,
-            headers={"Accept": "application/json", "User-Agent": "YuwanLabWriter"},
+            headers={"Accept": "application/json", "User-Agent": "SuperLeaf"},
             method="POST",
         )
         try:

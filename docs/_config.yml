@@ -1,10 +1,10 @@
-# YuwanLabWriter 文档站点配置
+# SuperLeaf 文档站点配置
 
-title: YuwanLabWriter
+title: SuperLeaf
 description: 面向学术写作的 AI 辅助协作编辑器
-baseurl: "/YuwanLabWriter"
+baseurl: "/SuperLeaf"
 url: "https://ohmyyuwan.github.io"
-repository: OhMyYuwan/YuwanLabWriter
+repository: OhMyYuwan/SuperLeaf
 
 # 主题配置
 remote_theme: just-the-docs/just-the-docs@v0.10.0
@@ -15,12 +15,12 @@ nav_sort: case_insensitive
 heading_anchors: true
 
 aux_links:
-  "YuwanLabWriter on GitHub":
-    - "https://github.com/OhMyYuwan/YuwanLabWriter"
+  "SuperLeaf on GitHub":
+    - "https://github.com/OhMyYuwan/SuperLeaf"
 
 nav_external_links:
   - title: Skill Market Catalog
-    url: https://github.com/OhMyYuwan/YuwanLabWriter.Skills
+    url: https://github.com/OhMyYuwan/SuperLeaf.Skills
     opens_in_new_tab: true
 
 # 搜索配置
@@ -35,7 +35,7 @@ search:
   button: false
 
 # 页脚配置
-footer_content: "YuwanLabWriter © 2026. 使用 <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a> 主题构建。"
+footer_content: "SuperLeaf © 2026. 使用 <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a> 主题构建。"
 
 # Callouts
 callouts:

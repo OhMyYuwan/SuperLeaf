@@ -1,11 +1,11 @@
 ---
 name: annotation-training-csv
-description: Convert YuwanLabWriter annotation training exports, records.jsonl files, or export ZIPs into compact CSV training datasets. Use this whenever the user mentions annotation-training-export, records.jsonl, 批注训练数据, clean training data, CSV dataset, reducing token cost, or turning annotation evaluations into LLM fine-tuning/evaluation rows.
+description: Convert SuperLeaf annotation training exports, records.jsonl files, or export ZIPs into compact CSV training datasets. Use this whenever the user mentions annotation-training-export, records.jsonl, 批注训练数据, clean training data, CSV dataset, reducing token cost, or turning annotation evaluations into LLM fine-tuning/evaluation rows.
 ---
 
 # Annotation Training CSV
 
-Use this skill to turn YuwanLabWriter annotation training exports into a clean,
+Use this skill to turn SuperLeaf annotation training exports into a clean,
 small CSV file for downstream training, evaluation, or manual review.
 
 The goal is token economy: keep only the fields needed for the next training
@@ -56,7 +56,7 @@ Use `--include-meta` only when the user needs traceability columns for audit.
 To copy this project-local skill into another workspace with npm tooling:
 
 ```bash
-npm exec --yes degit OhMyYuwan/YuwanLabWriter/docs/skills/annotation-training-csv ./annotation-training-csv
+npm exec --yes degit OhMyYuwan/SuperLeaf/docs/skills/annotation-training-csv ./annotation-training-csv
 ```
 
 If the repository is private, clone it with GitHub authentication first and

@@ -1,6 +1,6 @@
 # Authors
 
-YuwanLabWriter is created and maintained by:
+SuperLeaf is created and maintained by:
 
 - YuwanZ / YuwanLab
 
@@ -10,5 +10,5 @@ Community contributors are recognized through the Git history and pull request r
 
 ## Attribution Notes
 
-YuwanLabWriter draws inspiration from collaborative academic writing tools and uses third-party open source dependencies listed in the package manifests and lockfiles. Those projects remain under their own licenses.
+SuperLeaf draws inspiration from collaborative academic writing tools and uses third-party open source dependencies listed in the package manifests and lockfiles. Those projects remain under their own licenses.
 

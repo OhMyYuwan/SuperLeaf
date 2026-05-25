@@ -9,4 +9,4 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 
 @router.get("")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "yuwanlab-backend"}
+    return {"status": "ok", "service": "superleaf-backend"}

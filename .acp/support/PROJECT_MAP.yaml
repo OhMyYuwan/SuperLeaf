@@ -1,11 +1,11 @@
-# PROJECT MAP for YuwanLabWriter
+# PROJECT MAP for SuperLeaf
 #
 # Structural map of the repository rooted at `services/`. Update whenever a module is
 # added or removed; this file is the agent's structural index, not a wishlist.
 # Refreshed 2026-05-25 for REQ-0163 (MCP support catalog routing).
 
 project:
-  name: YuwanLabWriter
+  name: SuperLeaf
   root: .
   source_of_truth: services
   branch_strategy:
@@ -66,22 +66,26 @@ modules:
       - docs/figma.md
 
   - id: support-mcps
-    path: supports/YuwanLabWriter.MCPs
+    path: supports/SuperLeaf.MCPs
     kind: support-catalog
     description: Maintained MCP catalog consumed by Native Agents; stores verified MCP presets, transport configs, env schema, tool policy, risk labels, golden tests, and contributor docs.
     entry_files:
-      - supports/YuwanLabWriter.MCPs/README.md
-      - supports/YuwanLabWriter.MCPs/docs/README.md
-      - supports/YuwanLabWriter.MCPs/docs/adding-mcp.md
-      - supports/YuwanLabWriter.MCPs/docs/verification.md
-      - supports/YuwanLabWriter.MCPs/catalog.json
-      - supports/YuwanLabWriter.MCPs/presets/
-      - supports/YuwanLabWriter.MCPs/golden-tests/
+      - supports/SuperLeaf.MCPs/README.md
+      - supports/SuperLeaf.MCPs/docs/README.md
+      - supports/SuperLeaf.MCPs/docs/adding-mcp.md
+      - supports/SuperLeaf.MCPs/docs/verification.md
+      - supports/SuperLeaf.MCPs/catalog.json
+      - supports/SuperLeaf.MCPs/presets/
+      - supports/SuperLeaf.MCPs/golden-tests/
     note: |
-      This catalog is data, not frontend-specific code. The app consumes it
-      through backend/app/services/mcp_catalog_service.py and exposes it in
-      TeamTab's MCP subtab. Add a new preset here first, then wire app code
-      only if the generic catalog schema is insufficient.
+      This catalog is data, not frontend-specific code. At runtime the app
+      fetches the official catalog from `OhMyYuwan/SuperLeaf.MCPs` via
+      `YLW_MCP_CATALOG_URL`; local `supports/` checkouts are development /
+      offline fallbacks only. The backend exposes the catalog through
+      backend/app/services/mcp_catalog_service.py and TeamTab's MCP subtab.
+      Add a new preset in the external MCPs repository first, then wire app
+      code only if the generic catalog schema is insufficient. The `supports/`
+      directory must not be committed to the main SuperLeaf repository.
 
   # ── Backend (FastAPI proxy + SQLite persistence) ─────────────────
   - id: backend
@@ -188,7 +192,7 @@ modules:
       that bind to Provider models and can read only user-assigned Skills.
       `mcp_tool_service.py` and `mcp_catalog_service.py` implement the
       on-demand stdio MCP bridge plus catalog/probe/golden-test support for
-      tools declared under `supports/YuwanLabWriter.MCPs`.
+      tools declared by the remote `OhMyYuwan/SuperLeaf.MCPs` catalog.
       `skill_marketplace_service.py` reads the official Skill catalog from
       the configured marketplace URL; `skill_content_crypto.py` encrypts local
       Skill content at rest.

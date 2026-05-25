@@ -1,6 +1,9 @@
 {
   "id": "paper_search_mcp",
-  "name": "Paper Search MCP",
+  "owner": "openags",
+  "qualified_name": "openags@paper-search-mcp",
+  "registry": "external",
+  "name": "openags@paper-search-mcp",
   "description": "Exploratory preprint search over arXiv, PubMed, bioRxiv, and medRxiv. Useful for discovery, not reliable citation verification by itself.",
   "category": "academic_research",
   "capabilities": [

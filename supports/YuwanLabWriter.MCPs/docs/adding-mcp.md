@@ -31,7 +31,11 @@ supports/YuwanLabWriter.MCPs/presets/<category>/<mcp-name>.json
 ```json
 {
   "id": "example_mcp",
-  "name": "Example MCP",
+  "owner": "owner",
+  "qualified_name": "owner@example-mcp",
+  "registry": "external",
+  "official_recommended": false,
+  "name": "owner@example-mcp",
   "description": "One sentence describing what this MCP reliably does.",
   "category": "developer_tools",
   "capabilities": ["example_lookup"],
@@ -68,7 +72,13 @@ supports/YuwanLabWriter.MCPs/presets/<category>/<mcp-name>.json
 ## 3. 字段规则
 
 - `id`：稳定的 snake_case，会成为运行时 server id。
-- `name`：给 UI 展示的人类可读名称。
+- `owner`：MCP 所有者。GitHub 项目通常使用 `source.repo` 的 owner。
+- `qualified_name`：统一展示名，格式必须是 `owner@mcp-name`。
+- `registry`：使用 `official` 或 `external`。官方维护/深度适配的放
+  `official`；来自 GitHub / 社区并由 catalog 记录配置的放 `external`。
+- `official_recommended`：可选。只有产品默认推荐、质量已人工验收的 MCP
+  才设为 `true`；这不会改变 MCP 的所有者。
+- `name`：给 UI 展示的人类可读名称；默认也使用 `owner@mcp-name`。
 - `description`：写它能稳定完成什么，不写营销文案。
 - `capabilities`：短标签，例如 `paper_search`、`bibtex_export`、
   `repo_issue_lookup`。

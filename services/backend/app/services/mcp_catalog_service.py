@@ -32,6 +32,7 @@ class McpCatalogService:
             "name": payload.get("name", "YuwanLabWriter MCPs"),
             "version": payload.get("version", ""),
             "updated_at": payload.get("updated_at", ""),
+            "registries": list(payload.get("registries") or []),
             "presets": presets,
         }
 

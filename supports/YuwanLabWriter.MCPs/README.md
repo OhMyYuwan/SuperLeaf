@@ -7,6 +7,22 @@ environment requirements, risk posture, recommended tools, known limitations,
 and golden tests. The main YuwanLabWriter app consumes this catalog; it should
 not hardcode one-off MCP behavior in the frontend.
 
+## Registry Model
+
+MCPs are maintained as marketplace entries, not as frontend-specific presets.
+Each preset belongs to one registry:
+
+- `official`: maintained or deeply adapted by YuwanLabWriter.
+- `external`: sourced from GitHub / community MCP projects and verified here.
+
+Every MCP display name should use `owner@mcp-name`. For GitHub projects, the
+owner should match the GitHub owner where possible, for example
+`akapet00@semantic-scholar`.
+
+Use `official_recommended: true` only for entries that YuwanLabWriter actively
+recommends as a default choice after manual acceptance. This is an endorsement,
+not a change of ownership.
+
 ## Verification Grades
 
 - `citation_metadata`: suitable for source-backed citation metadata when the
@@ -18,7 +34,7 @@ not hardcode one-off MCP behavior in the frontend.
 
 ## Current Academic Search Policy
 
-Semantic Scholar is the primary built-in academic metadata search preset.
+Semantic Scholar is the primary owned-market academic metadata search preset.
 Paper Search is kept as exploratory preprint discovery because its arXiv
 keyword search can return noisy results for exact benchmark names.
 

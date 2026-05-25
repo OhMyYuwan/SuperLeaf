@@ -25,6 +25,7 @@ import {
   ZoomIn,
   ZoomOut,
   Download,
+  StretchHorizontal,
 } from 'lucide-react'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -39,7 +40,7 @@ import {
   sourceJumpFromPreviewText,
   type SourceJump,
 } from '../../services/previewSourceMap'
-import { clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
+import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -192,6 +193,19 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
     setZoom((current) => clampPdfZoom(updater(current)))
   }
 
+  const fitPdfToWidth = () => {
+    const scroller = pdfScrollRef.current
+    if (!scroller) {
+      setZoom(1)
+      return
+    }
+    const style = window.getComputedStyle(scroller)
+    const horizontalPadding =
+      Number.parseFloat(style.paddingLeft || '0') + Number.parseFloat(style.paddingRight || '0')
+    const viewportWidth = Math.max(0, scroller.clientWidth - horizontalPadding)
+    setZoom(calculateFitWidthZoom(pageWidth, viewportWidth))
+  }
+
   return (
     <div className="latex-preview" ref={containerRef}>
       <div className="latex-preview-toolbar">
@@ -260,6 +274,14 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
             title="放大"
           >
             <ZoomIn size={12} />
+          </button>
+          <button
+            className="small-btn"
+            onClick={fitPdfToWidth}
+            aria-label="适应宽度"
+            title="适应宽度"
+          >
+            <StretchHorizontal size={12} />
           </button>
         </div>
       </div>

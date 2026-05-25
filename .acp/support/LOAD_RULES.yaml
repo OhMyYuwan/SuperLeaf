@@ -243,10 +243,11 @@ rules:
           - services/frontend/src/features/workspace-center/EditorColumn.tsx
           - services/frontend/src/features/workspace-center/EditorToolbar.tsx
           - services/frontend/src/features/latex-editor/LatexEditor.tsx
+          - services/frontend/src/features/latex-editor/spelling.ts
           - services/frontend/src/stores/editorStore.ts
           - services/frontend/src/services/selectionContext.ts
         expand_when:
-          - editor mount, selection context, toolbar, or editor state changes
+          - editor mount, spell checking, selection context, toolbar, or editor state changes
       annotation-column:
         start_with:
           - services/frontend/src/features/workspace-center/AnnotationColumn.tsx
@@ -278,11 +279,25 @@ rules:
           - services/frontend/src/features/latex-editor/latex-snippets.ts
           - services/frontend/src/features/latex-editor/latex-folding.ts
           - services/frontend/src/features/latex-editor/search-panel.ts
+          - services/frontend/src/features/latex-editor/spelling.ts
           - services/frontend/src/__tests__/latexLanguageCompletion.test.ts
           - services/frontend/src/__tests__/latexSnippets.test.ts
           - services/frontend/src/__tests__/latexFolding.test.ts
+          - services/frontend/src/__tests__/spelling.test.ts
         expand_when:
-          - LaTeX parsing, completion, snippet, folding, or search behavior changes
+          - LaTeX parsing, completion, snippet, folding, search, or spell-check behavior changes
+      spelling:
+        start_with:
+          - services/frontend/src/features/latex-editor/spelling.ts
+          - services/frontend/src/services/spellingApi.ts
+          - services/frontend/src/__tests__/spelling.test.ts
+          - services/frontend/src/App.css
+          - services/backend/app/api/spelling.py
+          - services/backend/app/services/spelling_service.py
+          - services/backend/app/models.py
+          - services/backend/app/api/__init__.py
+        expand_when:
+          - editor spelling diagnostics, dictionary persistence, suggestions, or frontend/backend spelling contract changes
       decorations:
         start_with:
           - services/frontend/src/features/latex-editor/annotation-decorations.ts

@@ -86,7 +86,7 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 160px;
+  min-width: 196px;
   padding: 8px;
   background: rgba(30, 41, 59, 0.98);
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -114,6 +114,7 @@
   width: 16px;
   height: 16px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .view-control-item input[type="checkbox"]:disabled {
   opacity: 0.4;
@@ -125,6 +126,23 @@
 }
 .view-control-item:has(input:disabled):hover {
   background: transparent;
+}
+
+.view-control-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.view-control-label {
+  line-height: 1.2;
+}
+
+.view-control-hint {
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .view-control-divider {

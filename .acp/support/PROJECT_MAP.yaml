@@ -2,8 +2,8 @@
 #
 # Structural index for agents. Keep this file route-focused: it should answer
 # "where do I start reading?" rather than describe every implementation detail.
-# Refreshed 2026-05-25 for REQ-0187 after the docs site split into Chinese
-# primary docs under docs/zh and partial English docs under docs/en.
+# Refreshed 2026-05-25 for REQ-0194 after editor spell checking added a
+# backend spelling API, user dictionary service, and CodeMirror lint extension.
 
 project:
   name: SuperLeaf
@@ -142,7 +142,7 @@ modules:
   - id: backend-api
     path: services/backend/app/api
     kind: api-routes
-    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, workflows, conversations, archive/major versions, document versions, compile, notifications, and annotations.
+    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, workflows, conversations, archive/major versions, document versions, compile, notifications, annotations, and spelling.
     entry_files:
       - services/backend/app/api/__init__.py
       - services/backend/app/api/health.py
@@ -162,12 +162,13 @@ modules:
       - services/backend/app/api/versions.py
       - services/backend/app/api/annotation_evaluations.py
       - services/backend/app/api/notifications.py
+      - services/backend/app/api/spelling.py
       - services/backend/app/api/deps.py
 
   - id: backend-services
     path: services/backend/app/services
     kind: domain-services
-    description: Provider clients, native Agent runtime, Skill/MCP services, workflow orchestrator, project filesystem/archive/history services, collaboration snapshots, GitHub integration, auth, events, annotations, and compile.
+    description: Provider clients, native Agent runtime, Skill/MCP services, workflow orchestrator, project filesystem/archive/history services, collaboration snapshots, GitHub integration, auth, events, annotations, spell checking, and compile.
     entry_files:
       - services/backend/app/services/provider_service.py
       - services/backend/app/services/dify_client.py
@@ -203,6 +204,7 @@ modules:
       - services/backend/app/services/diff_service.py
       - services/backend/app/services/collab_snapshot_service.py
       - services/backend/app/services/stats_service.py
+      - services/backend/app/services/spelling_service.py
 
   - id: backend-tests
     path: services/backend
@@ -258,7 +260,7 @@ modules:
   - id: frontend-services
     path: services/frontend/src/services
     kind: client-services
-    description: Typed API clients, parsers, context builders, mention/range logic, collaboration provider, SSE client, and major-version download client.
+    description: Typed API clients, parsers, context builders, mention/range logic, collaboration provider, SSE client, spelling client, and major-version download client.
     entry_files:
       - services/frontend/src/services/backendApi.ts
       - services/frontend/src/services/authApi.ts
@@ -280,6 +282,7 @@ modules:
       - services/frontend/src/services/collaborationProvider.ts
       - services/frontend/src/services/agentQuality.ts
       - services/frontend/src/services/evaluationContext.ts
+      - services/frontend/src/services/spellingApi.ts
 
   - id: frontend-stores
     path: services/frontend/src/stores
@@ -324,7 +327,7 @@ modules:
   - id: frontend-tests
     path: services/frontend/src/__tests__
     kind: tests
-    description: Vitest tests for parsing, editor utilities, annotation decorations/store, automation store, mentions, markdown assets, and range tracking.
+    description: Vitest tests for parsing, editor utilities, annotation decorations/store, automation store, mentions, markdown assets, spell-check extraction, and range tracking.
     entry_files:
       - services/frontend/src/__tests__/documentParser.test.ts
       - services/frontend/src/__tests__/selectionContext.test.ts
@@ -335,16 +338,18 @@ modules:
       - services/frontend/src/__tests__/mentionsAttachedFiles.test.ts
       - services/frontend/src/__tests__/rangeTracker.test.ts
       - services/frontend/src/__tests__/markdownAssets.test.ts
+      - services/frontend/src/__tests__/spelling.test.ts
 
   - id: frontend-feature-latex-editor
     path: services/frontend/src/features/latex-editor
     kind: feature-module
-    description: CodeMirror 6 LaTeX editor, search panel, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, and annotation decorations.
+    description: CodeMirror 6 LaTeX editor, search panel, spell checking, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, and annotation decorations.
     entry_files:
       - services/frontend/src/features/latex-editor/LatexEditor.tsx
       - services/frontend/src/features/latex-editor/SelectionToolbar.tsx
       - services/frontend/src/features/latex-editor/extensions.ts
       - services/frontend/src/features/latex-editor/search-panel.ts
+      - services/frontend/src/features/latex-editor/spelling.ts
       - services/frontend/src/features/latex-editor/latex-language.ts
       - services/frontend/src/features/latex-editor/latex-completion-data.ts
       - services/frontend/src/features/latex-editor/latex-snippets.ts

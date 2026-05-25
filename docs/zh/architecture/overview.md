@@ -1,3 +1,9 @@
+---
+title: 系统架构
+parent: 中文文档
+nav_order: 12
+---
+
 # 系统架构
 
 SuperLeaf 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。

@@ -1,6 +1,7 @@
 ---
 title: Dify Provider
 parent: Provider 总览
+grand_parent: 中文文档
 nav_order: 3
 ---
 

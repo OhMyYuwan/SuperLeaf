@@ -1,5 +1,6 @@
 ---
 title: 编辑器
+parent: 中文文档
 nav_order: 6
 ---
 
@@ -68,7 +69,7 @@ Agent 输出会进入批注卡片，而不是直接覆盖正文。
 
 ## 快捷键
 
-常用快捷键见 [editor_shortcuts.md](../editor_shortcuts.md)。
+常用快捷键细节目前先保留英文现有稿，见 [Editor Shortcuts](../../en/editor-shortcuts.md)。
 
 编辑器内部基于 CodeMirror keymap，支持常见文本编辑行为。部分快捷键会随浏览器和操作系统略有差异。
 

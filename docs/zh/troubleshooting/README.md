@@ -1,5 +1,6 @@
 ---
 title: 故障排查
+parent: 中文文档
 nav_order: 10
 ---
 

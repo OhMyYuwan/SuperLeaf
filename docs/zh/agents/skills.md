@@ -1,6 +1,7 @@
 ---
 title: Skill 使用与市场
 parent: 原生 Agent
+grand_parent: 中文文档
 nav_order: 1
 ---
 

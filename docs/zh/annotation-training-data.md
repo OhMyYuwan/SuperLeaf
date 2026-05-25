@@ -1,6 +1,7 @@
 ---
 layout: default
 title: 批注训练数据
+parent: 中文文档
 nav_order: 6
 ---
 

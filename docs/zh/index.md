@@ -1,11 +1,13 @@
 ---
 layout: home
-title: 首页
+title: 中文文档
 nav_order: 1
+has_children: true
+permalink: /zh/
 ---
 
 <div class="ylw-hero">
-  <h1>SuperLeaf 文档</h1>
+  <h1>SuperLeaf 中文文档</h1>
   <p>一个本地部署的学术写作 IDE：LaTeX/Markdown 编辑、实时协作、后端原生 Agent、Skill/MCP Market、多 Agent 工作流、项目归档和批注训练数据在同一个工作区里闭环。</p>
   <div class="ylw-badge-row">
     <span class="ylw-badge">React 19</span>

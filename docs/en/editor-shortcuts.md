@@ -1,3 +1,9 @@
+---
+title: Editor Shortcuts
+parent: English
+nav_order: 1
+---
+
 # Editor Shortcuts
 
 This list documents the Overleaf-style formatting shortcuts implemented for the

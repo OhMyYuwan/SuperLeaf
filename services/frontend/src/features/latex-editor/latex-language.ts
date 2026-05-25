@@ -31,7 +31,6 @@ import {
   normalizeLatexCompletionData,
   type LatexCitationCompletion,
   type LatexCompletionData,
-  type LatexFilePathCompletion,
 } from './latex-completion-data'
 import { latexFolding } from './latex-folding'
 

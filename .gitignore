@@ -64,4 +64,6 @@ assets/default-project-template/
 # Dev process logs
 logs/
 
+# External support repositories are maintained separately.
 YuwanLabWriter.Skills/
+supports/

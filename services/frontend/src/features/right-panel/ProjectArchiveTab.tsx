@@ -69,9 +69,9 @@ export function ProjectArchiveTab() {
     try {
       await projectArchiveApi.createSnapshot(projectId, message.trim() || undefined)
       setMessage('')
-      setFeedback('本地大版本已保存。')
+      setFeedback('大版本已保存到服务器归档。')
       await load()
-      // Refresh git-based commit list as well.
+      // Refresh archive commit list as well.
       await loadCommits(projectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建项目大版本失败')
@@ -155,7 +155,7 @@ export function ProjectArchiveTab() {
         <div className="archive-section-head">
           <div>
             <h3><Archive size={14} /> 项目大版本</h3>
-            <p>本地编辑内容是 ground truth；这里把整个项目树保存为本地 Git 快照。</p>
+            <p>编辑数据库是工作源；这里把整个项目树保存为服务器端归档快照。</p>
           </div>
           <button className="small-btn" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 刷新
@@ -176,7 +176,7 @@ export function ProjectArchiveTab() {
             className="primary-btn"
             onClick={() => void createSnapshot()}
             disabled={!isOwner || saving}
-            title={isOwner ? '保存当前项目树为本地 Git commit' : '只有项目 Owner 可以创建大版本'}
+            title={isOwner ? '保存当前项目树为服务器端归档 commit' : '只有项目 Owner 可以创建大版本'}
           >
             {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />}
             保存大版本
@@ -187,7 +187,7 @@ export function ProjectArchiveTab() {
 
         {status?.binding.local_repo_path && (
           <div className="archive-meta">
-            <span>本地仓库</span>
+            <span>服务器归档路径</span>
             <code>{status.binding.local_repo_path}</code>
           </div>
         )}
@@ -197,7 +197,7 @@ export function ProjectArchiveTab() {
         <div className="archive-section-head">
           <div>
             <h3><GitBranch size={14} /> GitHub 大版本仓库</h3>
-            <p>只保存用户提供的仓库链接；上传时直接把本地 archive branch 推送过去。</p>
+            <p>只保存用户提供的仓库链接；上传时把服务器端归档 branch 推送过去。</p>
           </div>
         </div>
         <div className="archive-github-grid">
@@ -233,8 +233,8 @@ export function ProjectArchiveTab() {
       <div className="archive-section archive-history">
         <div className="archive-section-head">
           <div>
-            <h3>本地大版本历史（git）</h3>
-            <p>每个 commit 都是整个项目的原子快照。可对比、可恢复（恢复 = 新增 commit，不破坏历史）。</p>
+            <h3>大版本历史（服务器归档）</h3>
+            <p>每个 commit 都是整个项目的原子快照。可下载、可对比、可恢复（恢复 = 新增 commit，不破坏历史）。</p>
           </div>
         </div>
 
@@ -248,7 +248,7 @@ export function ProjectArchiveTab() {
               </button>
             </div>
             <span className="major-version-hint-note">
-              想做分支 / 回退 / 推送等高级操作，请在终端进入该目录直接使用 git 命令。
+              该路径位于运行后端服务的机器上，仅用于排查；普通导出请使用每个大版本里的下载按钮。
             </span>
           </div>
         )}

@@ -964,10 +964,12 @@ function NativeAgentForm({
   const mcpConfigsLoading = useNativeAgentStore((s) => s.mcpServersLoading)
   const loadMcpServers = useNativeAgentStore((s) => s.loadMcpServers)
   const mcpPresets = useMemo(() => mcpCatalog?.presets ?? [], [mcpCatalog])
+  const presetById = useMemo(() => new Map(mcpPresets.map((preset) => [preset.id, preset])), [mcpPresets])
+  const ownedPresetMcpConfigs = useMemo(() => mcpConfigs.filter((server) => Boolean(server.preset_id)), [mcpConfigs])
+  const customMcpConfigs = useMemo(() => mcpConfigs.filter((server) => !server.preset_id), [mcpConfigs])
   const selectedPresetIds = useMemo(() => new Set(mcpPresetIdsFromRuntime(draft.runtime_config)), [draft.runtime_config])
   const selectedServerIds = useMemo(() => new Set(mcpServerIdsFromRuntime(draft.runtime_config)), [draft.runtime_config])
   const legacyMcpServers = mcpServersFromRuntime(draft.runtime_config)
-  const customMcpConfigs = mcpConfigs.filter((server) => !server.preset_id)
 
   const modelInOptions = modelOptions.some((model) => model.id === draft.model)
   const effectiveModelMode = modelMode === 'select' && modelInOptions ? 'select' : 'custom'
@@ -981,7 +983,7 @@ function NativeAgentForm({
   }, [mcpConfigsLoaded, mcpConfigsLoading, loadMcpServers])
 
   useEffect(() => {
-    if (agent || mcpPresets.length === 0) return
+    if (agent || !mcpConfigsLoaded || ownedPresetMcpConfigs.length === 0) return
     setDraft((prev) => {
       if (
         mcpPresetIdsFromRuntime(prev.runtime_config).length > 0 ||
@@ -990,16 +992,16 @@ function NativeAgentForm({
       ) {
         return prev
       }
-      const defaultPresetIds = mcpPresets
-        .filter((preset) => preset.verification?.status === 'verified')
-        .map((preset) => preset.id)
-      if (defaultPresetIds.length === 0) return prev
+      const defaultServerIds = ownedPresetMcpConfigs
+        .filter((server) => server.is_enabled && presetById.get(server.preset_id)?.verification?.status === 'verified')
+        .map((server) => server.id)
+      if (defaultServerIds.length === 0) return prev
       return {
         ...prev,
-        runtime_config: writeMcpSelection(prev.runtime_config, defaultPresetIds, []),
+        runtime_config: writeMcpSelection(prev.runtime_config, [], defaultServerIds),
       }
     })
-  }, [agent, mcpPresets])
+  }, [agent, mcpConfigsLoaded, ownedPresetMcpConfigs, presetById])
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -1026,24 +1028,16 @@ function NativeAgentForm({
     }))
   }
 
-  const togglePresetMcp = (preset: McpPreset, checked: boolean) => {
+  const toggleOwnedMcp = (server: NativeMcpServerConfig, checked: boolean) => {
     const nextPresetIds = new Set(selectedPresetIds)
     const nextServerIds = new Set(selectedServerIds)
-    const configured = mcpConfigs.find((server) => server.preset_id === preset.id)
     if (checked) {
-      nextPresetIds.add(preset.id)
+      nextServerIds.add(server.id)
+      if (server.preset_id) nextPresetIds.delete(server.preset_id)
     } else {
-      nextPresetIds.delete(preset.id)
-      if (configured) nextServerIds.delete(configured.id)
+      nextServerIds.delete(server.id)
+      if (server.preset_id) nextPresetIds.delete(server.preset_id)
     }
-    updateMcpSelection(nextPresetIds, nextServerIds)
-  }
-
-  const toggleCustomMcp = (server: NativeMcpServerConfig, checked: boolean) => {
-    const nextPresetIds = new Set(selectedPresetIds)
-    const nextServerIds = new Set(selectedServerIds)
-    if (checked) nextServerIds.add(server.id)
-    else nextServerIds.delete(server.id)
     updateMcpSelection(nextPresetIds, nextServerIds)
   }
 
@@ -1139,26 +1133,27 @@ function NativeAgentForm({
       <fieldset className="skill-picker-field mcp-picker-field">
         <legend>MCP 工具</legend>
         <p className="mcp-field-note">Agent 这里只选择要开放的 MCP。命令、Env、工具白名单在团队管理的 MCP 标签页维护。</p>
-        {mcpCatalogLoading && mcpPresets.length === 0 && (
-          <div className="agent-empty-inline">正在读取 MCP catalog...</div>
+        {mcpConfigsLoading && mcpConfigs.length === 0 && (
+          <div className="agent-empty-inline">正在读取拥有的 MCP...</div>
         )}
-        {!mcpCatalogLoading && mcpPresets.length === 0 && (
-          <div className="agent-empty-inline">还没有可用的 MCP preset。请检查 supports/YuwanLabWriter.MCPs。</div>
+        {!mcpConfigsLoading && mcpConfigs.length === 0 && (
+          <div className="agent-empty-inline">还没有拥有的 MCP。先到 MCP 标签页从市场添加，或创建自定义 MCP。</div>
         )}
         <div className="skill-picker">
-          {mcpPresets.map((preset) => {
-            const configured = mcpConfigs.find((server) => server.preset_id === preset.id)
-            const legacySelected = legacyMcpServers.some((server) => server.id === preset.id && server.enabled)
-            const checked = selectedPresetIds.has(preset.id) || (configured ? selectedServerIds.has(configured.id) : false) || legacySelected
+          {ownedPresetMcpConfigs.map((server) => {
+            const preset = presetById.get(server.preset_id)
+            const legacySelected = legacyMcpServers.some((legacy) => legacy.id === server.preset_id && legacy.enabled)
+            const checked = selectedServerIds.has(server.id) || selectedPresetIds.has(server.preset_id) || legacySelected
             return (
-              <label key={preset.id} className={`skill-check ${checked ? 'selected' : ''}`}>
+              <label key={server.id} className={`skill-check ${checked ? 'selected' : ''}`}>
                 <input
                   type="checkbox"
                   checked={checked}
-                  onChange={(event) => togglePresetMcp(preset, event.target.checked)}
+                  disabled={!server.is_enabled && !checked}
+                  onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
-                <span>{mcpQualifiedName(preset)}</span>
-                <small>{mcpRegistryLabel(preset)} · {preset.category}</small>
+                <span>{ownedMcpName(server, preset)}</span>
+                <small>{preset ? `${mcpRegistryLabel(preset)} · ${preset.category}` : '已拥有 MCP'} · {server.is_enabled ? '已启用' : '已停用'}</small>
               </label>
             )
           })}
@@ -1169,17 +1164,15 @@ function NativeAgentForm({
                 <input
                   type="checkbox"
                   checked={checked}
-                  onChange={(event) => toggleCustomMcp(server, event.target.checked)}
+                  disabled={!server.is_enabled && !checked}
+                  onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
                 <span>{ownedMcpName(server)}</span>
-                <small>{server.status} · custom MCP</small>
+                <small>自定义 · {server.is_enabled ? '已启用' : '已停用'} · {server.status}</small>
               </label>
             )
           })}
         </div>
-        {customMcpConfigs.length === 0 && (
-          <div className="agent-empty-inline">没有自定义 MCP。需要自定义命令时去 MCP 标签页添加。</div>
-        )}
         {legacyMcpServers.length > 0 && (
           <div className="agent-empty-inline">检测到 {legacyMcpServers.length} 个旧版内联 MCP 配置；未改动时仍会运行，下一次修改 MCP 选择后会迁移为引用式配置。</div>
         )}
@@ -1222,10 +1215,12 @@ function McpManagementPanel({
 }) {
   const [checks, setChecks] = useState<Record<string, McpCheckState>>({})
   const [addingCustom, setAddingCustom] = useState(false)
+  const [marketSearch, setMarketSearch] = useState('')
   const configuredByPreset = new Map(servers.filter((server) => server.preset_id).map((server) => [server.preset_id, server]))
   const presetById = new Map(presets.map((preset) => [preset.id, preset]))
   const officialCount = presets.filter((preset) => preset.registry === 'official').length
   const externalCount = presets.length - officialCount
+  const filteredPresets = presets.filter((preset) => mcpMarketMatches(preset, marketSearch))
 
   const runServerProbe = async (key: string, server: NativeMcpServerConfig) => {
     setChecks((prev) => ({
@@ -1329,11 +1324,21 @@ function McpManagementPanel({
             <span>官方和外部 MCP 统一陈列；名称采用 所有者@MCP名。</span>
           </div>
         </div>
+        <label className="skill-market-search">
+          <span>搜索 MCP 市场</span>
+          <input
+            value={marketSearch}
+            onChange={(event) => setMarketSearch(event.target.value)}
+            placeholder="搜索所有者、MCP 名、描述、分类、能力"
+          />
+        </label>
         {presets.length === 0 ? (
           <div className="agent-empty-inline">还没有读取到 MCP 市场条目。</div>
+        ) : filteredPresets.length === 0 ? (
+          <div className="agent-empty-inline">没有匹配「{marketSearch.trim()}」的 MCP。</div>
         ) : (
           <div className="mcp-catalog-list">
-            {presets.map((preset) => {
+            {filteredPresets.map((preset) => {
               const configured = configuredByPreset.get(preset.id)
               return (
                 <div key={preset.id} className="mcp-catalog-row">
@@ -1352,7 +1357,7 @@ function McpManagementPanel({
                         type="button"
                         onClick={() => void onEnsurePresetServer(preset.id)}
                       >
-                        <Plus size={12} /> 添加到拥有的 MCP
+                        <Plus size={12} /> 添加 MCP
                       </button>
                     )}
                   </div>
@@ -1677,11 +1682,15 @@ function McpCheckResult({ check }: { check?: McpCheckState }) {
     return <div className="mcp-check-result error">{check.error}</div>
   }
   if (check.golden) {
+    const detail = check.golden.error
+      ? ` · ${check.golden.error}`
+      : check.golden.warnings && check.golden.warnings.length > 0
+        ? ` · ${check.golden.warnings.join('; ')}`
+        : ''
     return (
       <div className={`mcp-check-result ${check.golden.passed ? 'ok' : 'error'}`}>
         功能性检查{check.golden.passed ? '通过' : '失败'}
-        {check.golden.error ? ` · ${check.golden.error}` : ''}
-        {check.golden.raw_preview ? ` · ${check.golden.raw_preview}` : ''}
+        {detail}
       </div>
     )
   }
@@ -2447,6 +2456,31 @@ function skillMarketMatches(entry: SkillMarketplaceEntry, query: string): boolea
     entry.license,
     ...(entry.tags ?? []),
   ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(normalized)
+}
+
+function mcpMarketMatches(preset: McpPreset, query: string): boolean {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return true
+  const sourceValues = Object.values(preset.source ?? {}).filter((value) => typeof value === 'string')
+  const haystack = [
+    preset.id,
+    preset.name,
+    preset.owner,
+    preset.qualified_name,
+    mcpQualifiedName(preset),
+    mcpRegistryLabel(preset),
+    preset.registry,
+    preset.category,
+    preset.description,
+    preset.verification.status,
+    preset.verification.grade,
+    ...preset.capabilities,
+    ...sourceValues,
+  ]
+    .filter(Boolean)
     .join(' ')
     .toLowerCase()
   return haystack.includes(normalized)

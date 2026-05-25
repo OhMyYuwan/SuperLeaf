@@ -195,6 +195,18 @@ def _reliable_env_names(preset: dict[str, Any]) -> list[str]:
 
 
 def _evaluate_golden_result(*, preset_id: str, test: dict[str, Any], raw: str) -> dict[str, Any]:
+    tool_error = _extract_mcp_tool_error(raw)
+    if tool_error:
+        return {
+            "status": "failed",
+            "passed": False,
+            "preset_id": preset_id,
+            "test_id": test.get("id", ""),
+            "matched": {},
+            "warnings": _mcp_tool_error_warnings(preset_id, tool_error),
+            "error": _friendly_mcp_tool_error(preset_id, tool_error),
+        }
+
     parsed = _parse_mcp_text_result(raw)
     items = parsed if isinstance(parsed, list) else [parsed]
     title_needles = [str(item).lower() for item in test.get("expect_title_contains", [])]
@@ -231,6 +243,60 @@ def _evaluate_golden_result(*, preset_id: str, test: dict[str, Any], raw: str) -
         "warnings": warnings,
         "raw_preview": raw[:3000],
     }
+
+
+def _extract_mcp_tool_error(raw: str) -> str:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+
+    if "error" in payload:
+        return _error_to_text(payload["error"])
+
+    content = payload.get("content")
+    text_items: list[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_items.append(item["text"].strip())
+    text = " ".join(item for item in text_items if item).strip()
+    if payload.get("isError") is True:
+        return text or "MCP tool returned an error"
+    if text.startswith("Error calling tool") or "Rate limit exceeded" in text:
+        return text
+    return ""
+
+
+def _error_to_text(error: Any) -> str:
+    if isinstance(error, str):
+        return error.strip()
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    return json.dumps(error, ensure_ascii=False, default=str)
+
+
+def _friendly_mcp_tool_error(preset_id: str, message: str) -> str:
+    cleaned = " ".join(message.split())
+    lower = cleaned.lower()
+    if "rate limit exceeded" in lower:
+        if preset_id == "semantic_scholar" or "/paper/search" in lower or "semantic scholar" in lower:
+            return (
+                "Semantic Scholar API 已触发匿名限流。请在拥有的 MCP 配置中添加 "
+                "SEMANTIC_SCHOLAR_API_KEY，保存后再运行功能性检查。"
+            )
+        return "MCP 工具触发限流。请在 Env 中添加对应服务的 API Key 后重试。"
+    return f"MCP 工具调用失败：{cleaned[:500]}" if cleaned else "MCP 工具调用失败。"
+
+
+def _mcp_tool_error_warnings(preset_id: str, message: str) -> list[str]:
+    if "rate limit exceeded" in message.lower() and preset_id == "semantic_scholar":
+        return ["SEMANTIC_SCHOLAR_API_KEY is recommended for reliable Semantic Scholar searches"]
+    return []
 
 
 def _parse_mcp_text_result(raw: str) -> Any:

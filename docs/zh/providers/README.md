@@ -1,5 +1,6 @@
 ---
 title: Provider 总览
+parent: 中文文档
 nav_order: 8
 has_children: true
 ---

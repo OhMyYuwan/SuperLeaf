@@ -1,6 +1,7 @@
 ---
 title: Nanobot Provider
 parent: Provider 总览
+grand_parent: 中文文档
 nav_order: 2
 ---
 
@@ -216,5 +217,5 @@ nanobot serve --config ~/.nanobot-b/config.json
 - Nanobot 官方文档：<https://github.com/HKUDS/nanobot>
 - OpenAI 兼容 API 细节：`reference/nanobot/docs/openai-api.md`
 - 多实例部署：`reference/nanobot/docs/multiple-instances.md`
-- SuperLeaf 后端客户端实现：[nanobot_client.py](../../services/backend/app/services/nanobot_client.py)
-- SuperLeaf provider 同步逻辑：[provider_service.py](../../services/backend/app/services/provider_service.py)
+- SuperLeaf 后端客户端实现：[nanobot_client.py](../../../services/backend/app/services/nanobot_client.py)
+- SuperLeaf provider 同步逻辑：[provider_service.py](../../../services/backend/app/services/provider_service.py)

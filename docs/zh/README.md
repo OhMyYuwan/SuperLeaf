@@ -1,5 +1,6 @@
 ---
 title: 文档目录
+parent: 中文文档
 nav_order: 2
 ---
 

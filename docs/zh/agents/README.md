@@ -1,5 +1,6 @@
 ---
 title: 原生 Agent
+parent: 中文文档
 nav_order: 5
 has_children: true
 ---

@@ -1,0 +1,35 @@
+<script>
+  (function () {
+    const baseUrl = '{{ site.baseurl }}'.replace(/\/$/, '')
+
+    function withBase(path) {
+      return `${baseUrl}${path}`
+    }
+
+    function currentLanguage(pathname) {
+      const path = baseUrl && pathname.startsWith(baseUrl)
+        ? pathname.slice(baseUrl.length) || '/'
+        : pathname
+
+      if (path.startsWith('/en/')) return 'en'
+      if (path.startsWith('/zh/')) return 'zh'
+      return 'root'
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      if (document.querySelector('.sl-lang-switch')) return
+
+      const active = currentLanguage(window.location.pathname)
+      const nav = document.createElement('nav')
+      nav.className = 'sl-lang-switch'
+      nav.setAttribute('aria-label', 'Language switcher')
+      nav.innerHTML = [
+        `<a class="sl-lang-link ${active === 'zh' || active === 'root' ? 'is-active' : ''}" href="${withBase('/zh/')}">中文</a>`,
+        `<a class="sl-lang-link ${active === 'en' ? 'is-active' : ''}" href="${withBase('/en/')}">EN</a>`,
+      ].join('')
+
+      document.body.appendChild(nav)
+    })
+  })()
+</script>
+

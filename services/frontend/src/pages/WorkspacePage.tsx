@@ -51,9 +51,9 @@ const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
 const OUTLINE_COLLAPSED_HEIGHT = '44px'
 const WORKSPACE_PANEL_SIZES = {
   outer: {
-    left: { defaultSize: 16, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
-    center: { defaultSize: 64, minSize: 40 },
-    right: { defaultSize: 20, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+    left: { defaultSize: 10, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+    center: { defaultSize: 68, minSize: 40 },
+    right: { defaultSize: 22, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
   },
   inner: {
     annotation: { defaultSize: 12, minSize: 12 },

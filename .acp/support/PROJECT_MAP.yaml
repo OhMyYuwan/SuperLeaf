@@ -2,8 +2,8 @@
 #
 # Structural index for agents. Keep this file route-focused: it should answer
 # "where do I start reading?" rather than describe every implementation detail.
-# Refreshed 2026-05-25 for REQ-0182 after the SuperLeaf rename, MCP/Skill
-# support repository split, and project archive download work.
+# Refreshed 2026-05-25 for REQ-0187 after the docs site split into Chinese
+# primary docs under docs/zh and partial English docs under docs/en.
 
 project:
   name: SuperLeaf
@@ -64,20 +64,26 @@ modules:
   - id: public-docs
     path: docs
     kind: documentation
-    description: GitHub Pages product, provider, architecture, editor, collaboration, Skill, workflow, and troubleshooting docs.
+    description: GitHub Pages product docs. Chinese is maintained under docs/zh; English is partial under docs/en until the Chinese docs are complete.
     entry_files:
       - docs/index.md
-      - docs/README.md
+      - docs/zh/index.md
+      - docs/zh/README.md
+      - docs/en/index.md
+      - docs/en/editor-shortcuts.md
       - docs/_config.yml
-      - docs/architecture/overview.md
-      - docs/architecture/context-management.md
-      - docs/agents/README.md
-      - docs/agents/skills.md
-      - docs/collaboration/README.md
-      - docs/editor/README.md
-      - docs/providers/README.md
-      - docs/workflows/README.md
-      - docs/troubleshooting/README.md
+      - docs/_includes/head_custom.html
+      - docs/_sass/custom/custom.scss
+      - docs/zh/architecture/overview.md
+      - docs/zh/architecture/context-management.md
+      - docs/zh/agents/README.md
+      - docs/zh/agents/skills.md
+      - docs/zh/agents/mcps.md
+      - docs/zh/collaboration/README.md
+      - docs/zh/editor/README.md
+      - docs/zh/providers/README.md
+      - docs/zh/workflows/README.md
+      - docs/zh/troubleshooting/README.md
 
   - id: support-mcps
     path: supports/SuperLeaf.MCPs

@@ -1,5 +1,6 @@
 ---
 title: 版本历史与项目归档
+parent: 中文文档
 nav_order: 8
 ---
 

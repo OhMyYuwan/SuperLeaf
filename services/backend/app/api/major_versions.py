@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_session
@@ -97,6 +100,31 @@ def get_major_version_detail(
     }
 
 
+@router.get("/{sha}/download")
+def download_major_version(
+    sha: str,
+    project: Project = Depends(get_project_from_path),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> StreamingResponse:
+    """Download a specific project archive commit as a ZIP file."""
+    svc = ProjectArchiveService(db, project, user)
+    try:
+        archive = svc.archive_commit_zip(sha)
+    except ArchiveError as e:
+        raise HTTPException(400, str(e)) from e
+
+    quoted = quote(archive.filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}",
+    }
+    return StreamingResponse(
+        BytesIO(archive.content),
+        media_type="application/zip",
+        headers=headers,
+    )
+
+
 @router.get("/{sha}/diff", response_model=CommitDiffOut)
 def get_major_version_diff(
     sha: str,
@@ -170,4 +198,3 @@ def restore_major_version(
     except ArchiveError as e:
         raise HTTPException(400, str(e)) from e
     return ProjectArchiveSnapshotOut.model_validate(snapshot)
-

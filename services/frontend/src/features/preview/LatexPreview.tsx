@@ -9,6 +9,7 @@
  *   - 编译 button (manual trigger)
  *   - 编译器 picker
  *   - 自动编译 toggle (debounced on content change)
+ *   - Ctrl/Cmd + wheel PDF zoom
  *   - Full-log toggle
  */
 
@@ -38,6 +39,7 @@ import {
   sourceJumpFromPreviewText,
   type SourceJump,
 } from '../../services/previewSourceMap'
+import { clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -82,6 +84,12 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   const lastPdfVersionRef = useRef(pdfVersion)
   const pdfScrollTopRef = useRef(0)
   const pendingPdfScrollRestoreRef = useRef<number | null>(null)
+
+  usePdfWheelZoom({
+    scrollRef: pdfScrollRef,
+    zoom,
+    setZoom,
+  })
 
   const compileCurrentDocument = async () => {
     await saveBackendDoc(documentId)
@@ -180,6 +188,10 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
 
+  const setToolbarZoom = (updater: (current: number) => number) => {
+    setZoom((current) => clampPdfZoom(updater(current)))
+  }
+
   return (
     <div className="latex-preview" ref={containerRef}>
       <div className="latex-preview-toolbar">
@@ -234,7 +246,8 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
         <div className="latex-preview-zoom">
           <button
             className="small-btn"
-            onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
+            onClick={() => setToolbarZoom((z) => z - 0.1)}
+            aria-label="缩小 PDF"
             title="缩小"
           >
             <ZoomOut size={12} />
@@ -242,7 +255,8 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
           <span className="zoom-value">{Math.round(zoom * 100)}%</span>
           <button
             className="small-btn"
-            onClick={() => setZoom((z) => Math.min(2.5, z + 0.1))}
+            onClick={() => setToolbarZoom((z) => z + 0.1)}
+            aria-label="放大 PDF"
             title="放大"
           >
             <ZoomIn size={12} />
@@ -313,7 +327,7 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
               <Page
                 key={i}
                 pageNumber={i + 1}
-                width={pageWidth * zoom}
+                width={pageWidth * clampPdfZoom(zoom)}
                 renderTextLayer
                 renderAnnotationLayer={false}
                 className="latex-pdf-page"

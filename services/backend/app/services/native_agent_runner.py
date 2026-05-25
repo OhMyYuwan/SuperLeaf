@@ -1,7 +1,7 @@
 """Backend runner for project-scoped native Agents.
 
 The runner intentionally receives only explicit payload data assembled by
-YuwanLabWriter. It has no database/session handle and no filesystem access.
+SuperLeaf. It has no database/session handle and no filesystem access.
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ class NativeAgentRunner:
         is_write_mode = bool(write_mode) or legacy_output_mode == "write"
 
         parts = [
-            "You are a native YuwanLabWriter Agent.",
+            "You are a native SuperLeaf Agent.",
             "You must only use the user message and your assigned Agent workspace.",
             "Your only readable workspace is `.agents/` for this Agent.",
             "Use list_agent_files and read_agent_file when you need Skill files.",
@@ -177,7 +177,7 @@ class NativeAgentRunner:
             parts.extend(
                 [
                     "",
-                    "Return a direct Markdown response that can be rendered as-is in YuwanLabWriter.",
+                    "Return a direct Markdown response that can be rendered as-is in SuperLeaf.",
                     "Do NOT output JSON or split the answer into annotations, suggestions, or risks unless the user or workflow explicitly asks for that structured schema.",
                     "If you include replaceable text, put that snippet in one fenced code block and keep its source format from the user's selected text.",
                     "Keep the review concise, actionable, and anchored to the selected text.",

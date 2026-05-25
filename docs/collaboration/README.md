@@ -5,7 +5,7 @@ nav_order: 9
 
 # 实时协作
 
-YuwanLabWriter 支持多人同时编辑同一文档，体验类似 Overleaf / Google Docs。
+SuperLeaf 支持多人同时编辑同一文档，体验类似 Overleaf / Google Docs。
 
 ## 工作原理
 

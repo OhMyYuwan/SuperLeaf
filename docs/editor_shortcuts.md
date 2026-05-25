@@ -1,7 +1,7 @@
 # Editor Shortcuts
 
 This list documents the Overleaf-style formatting shortcuts implemented for the
-YuwanLabWriter source editor.
+SuperLeaf source editor.
 
 Reference inspected:
 `/Volumes/DevLayer/Reference/overleaf/services/web/frontend/js/features/source-editor/languages/latex/shortcuts.ts`
@@ -28,4 +28,4 @@ and
 - Plain text documents keep CodeMirror's default behavior and do not receive these formatting commands.
 - The Markdown italic shortcut follows Overleaf's Markdown reference and uses `_..._`.
 - The AUTO comment shortcut is intentionally minimal: it inserts only `% AUTO ` and leaves goal/keep/avoid behavior to Agent Skills.
-- The implementation is local to YuwanLabWriter; the Overleaf code was used only as read-only behavioral reference.
+- The implementation is local to SuperLeaf; the Overleaf code was used only as read-only behavioral reference.

@@ -37,6 +37,7 @@ import { useFilesystemStore } from '../stores/filesystemStore'
 import { useViewStore } from '../stores/viewStore'
 import { useProjectStore } from '../stores/projectStore'
 import { useUserStore } from '../stores/userStore'
+import { useRecentDocStore } from '../stores/recentDocStore'
 import { resetProjectScopedStores } from '../stores/_reset'
 import { BackendError } from '../services/backendApi'
 import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesystemApi'
@@ -145,6 +146,7 @@ export function WorkspacePage() {
   const loadingBibDocIds = useRef(new Set<string>())
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
+  const autoOpenAttemptedFor = useRef<string | null>(null)
 
   const handlePanelLayout = (sizes: number[]) => {
     let panelIndex = 0
@@ -274,11 +276,41 @@ export function WorkspacePage() {
       console.error('[workspace] initial loadBackendDoc failed', err)
       if (err instanceof BackendError && (err.status === 400 || err.status === 404)) {
         useDocumentStore.setState({ activeDocumentId: null })
+        useRecentDocStore.getState().forget(projectId)
       }
     })
     // documents intentionally excluded — we only want this on mount / activeId change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDocumentId, projectReady])
+
+  // Remember the active doc per project so re-entering opens the same one.
+  useEffect(() => {
+    if (!projectReady || !activeDocumentId) return
+    useRecentDocStore.getState().record(projectId, activeDocumentId)
+  }, [activeDocumentId, projectReady, projectId])
+
+  // Auto-open the last active doc (or a sensible default) when entering a
+  // project with a blank editor. Only attempted once per project entry so the
+  // user closing the doc doesn't immediately reopen it.
+  useEffect(() => {
+    if (!projectReady || !tree) return
+    if (activeDocumentId) return
+    if (autoOpenAttemptedFor.current === projectId) return
+    autoOpenAttemptedFor.current = projectId
+
+    const remembered = useRecentDocStore.getState().get(projectId)
+    const target = (remembered && findTreeDoc(tree.root, remembered))
+      ? remembered
+      : pickDefaultDoc(tree.root)
+    if (!target) return
+
+    void loadBackendDoc(target).catch((err) => {
+      console.warn('[workspace] auto-open last doc failed', err)
+      if (err instanceof BackendError && (err.status === 400 || err.status === 404)) {
+        useRecentDocStore.getState().forget(projectId)
+      }
+    })
+  }, [projectReady, tree, activeDocumentId, projectId, loadBackendDoc])
 
   // Multi-device catch-up: when the tab regains focus or visibility, hydrate
   // annotations only if the SSE stream had a disconnect since the last hydrate.
@@ -325,6 +357,7 @@ export function WorkspacePage() {
     const switchingProject = previousProjectId !== projectId
     if (switchingProject) {
       resetProjectScopedStores()
+      autoOpenAttemptedFor.current = null
     }
     projectStore.setCurrent(projectId)
     if (!projectStore.loaded && !projectStore.loading) {
@@ -757,4 +790,40 @@ function isCitationSourceDoc(doc: Document): boolean {
 
 function isBibDocumentName(name: string): boolean {
   return name.toLowerCase().endsWith('.bib')
+}
+
+function findTreeDoc(folder: TreeFolder, docId: string): TreeDoc | null {
+  for (const doc of folder.docs) {
+    if (doc.id === docId) return doc
+  }
+  for (const child of folder.folders) {
+    const hit = findTreeDoc(child, docId)
+    if (hit) return hit
+  }
+  return null
+}
+
+function pickDefaultDoc(root: TreeFolder): string | null {
+  const allDocs = collectAllDocs(root).filter((d) => !isBibDocumentName(d.name))
+  if (allDocs.length === 0) return null
+
+  const named = (target: string) =>
+    allDocs.find((d) => d.name.toLowerCase() === target)
+  const byExt = (ext: string) =>
+    allDocs.find((d) => d.name.toLowerCase().endsWith(ext))
+
+  return (
+    named('main.tex')?.id ??
+    named('main.md')?.id ??
+    byExt('.tex')?.id ??
+    byExt('.md')?.id ??
+    allDocs[0].id
+  )
+}
+
+function collectAllDocs(folder: TreeFolder): TreeDoc[] {
+  return [
+    ...folder.docs,
+    ...folder.folders.flatMap((child) => collectAllDocs(child)),
+  ]
 }

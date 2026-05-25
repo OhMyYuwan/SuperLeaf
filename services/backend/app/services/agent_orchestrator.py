@@ -26,6 +26,7 @@ from ..secrets_vault import decrypt
 from .agent_registry_service import AgentRegistryService
 from .agent_workspace_service import AgentWorkspaceService
 from .dify_client import DifyClient
+from .mcp_config_service import McpConfigService
 from .nanobot_client import NanobotClient
 from .native_agent_runner import NativeAgentRunner, NativeAgentRuntimeConfig, NativeRunPayload
 from .provider_service import ProviderService
@@ -1012,6 +1013,10 @@ class WorkflowOrchestrator:
             user_id=ctx.workflow_def.user_id,
         )
         workspace_root = AgentWorkspaceService(self.db).ensure_workspace(native_agent)
+        runtime_config = McpConfigService(self.db).resolve_runtime_config(
+            user_id=ctx.workflow_def.user_id,
+            runtime_config=native_agent.runtime_config or {},
+        )
         runner = NativeAgentRunner(
             NativeAgentRuntimeConfig(
                 agent_id=native_agent.id,
@@ -1022,9 +1027,10 @@ class WorkflowOrchestrator:
                 instructions=native_agent.instructions,
                 skills=skills,
                 workspace_root=str(workspace_root),
-                temperature=float((native_agent.runtime_config or {}).get("temperature", 0.2)),
-                max_tokens=int((native_agent.runtime_config or {}).get("max_tokens", 4000)),
-                max_tool_rounds=int((native_agent.runtime_config or {}).get("max_tool_rounds", 8)),
+                temperature=float(runtime_config.get("temperature", 0.2)),
+                max_tokens=int(runtime_config.get("max_tokens", 4000)),
+                max_tool_rounds=int(runtime_config.get("max_tool_rounds", 8)),
+                runtime_config=runtime_config,
             )
         )
         accumulated_text: list[str] = []

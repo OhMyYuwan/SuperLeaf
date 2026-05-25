@@ -6,7 +6,7 @@ nav_order: 3
 
 # Dify Provider
 
-Dify 可以作为外部 Agent / workflow 服务接入 YuwanLabWriter。YuwanLabWriter 后端负责保存 endpoint 和 API key，并把 Dify 的输出转成批注、建议或普通消息。
+Dify 可以作为外部 Agent / workflow 服务接入 SuperLeaf。SuperLeaf 后端负责保存 endpoint 和 API key，并把 Dify 的输出转成批注、建议或普通消息。
 
 ## 本地 Dify
 
@@ -34,9 +34,9 @@ Dify Cloud 的默认 API 根地址通常是：
 https://api.dify.ai/v1
 ```
 
-在 Dify 应用页面复制 API key 后，回到 YuwanLabWriter 添加 Provider。
+在 Dify 应用页面复制 API key 后，回到 SuperLeaf 添加 Provider。
 
-## 在 YuwanLabWriter 中添加
+## 在 SuperLeaf 中添加
 
 | 字段 | 本地示例 | Cloud 示例 |
 |---|---|---|
@@ -54,7 +54,7 @@ https://api.dify.ai/v1
 | Chatflow | 适合多轮对话 |
 | Agent Chat | 适合工具型对话 |
 
-YuwanLabWriter 更推荐把稳定写作能力沉淀为原生 Agent + Skill；Dify 更适合接入已有应用或团队既有 workflow。
+SuperLeaf 更推荐把稳定写作能力沉淀为原生 Agent + Skill；Dify 更适合接入已有应用或团队既有 workflow。
 
 ## 输出建议
 
@@ -79,4 +79,4 @@ YuwanLabWriter 更推荐把稳定写作能力沉淀为原生 Agent + Skill；Dif
 - `401`：API key 不正确或应用未发布。
 - `404`：endpoint 路径错误，确认是否包含 `/v1`。
 - 超时：Dify 服务未启动，或本地 Docker 资源不足。
-- 输出不进批注：检查 Dify 返回格式是否符合 YuwanLabWriter 解析约定。
+- 输出不进批注：检查 Dify 返回格式是否符合 SuperLeaf 解析约定。

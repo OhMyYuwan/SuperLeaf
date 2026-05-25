@@ -1,6 +1,6 @@
 # Code of Conduct
 
-YuwanLabWriter should be a respectful and productive space for people working on academic writing tools, collaboration systems, and AI-assisted editing.
+SuperLeaf should be a respectful and productive space for people working on academic writing tools, collaboration systems, and AI-assisted editing.
 
 ## Expected Behavior
 

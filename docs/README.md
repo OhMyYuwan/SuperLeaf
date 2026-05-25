@@ -3,7 +3,7 @@ title: 文档目录
 nav_order: 2
 ---
 
-# YuwanLabWriter 教程
+# SuperLeaf 教程
 
 这份文档面向使用者和开发者，目标是让你能从“本地启动”一路走到“配置 Agent、装配 Skill、运行工作流、处理批注和导出训练数据”。
 

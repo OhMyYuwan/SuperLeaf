@@ -6,7 +6,7 @@ nav_order: 6
 
 # 批注训练数据
 
-YuwanLabWriter 会记录并保留与 Agent 交互产生的数据，包括批注、建议、风险提示、用户评价、采用情况、标签和是否加入训练数据集。这些数据用于回看审稿过程、导出训练样本，以及后续构建项目级写作知识库。
+SuperLeaf 会记录并保留与 Agent 交互产生的数据，包括批注、建议、风险提示、用户评价、采用情况、标签和是否加入训练数据集。这些数据用于回看审稿过程、导出训练样本，以及后续构建项目级写作知识库。
 
 ## 保留了哪些数据
 
@@ -64,7 +64,7 @@ python3 docs/skills/annotation-training-csv/scripts/extract_training_csv.py \
 如果要把这个 Skill 复制到其他项目，可以用 npm tooling 下载：
 
 ```bash
-npm exec --yes degit OhMyYuwan/YuwanLabWriter/docs/skills/annotation-training-csv ./annotation-training-csv
+npm exec --yes degit OhMyYuwan/SuperLeaf/docs/skills/annotation-training-csv ./annotation-training-csv
 ```
 
 如果仓库是 private，请先用 GitHub 身份 clone 仓库，再复制 `docs/skills/annotation-training-csv/`。

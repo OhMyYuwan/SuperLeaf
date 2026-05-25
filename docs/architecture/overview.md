@@ -1,6 +1,6 @@
 # 系统架构
 
-YuwanLabWriter 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
+SuperLeaf 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
 
 ## 服务架构
 
@@ -93,7 +93,7 @@ Project
 - **CachedWorkflow**：外部 provider 同步出的可运行 Agent / workflow 投影
 - **NativeAgentCredential**：原生 Agent 运行凭证，加密存储
 - **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider；运行时只能读取用户装配的 Skill
-- **Skill**：原生 Agent 可引用的私有、共享或市场 Skill；内容加密存储，市场索引来自官方 `YuwanLabWriter.Skills` catalog
+- **Skill**：原生 Agent 可引用的私有、共享或市场 Skill；内容加密存储，市场索引来自官方 `SuperLeaf.Skills` catalog
 - **SkillHidden**：用户本地 Skill 库隐藏/移除状态
 - **WorkflowDefinition**：用户自定义的多节点工作流
 - **WorkflowRun**：工作流运行记录

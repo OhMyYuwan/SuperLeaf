@@ -136,7 +136,7 @@ export function ProjectListPage() {
     <div className="project-list-page">
       <header className="project-list-header">
         <div>
-          <div className="brand">YuwanLabWriter</div>
+          <div className="brand">SuperLeaf</div>
           <div className="subtitle">选择或创建一个项目</div>
         </div>
         <div className="project-list-header-actions">

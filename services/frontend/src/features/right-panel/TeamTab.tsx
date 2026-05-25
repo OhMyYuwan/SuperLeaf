@@ -881,11 +881,19 @@ function isOfficialRecommendedMcp(preset?: McpPreset): boolean {
 }
 
 function OfficialMcpBadge() {
+  return <OfficialBadge ariaLabel="官方推荐 MCP" title="官方推荐 MCP" />
+}
+
+function OfficialSkillBadge() {
+  return <OfficialBadge ariaLabel="官方 Skill" title="官方 Skill" />
+}
+
+function OfficialBadge({ ariaLabel, title }: { ariaLabel: string; title: string }) {
   return (
-    <button type="button" className="mcp-official-badge" aria-label="官方推荐 MCP" title="官方推荐 MCP">
+    <span className="official-badge" aria-label={ariaLabel} title={title}>
       <Medal size={12} />
       官方
-    </button>
+    </span>
   )
 }
 
@@ -1123,7 +1131,7 @@ function NativeAgentForm({
                     }}
                   />
                   <span>{skillLabel(skill)}</span>
-                  <small>{skillPillLabel(skill)}</small>
+                  {skill.source === 'marketplace' ? <OfficialSkillBadge /> : <small>{skillPillLabel(skill)}</small>}
                 </label>
               )
             })}
@@ -1818,7 +1826,11 @@ function SkillManagementPanel({
                 <span>{skill.description || '无描述'}</span>
               </div>
               <div className="skill-market-actions">
-                <span className={`native-pill ${skillPillTone(skill)}`}>{skillPillLabel(skill, pendingShareIds.has(skill.id))}</span>
+                {skill.source === 'marketplace' ? (
+                  <OfficialSkillBadge />
+                ) : (
+                  <span className={`native-pill ${skillPillTone(skill)}`}>{skillPillLabel(skill, pendingShareIds.has(skill.id))}</span>
+                )}
                 <button
                   className="ghost-btn small danger"
                   type="button"
@@ -1916,9 +1928,8 @@ function SkillManagementPanel({
                     <small>{entry.installed ? `已在本地 Skill 库登记 v${entry.installed_version || entry.version}` : entry.install_command}</small>
                   </div>
                   <div className="skill-market-actions">
-                    <span className={`native-pill ${entry.installed ? 'ok' : 'neutral'}`}>
-                      {entry.installed ? '本地' : '市场'}
-                    </span>
+                    <OfficialSkillBadge />
+                    {entry.installed && <span className="native-pill ok">本地</span>}
                     {entry.installed && entry.update_available && (
                       <button
                         className="ghost-btn small"

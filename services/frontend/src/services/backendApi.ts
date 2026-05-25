@@ -446,6 +446,10 @@ export interface NativeMcpServerConfigPatch {
 export interface McpPreset {
   id: string
   name: string
+  owner?: string
+  qualified_name?: string
+  registry?: 'official' | 'external' | string
+  official_recommended?: boolean
   description: string
   category: string
   capabilities: string[]
@@ -488,6 +492,7 @@ export interface McpCatalog {
   name: string
   version: string
   updated_at: string
+  registries?: Array<{ id: string; name: string; description?: string }>
   presets: McpPreset[]
 }
 

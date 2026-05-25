@@ -15,6 +15,7 @@ import {
   CircleAlert,
   Loader2,
   MessageSquare,
+  Medal,
   Plus,
   RefreshCw,
   Trash2,
@@ -848,7 +849,7 @@ function writeMcpSelection(
 function serverFromPreset(preset: McpPreset): NativeAgentMcpServer {
   return {
     id: preset.id,
-    name: preset.name,
+    name: mcpQualifiedName(preset),
     enabled: true,
     transport: preset.transport.type || 'stdio',
     command: preset.transport.command,
@@ -858,9 +859,49 @@ function serverFromPreset(preset: McpPreset): NativeAgentMcpServer {
   }
 }
 
-function mcpRiskLabel(preset: McpPreset): string {
-  const grade = preset.verification?.grade ? ` · ${preset.verification.grade}` : ''
-  return `${preset.category} · ${preset.risk?.level || 'unknown'}${grade}`
+function mcpQualifiedName(preset: McpPreset): string {
+  if (preset.qualified_name?.trim()) return preset.qualified_name.trim()
+  if (preset.name.includes('@')) return preset.name
+  const owner = preset.owner?.trim() || mcpOwnerFromSource(preset) || 'external'
+  return `${owner}@${preset.name}`
+}
+
+function mcpOwnerFromSource(preset: McpPreset): string {
+  const repo = preset.source?.repo
+  if (typeof repo === 'string' && repo.includes('/')) return repo.split('/')[0]
+  return ''
+}
+
+function mcpRegistryLabel(preset: McpPreset): string {
+  return preset.registry === 'official' ? '官方' : '外部'
+}
+
+function isOfficialRecommendedMcp(preset?: McpPreset): boolean {
+  return Boolean(preset?.official_recommended || preset?.registry === 'official')
+}
+
+function OfficialMcpBadge() {
+  return (
+    <button type="button" className="mcp-official-badge" aria-label="官方推荐 MCP" title="官方推荐 MCP">
+      <Medal size={12} />
+      官方
+    </button>
+  )
+}
+
+function ownedMcpName(server: NativeMcpServerConfig, preset?: McpPreset): string {
+  if (preset) return mcpQualifiedName(preset)
+  if (server.name.includes('@')) return server.name
+  const base = (server.name || server.command || 'custom-mcp').trim()
+  return `local@${base}`
+}
+
+function goldenPassed(check?: McpCheckState): boolean {
+  return Boolean(check?.golden?.passed)
+}
+
+function connectivityPassed(check?: McpCheckState): boolean {
+  return check?.probe?.status === 'ok'
 }
 
 function mcpPresetSourceLabel(preset: McpPreset): string {
@@ -1116,8 +1157,8 @@ function NativeAgentForm({
                   checked={checked}
                   onChange={(event) => togglePresetMcp(preset, event.target.checked)}
                 />
-                <span>{preset.name}</span>
-                <small>{configured ? configured.status : preset.verification?.status || 'preset'} · {preset.category}</small>
+                <span>{mcpQualifiedName(preset)}</span>
+                <small>{mcpRegistryLabel(preset)} · {preset.category}</small>
               </label>
             )
           })}
@@ -1130,7 +1171,7 @@ function NativeAgentForm({
                   checked={checked}
                   onChange={(event) => toggleCustomMcp(server, event.target.checked)}
                 />
-                <span>{server.name || server.command}</span>
+                <span>{ownedMcpName(server)}</span>
                 <small>{server.status} · custom MCP</small>
               </label>
             )
@@ -1182,26 +1223,9 @@ function McpManagementPanel({
   const [checks, setChecks] = useState<Record<string, McpCheckState>>({})
   const [addingCustom, setAddingCustom] = useState(false)
   const configuredByPreset = new Map(servers.filter((server) => server.preset_id).map((server) => [server.preset_id, server]))
-  const customServers = servers.filter((server) => !server.preset_id)
-
-  const runPresetProbe = async (key: string, preset: McpPreset) => {
-    setChecks((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], busy: 'probe', error: undefined },
-    }))
-    try {
-      const probe = await nativeAgentApi.mcp.probe({ preset_id: preset.id, server: serverFromPreset(preset) })
-      setChecks((prev) => ({
-        ...prev,
-        [key]: { ...prev[key], busy: null, probe, error: undefined },
-      }))
-    } catch (err) {
-      setChecks((prev) => ({
-        ...prev,
-        [key]: { ...prev[key], busy: null, error: errorMessage(err) },
-      }))
-    }
-  }
+  const presetById = new Map(presets.map((preset) => [preset.id, preset]))
+  const officialCount = presets.filter((preset) => preset.registry === 'official').length
+  const externalCount = presets.length - officialCount
 
   const runServerProbe = async (key: string, server: NativeMcpServerConfig) => {
     setChecks((prev) => ({
@@ -1217,7 +1241,7 @@ function McpManagementPanel({
     } else {
       setChecks((prev) => ({
         ...prev,
-        [key]: { ...prev[key], busy: null, error: 'MCP 探测失败，请检查配置' },
+        [key]: { ...prev[key], busy: null, error: 'MCP 连通性检查失败，请检查配置' },
       }))
     }
   }
@@ -1246,7 +1270,7 @@ function McpManagementPanel({
   return (
     <section className="mcp-management-panel">
       <div className="tab-header-row">
-        <span>MCP 管理：{presets.length} 个 catalog preset · {servers.length} 个已配置 · {customServers.length} 个自定义</span>
+        <span>MCP：{presets.length} 个市场条目 · {servers.length} 个拥有 · 官方 {officialCount} · 外部 {externalCount}</span>
         <button className="small-btn" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 刷新
         </button>
@@ -1256,86 +1280,8 @@ function McpManagementPanel({
       <section className="mcp-library-section">
         <div className="skill-market-header">
           <div>
-            <strong>内置 MCP Catalog</strong>
-            <span>来自 supports/YuwanLabWriter.MCPs；这里负责命令、Env、工具白名单和验收测试。</span>
-          </div>
-        </div>
-        {presets.length === 0 ? (
-          <div className="agent-empty-inline">还没有读取到 MCP preset。</div>
-        ) : (
-          <div className="mcp-catalog-list">
-            {presets.map((preset) => {
-              const key = `preset:${preset.id}`
-              const configured = configuredByPreset.get(preset.id)
-              const check = checks[key]
-              return (
-                <div key={preset.id} className="mcp-catalog-row">
-                  <div className="skill-market-copy">
-                    <strong>{preset.name}</strong>
-                    <span>{preset.description}</span>
-                    <small>{mcpRiskLabel(preset)} · {mcpPresetSourceLabel(preset)}</small>
-                  </div>
-                  <div className="mcp-row-actions">
-                    <span className={`native-pill ${preset.verification?.status === 'verified' ? 'ok' : 'neutral'}`}>
-                      {preset.verification?.status || 'unverified'}
-                    </span>
-                    {configured ? (
-                      <span className={`native-pill ${configured.status === 'ok' ? 'ok' : configured.status === 'error' ? 'error' : 'neutral'}`}>
-                        已配置 · {configured.status}
-                      </span>
-                    ) : (
-                      <button
-                        className="ghost-btn small"
-                        type="button"
-                        disabled={Boolean(check?.busy)}
-                        onClick={() => void onEnsurePresetServer(preset.id)}
-                      >
-                        <Plus size={12} /> 添加到 MCP 库
-                      </button>
-                    )}
-                    <button
-                      className="ghost-btn small"
-                      type="button"
-                      disabled={Boolean(check?.busy)}
-                      onClick={() => configured ? void runServerProbe(key, configured) : void runPresetProbe(key, preset)}
-                    >
-                      {check?.busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
-                      Probe
-                    </button>
-                    <button
-                      className="ghost-btn small"
-                      type="button"
-                      disabled={Boolean(check?.busy) || (preset.verification?.golden_tests?.length ?? 0) === 0}
-                      onClick={() => void runGoldenTest(key, preset, configured)}
-                    >
-                      {check?.busy === 'golden' ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />}
-                      Golden
-                    </button>
-                  </div>
-                  {configured && (
-                    <McpServerEditor
-                      server={configured}
-                      preset={preset}
-                      check={check}
-                      onUpdate={onUpdateServer}
-                      onDelete={onDeleteServer}
-                      onProbe={() => runServerProbe(key, configured)}
-                      onGolden={() => runGoldenTest(key, preset, configured)}
-                    />
-                  )}
-                  <McpCheckResult check={check} />
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="mcp-library-section">
-        <div className="skill-market-header">
-          <div>
-            <strong>自定义 MCP</strong>
-            <span>适配任意 GitHub MCP server：填写启动命令、参数、Env 和允许暴露的工具。</span>
+            <strong>拥有的 MCP</strong>
+            <span>这里配置已添加的官方、外部和自定义 MCP；Agent 面板只负责勾选使用。</span>
           </div>
           <button className="ghost-btn small" type="button" onClick={() => setAddingCustom((value) => !value)}>
             <Plus size={12} /> 自定义 MCP
@@ -1351,42 +1297,65 @@ function McpManagementPanel({
             }}
           />
         )}
-        {customServers.length === 0 ? (
-          <div className="agent-empty-inline">还没有自定义 MCP。常用 MCP 建议先沉淀到 supports/YuwanLabWriter.MCPs。</div>
+        {servers.length === 0 ? (
+          <div className="agent-empty-inline">还没有拥有的 MCP。可以从 MCP 市场添加，也可以在这里添加自定义 MCP。</div>
         ) : (
           <div className="mcp-catalog-list">
-            {customServers.map((server) => {
+            {servers.map((server) => {
               const key = `server:${server.id}`
               const check = checks[key]
+              const preset = server.preset_id ? presetById.get(server.preset_id) : undefined
               return (
-                <div key={server.id} className="mcp-catalog-row">
+                <McpOwnedServerRow
+                  key={server.id}
+                  server={server}
+                  preset={preset}
+                  check={check}
+                  onUpdate={onUpdateServer}
+                  onDelete={onDeleteServer}
+                  onProbe={() => runServerProbe(key, server)}
+                  onGolden={preset ? () => runGoldenTest(key, preset, server) : undefined}
+                />
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="mcp-library-section">
+        <div className="skill-market-header">
+          <div>
+            <strong>MCP 市场</strong>
+            <span>官方和外部 MCP 统一陈列；名称采用 所有者@MCP名。</span>
+          </div>
+        </div>
+        {presets.length === 0 ? (
+          <div className="agent-empty-inline">还没有读取到 MCP 市场条目。</div>
+        ) : (
+          <div className="mcp-catalog-list">
+            {presets.map((preset) => {
+              const configured = configuredByPreset.get(preset.id)
+              return (
+                <div key={preset.id} className="mcp-catalog-row">
                   <div className="skill-market-copy">
-                    <strong>{server.name || server.command}</strong>
-                    <span>{server.is_enabled ? '已启用' : '已停用'} · {server.status} · {server.env_keys.length ? `Env: ${server.env_keys.join(', ')}` : '无 Env'}</span>
-                    <small>{server.command} {joinArgs(server.args)}</small>
+                    <strong>{mcpQualifiedName(preset)}</strong>
+                    <span>{preset.description}</span>
+                    <small>{mcpRegistryLabel(preset)} · {preset.category} · {mcpPresetSourceLabel(preset)}</small>
                   </div>
                   <div className="mcp-row-actions">
-                    <span className={`native-pill ${server.status === 'ok' ? 'ok' : server.status === 'error' ? 'error' : 'neutral'}`}>
-                      {server.status}
-                    </span>
-                    <button
-                      className="ghost-btn small"
-                      type="button"
-                      disabled={Boolean(check?.busy) || !server.is_enabled}
-                      onClick={() => void runServerProbe(key, server)}
-                    >
-                      {check?.busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
-                      Probe
-                    </button>
+                    {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
+                    {configured ? (
+                      <span className="native-pill neutral">已拥有</span>
+                    ) : (
+                      <button
+                        className="ghost-btn small"
+                        type="button"
+                        onClick={() => void onEnsurePresetServer(preset.id)}
+                      >
+                        <Plus size={12} /> 添加到拥有的 MCP
+                      </button>
+                    )}
                   </div>
-                  <McpServerEditor
-                    server={server}
-                    check={check}
-                    onUpdate={onUpdateServer}
-                    onDelete={onDeleteServer}
-                    onProbe={() => runServerProbe(key, server)}
-                  />
-                  <McpCheckResult check={check} />
                 </div>
               )
             })}
@@ -1397,7 +1366,7 @@ function McpManagementPanel({
   )
 }
 
-function McpServerEditor({
+function McpOwnedServerRow({
   server,
   preset,
   check,
@@ -1414,8 +1383,83 @@ function McpServerEditor({
   onProbe: () => Promise<void>
   onGolden?: () => Promise<void>
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const connectivityOk = connectivityPassed(check)
+  const functionalityOk = goldenPassed(check)
+
+  return (
+    <div className={`mcp-catalog-row ${expanded ? 'expanded' : ''}`}>
+      <div className="skill-market-copy">
+        <strong>{ownedMcpName(server, preset)}</strong>
+        <span>
+          {preset ? mcpRegistryLabel(preset) : '自定义'} · {server.is_enabled ? '已启用' : '已停用'} · {server.env_keys.length ? `Env: ${server.env_keys.join(', ')}` : '无 Env'}
+        </span>
+        <small>{server.command} {joinArgs(server.args)}</small>
+      </div>
+      <div className="mcp-row-actions">
+        {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
+        <button
+          className={`ghost-btn small ${connectivityOk ? 'success' : ''}`}
+          type="button"
+          disabled={Boolean(check?.busy) || !server.is_enabled}
+          onClick={() => void onProbe()}
+        >
+          {check?.busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+          连通性
+        </button>
+        {onGolden && (
+          <button
+            className={`ghost-btn small ${functionalityOk ? 'success' : ''}`}
+            type="button"
+            onClick={() => void onGolden()}
+            disabled={Boolean(check?.busy)}
+          >
+            {check?.busy === 'golden' ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />}
+            功能性
+          </button>
+        )}
+        <button className="ghost-btn small" type="button" onClick={() => setExpanded((value) => !value)}>
+          {expanded ? '收起配置' : '配置'}
+        </button>
+      </div>
+      {expanded && (
+        <McpServerEditor
+          server={server}
+          preset={preset}
+          check={check}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          onProbe={onProbe}
+          onGolden={onGolden}
+          onSaved={() => setExpanded(false)}
+        />
+      )}
+      <McpCheckResult check={check} />
+    </div>
+  )
+}
+
+function McpServerEditor({
+  server,
+  preset,
+  check,
+  onUpdate,
+  onDelete,
+  onProbe,
+  onGolden,
+  onSaved,
+}: {
+  server: NativeMcpServerConfig
+  preset?: McpPreset
+  check?: McpCheckState
+  onUpdate: (id: string, patch: NativeMcpServerConfigPatch) => Promise<NativeMcpServerConfig | null>
+  onDelete: (id: string) => Promise<boolean>
+  onProbe: () => Promise<void>
+  onGolden?: () => Promise<void>
+  onSaved?: () => void
+}) {
   const [draft, setDraft] = useState({
-    name: server.name,
+    name: ownedMcpName(server, preset),
     description: server.description,
     command: server.command,
     args: joinArgs(server.args),
@@ -1427,7 +1471,7 @@ function McpServerEditor({
 
   useEffect(() => {
     setDraft({
-      name: server.name,
+      name: ownedMcpName(server, preset),
       description: server.description,
       command: server.command,
       args: joinArgs(server.args),
@@ -1435,7 +1479,7 @@ function McpServerEditor({
       envText: '',
       isEnabled: server.is_enabled,
     })
-  }, [server.id, server.updated_at])
+  }, [server.id, server.updated_at, preset?.qualified_name, preset?.name, preset?.owner])
 
   const save = async () => {
     setSaving(true)
@@ -1449,14 +1493,17 @@ function McpServerEditor({
     }
     if (draft.envText.trim()) patch.env = parseEnvLines(draft.envText)
     const updated = await onUpdate(server.id, patch)
-    if (updated) setDraft((prev) => ({ ...prev, envText: '' }))
+    if (updated) {
+      setDraft((prev) => ({ ...prev, envText: '' }))
+      onSaved?.()
+    }
     setSaving(false)
   }
 
   return (
     <div className="mcp-server-grid mcp-config-editor">
       <label>
-        <span>Name</span>
+        <span>Name（owner@MCP）</span>
         <input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} />
       </label>
       <label>
@@ -1502,12 +1549,22 @@ function McpServerEditor({
           {saving ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />}
           保存配置
         </button>
-        <button type="button" className="ghost-btn small" onClick={() => void onProbe()} disabled={Boolean(check?.busy) || !server.is_enabled}>
-          <RefreshCw size={12} /> Probe
+        <button
+          type="button"
+          className={`ghost-btn small ${connectivityPassed(check) ? 'success' : ''}`}
+          onClick={() => void onProbe()}
+          disabled={Boolean(check?.busy) || !server.is_enabled}
+        >
+          <RefreshCw size={12} /> 连通性
         </button>
         {onGolden && (
-          <button type="button" className="ghost-btn small" onClick={() => void onGolden()} disabled={Boolean(check?.busy)}>
-            <CheckCircle2 size={12} /> Golden
+          <button
+            type="button"
+            className={`ghost-btn small ${goldenPassed(check) ? 'success' : ''}`}
+            onClick={() => void onGolden()}
+            disabled={Boolean(check?.busy)}
+          >
+            <CheckCircle2 size={12} /> 功能性
           </button>
         )}
         <button type="button" className="ghost-btn small danger" onClick={() => void onDelete(server.id)}>
@@ -1526,7 +1583,8 @@ function CustomMcpForm({
   onCancel: () => void
 }) {
   const [draft, setDraft] = useState({
-    name: '',
+    owner: 'local',
+    mcpName: '',
     description: '',
     command: 'npx',
     args: '-y @modelcontextprotocol/server-everything',
@@ -1543,10 +1601,12 @@ function CustomMcpForm({
       setError('Command 不能为空')
       return
     }
+    const owner = draft.owner.trim() || 'local'
+    const mcpName = draft.mcpName.trim() || draft.command.trim()
     setSaving(true)
     const created = await onSave({
       source: 'custom',
-      name: draft.name.trim() || draft.command.trim(),
+      name: `${owner}@${mcpName}`,
       description: draft.description.trim(),
       transport: 'stdio',
       command: draft.command.trim(),
@@ -1563,8 +1623,12 @@ function CustomMcpForm({
     <form className="native-agent-inline-form mcp-custom-form" onSubmit={submit}>
       <div className="mcp-server-grid">
         <label>
-          <span>Name</span>
-          <input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} placeholder="例如 Context7" />
+          <span>Owner</span>
+          <input value={draft.owner} onChange={(event) => setDraft((prev) => ({ ...prev, owner: event.target.value }))} placeholder="local" />
+        </label>
+        <label>
+          <span>MCP 名称</span>
+          <input value={draft.mcpName} onChange={(event) => setDraft((prev) => ({ ...prev, mcpName: event.target.value }))} placeholder="context7" />
         </label>
         <label>
           <span>Command</span>
@@ -1615,7 +1679,7 @@ function McpCheckResult({ check }: { check?: McpCheckState }) {
   if (check.golden) {
     return (
       <div className={`mcp-check-result ${check.golden.passed ? 'ok' : 'error'}`}>
-        Golden test {check.golden.passed ? 'passed' : 'failed'}
+        功能性检查{check.golden.passed ? '通过' : '失败'}
         {check.golden.error ? ` · ${check.golden.error}` : ''}
         {check.golden.raw_preview ? ` · ${check.golden.raw_preview}` : ''}
       </div>
@@ -1626,7 +1690,7 @@ function McpCheckResult({ check }: { check?: McpCheckState }) {
     const missing = check.probe.missing_tools.length > 0 ? ` · missing: ${check.probe.missing_tools.join(', ')}` : ''
     return (
       <div className={`mcp-check-result ${check.probe.status === 'ok' ? 'ok' : 'warn'}`}>
-        {check.probe.status} · {check.probe.tools.length} tools{missing}{warning}
+        连通性 {check.probe.status} · {check.probe.tools.length} tools{missing}{warning}
       </div>
     )
   }

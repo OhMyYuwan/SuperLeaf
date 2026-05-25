@@ -1,6 +1,10 @@
 {
   "id": "semantic_scholar",
-  "name": "Semantic Scholar",
+  "owner": "akapet00",
+  "qualified_name": "akapet00@semantic-scholar",
+  "registry": "external",
+  "official_recommended": true,
+  "name": "akapet00@semantic-scholar",
   "description": "Reliable paper metadata, citation lookup, references, and BibTeX export through the Semantic Scholar API.",
   "category": "academic_research",
   "capabilities": [
@@ -31,7 +35,7 @@
       "required": false,
       "required_for_reliable_use": true,
       "secret": true,
-      "description": "Recommended for stable rate limits. Human acceptance for built-in search should use an API key."
+      "description": "Recommended for stable rate limits. Human acceptance for the owned academic search MCP should use an API key."
     }
   ],
   "tool_policy": {

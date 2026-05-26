@@ -93,6 +93,24 @@ class GitHubOAuthState(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class SpellingPreference(Base):
+    """User-private spelling preferences for editor spell checking."""
+
+    __tablename__ = "spelling_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "language", name="uq_spelling_preferences_user_language"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    language: Mapped[str] = mapped_column(String(32), default="en")
+    words: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 # ---------------------------------------------------------------------------
 # Providers + cached workflows (per-user)
 # ---------------------------------------------------------------------------

@@ -23,7 +23,13 @@ import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
 import { spellingFor } from './spelling'
 import { setLatexCompletionDataEffect } from './latex-language'
-import type { LatexCitationCompletion, LatexCompletionData, LatexFilePathCompletion, LatexLabelCompletion } from './latex-completion-data'
+import type {
+  LatexCitationCompletion,
+  LatexCommandCompletion,
+  LatexCompletionData,
+  LatexFilePathCompletion,
+  LatexLabelCompletion,
+} from './latex-completion-data'
 import { collaborationExtensions } from './collaboration-extensions'
 import {
   annotationDecorationsExtension,
@@ -87,6 +93,7 @@ export interface LatexEditorProps {
   citationCompletions?: LatexCitationCompletion[]
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
+  commandCompletions?: LatexCommandCompletion[]
 }
 
 export function LatexEditor({
@@ -111,6 +118,7 @@ export function LatexEditor({
   citationCompletions,
   filePathCompletions,
   labelCompletions,
+  commandCompletions,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -126,8 +134,13 @@ export function LatexEditor({
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
   const spellingCompartment = useMemo(() => new Compartment(), [])
   const completionData = useMemo<LatexCompletionData>(
-    () => ({ citations: citationCompletions ?? [], filePaths: filePathCompletions ?? [], labels: labelCompletions ?? [] }),
-    [citationCompletions, filePathCompletions, labelCompletions],
+    () => ({
+      citations: citationCompletions ?? [],
+      filePaths: filePathCompletions ?? [],
+      labels: labelCompletions ?? [],
+      commands: commandCompletions ?? [],
+    }),
+    [citationCompletions, filePathCompletions, labelCompletions, commandCompletions],
   )
   const completionDataRef = useRef(completionData)
   const [sourceJumpFlash, setSourceJumpFlash] = useState(false)

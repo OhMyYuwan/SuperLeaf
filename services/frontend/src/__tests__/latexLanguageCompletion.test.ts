@@ -45,6 +45,7 @@ describe('latex language completion source', () => {
       ],
       filePaths: [],
       labels: [],
+      commands: [],
     }
 
     const empty = complete('\\cite{', completionData)
@@ -71,6 +72,7 @@ describe('latex language completion source', () => {
       ],
       filePaths: [],
       labels: [],
+      commands: [],
     })
     const option = result.options[0]
 
@@ -88,6 +90,34 @@ describe('latex language completion source', () => {
     expect(placement.class).toBe('cm-completionInfo-above')
     expect(placement.style).toContain('bottom: calc(100% + 8px)')
     expect(placement.style).toContain('width:')
+  })
+
+  it('completes custom commands collected from newcommand definitions', () => {
+    const slash = complete('\\', {
+      citations: [],
+      filePaths: [],
+      labels: [],
+      commands: [
+        { name: 'vect', source: 'main.tex', requiredArgCount: 1 },
+        { name: 'todo', source: 'macros.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      ],
+    })
+
+    const labels = labelsOf(slash)
+    expect(labels).toContain('\\vect{}')
+    expect(labels).toContain('\\todo[]{}')
+
+    const ve = updateCompletion(slash, '\\ve', {
+      citations: [],
+      filePaths: [],
+      labels: [],
+      commands: [
+        { name: 'vect', source: 'main.tex', requiredArgCount: 1 },
+        { name: 'todo', source: 'macros.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      ],
+    })
+    expect(labelsOf(ve)).toContain('\\vect{}')
+    expect(labelsOf(ve)).not.toContain('\\todo[]{}')
   })
 })
 

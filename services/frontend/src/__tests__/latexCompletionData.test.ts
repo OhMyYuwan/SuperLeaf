@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectLatexCitationCompletions,
+  collectLatexCommandCompletions,
   extractBibEntries,
   extractBibitemKeys,
+  extractLatexCommandDefinitions,
   filterCitationCompletions,
   findCitationArgumentContext,
   scoreCitationCompletion,
@@ -82,5 +84,36 @@ describe('latex completion data', () => {
     expect(scoreCitationCompletion(keyMatch, 'attention')).toBeGreaterThan(
       scoreCitationCompletion(titleMatch, 'attention'),
     )
+  })
+
+  it('extracts custom command definitions for autocomplete', () => {
+    const content = [
+      '\\newcommand{\\vect}[1]{\\mathbf{#1}}',
+      '\\newcommand*\\todo[2][note]{\\textbf{#1}: #2}',
+      '\\renewcommand{\\oldmacro}{Updated}',
+      '\\providecommand{\\fallback}[3]{#1#2#3}',
+      '\\DeclareRobustCommand{\\safe}[1]{#1}',
+      '\\def\\quick#1#2{#1 #2}',
+    ].join('\n')
+
+    expect(extractLatexCommandDefinitions(content, 'main.tex')).toEqual([
+      { name: 'vect', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 1 },
+      { name: 'todo', source: 'main.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      { name: 'oldmacro', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 0 },
+      { name: 'fallback', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 3 },
+      { name: 'safe', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 1 },
+      { name: 'quick', source: 'main.tex', requiredArgCount: 2 },
+    ])
+  })
+
+  it('deduplicates custom commands across project documents', () => {
+    const commands = collectLatexCommandCompletions([
+      { name: 'main.tex', content: '\\newcommand{\\term}[1]{#1}' },
+      { name: 'defs.tex', content: '\\newcommand{\\term}[2]{#1 #2}' },
+    ])
+
+    expect(commands).toEqual([
+      { name: 'term', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 2 },
+    ])
   })
 })

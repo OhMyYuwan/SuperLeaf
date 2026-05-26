@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { __spellingTest } from '../features/latex-editor/spelling'
+import { spellingApi } from '../services/spellingApi'
+
+afterEach(() => {
+  __spellingTest.resetState()
+  vi.restoreAllMocks()
+})
 
 describe('spelling word extraction', () => {
   it('extracts prose from LaTeX while skipping commands, refs, URLs, comments, and math', () => {
@@ -41,5 +47,37 @@ describe('spelling word extraction', () => {
     expect(__spellingTest.matchCase('collaborative', 'Collabrative')).toBe('Collaborative')
     expect(__spellingTest.matchCase('api', 'API')).toBe('API')
     expect(__spellingTest.matchCase('writer', 'wrter')).toBe('writer')
+  })
+
+  it('marks a learned personal dictionary word as correct immediately', async () => {
+    vi.spyOn(spellingApi, 'learn').mockResolvedValue({ language: 'en', words: ['ImageNet'] })
+    __spellingTest.seedCache('en', 'ImageNet', { correct: false, suggestions: ['immanent'] })
+    const refresh = vi.fn()
+
+    const promise = __spellingTest.learnPersonalDictionaryWord('en', 'ImageNet', refresh)
+
+    expect(__spellingTest.cachedMisspellings('en', ['ImageNet']).has('imagenet')).toBe(false)
+    expect(refresh).toHaveBeenCalledTimes(1)
+
+    await promise
+
+    expect(spellingApi.learn).toHaveBeenCalledWith('en', 'ImageNet')
+    expect(__spellingTest.cachedMisspellings('en', ['ImageNet']).has('imagenet')).toBe(false)
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('rolls back the optimistic spelling cache when personal dictionary save fails', async () => {
+    vi.spyOn(spellingApi, 'learn').mockRejectedValue(new Error('offline'))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    __spellingTest.seedCache('en', 'ImageNet', { correct: false, suggestions: ['immanent'] })
+    const refresh = vi.fn()
+
+    await __spellingTest.learnPersonalDictionaryWord('en', 'ImageNet', refresh)
+
+    expect(__spellingTest.cachedMisspellings('en', ['ImageNet']).get('imagenet')).toEqual({
+      word: 'ImageNet',
+      suggestions: ['immanent'],
+    })
+    expect(refresh).toHaveBeenCalledTimes(2)
   })
 })

@@ -12,5 +12,4 @@ English documentation is currently partial. The Chinese documentation is the mai
 
 ## Available Pages
 
-- [Editor Shortcuts](editor-shortcuts.md)
-
+- [Editor Shortcuts](editor-shortcuts.html)

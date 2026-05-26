@@ -492,8 +492,6 @@ def convert_file_to_doc(
         raise HTTPException(400, "file is not valid UTF-8 text") from e
     svc = ProjectFsService(db, project)
     doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
-    db.delete(f)
-    db.commit()
     _publish_tree_changed(
         project,
         "file.converted_to_doc",

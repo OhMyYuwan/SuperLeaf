@@ -49,7 +49,7 @@ research drafting.
 保存后点击测连。前端只会显示 `has_api_key`，明文 key 不会再返回浏览器。
 
 {: .note }
-如果你已经有 Dify 服务，也可以使用 `dify-local` 或 `dify-cloud`。详见 [Provider 配置](../providers/)。
+如果你已经有 Dify 服务，也可以使用 `dify-local` 或 `dify-cloud`。详见 [Provider 配置](../providers/README.html)。
 
 ## 4. 创建原生 Agent
 
@@ -111,4 +111,4 @@ research drafting.
 - 可选：一个通过连通性/功能性检查并启用到 Agent 的 MCP
 - 一条由 Agent 产生的批注
 
-如果任何一步失败，请看 [故障排查](../troubleshooting/)。
+如果任何一步失败，请看 [故障排查](../troubleshooting/README.html)。

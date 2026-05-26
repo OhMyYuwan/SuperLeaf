@@ -25,6 +25,7 @@ coverage/
 .vite/
 .cache/
 .next/
+docs/_site/
 
 # Logs
 npm-debug.log*

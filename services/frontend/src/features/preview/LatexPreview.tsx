@@ -9,6 +9,7 @@
  *   - 编译 button (manual trigger)
  *   - 编译器 picker
  *   - 自动编译 toggle (debounced on content change)
+ *   - Ctrl/Cmd + wheel PDF zoom
  *   - Full-log toggle
  */
 
@@ -24,6 +25,7 @@ import {
   ZoomIn,
   ZoomOut,
   Download,
+  StretchHorizontal,
 } from 'lucide-react'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -38,6 +40,7 @@ import {
   sourceJumpFromPreviewText,
   type SourceJump,
 } from '../../services/previewSourceMap'
+import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -82,6 +85,12 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   const lastPdfVersionRef = useRef(pdfVersion)
   const pdfScrollTopRef = useRef(0)
   const pendingPdfScrollRestoreRef = useRef<number | null>(null)
+
+  usePdfWheelZoom({
+    scrollRef: pdfScrollRef,
+    zoom,
+    setZoom,
+  })
 
   const compileCurrentDocument = async () => {
     await saveBackendDoc(documentId)
@@ -180,6 +189,23 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
 
+  const setToolbarZoom = (updater: (current: number) => number) => {
+    setZoom((current) => clampPdfZoom(updater(current)))
+  }
+
+  const fitPdfToWidth = () => {
+    const scroller = pdfScrollRef.current
+    if (!scroller) {
+      setZoom(1)
+      return
+    }
+    const style = window.getComputedStyle(scroller)
+    const horizontalPadding =
+      Number.parseFloat(style.paddingLeft || '0') + Number.parseFloat(style.paddingRight || '0')
+    const viewportWidth = Math.max(0, scroller.clientWidth - horizontalPadding)
+    setZoom(calculateFitWidthZoom(pageWidth, viewportWidth))
+  }
+
   return (
     <div className="latex-preview" ref={containerRef}>
       <div className="latex-preview-toolbar">
@@ -234,7 +260,8 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
         <div className="latex-preview-zoom">
           <button
             className="small-btn"
-            onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
+            onClick={() => setToolbarZoom((z) => z - 0.1)}
+            aria-label="缩小 PDF"
             title="缩小"
           >
             <ZoomOut size={12} />
@@ -242,10 +269,19 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
           <span className="zoom-value">{Math.round(zoom * 100)}%</span>
           <button
             className="small-btn"
-            onClick={() => setZoom((z) => Math.min(2.5, z + 0.1))}
+            onClick={() => setToolbarZoom((z) => z + 0.1)}
+            aria-label="放大 PDF"
             title="放大"
           >
             <ZoomIn size={12} />
+          </button>
+          <button
+            className="small-btn"
+            onClick={fitPdfToWidth}
+            aria-label="适应宽度"
+            title="适应宽度"
+          >
+            <StretchHorizontal size={12} />
           </button>
         </div>
       </div>
@@ -313,7 +349,7 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
               <Page
                 key={i}
                 pageNumber={i + 1}
-                width={pageWidth * zoom}
+                width={pageWidth * clampPdfZoom(zoom)}
                 renderTextLayer
                 renderAnnotationLayer={false}
                 className="latex-pdf-page"

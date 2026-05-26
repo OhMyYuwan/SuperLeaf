@@ -163,6 +163,34 @@
   white-space: normal;
 }
 
+.user-message-content {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.user-message-content.is-collapsed {
+  cursor: zoom-in;
+}
+
+.user-message-content.is-expanded {
+  cursor: zoom-out;
+}
+
+.user-message-content:hover {
+  color: #f8fafc;
+}
+
+.user-message-content:focus-visible {
+  outline: 2px solid rgba(147, 197, 253, 0.72);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
 .message-error {
   font-size: 11px;
   color: #fca5a5;

@@ -392,6 +392,16 @@
   user-select: none;
 }
 
+.tree-inline-loading {
+  min-width: 0;
+  margin-left: 4px;
+  overflow: hidden;
+  color: rgba(148, 163, 184, 0.7);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tree-folder-block.root.drag-over .tree-root-drop-target {
   color: #bfdbfe;
   border-color: rgba(59, 130, 246, 0.62);

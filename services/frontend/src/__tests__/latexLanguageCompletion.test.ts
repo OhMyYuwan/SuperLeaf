@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import {
   latex,
   latexCompletionSource,
+  missingCitationDiagnosticsForContent,
+  missingReferenceDiagnosticsForContent,
   positionLatexCompletionInfo,
 } from '../features/latex-editor/latex-language'
 import type { LatexCompletionData } from '../features/latex-editor/latex-completion-data'
@@ -45,6 +47,7 @@ describe('latex language completion source', () => {
       ],
       filePaths: [],
       labels: [],
+      commands: [],
     }
 
     const empty = complete('\\cite{', completionData)
@@ -71,6 +74,7 @@ describe('latex language completion source', () => {
       ],
       filePaths: [],
       labels: [],
+      commands: [],
     })
     const option = result.options[0]
 
@@ -88,6 +92,76 @@ describe('latex language completion source', () => {
     expect(placement.class).toBe('cm-completionInfo-above')
     expect(placement.style).toContain('bottom: calc(100% + 8px)')
     expect(placement.style).toContain('width:')
+  })
+
+  it('marks unresolved citation keys with a citation warning', () => {
+    const content = 'Known \\cite{vaswani2017attention, missing2024}.'
+    const diagnostics = missingCitationDiagnosticsForContent(content, [
+      { key: 'vaswani2017attention' },
+    ])
+
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0]).toMatchObject({
+      from: content.indexOf('missing2024'),
+      to: content.indexOf('missing2024') + 'missing2024'.length,
+      severity: 'warning',
+      source: 'citation',
+      markClass: 'ylw-cm-missing-citation',
+      message: '未找到引用: "missing2024"',
+    })
+  })
+
+  it('does not mark citations before bibliography keys are loaded', () => {
+    expect(missingCitationDiagnosticsForContent('\\cite{missing2024}', [])).toEqual([])
+  })
+
+  it('marks unresolved reference keys with a reference warning', () => {
+    const content = 'Known \\ref{sec:intro}; missing \\eqref{eq:missing}.'
+    const diagnostics = missingReferenceDiagnosticsForContent(content, [
+      { key: 'sec:intro' },
+    ])
+
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0]).toMatchObject({
+      from: content.indexOf('eq:missing'),
+      to: content.indexOf('eq:missing') + 'eq:missing'.length,
+      severity: 'warning',
+      source: 'reference',
+      markClass: 'ylw-cm-missing-reference',
+      message: '未找到标签: "eq:missing"',
+    })
+  })
+
+  it('does not mark references before labels are loaded', () => {
+    expect(missingReferenceDiagnosticsForContent('\\ref{sec:missing}', [])).toEqual([])
+  })
+
+  it('completes custom commands collected from newcommand definitions', () => {
+    const slash = complete('\\', {
+      citations: [],
+      filePaths: [],
+      labels: [],
+      commands: [
+        { name: 'vect', source: 'main.tex', requiredArgCount: 1 },
+        { name: 'todo', source: 'macros.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      ],
+    })
+
+    const labels = labelsOf(slash)
+    expect(labels).toContain('\\vect{}')
+    expect(labels).toContain('\\todo[]{}')
+
+    const ve = updateCompletion(slash, '\\ve', {
+      citations: [],
+      filePaths: [],
+      labels: [],
+      commands: [
+        { name: 'vect', source: 'main.tex', requiredArgCount: 1 },
+        { name: 'todo', source: 'macros.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      ],
+    })
+    expect(labelsOf(ve)).toContain('\\vect{}')
+    expect(labelsOf(ve)).not.toContain('\\todo[]{}')
   })
 })
 

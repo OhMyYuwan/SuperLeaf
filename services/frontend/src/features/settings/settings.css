@@ -582,6 +582,12 @@
   font-size: 12px;
 }
 
+.member-invite-email-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .member-invite-form label span {
   font-size: 11px;
   font-weight: 500;
@@ -604,4 +610,53 @@
 .member-invite-form input:focus,
 .member-invite-form select:focus {
   border-color: rgba(59, 130, 246, 0.55);
+}
+
+.recent-collaborators {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-collaborators-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.recent-collaborator-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 92px;
+  overflow-y: auto;
+}
+
+.recent-collaborator-chip {
+  max-width: 100%;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.64);
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-collaborator-chip:hover {
+  border-color: rgba(59, 130, 246, 0.38);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.recent-collaborator-chip:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.48);
+  outline-offset: 2px;
+}
+
+.recent-collaborators-empty {
+  color: rgba(148, 163, 184, 0.55);
+  font-size: 12px;
 }

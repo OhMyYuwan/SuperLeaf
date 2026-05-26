@@ -9,6 +9,8 @@ export interface PeerInfo {
   name: string
   color: string
   colorLight: string
+  projectId?: string
+  docId?: string
 }
 
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
@@ -31,14 +33,19 @@ export class CollaborationProvider {
   readonly awareness: Awareness
   readonly provider: WebsocketProvider
 
+  private readonly projectId: string
+  private readonly docId: string
   private _status: ConnectionStatus = 'disconnected'
   private _listeners = new Set<(status: ConnectionStatus) => void>()
 
   constructor(
+    projectId: string,
     docId: string,
     token: string,
     userInfo: { id: string; name: string; color: string },
   ) {
+    this.projectId = projectId
+    this.docId = docId
     this.doc = new Y.Doc()
     this.yText = this.doc.getText('content')
     this.provider = new WebsocketProvider(
@@ -57,6 +64,8 @@ export class CollaborationProvider {
       name: userInfo.name,
       color: userInfo.color,
       colorLight: userInfo.color + '40',
+      projectId,
+      docId,
     })
 
     this.provider.on('status', ({ status }: { status: string }) => {
@@ -88,6 +97,7 @@ export class CollaborationProvider {
     this.awareness.getStates().forEach((state, clientId) => {
       if (clientId === this.doc.clientID) return
       const user = state.user as PeerInfo | undefined
+      if (user?.projectId !== this.projectId || user?.docId !== this.docId) return
       if (user?.id && !peersByUserId.has(user.id)) {
         peersByUserId.set(user.id, user)
       }

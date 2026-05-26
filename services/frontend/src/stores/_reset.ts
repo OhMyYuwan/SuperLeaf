@@ -15,10 +15,13 @@ import { useDocumentStore } from './documentStore'
 import { useAnnotationStore } from './annotationStore'
 import { useFilesystemStore } from './filesystemStore'
 import { useCompileStore } from './compileStore'
+import { useCollaborationStore } from './collaborationStore'
 import { useConversationStore } from './conversationStore'
 import { useWorkflowStore } from './workflowStore'
 
 export function resetProjectScopedStores(): void {
+  useCollaborationStore.getState().disconnect()
+
   useDocumentStore.setState({
     documents: {},
     activeDocumentId: null,
@@ -108,4 +111,3 @@ export async function resetUserScopedStores(): Promise<void> {
     error: null,
   })
 }
-

@@ -23,9 +23,10 @@ interface CollaborationState {
   provider: CollaborationProvider | null
   status: ConnectionStatus
   peers: PeerInfo[]
+  currentProjectId: string | null
   currentDocId: string | null
 
-  connect: (docId: string, user: { id: string; name: string }) => Promise<void>
+  connect: (projectId: string, docId: string, user: { id: string; name: string }) => Promise<void>
   disconnect: () => void
 }
 
@@ -33,13 +34,15 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   provider: null,
   status: 'disconnected',
   peers: [],
+  currentProjectId: null,
   currentDocId: null,
 
-  connect: async (docId, user) => {
+  connect: async (projectId, docId, user) => {
     const prev = get().provider
     if (prev) {
       prev.destroy()
     }
+    set({ provider: null, status: 'connecting', peers: [], currentProjectId: projectId, currentDocId: docId })
 
     // Fetch a collab token from the backend (echoes the session cookie).
     let token: string
@@ -48,21 +51,25 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
       token = res.token
     } catch {
       console.warn('[collaborationStore] failed to get collab token')
-      set({ status: 'disconnected', provider: null, currentDocId: null })
+      set({ status: 'disconnected', provider: null, peers: [], currentProjectId: null, currentDocId: null })
       return
     }
 
-    const provider = new CollaborationProvider(docId, token, {
+    if (get().currentProjectId !== projectId || get().currentDocId !== docId) return
+
+    const provider = new CollaborationProvider(projectId, docId, token, {
       id: user.id,
       name: user.name,
       color: colorForUser(user.id),
     })
 
     provider.onStatusChange((status) => {
+      if (get().provider !== provider) return
       set({ status })
     })
 
     provider.awareness.on('change', () => {
+      if (get().provider !== provider) return
       set({ peers: provider.getPeers() })
     })
 
@@ -70,6 +77,7 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
       provider,
       status: provider.status,
       peers: [],
+      currentProjectId: projectId,
       currentDocId: docId,
     })
   },
@@ -79,6 +87,6 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     if (provider) {
       provider.destroy()
     }
-    set({ provider: null, status: 'disconnected', peers: [], currentDocId: null })
+    set({ provider: null, status: 'disconnected', peers: [], currentProjectId: null, currentDocId: null })
   },
 }))

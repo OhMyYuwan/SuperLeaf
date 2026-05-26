@@ -154,9 +154,7 @@ function diagnosticForWord(language: string, word: SpellWord, misspelling: Spell
       name: '加入词典',
       apply: (view: EditorView, from: number, to: number) => {
         const current = view.state.sliceDoc(from, to)
-        const key = cacheKey(language, current)
-        cache.set(key, { correct: true, suggestions: [] })
-        void spellingApi.learn(language, current).finally(() => forceLinting(view))
+        void learnPersonalDictionaryWord(language, current, () => forceLinting(view))
       },
     },
     {
@@ -176,6 +174,37 @@ function diagnosticForWord(language: string, word: SpellWord, misspelling: Spell
     markClass: SPELLING_MARK_CLASS,
     message: `可能的拼写错误: "${word.text}"`,
     actions,
+  }
+}
+
+async function learnPersonalDictionaryWord(
+  language: string,
+  word: string,
+  refresh: () => void,
+): Promise<void> {
+  const key = cacheKey(language, word)
+  const previous = cache.get(key)
+  cache.set(key, { correct: true, suggestions: [] })
+  refresh()
+
+  try {
+    const response = await spellingApi.learn(language, word)
+    markDictionaryWordsCorrect(response.language || language, response.words)
+    refresh()
+  } catch (error) {
+    if (previous) {
+      cache.set(key, previous)
+    } else {
+      cache.delete(key)
+    }
+    console.warn('[spelling] Failed to save word to personal dictionary:', error)
+    refresh()
+  }
+}
+
+function markDictionaryWordsCorrect(language: string, words: string[]): void {
+  for (const word of words) {
+    cache.set(cacheKey(language, word), { correct: true, suggestions: [] })
   }
 }
 
@@ -443,5 +472,14 @@ function isAsciiLetter(char: string): boolean {
 
 export const __spellingTest = {
   collectSpellcheckWordsFromText,
+  cachedMisspellings,
+  learnPersonalDictionaryWord,
   matchCase,
+  resetState: () => {
+    cache.clear()
+    ignored.clear()
+  },
+  seedCache: (language: string, word: string, entry: SpellCacheEntry) => {
+    cache.set(cacheKey(language, word), entry)
+  },
 }

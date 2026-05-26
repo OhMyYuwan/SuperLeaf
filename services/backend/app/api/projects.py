@@ -22,6 +22,7 @@ from ..schemas import (
     ProjectMemberOut,
     ProjectOut,
     ProjectUpdateIn,
+    RecentCollaboratorOut,
 )
 from ..services.event_bus import bus
 from ..services.annotation_training_export_service import build_annotation_training_export_zip
@@ -84,6 +85,27 @@ def import_github_project(
     except GitHubError as e:
         raise HTTPException(400, str(e)) from e
     return ProjectOut.model_validate(project)
+
+
+@router.get("/recent-collaborators", response_model=list[RecentCollaboratorOut])
+def list_recent_collaborators(
+    limit: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> list[RecentCollaboratorOut]:
+    """List users this account has collaborated with recently."""
+    svc = ProjectMemberService(db)
+    rows = svc.list_recent_collaborators(user.id, limit=limit)
+    return [
+        RecentCollaboratorOut(
+            id=row.id,
+            user_id=row.collaborator_user_id,
+            email=row.collaborator_email,
+            display_name=row.collaborator_display_name or row.collaborator_email,
+            last_collaborated_at=row.last_collaborated_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{project_id}", response_model=ProjectOut)

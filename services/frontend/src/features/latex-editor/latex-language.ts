@@ -16,6 +16,7 @@ import {
   snippetCompletion,
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult } from '@codemirror/autocomplete'
+import { linter, type Diagnostic } from '@codemirror/lint'
 import { StateEffect, StateField, type Extension } from '@codemirror/state'
 import type { EditorView, Rect } from '@codemirror/view'
 import {
@@ -24,13 +25,17 @@ import {
   latexSnippetCommandTriggers,
 } from './latex-snippets'
 import {
+  collectLatexCitationKeyUsages,
+  collectLatexReferenceKeyUsages,
   completionBoostFor,
   filterCitationCompletions,
   findCitationArgumentContext,
   matchesCompletionQuery,
   normalizeLatexCompletionData,
   type LatexCitationCompletion,
+  type LatexCommandCompletion,
   type LatexCompletionData,
+  type LatexLabelCompletion,
 } from './latex-completion-data'
 import { latexFolding } from './latex-folding'
 
@@ -111,6 +116,8 @@ const LATEX_COMMANDS: string[] = [
 ]
 
 export const setLatexCompletionDataEffect = StateEffect.define<LatexCompletionData>()
+const MISSING_CITATION_MARK_CLASS = 'ylw-cm-missing-citation'
+const MISSING_REFERENCE_MARK_CLASS = 'ylw-cm-missing-reference'
 
 const latexCompletionDataState = StateField.define<LatexCompletionData>({
   create: () => normalizeLatexCompletionData(),
@@ -205,6 +212,10 @@ export function latexCompletionSource(context: CompletionContext): CompletionRes
     const prefix = command.text.slice(1)
     const snippetTriggers = latexSnippetCommandTriggers()
     const snippetCompletions = latexCommandSnippetCompletions(prefix)
+    const customCompletions = customCommandCompletions(context, prefix, new Set([
+      ...snippetTriggers,
+      ...LATEX_COMMANDS,
+    ]))
     const commandCompletions = LATEX_COMMANDS
       .filter((name) => matchesCommandQuery(name, prefix))
       .filter((name) => !snippetTriggers.has(name))
@@ -221,7 +232,7 @@ export function latexCompletionSource(context: CompletionContext): CompletionRes
     return {
       from: command.from,
       to: context.pos,
-      options: [...snippetCompletions, ...commandCompletions],
+      options: [...snippetCompletions, ...customCompletions, ...commandCompletions],
       filter: false,
       update: (_current, _from, _to, nextContext) => latexCompletionSource(nextContext),
     }
@@ -282,6 +293,62 @@ function citationToCompletion(citation: LatexCitationCompletion): Completion {
     apply: citation.key,
     boost: 80,
   }
+}
+
+export function missingCitationDiagnosticsForContent(
+  content: string,
+  citations: LatexCitationCompletion[],
+): Diagnostic[] {
+  if (citations.length === 0) return []
+  const knownKeys = new Set(citations.map((citation) => citation.key))
+  return collectLatexCitationKeyUsages(content)
+    .filter((usage) => !knownKeys.has(usage.key))
+    .map((usage) => ({
+      from: usage.from,
+      to: usage.to,
+      severity: 'warning',
+      source: 'citation',
+      markClass: MISSING_CITATION_MARK_CLASS,
+      message: `未找到引用: "${usage.key}"`,
+    }))
+}
+
+export function missingReferenceDiagnosticsForContent(
+  content: string,
+  labels: LatexLabelCompletion[],
+): Diagnostic[] {
+  if (labels.length === 0) return []
+  const knownKeys = new Set(labels.map((label) => label.key))
+  return collectLatexReferenceKeyUsages(content)
+    .filter((usage) => !knownKeys.has(usage.key))
+    .map((usage) => ({
+      from: usage.from,
+      to: usage.to,
+      severity: 'warning',
+      source: 'reference',
+      markClass: MISSING_REFERENCE_MARK_CLASS,
+      message: `未找到标签: "${usage.key}"`,
+    }))
+}
+
+function missingCrossReferenceLinter(): Extension {
+  return linter(
+    (view) => {
+      const completionData = view.state.field(latexCompletionDataState, false)
+      const content = view.state.doc.toString()
+      return [
+        ...missingCitationDiagnosticsForContent(content, completionData?.citations ?? []),
+        ...missingReferenceDiagnosticsForContent(content, completionData?.labels ?? []),
+      ]
+    },
+    {
+      delay: 400,
+      needsRefresh: (update) =>
+        update.docChanged ||
+        update.startState.field(latexCompletionDataState, false) !==
+          update.state.field(latexCompletionDataState, false),
+    },
+  )
 }
 
 const GRAPHIC_COMMANDS = /\\includegraphics(?:\[[^\]]*])?\{([^{}]*)$/
@@ -407,6 +474,51 @@ function matchesCommandQuery(name: string, prefix: string): boolean {
   return matchesCompletionQuery(name, prefix)
 }
 
+function customCommandCompletions(
+  context: CompletionContext,
+  prefix: string,
+  skippedNames: Set<string>,
+): Completion[] {
+  const completionData = context.state.field(latexCompletionDataState, false)
+  const customCommands = completionData?.commands ?? []
+  return customCommands
+    .filter((command) => !skippedNames.has(command.name))
+    .filter((command) => matchesCommandQuery(command.name, prefix))
+    .map((command) => customCommandToCompletion(command, prefix))
+    .sort((a, b) =>
+      (b.boost ?? 0) - (a.boost ?? 0) ||
+      a.label.localeCompare(b.label),
+    )
+}
+
+function customCommandToCompletion(command: LatexCommandCompletion, prefix: string): Completion {
+  const optionalArgCount = Math.max(0, command.optionalArgCount ?? 0)
+  const requiredArgCount = Math.max(0, command.requiredArgCount ?? 0)
+  const label = [
+    `\\${command.name}`,
+    '[]'.repeat(optionalArgCount),
+    '{}'.repeat(requiredArgCount),
+  ].join('')
+  const snippet = buildCustomCommandSnippet(command.name, optionalArgCount, requiredArgCount)
+  return snippetCompletion(snippet, {
+    label,
+    type: 'function',
+    detail: command.source ? `自定义 · ${command.source}` : '自定义',
+    boost: completionBoostFor(command.name, prefix.toLowerCase(), 90),
+  })
+}
+
+function buildCustomCommandSnippet(
+  name: string,
+  optionalArgCount: number,
+  requiredArgCount: number,
+): string {
+  let tab = 1
+  const optionalArgs = Array.from({ length: optionalArgCount }, () => `[${'${' + tab++ + '}'}]`).join('')
+  const requiredArgs = Array.from({ length: requiredArgCount }, () => `\\{${'${' + tab++ + '}'}\\}`).join('')
+  return `\\${name}${optionalArgs}${requiredArgs}${'${0}'}`
+}
+
 function genericBeginEnvironmentCompletions(
   prefix: string,
   skippedLabels: Set<string>,
@@ -437,6 +549,7 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
     new LanguageSupport(StreamLanguage.define(stex)),
     latexFolding(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    missingCrossReferenceLinter(),
     autocompletion({
       override: [latexCompletionSource],
       activateOnTyping: true,

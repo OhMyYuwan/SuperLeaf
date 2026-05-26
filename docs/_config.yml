@@ -17,12 +17,14 @@ heading_anchors: true
 aux_links:
   "SuperLeaf on GitHub":
     - "https://github.com/OhMyYuwan/SuperLeaf"
+  "中 / En":
+    - "/SuperLeaf/en/"
 
 nav_external_links:
-  - title: Skill Market Catalog
+  - title: 智能体技能市场
     url: https://github.com/OhMyYuwan/SuperLeaf.Skills
     opens_in_new_tab: true
-  - title: MCP Market Catalog
+  - title: MCP 服务市场
     url: https://github.com/OhMyYuwan/SuperLeaf.MCPs
     opens_in_new_tab: true
 

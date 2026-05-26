@@ -1,6 +1,11 @@
 <script>
   (function () {
     const baseUrl = '{{ site.baseurl }}'.replace(/\/$/, '')
+    const availablePaths = new Set([
+      {% for item in site.pages %}
+      '{{ item.url }}'{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    ])
 
     function withBase(path) {
       return `${baseUrl}${path}`
@@ -16,20 +21,127 @@
       return 'root'
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
-      if (document.querySelector('.sl-lang-switch')) return
+    function currentPath(pathname) {
+      return baseUrl && pathname.startsWith(baseUrl)
+        ? pathname.slice(baseUrl.length) || '/'
+        : pathname
+    }
 
+    function targetPath(pathname) {
+      const path = currentPath(pathname)
+      if (path.startsWith('/en/')) {
+        const candidate = `/zh/${path.slice('/en/'.length)}`
+        return availablePaths.has(candidate) ? candidate : '/zh/'
+      }
+      if (path.startsWith('/zh/')) {
+        const candidate = `/en/${path.slice('/zh/'.length)}`
+        return availablePaths.has(candidate) ? candidate : '/en/'
+      }
+      return '/en/'
+    }
+
+    function linkPath(link) {
+      const href = link.getAttribute('href') || ''
+      try {
+        const url = new URL(href, window.location.origin)
+        return baseUrl && url.pathname.startsWith(baseUrl)
+          ? url.pathname.slice(baseUrl.length) || '/'
+          : url.pathname
+      } catch (_error) {
+        return href
+      }
+    }
+
+    function setLinkLabel(link, label) {
+      const textNode = Array.from(link.childNodes)
+        .find((node) => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim())
+
+      if (textNode) {
+        textNode.textContent = ` ${label} `
+        return
+      }
+
+      link.insertBefore(document.createTextNode(` ${label} `), link.firstChild)
+    }
+
+    function syncLanguageNavigation(active) {
+      const visibleLanguage = active === 'en' ? 'en' : 'zh'
+      document.documentElement.setAttribute('data-sl-docs-language', visibleLanguage)
+
+      const marketLabels = {
+        skills: visibleLanguage === 'en' ? 'Skill Market' : '智能体技能市场',
+        mcps: visibleLanguage === 'en' ? 'MCP Market' : 'MCP 服务市场',
+      }
+
+      document.querySelectorAll('.site-nav .nav-list-item').forEach((item) => {
+        const directLink = item.querySelector(':scope > .nav-list-link, :scope > .nav-list-expander + .nav-list-link, :scope > a')
+        if (!directLink) return
+
+        const href = directLink.getAttribute('href') || ''
+        if (href.includes('SuperLeaf.Skills')) setLinkLabel(directLink, marketLabels.skills)
+        if (href.includes('SuperLeaf.MCPs')) setLinkLabel(directLink, marketLabels.mcps)
+
+        const path = linkPath(directLink)
+        const isEnglish = path === '/en/' || path.startsWith('/en/')
+        const isChinese = path === '/zh/' || path.startsWith('/zh/')
+
+        if (visibleLanguage === 'en' && isChinese) {
+          item.hidden = true
+          return
+        }
+
+        if (visibleLanguage === 'zh' && isEnglish) {
+          item.hidden = true
+          return
+        }
+
+        item.hidden = false
+      })
+    }
+
+    function mountLanguageSwitch() {
       const active = currentLanguage(window.location.pathname)
-      const nav = document.createElement('nav')
-      nav.className = 'sl-lang-switch'
-      nav.setAttribute('aria-label', 'Language switcher')
-      nav.innerHTML = [
-        `<a class="sl-lang-link ${active === 'zh' || active === 'root' ? 'is-active' : ''}" href="${withBase('/zh/')}">中文</a>`,
-        `<a class="sl-lang-link ${active === 'en' ? 'is-active' : ''}" href="${withBase('/en/')}">EN</a>`,
+      const target = withBase(targetPath(window.location.pathname))
+      syncLanguageNavigation(active)
+
+      if (document.querySelector('.sl-lang-switch-item')) return
+
+      const existingLink = Array.from(document.querySelectorAll('.aux-nav-list a'))
+        .find((link) => (link.textContent || '').trim() === '中 / En')
+
+      if (existingLink) {
+        existingLink.classList.add('sl-lang-switch-button')
+        existingLink.setAttribute('href', target)
+        existingLink.setAttribute('aria-label', '切换文档语言')
+        existingLink.innerHTML = [
+          `<span class="${active === 'zh' || active === 'root' ? 'is-active' : ''}">中</span>`,
+          '<span class="sl-lang-separator">/</span>',
+          `<span class="${active === 'en' ? 'is-active' : ''}">En</span>`,
+        ].join('')
+        existingLink.closest('.aux-nav-list-item')?.classList.add('sl-lang-switch-item')
+        return
+      }
+
+      const item = document.createElement('li')
+      item.className = 'aux-nav-list-item sl-lang-switch-item'
+      item.innerHTML = [
+        `<a class="site-button sl-lang-switch-button" href="${target}" aria-label="切换文档语言">`,
+        `<span class="${active === 'zh' || active === 'root' ? 'is-active' : ''}">中</span>`,
+        '<span class="sl-lang-separator">/</span>',
+        `<span class="${active === 'en' ? 'is-active' : ''}">En</span>`,
+        '</a>',
       ].join('')
 
-      document.body.appendChild(nav)
-    })
+      const auxList = document.querySelector('.aux-nav-list')
+      if (auxList) {
+        auxList.appendChild(item)
+        return
+      }
+
+      const fallback = document.querySelector('.site-header')
+      if (fallback) fallback.appendChild(item.firstElementChild)
+    }
+
+    document.addEventListener('DOMContentLoaded', mountLanguageSwitch)
   })()
 </script>
-

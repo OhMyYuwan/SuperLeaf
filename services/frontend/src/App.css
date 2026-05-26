@@ -248,10 +248,18 @@ button {
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }
-.cm-content .ylw-cm-spelling-error {
-  text-decoration: underline wavy rgba(244, 114, 182, 0.9);
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 3px;
+.cm-content .ylw-cm-spelling-error,
+.cm-content .cm-lintRange-warning.ylw-cm-spelling-error,
+.cm-content .ylw-cm-spelling-error.cm-lintRange-warning {
+  background-image: none !important;
+  background-position: initial !important;
+  background-repeat: initial !important;
+  border-bottom: 1px dashed rgba(239, 68, 68, 0.82);
+  text-decoration-line: underline !important;
+  text-decoration-style: dashed !important;
+  text-decoration-color: rgba(239, 68, 68, 0.82) !important;
+  text-decoration-thickness: 1px !important;
+  text-underline-offset: 4px;
 }
 .cm-content .ylw-sev-high {
   background: rgba(239, 68, 68, 0.12);

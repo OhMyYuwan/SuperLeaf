@@ -145,6 +145,18 @@ class ProjectFsService:
             if parent is None or parent.project_id != project.id:
                 raise ValueError("parent folder not found")
 
+        existing = (
+            self.db.query(Folder)
+            .filter(
+                Folder.project_id == project.id,
+                Folder.parent_folder_id == parent_folder_id,
+                Folder.name == name,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+
         max_sort = (
             self.db.query(Folder)
             .filter(
@@ -174,6 +186,18 @@ class ProjectFsService:
             if folder is None or folder.project_id != project.id:
                 raise ValueError("folder not found")
 
+        existing = self._find_doc_by_name(folder_id, name)
+        if existing is not None:
+            existing.format = format
+            existing.content = content
+            existing.version += 1
+            existing.updated_at = datetime.utcnow()
+            self._delete_file_siblings(folder_id, name)
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing
+
+        self._delete_file_siblings(folder_id, name)
         doc = Doc(
             project_id=project.id,
             folder_id=folder_id,
@@ -229,6 +253,12 @@ class ProjectFsService:
             return False
         entity.name = new_name  # type: ignore[union-attr]
         entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
+        if entity_type == "doc":
+            self._delete_doc_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
+            self._delete_file_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
+        elif entity_type == "file":
+            self._delete_file_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
+            self._delete_doc_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         self.db.commit()
         return True
 
@@ -269,12 +299,16 @@ class ProjectFsService:
                 return False, "doc not found"
             doc.folder_id = target_folder_id
             doc.updated_at = datetime.utcnow()
+            self._delete_doc_siblings(target_folder_id, doc.name, keep_id=doc.id)
+            self._delete_file_siblings(target_folder_id, doc.name)
         elif entity_type == "file":
             f = self.db.get(FileBlob, entity_id)
             if f is None or f.project_id != project.id:
                 return False, "file not found"
             f.folder_id = target_folder_id
             f.updated_at = datetime.utcnow()
+            self._delete_file_siblings(target_folder_id, f.name, keep_id=f.id)
+            self._delete_doc_siblings(target_folder_id, f.name)
         else:
             return False, "invalid entity type"
 
@@ -324,6 +358,18 @@ class ProjectFsService:
             folder = self.db.get(Folder, folder_id)
             if folder is None or folder.project_id != project.id:
                 raise ValueError("folder not found")
+        existing = self._find_file_by_name(folder_id, name)
+        if existing is not None:
+            existing.mime_type = mime_type
+            existing.size_bytes = len(blob)
+            existing.blob = blob
+            existing.updated_at = datetime.utcnow()
+            self._delete_doc_siblings(folder_id, name)
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing
+
+        self._delete_doc_siblings(folder_id, name)
         f = FileBlob(
             project_id=project.id,
             folder_id=folder_id,
@@ -336,6 +382,68 @@ class ProjectFsService:
         self.db.commit()
         self.db.refresh(f)
         return f
+
+    def _find_doc_by_name(self, folder_id: str | None, name: str) -> Doc | None:
+        return (
+            self.db.query(Doc)
+            .filter(
+                Doc.project_id == self.project.id,
+                Doc.folder_id == folder_id,
+                Doc.name == name,
+            )
+            .first()
+        )
+
+    def _find_file_by_name(self, folder_id: str | None, name: str) -> FileBlob | None:
+        return (
+            self.db.query(FileBlob)
+            .filter(
+                FileBlob.project_id == self.project.id,
+                FileBlob.folder_id == folder_id,
+                FileBlob.name == name,
+            )
+            .first()
+        )
+
+    def _delete_doc_siblings(
+        self,
+        folder_id: str | None,
+        name: str,
+        *,
+        keep_id: str | None = None,
+    ) -> int:
+        query = self.db.query(Doc).filter(
+            Doc.project_id == self.project.id,
+            Doc.folder_id == folder_id,
+            Doc.name == name,
+        )
+        if keep_id is not None:
+            query = query.filter(Doc.id != keep_id)
+        deleted_docs = query.all()
+        for doc in deleted_docs:
+            if self.project.main_doc_id == doc.id:
+                self.project.main_doc_id = ""
+            self.db.delete(doc)
+        return len(deleted_docs)
+
+    def _delete_file_siblings(
+        self,
+        folder_id: str | None,
+        name: str,
+        *,
+        keep_id: str | None = None,
+    ) -> int:
+        query = self.db.query(FileBlob).filter(
+            FileBlob.project_id == self.project.id,
+            FileBlob.folder_id == folder_id,
+            FileBlob.name == name,
+        )
+        if keep_id is not None:
+            query = query.filter(FileBlob.id != keep_id)
+        deleted_files = query.all()
+        for file in deleted_files:
+            self.db.delete(file)
+        return len(deleted_files)
 
     # --------------------------------------------------------- import directory
 

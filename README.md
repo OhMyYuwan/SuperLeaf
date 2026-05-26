@@ -67,22 +67,22 @@ cd SuperLeaf
 
 ## 📚 文档
 
-- [安装指南](docs/getting-started/install.md)
-- [首次启动](docs/getting-started/first-run.md)
-- [编辑器功能](docs/editor/)
-- [原生 Agent、Skill 与 MCP](docs/agents/)
-- [MCP 使用与市场](docs/agents/mcps.md)
-- [版本历史与项目归档](docs/versioning/)
-- [实时协作](docs/collaboration/)
-- [工作流系统](docs/workflows/)
-- [批注训练数据与 CSV Skill](docs/annotation-training-data.md)
-- [Provider 配置](docs/providers/)
-- [架构总览](docs/architecture/overview.md)
-- [开发导航与 Project Map](docs/development/)
-- [故障排查](docs/troubleshooting/)
-- [TODO / Roadmap](docs/TODO.md)
+- [安装指南](docs/zh/getting-started/install.md)
+- [首次启动](docs/zh/getting-started/first-run.md)
+- [编辑器功能](docs/zh/editor/)
+- [原生 Agent、Skill 与 MCP](docs/zh/agents/)
+- [MCP 使用与市场](docs/zh/agents/mcps.md)
+- [版本历史与项目归档](docs/zh/versioning/)
+- [实时协作](docs/zh/collaboration/)
+- [工作流系统](docs/zh/workflows/)
+- [批注训练数据与 CSV Skill](docs/zh/annotation-training-data.md)
+- [Provider 配置](docs/zh/providers/)
+- [架构总览](docs/zh/architecture/overview.md)
+- [开发导航与 Project Map](docs/zh/development/)
+- [故障排查](docs/zh/troubleshooting/)
+- [TODO / Roadmap](docs/zh/TODO.md)
 
-SuperLeaf 会记录并保留与 Agent 交互产生的批注、建议、风险提示、用户评价、采用情况和训练数据标记。数据导出与清洗说明见 [批注训练数据教程](docs/annotation-training-data.md)，项目内 Skill 位于 `docs/skills/annotation-training-csv/`。
+SuperLeaf 会记录并保留与 Agent 交互产生的批注、建议、风险提示、用户评价、采用情况和训练数据标记。数据导出与清洗说明见 [批注训练数据教程](docs/zh/annotation-training-data.md)，项目内 Skill 位于 `docs/skills/annotation-training-csv/`。
 
 训练数据 CSV Skill 可用 npm tooling 下载：
 
@@ -134,7 +134,7 @@ SuperLeaf 有两层版本：
 - **文档历史**：数据库中的单文档快照、标签、diff 和恢复。
 - **项目大版本**：后端服务机器上的服务器端 git archive，用于保存整个项目树的原子快照。
 
-项目大版本可以对比、恢复，也可以按 commit 下载完整 ZIP。这里的 git archive 是服务器端实现细节，不代表用户电脑里的本地 git 仓库。更多说明见 [版本历史与项目归档](docs/versioning/)。
+项目大版本可以对比、恢复，也可以按 commit 下载完整 ZIP。这里的 git archive 是服务器端实现细节，不代表用户电脑里的本地 git 仓库。更多说明见 [版本历史与项目归档](docs/zh/versioning/)。
 
 ## 🤝 多人协作
 
@@ -174,7 +174,7 @@ git merge develop
 | [`.acp/support/LOAD_RULES.yaml`](.acp/support/LOAD_RULES.yaml) | 按任务类型列出应先读取的入口文件与扩展条件 |
 | [`.acp/support/CHANGE_POLICY.yaml`](.acp/support/CHANGE_POLICY.yaml) | 受保护路径、高风险变更和禁止操作 |
 
-更详细的维护说明见 [开发导航与 Project Map](docs/development/)。
+更详细的维护说明见 [开发导航与 Project Map](docs/zh/development/)。
 
 ## 🧭 开发协议
 

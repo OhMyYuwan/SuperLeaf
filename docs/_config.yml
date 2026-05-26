@@ -1,7 +1,7 @@
-# SuperLeaf 文档站点配置
+# SuperLeaf documentation site configuration
 
 title: SuperLeaf
-description: 面向学术写作的 AI 辅助协作编辑器
+description: 面向学术写作的 AI 辅助协作编辑器 / AI-assisted collaborative editor for academic writing
 baseurl: "/SuperLeaf"
 url: "https://ohmyyuwan.github.io"
 repository: OhMyYuwan/SuperLeaf
@@ -38,21 +38,21 @@ search:
   button: false
 
 # 页脚配置
-footer_content: "SuperLeaf © 2026. 使用 <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a> 主题构建。"
+footer_content: "SuperLeaf © 2026. 使用 / Built with <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a>."
 
 # Callouts
 callouts:
   note:
-    title: 提示
+    title: 提示 / Note
     color: blue
   important:
-    title: 重要
+    title: 重要 / Important
     color: yellow
   warning:
-    title: 注意
+    title: 注意 / Warning
     color: red
   success:
-    title: 推荐
+    title: 推荐 / Recommended
     color: green
 
 # 代码高亮

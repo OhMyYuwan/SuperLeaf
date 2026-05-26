@@ -169,7 +169,7 @@ export function FileTree({
         </span>
       </div>
 
-      {loading && <div className="outline-empty">正在加载文件树…</div>}
+      {loading && !tree && <div className="outline-empty">正在加载文件树…</div>}
       {error && <div className="tree-error">{error}</div>}
 
       <div className="file-list tree-list">
@@ -180,6 +180,7 @@ export function FileTree({
             depth={0}
             activeDocId={activeDocId}
             activeFileId={activeFileId ?? null}
+            loading={loading}
             expandedFolderIds={expandedFolderIds}
             onToggleFolder={onToggleFolder}
             onOpenDoc={onOpenDoc}
@@ -203,6 +204,7 @@ interface FolderNodeProps {
   depth: number
   activeDocId: string | null
   activeFileId: string | null
+  loading: boolean
   expandedFolderIds: Record<string, boolean>
   onToggleFolder: (folderId: string) => void
   onOpenDoc: (docId: string) => void
@@ -230,6 +232,7 @@ function FolderNode({
   depth,
   activeDocId,
   activeFileId,
+  loading,
   expandedFolderIds,
   onToggleFolder,
   onOpenDoc,
@@ -409,6 +412,7 @@ function FolderNode({
           depth={depth + 1}
           activeDocId={activeDocId}
           activeFileId={activeFileId}
+          loading={false}
           expandedFolderIds={expandedFolderIds}
           onToggleFolder={onToggleFolder}
           onOpenDoc={onOpenDoc}
@@ -499,6 +503,7 @@ function FolderNode({
         >
           <FolderOpen size={14} />
           <span>项目根目录</span>
+          {loading && <span className="tree-inline-loading">正在加载文件树…</span>}
         </div>
         {children}
       </div>

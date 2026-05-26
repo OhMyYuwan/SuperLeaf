@@ -137,13 +137,46 @@ class McpConfigService:
         self.db.commit()
         return True
 
-    def mark_probe(self, server_id: str, *, user_id: str, status: str, detail: str) -> NativeMcpServer | None:
+    def mark_probe(
+        self,
+        server_id: str,
+        *,
+        user_id: str,
+        status: str,
+        detail: str,
+        tool_count: int = 0,
+    ) -> NativeMcpServer | None:
         row = self.get_server(server_id, user_id=user_id)
         if row is None:
             return None
+        now = datetime.utcnow()
         row.status = status
         row.status_detail = detail
-        row.updated_at = datetime.utcnow()
+        row.last_probe_at = now
+        row.last_probe_status = status
+        row.last_probe_detail = detail
+        row.last_tool_count = max(0, int(tool_count or 0))
+        row.updated_at = now
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def mark_golden(
+        self,
+        server_id: str,
+        *,
+        user_id: str,
+        status: str,
+        detail: str,
+    ) -> NativeMcpServer | None:
+        row = self.get_server(server_id, user_id=user_id)
+        if row is None:
+            return None
+        now = datetime.utcnow()
+        row.last_golden_at = now
+        row.last_golden_status = status
+        row.last_golden_detail = detail
+        row.updated_at = now
         self.db.commit()
         self.db.refresh(row)
         return row

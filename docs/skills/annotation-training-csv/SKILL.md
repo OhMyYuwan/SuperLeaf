@@ -1,6 +1,7 @@
 ---
 name: annotation-training-csv
 description: Convert SuperLeaf annotation training exports, records.jsonl files, or export ZIPs into compact CSV training datasets. Use this whenever the user mentions annotation-training-export, records.jsonl, 批注训练数据, clean training data, CSV dataset, reducing token cost, or turning annotation evaluations into LLM fine-tuning/evaluation rows.
+nav_exclude: true
 ---
 
 # Annotation Training CSV

@@ -80,4 +80,4 @@ Workflow Definition 可以使用原生 Agent。推荐做法：
 
 大多数写作类运行会生成批注卡片。这样正文不会被 Agent 直接覆盖，用户可以逐条确认。
 
-训练数据相关说明见 [批注训练数据](../annotation-training-data.md)。
+训练数据相关说明见 [交互数据收集](../annotation-training-data.html)。

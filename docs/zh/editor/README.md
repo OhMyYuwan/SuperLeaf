@@ -81,7 +81,7 @@ Agent 输出会进入批注卡片，而不是直接覆盖正文。
 
 ## 快捷键
 
-常用快捷键细节目前先保留英文现有稿，见 [Editor Shortcuts](../../en/editor-shortcuts.md)。
+常用快捷键细节目前先保留英文现有稿，见 [Editor Shortcuts](../../en/editor-shortcuts.html)。
 
 编辑器内部基于 CodeMirror keymap，支持常见文本编辑行为。部分快捷键会随浏览器和操作系统略有差异。
 
@@ -93,4 +93,4 @@ Agent 输出会进入批注卡片，而不是直接覆盖正文。
 - 文档内容冲突由 CRDT 自动合并。
 - 后端定期把协作文档快照写回 SQLite。
 
-详见 [多人协作](../collaboration/)。
+详见 [多人协作](../collaboration/README.html)。

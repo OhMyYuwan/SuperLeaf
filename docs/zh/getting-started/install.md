@@ -115,4 +115,4 @@ curl http://localhost:8000/api/health
 2. 看到登录/注册页
 3. 注册账号后进入项目列表
 
-下一步请继续看 [首次启动](first-run.md)。
+下一步请继续看 [首次启动](first-run.html)。

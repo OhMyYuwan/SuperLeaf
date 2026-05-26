@@ -21,14 +21,75 @@
 }
 
 .latex-compile-btn {
+  height: 30px;
   padding: 6px 12px !important;
   font-size: 12px !important;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  color: #ffffff !important;
+}
+.latex-compile-btn svg {
+  color: #ffffff;
+  stroke: #ffffff;
+}
+
+.latex-compile-settings {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.latex-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  background: white;
+  color: #000000;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.latex-settings-btn svg {
+  flex: 0 0 15px;
+  width: 15px !important;
+  height: 15px !important;
+  color: #000000;
+  stroke: #000000;
+}
+.latex-settings-btn:hover,
+.latex-settings-btn[aria-expanded='true'] {
+  background: #f8fafc;
+}
+
+.latex-compile-settings-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  min-width: 220px;
+  padding: 10px;
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+}
+
+.latex-settings-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
 }
 
 .compiler-picker {
+  height: 30px;
   padding: 4px 8px;
   font-size: 12px;
   border: 1px solid #94a3b8;
@@ -37,17 +98,33 @@
   color: #0f172a;
 }
 
-.auto-compile-toggle {
+.latex-settings-field .compiler-picker {
+  width: 100%;
+}
+
+.latex-settings-empty {
   display: inline-flex;
   align-items: center;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.latex-settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 4px;
   font-size: 12px;
   color: #334155;
   cursor: pointer;
 }
-.auto-compile-toggle input {
-  width: 14px;
-  height: 14px;
+.latex-settings-toggle input {
+  width: 16px;
+  height: 16px;
   cursor: pointer;
 }
 
@@ -58,6 +135,7 @@
   margin-left: auto;
 }
 .latex-preview-zoom .small-btn {
+  height: 30px;
   padding: 4px 6px;
   background: white;
   color: #334155;
@@ -73,19 +151,29 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  width: 34px;
+  height: 30px;
+  padding: 0;
   background: white;
-  color: #334155;
+  color: #000000;
   border: 1px solid #94a3b8;
   border-radius: 6px;
   cursor: pointer;
   text-decoration: none;
 }
+.latex-preview-download svg {
+  flex: 0 0 15px;
+  width: 15px !important;
+  height: 15px !important;
+  color: #000000;
+  stroke: #000000;
+}
 .latex-preview-download:hover {
-  background: #f1f5f9;
+  background: #f8fafc;
 }
 .latex-preview-download.is-disabled {
-  opacity: 0.5;
+  opacity: 1;
+  background: white;
   cursor: not-allowed;
   pointer-events: auto;
 }

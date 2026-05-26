@@ -7,8 +7,7 @@
  *
  * Controls:
  *   - 编译 button (manual trigger)
- *   - 编译器 picker
- *   - 自动编译 toggle (debounced on content change)
+ *   - 编译设置 popover (compiler picker + auto-compile toggle)
  *   - Ctrl/Cmd + wheel PDF zoom
  *   - Full-log toggle
  */
@@ -26,6 +25,7 @@ import {
   ZoomOut,
   Download,
   StretchHorizontal,
+  Settings,
 } from 'lucide-react'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -77,9 +77,11 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
 
   const [numPages, setNumPages] = useState<number>(0)
   const [showLog, setShowLog] = useState(false)
+  const [showCompileSettings, setShowCompileSettings] = useState(false)
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
+  const compileSettingsRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const lastAutoCompiledSavedAtRef = useRef(0)
   const lastPdfVersionRef = useRef(pdfVersion)
@@ -106,6 +108,31 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
     loadCompilers()
     loadSettings()
   }, [loadCompilers, loadSettings])
+
+  useEffect(() => {
+    if (!showCompileSettings) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (!compileSettingsRef.current?.contains(target)) {
+        setShowCompileSettings(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowCompileSettings(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showCompileSettings])
 
   // Auto-compile only after the open document has been saved. This prevents
   // compile errors from creating retry loops and keeps latexmk off dirty text.
@@ -219,31 +246,6 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
           {compiling ? '编译中…' : '编译'}
         </button>
 
-        {compilersAvailable.length > 0 && (
-          <select
-            className="compiler-picker"
-            value={currentCompiler}
-            onChange={(e) => handleCompilerChange(e.target.value)}
-            disabled={compiling}
-            title="编译器"
-          >
-            {compilersAvailable.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <label className="auto-compile-toggle" title="保存后自动编译">
-          <input
-            type="checkbox"
-            checked={autoCompile}
-            onChange={(e) => setAutoCompile(e.target.checked)}
-          />
-          <span>自动</span>
-        </label>
-
         <a
           className={`small-btn latex-preview-download${pdfUrl ? '' : ' is-disabled'}`}
           href={pdfUrl || undefined}
@@ -254,8 +256,61 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
             if (!pdfUrl) e.preventDefault()
           }}
         >
-          <Download size={12} />
+          <Download size={18} />
         </a>
+
+        <div className="latex-compile-settings" ref={compileSettingsRef}>
+          <button
+            type="button"
+            className="small-btn latex-settings-btn"
+            onClick={() => setShowCompileSettings((value) => !value)}
+            aria-label="编译设置"
+            aria-expanded={showCompileSettings}
+            aria-controls="latex-compile-settings"
+            title="编译设置"
+          >
+            <Settings size={18} strokeWidth={2} />
+          </button>
+
+          {showCompileSettings && (
+            <div
+              className="latex-compile-settings-popover"
+              id="latex-compile-settings"
+              role="group"
+              aria-label="编译设置"
+            >
+              <label className="latex-settings-field">
+                <span>编译器</span>
+                {compilersAvailable.length > 0 ? (
+                  <select
+                    className="compiler-picker"
+                    value={currentCompiler}
+                    onChange={(e) => handleCompilerChange(e.target.value)}
+                    disabled={compiling}
+                    title="编译器"
+                  >
+                    {compilersAvailable.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="latex-settings-empty">未检测到编译器</span>
+                )}
+              </label>
+
+              <label className="latex-settings-toggle" title="保存后自动编译">
+                <span>自动编译</span>
+                <input
+                  type="checkbox"
+                  checked={autoCompile}
+                  onChange={(e) => setAutoCompile(e.target.checked)}
+                />
+              </label>
+            </div>
+          )}
+        </div>
 
         <div className="latex-preview-zoom">
           <button

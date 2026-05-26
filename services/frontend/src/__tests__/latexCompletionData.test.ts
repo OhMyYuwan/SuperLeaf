@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectLatexCitationCompletions,
+  collectLatexCitationKeyUsages,
+  collectLatexCommandCompletions,
+  collectLatexReferenceKeyUsages,
   extractBibEntries,
   extractBibitemKeys,
+  extractLatexCommandDefinitions,
   filterCitationCompletions,
   findCitationArgumentContext,
   scoreCitationCompletion,
@@ -50,6 +54,56 @@ describe('latex completion data', () => {
     })
   })
 
+  it('collects citation key ranges from cite commands', () => {
+    const content = 'See \\citep[chap. 2]{vaswani2017attention, missing2024} and \\nocite{*}.'
+
+    expect(collectLatexCitationKeyUsages(content)).toEqual([
+      {
+        key: 'vaswani2017attention',
+        from: content.indexOf('vaswani2017attention'),
+        to: content.indexOf('vaswani2017attention') + 'vaswani2017attention'.length,
+        command: 'citep',
+      },
+      {
+        key: 'missing2024',
+        from: content.indexOf('missing2024'),
+        to: content.indexOf('missing2024') + 'missing2024'.length,
+        command: 'citep',
+      },
+    ])
+  })
+
+  it('collects reference key ranges from ref commands', () => {
+    const content = 'See \\ref{sec:intro}, \\eqref{eq:loss}, and \\cref{fig:a, tab:b}.'
+
+    expect(collectLatexReferenceKeyUsages(content)).toEqual([
+      {
+        key: 'sec:intro',
+        from: content.indexOf('sec:intro'),
+        to: content.indexOf('sec:intro') + 'sec:intro'.length,
+        command: 'ref',
+      },
+      {
+        key: 'eq:loss',
+        from: content.indexOf('eq:loss'),
+        to: content.indexOf('eq:loss') + 'eq:loss'.length,
+        command: 'eqref',
+      },
+      {
+        key: 'fig:a',
+        from: content.indexOf('fig:a'),
+        to: content.indexOf('fig:a') + 'fig:a'.length,
+        command: 'cref',
+      },
+      {
+        key: 'tab:b',
+        from: content.indexOf('tab:b'),
+        to: content.indexOf('tab:b') + 'tab:b'.length,
+        command: 'cref',
+      },
+    ])
+  })
+
   it('filters citations with prefix matches before contains matches', () => {
     const filtered = filterCitationCompletions(
       [
@@ -82,5 +136,36 @@ describe('latex completion data', () => {
     expect(scoreCitationCompletion(keyMatch, 'attention')).toBeGreaterThan(
       scoreCitationCompletion(titleMatch, 'attention'),
     )
+  })
+
+  it('extracts custom command definitions for autocomplete', () => {
+    const content = [
+      '\\newcommand{\\vect}[1]{\\mathbf{#1}}',
+      '\\newcommand*\\todo[2][note]{\\textbf{#1}: #2}',
+      '\\renewcommand{\\oldmacro}{Updated}',
+      '\\providecommand{\\fallback}[3]{#1#2#3}',
+      '\\DeclareRobustCommand{\\safe}[1]{#1}',
+      '\\def\\quick#1#2{#1 #2}',
+    ].join('\n')
+
+    expect(extractLatexCommandDefinitions(content, 'main.tex')).toEqual([
+      { name: 'vect', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 1 },
+      { name: 'todo', source: 'main.tex', optionalArgCount: 1, requiredArgCount: 1 },
+      { name: 'oldmacro', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 0 },
+      { name: 'fallback', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 3 },
+      { name: 'safe', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 1 },
+      { name: 'quick', source: 'main.tex', requiredArgCount: 2 },
+    ])
+  })
+
+  it('deduplicates custom commands across project documents', () => {
+    const commands = collectLatexCommandCompletions([
+      { name: 'main.tex', content: '\\newcommand{\\term}[1]{#1}' },
+      { name: 'defs.tex', content: '\\newcommand{\\term}[2]{#1 #2}' },
+    ])
+
+    expect(commands).toEqual([
+      { name: 'term', source: 'main.tex', optionalArgCount: 0, requiredArgCount: 2 },
+    ])
   })
 })

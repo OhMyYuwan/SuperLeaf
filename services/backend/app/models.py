@@ -465,6 +465,36 @@ class ProjectMember(Base):
     )
 
 
+class RecentCollaborator(Base):
+    """Per-user recent collaborators remembered across projects.
+
+    This acts like an invite contact list: even if a project member is later
+    removed, the user still appears as someone the owner has collaborated with.
+    Email/display name are snapshotted so the list remains useful if the user
+    profile changes or becomes unavailable.
+    """
+
+    __tablename__ = "recent_collaborators"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id",
+            "collaborator_user_id",
+            name="uq_recent_collaborators_owner_collaborator",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    collaborator_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    collaborator_email: Mapped[str] = mapped_column(String(255), default="")
+    collaborator_display_name: Mapped[str] = mapped_column(String(128), default="")
+    last_collaborated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class ProjectArchiveBinding(Base):
     """Project-level archive settings.
 

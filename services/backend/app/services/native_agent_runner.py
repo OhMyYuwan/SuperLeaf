@@ -57,6 +57,14 @@ class NativeRunPayload:
     context_files: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class _ToolExecutionResult:
+    content: str
+    failed: bool = False
+    failed_function_name: str = ""
+    tool_kind: str = "workspace"
+
+
 class NativeAgentRunner:
     def __init__(self, config: NativeAgentRuntimeConfig) -> None:
         self.config = config
@@ -121,6 +129,9 @@ class NativeAgentRunner:
             "Never claim to read files outside `.agents/`.",
             "If MCP tools are available, call them only when the user explicitly asks for external retrieval, academic search, paper lookup, citation lookup, or source-backed evidence.",
             "Do not use MCP tools for ordinary editing, rewriting, style review, or summarization unless the user asks to search or verify external sources.",
+            "If an MCP tool result reports `status: failed`, continue with the best available answer.",
+            "Explicitly tell the user the external MCP retrieval failed, include the failure reason,",
+            "ask the user to check MCP configuration/API key/quota, and avoid presenting failed tool results as facts.",
         ]
         if not is_write_mode:
             parts.append("Do not propose direct file mutations. Return review output only.")
@@ -269,14 +280,16 @@ class NativeAgentRunner:
                     "event": "native.agent.tool",
                     "data": {
                         "name": call.get("function", {}).get("name", ""),
-                        "result_preview": result[:500],
+                        "result_preview": result.content[:500],
+                        "failed": result.failed,
+                        "tool_kind": result.tool_kind,
                     },
                 }
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.get("id") or "tool-call",
-                        "content": result,
+                        "content": result.content,
                     }
                 )
 
@@ -285,7 +298,11 @@ class NativeAgentRunner:
             "data": {"delta": "\n\n[Tool limit reached while reading Agent workspace.]"},
         }
 
-    async def _execute_tool(self, call: dict[str, Any], mcp_tool_map: dict[str, McpToolRef]) -> str:
+    async def _execute_tool(
+        self,
+        call: dict[str, Any],
+        mcp_tool_map: dict[str, McpToolRef],
+    ) -> _ToolExecutionResult:
         fn = call.get("function") if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "")
         args_raw = fn.get("arguments") or "{}"
@@ -298,21 +315,170 @@ class NativeAgentRunner:
             if name == "list_agent_files":
                 prefix = str(args.get("prefix") or ".agents")
                 files = list_agent_workspace_files(root, prefix=prefix)
-                return json.dumps(
-                    [{"path": file.path, "type": file.type, "size": file.size} for file in files],
-                    ensure_ascii=False,
+                return _ToolExecutionResult(
+                    json.dumps(
+                        [{"path": file.path, "type": file.type, "size": file.size} for file in files],
+                        ensure_ascii=False,
+                    )
                 )
             if name == "read_agent_file":
                 path = str(args.get("path") or "")
                 content = read_agent_workspace_file(root, path)
-                return content
+                return _ToolExecutionResult(content)
             if name in mcp_tool_map:
-                return await call_mcp_tool(mcp_tool_map[name], args)
+                ref = mcp_tool_map[name]
+                try:
+                    result = await call_mcp_tool(ref, args)
+                except Exception as exc:  # noqa: BLE001
+                    return _mcp_failure_result(
+                        ref,
+                        error_type=_mcp_error_type(f"{type(exc).__name__}: {exc}"),
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
+                if _mcp_result_is_error(result):
+                    detail = _mcp_error_detail(result)
+                    return _mcp_failure_result(
+                        ref,
+                        error_type=_mcp_error_type(detail),
+                        detail=detail,
+                        raw_result=result,
+                    )
+                return _ToolExecutionResult(result, tool_kind="mcp")
         except AgentWorkspaceError as exc:
-            return f"ERROR: {exc}"
+            return _ToolExecutionResult(f"ERROR: {exc}")
         except Exception as exc:  # noqa: BLE001
-            return f"ERROR: {type(exc).__name__}: {exc}"
-        return f"ERROR: unknown tool {name}"
+            return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
+        return _ToolExecutionResult(f"ERROR: unknown tool {name}")
+
+
+def _mcp_failure_result(
+    ref: McpToolRef,
+    *,
+    error_type: str,
+    detail: str,
+    raw_result: str = "",
+) -> _ToolExecutionResult:
+    payload: dict[str, Any] = {
+        "status": "failed",
+        "tool_type": "mcp",
+        "error_type": error_type,
+        "server": ref.server.name,
+        "server_id": ref.server.id,
+        "tool_name": ref.tool_name,
+        "function_name": ref.function_name,
+        "detail": _clip_text(detail, 4000),
+        "user_action": "请检查 MCP 配置、API key、远程服务访问权限或匿名访问限额。",
+        "agent_instruction": (
+            "The external MCP tool failed or was rejected. Continue with the best available "
+            "response, explicitly tell the user that external MCP retrieval failed, include "
+            "the failure reason, ask the user to check MCP configuration/API key/quota, and "
+            "do not cite this failed tool result as evidence."
+        ),
+    }
+    if raw_result:
+        payload["raw_result_preview"] = _clip_text(raw_result, 4000)
+    return _ToolExecutionResult(
+        json.dumps(payload, ensure_ascii=False),
+        failed=True,
+        failed_function_name=ref.function_name,
+        tool_kind="mcp",
+    )
+
+
+def _mcp_result_is_error(result: str) -> bool:
+    parsed = _parse_json_object(result)
+    if parsed is not None:
+        if parsed.get("isError") is True:
+            return True
+        if parsed.get("status") in {"failed", "error"}:
+            return True
+        if parsed.get("error"):
+            return True
+    lower = result.casefold()
+    return lower.startswith("error") or any(
+        token in lower
+        for token in (
+            "rate limit",
+            "rate_limit",
+            "rate-limit",
+            "permission denied",
+            "access denied",
+            "forbidden",
+            "unauthorized",
+        )
+    )
+
+
+def _mcp_error_detail(result: str) -> str:
+    parsed = _parse_json_object(result)
+    if parsed is None:
+        return _clip_text(result, 4000)
+
+    content = parsed.get("content")
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+        if text_parts:
+            return _clip_text("\n".join(text_parts), 4000)
+
+    for key in ("detail", "message", "error"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return _clip_text(value, 4000)
+        if value is not None:
+            return _clip_text(json.dumps(value, ensure_ascii=False), 4000)
+
+    return _clip_text(result, 4000)
+
+
+def _mcp_error_type(text: str) -> str:
+    lower = text.casefold()
+    if any(token in lower for token in ("rate limit", "rate_limit", "rate-limit", "429", "quota")):
+        return "rate_limited"
+    if any(
+        token in lower
+        for token in (
+            "access denied",
+            "permission denied",
+            "forbidden",
+            "unauthorized",
+            "authentication",
+            "api key",
+            "401",
+            "403",
+        )
+    ):
+        return "access_denied"
+    if any(token in lower for token in ("timeout", "timed out")):
+        return "timeout"
+    if any(
+        token in lower
+        for token in (
+            "server unavailable",
+            "closed stdout",
+            "connection",
+            "connecterror",
+            "nodename",
+            "servname",
+        )
+    ):
+        return "server_unavailable"
+    return "tool_error"
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _clip_text(text: str, limit: int) -> str:
+    clean = str(text)
+    return clean if len(clean) <= limit else clean[:limit] + "\n...[truncated]"
 
 
 def _delta_text(evt: dict[str, Any]) -> str:

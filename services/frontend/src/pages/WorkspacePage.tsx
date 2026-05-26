@@ -400,18 +400,23 @@ export function WorkspacePage() {
       collabDisconnect()
       return
     }
-    void collabConnect(activeDocumentId, {
+    let cancelled = false
+    void collabConnect(projectId, activeDocumentId, {
       id: currentUser.id,
       name: currentUser.display_name ?? currentUser.email,
     }).then(() => {
+      if (cancelled) return
+      const collab = useCollaborationStore.getState()
+      if (collab.currentProjectId !== projectId || collab.currentDocId !== activeDocumentId) return
       setCollaborating(activeDocumentId, true)
     })
     return () => {
+      cancelled = true
       setCollaborating(activeDocumentId, false)
       collabDisconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDocumentId, projectReady, currentUser?.id])
+  }, [activeDocumentId, projectId, projectReady, currentUser?.id])
 
   // Document content is no longer persisted (servers is the source of truth,
   // see documentStore persist config). On mount / hard refresh, if we have a

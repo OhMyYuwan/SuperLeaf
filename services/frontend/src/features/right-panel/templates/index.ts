@@ -29,7 +29,7 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   {
     id: 'consensus',
     label: 'Consensus · 多轮收敛',
-    description: '两个 Agent 在 Loop 容器内并行评议，仲裁 Agent 判断是否收敛。',
+    description: '写作者、Reviewer、导师在 Loop 内多轮协作，导师判断是否收敛。',
     draft: consensus as WorkflowDefinitionDraft,
   },
 ]

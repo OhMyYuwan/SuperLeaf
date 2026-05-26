@@ -51,6 +51,20 @@ export interface CitationArgumentContext {
   existingKeys: string[]
 }
 
+export interface LatexCitationKeyUsage {
+  key: string
+  from: number
+  to: number
+  command: string
+}
+
+export interface LatexReferenceKeyUsage {
+  key: string
+  from: number
+  to: number
+  command: string
+}
+
 const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [], filePaths: [], labels: [], commands: [] }
 const IGNORED_BIB_TYPES = new Set(['comment', 'preamble', 'string'])
 const NO_MATCH = Number.NEGATIVE_INFINITY
@@ -202,6 +216,59 @@ export function filterCitationCompletions(
     .slice(0, limit)
 }
 
+export function collectLatexCitationKeyUsages(content: string): LatexCitationKeyUsage[] {
+  const usages: LatexCitationKeyUsage[] = []
+  const commandRegex = /\\([A-Za-z]*cite[A-Za-z]*|nocite)\*?/gi
+  let match: RegExpExecArray | null
+
+  while ((match = commandRegex.exec(content)) !== null) {
+    const command = match[1]
+    let cursor = match.index + match[0].length
+    cursor = skipWhitespace(content, cursor)
+
+    while (content[cursor] === '[') {
+      const close = findBracketClose(content, cursor, '[', ']')
+      if (close < 0) break
+      cursor = skipWhitespace(content, close + 1)
+    }
+
+    if (content[cursor] !== '{') continue
+    const close = findBalancedClose(content, cursor, '{', '}')
+    if (close < 0) continue
+
+    const argument = content.slice(cursor + 1, close)
+    let partStart = 0
+    for (let index = 0; index <= argument.length; index++) {
+      if (index < argument.length && argument[index] !== ',') continue
+      const raw = argument.slice(partStart, index)
+      const leading = raw.match(/^\s*/)?.[0].length ?? 0
+      const trailing = raw.match(/\s*$/)?.[0].length ?? 0
+      const key = raw.slice(leading, raw.length - trailing)
+      if (key && key !== '*') {
+        const from = cursor + 1 + partStart + leading
+        usages.push({
+          key,
+          from,
+          to: from + key.length,
+          command,
+        })
+      }
+      partStart = index + 1
+    }
+
+    commandRegex.lastIndex = close + 1
+  }
+
+  return usages
+}
+
+export function collectLatexReferenceKeyUsages(content: string): LatexReferenceKeyUsage[] {
+  return collectCommaSeparatedCommandKeyUsages(
+    content,
+    /\\(ref|eqref|pageref|autoref|cref|Cref|nameref)\*?/g,
+  )
+}
+
 export function matchesCompletionQuery(value: string, query: string): boolean {
   return completionMatchScore(value, query) > NO_MATCH
 }
@@ -270,6 +337,53 @@ export function scoreCitationCompletion(
     score += tokenScore
   }
   return score
+}
+
+function collectCommaSeparatedCommandKeyUsages<T extends { key: string; from: number; to: number; command: string }>(
+  content: string,
+  commandRegex: RegExp,
+): T[] {
+  const usages: T[] = []
+  let match: RegExpExecArray | null
+
+  while ((match = commandRegex.exec(content)) !== null) {
+    const command = match[1]
+    let cursor = skipWhitespace(content, match.index + match[0].length)
+
+    while (content[cursor] === '[') {
+      const close = findBracketClose(content, cursor, '[', ']')
+      if (close < 0) break
+      cursor = skipWhitespace(content, close + 1)
+    }
+
+    if (content[cursor] !== '{') continue
+    const close = findBalancedClose(content, cursor, '{', '}')
+    if (close < 0) continue
+
+    const argument = content.slice(cursor + 1, close)
+    let partStart = 0
+    for (let index = 0; index <= argument.length; index++) {
+      if (index < argument.length && argument[index] !== ',') continue
+      const raw = argument.slice(partStart, index)
+      const leading = raw.match(/^\s*/)?.[0].length ?? 0
+      const trailing = raw.match(/\s*$/)?.[0].length ?? 0
+      const key = raw.slice(leading, raw.length - trailing)
+      if (key && key !== '*') {
+        const from = cursor + 1 + partStart + leading
+        usages.push({
+          key,
+          from,
+          to: from + key.length,
+          command,
+        } as T)
+      }
+      partStart = index + 1
+    }
+
+    commandRegex.lastIndex = close + 1
+  }
+
+  return usages
 }
 
 function normalizeCitationCompletions(
@@ -418,6 +532,14 @@ function findBalancedClose(
       depth--
       if (depth === 0) return index
     }
+  }
+  return -1
+}
+
+function findBracketClose(text: string, openIndex: number, open: string, close: string): number {
+  for (let index = openIndex + 1; index < text.length; index++) {
+    if (text[index] === close && text[index - 1] !== '\\') return index
+    if (text[index] === open && text[index - 1] !== '\\') return -1
   }
   return -1
 }

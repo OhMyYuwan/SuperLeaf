@@ -18,10 +18,18 @@ export interface LatexLabelCompletion {
   source?: string
 }
 
+export interface LatexCommandCompletion {
+  name: string
+  source?: string
+  optionalArgCount?: number
+  requiredArgCount?: number
+}
+
 export interface LatexCompletionData {
   citations: LatexCitationCompletion[]
   filePaths: LatexFilePathCompletion[]
   labels: LatexLabelCompletion[]
+  commands: LatexCommandCompletion[]
 }
 
 export interface LatexCitationSource {
@@ -43,7 +51,7 @@ export interface CitationArgumentContext {
   existingKeys: string[]
 }
 
-const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [], filePaths: [], labels: [] }
+const EMPTY_COMPLETION_DATA: LatexCompletionData = { citations: [], filePaths: [], labels: [], commands: [] }
 const IGNORED_BIB_TYPES = new Set(['comment', 'preamble', 'string'])
 const NO_MATCH = Number.NEGATIVE_INFINITY
 
@@ -55,6 +63,7 @@ export function normalizeLatexCompletionData(
     citations: normalizeCitationCompletions(data.citations ?? []),
     filePaths: data.filePaths ?? [],
     labels: data.labels ?? [],
+    commands: normalizeCommandCompletions(data.commands ?? []),
   }
 }
 
@@ -491,4 +500,199 @@ export function collectLatexLabels(sources: LatexLabelSource[]): LatexLabelCompl
   }
 
   return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key))
+}
+
+export interface LatexCommandSource {
+  name: string
+  content: string
+}
+
+export function collectLatexCommandCompletions(
+  sources: LatexCommandSource[],
+): LatexCommandCompletion[] {
+  const byName = new Map<string, LatexCommandCompletion>()
+  for (const source of sources) {
+    for (const command of extractLatexCommandDefinitions(source.content, source.name)) {
+      const existing = byName.get(command.name)
+      if (!existing) {
+        byName.set(command.name, command)
+        continue
+      }
+      byName.set(command.name, {
+        ...existing,
+        optionalArgCount: Math.max(existing.optionalArgCount ?? 0, command.optionalArgCount ?? 0),
+        requiredArgCount: Math.max(existing.requiredArgCount ?? 0, command.requiredArgCount ?? 0),
+      })
+    }
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function extractLatexCommandDefinitions(content: string, source = ''): LatexCommandCompletion[] {
+  const commands: LatexCommandCompletion[] = []
+  let cursor = 0
+
+  while (cursor < content.length) {
+    const commandStart = content.indexOf('\\', cursor)
+    if (commandStart < 0) break
+
+    const definition = readDefinitionCommand(content, commandStart, source)
+    if (definition) {
+      commands.push(definition.command)
+      cursor = Math.max(definition.next, commandStart + 1)
+      continue
+    }
+
+    const defDefinition = readDefCommand(content, commandStart, source)
+    if (defDefinition) {
+      commands.push(defDefinition.command)
+      cursor = Math.max(defDefinition.next, commandStart + 1)
+      continue
+    }
+
+    cursor = commandStart + 1
+  }
+
+  return commands
+}
+
+function normalizeCommandCompletions(commands: LatexCommandCompletion[]): LatexCommandCompletion[] {
+  const byName = new Map<string, LatexCommandCompletion>()
+  for (const command of commands) {
+    const name = normalizeCommandName(command.name)
+    if (!name) continue
+    const current = byName.get(name)
+    const next = {
+      ...command,
+      name,
+      optionalArgCount: Math.max(0, command.optionalArgCount ?? 0),
+      requiredArgCount: Math.max(0, command.requiredArgCount ?? 0),
+    }
+    if (!current) {
+      byName.set(name, next)
+      continue
+    }
+    byName.set(name, {
+      ...current,
+      optionalArgCount: Math.max(current.optionalArgCount ?? 0, next.optionalArgCount ?? 0),
+      requiredArgCount: Math.max(current.requiredArgCount ?? 0, next.requiredArgCount ?? 0),
+    })
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+const COMMAND_DEFINITION_NAMES = new Set([
+  'newcommand',
+  'renewcommand',
+  'providecommand',
+  'DeclareRobustCommand',
+])
+
+function readDefinitionCommand(
+  content: string,
+  slashIndex: number,
+  source: string,
+): { command: LatexCommandCompletion; next: number } | null {
+  const nameInfo = readControlWord(content, slashIndex)
+  if (!nameInfo || !COMMAND_DEFINITION_NAMES.has(nameInfo.name)) return null
+
+  let cursor = nameInfo.end
+  if (content[cursor] === '*') cursor += 1
+  cursor = skipWhitespace(content, cursor)
+
+  const macro = readMacroNameArgument(content, cursor)
+  if (!macro) return null
+  cursor = skipWhitespace(content, macro.end)
+
+  let totalArgs = 0
+  let optionalArgCount = 0
+  const argCount = readBracketArgument(content, cursor)
+  if (argCount) {
+    const parsed = Number.parseInt(argCount.value.trim(), 10)
+    if (Number.isFinite(parsed) && parsed > 0) totalArgs = parsed
+    cursor = skipWhitespace(content, argCount.end)
+    const defaultArg = readBracketArgument(content, cursor)
+    if (defaultArg) {
+      optionalArgCount = totalArgs > 0 ? 1 : 0
+      cursor = skipWhitespace(content, defaultArg.end)
+    }
+  }
+
+  const requiredArgCount = Math.max(0, totalArgs - optionalArgCount)
+  return {
+    command: {
+      name: macro.name,
+      source,
+      optionalArgCount,
+      requiredArgCount,
+    },
+    next: cursor,
+  }
+}
+
+function readDefCommand(
+  content: string,
+  slashIndex: number,
+  source: string,
+): { command: LatexCommandCompletion; next: number } | null {
+  const nameInfo = readControlWord(content, slashIndex)
+  if (!nameInfo || nameInfo.name !== 'def') return null
+
+  let cursor = skipWhitespace(content, nameInfo.end)
+  const macro = readControlWord(content, cursor)
+  if (!macro) return null
+  cursor = macro.end
+
+  let requiredArgCount = 0
+  while (content[cursor] === '#') {
+    const digit = content[cursor + 1]
+    if (!digit || !/\d/.test(digit)) break
+    requiredArgCount = Math.max(requiredArgCount, Number.parseInt(digit, 10))
+    cursor += 2
+  }
+
+  return {
+    command: {
+      name: macro.name,
+      source,
+      requiredArgCount,
+    },
+    next: cursor,
+  }
+}
+
+function readMacroNameArgument(
+  content: string,
+  start: number,
+): { name: string; end: number } | null {
+  if (content[start] === '{') {
+    const end = findBalancedClose(content, start, '{', '}')
+    if (end < 0) return null
+    const innerStart = skipWhitespace(content, start + 1)
+    const macro = readControlWord(content, innerStart)
+    if (!macro) return null
+    return { name: macro.name, end: end + 1 }
+  }
+
+  const macro = readControlWord(content, start)
+  return macro ? { name: macro.name, end: macro.end } : null
+}
+
+function readControlWord(content: string, slashIndex: number): { name: string; end: number } | null {
+  if (content[slashIndex] !== '\\') return null
+  let end = slashIndex + 1
+  while (end < content.length && /[A-Za-z@]/.test(content[end])) end += 1
+  if (end === slashIndex + 1) return null
+  return { name: content.slice(slashIndex + 1, end), end }
+}
+
+function readBracketArgument(content: string, start: number): { value: string; end: number } | null {
+  if (content[start] !== '[') return null
+  const end = findBalancedClose(content, start, '[', ']')
+  if (end < 0) return null
+  return { value: content.slice(start + 1, end), end: end + 1 }
+}
+
+function normalizeCommandName(name: string): string {
+  return name.replace(/^\\+/, '').trim()
 }

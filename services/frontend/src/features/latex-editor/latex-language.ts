@@ -30,6 +30,7 @@ import {
   matchesCompletionQuery,
   normalizeLatexCompletionData,
   type LatexCitationCompletion,
+  type LatexCommandCompletion,
   type LatexCompletionData,
 } from './latex-completion-data'
 import { latexFolding } from './latex-folding'
@@ -205,6 +206,10 @@ export function latexCompletionSource(context: CompletionContext): CompletionRes
     const prefix = command.text.slice(1)
     const snippetTriggers = latexSnippetCommandTriggers()
     const snippetCompletions = latexCommandSnippetCompletions(prefix)
+    const customCompletions = customCommandCompletions(context, prefix, new Set([
+      ...snippetTriggers,
+      ...LATEX_COMMANDS,
+    ]))
     const commandCompletions = LATEX_COMMANDS
       .filter((name) => matchesCommandQuery(name, prefix))
       .filter((name) => !snippetTriggers.has(name))
@@ -221,7 +226,7 @@ export function latexCompletionSource(context: CompletionContext): CompletionRes
     return {
       from: command.from,
       to: context.pos,
-      options: [...snippetCompletions, ...commandCompletions],
+      options: [...snippetCompletions, ...customCompletions, ...commandCompletions],
       filter: false,
       update: (_current, _from, _to, nextContext) => latexCompletionSource(nextContext),
     }
@@ -405,6 +410,51 @@ export function positionLatexCompletionInfo(
 
 function matchesCommandQuery(name: string, prefix: string): boolean {
   return matchesCompletionQuery(name, prefix)
+}
+
+function customCommandCompletions(
+  context: CompletionContext,
+  prefix: string,
+  skippedNames: Set<string>,
+): Completion[] {
+  const completionData = context.state.field(latexCompletionDataState, false)
+  const customCommands = completionData?.commands ?? []
+  return customCommands
+    .filter((command) => !skippedNames.has(command.name))
+    .filter((command) => matchesCommandQuery(command.name, prefix))
+    .map((command) => customCommandToCompletion(command, prefix))
+    .sort((a, b) =>
+      (b.boost ?? 0) - (a.boost ?? 0) ||
+      a.label.localeCompare(b.label),
+    )
+}
+
+function customCommandToCompletion(command: LatexCommandCompletion, prefix: string): Completion {
+  const optionalArgCount = Math.max(0, command.optionalArgCount ?? 0)
+  const requiredArgCount = Math.max(0, command.requiredArgCount ?? 0)
+  const label = [
+    `\\${command.name}`,
+    '[]'.repeat(optionalArgCount),
+    '{}'.repeat(requiredArgCount),
+  ].join('')
+  const snippet = buildCustomCommandSnippet(command.name, optionalArgCount, requiredArgCount)
+  return snippetCompletion(snippet, {
+    label,
+    type: 'function',
+    detail: command.source ? `自定义 · ${command.source}` : '自定义',
+    boost: completionBoostFor(command.name, prefix.toLowerCase(), 90),
+  })
+}
+
+function buildCustomCommandSnippet(
+  name: string,
+  optionalArgCount: number,
+  requiredArgCount: number,
+): string {
+  let tab = 1
+  const optionalArgs = Array.from({ length: optionalArgCount }, () => `[${'${' + tab++ + '}'}]`).join('')
+  const requiredArgs = Array.from({ length: requiredArgCount }, () => `\\{${'${' + tab++ + '}'}\\}`).join('')
+  return `\\${name}${optionalArgs}${requiredArgs}${'${0}'}`
 }
 
 function genericBeginEnvironmentCompletions(

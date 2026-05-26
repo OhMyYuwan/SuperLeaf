@@ -18,7 +18,12 @@ import {
   type EditorRestoreState,
   type SelectionInfo,
 } from '../latex-editor'
-import type { LatexCitationCompletion, LatexFilePathCompletion, LatexLabelCompletion } from '../latex-editor/latex-completion-data'
+import type {
+  LatexCitationCompletion,
+  LatexCommandCompletion,
+  LatexFilePathCompletion,
+  LatexLabelCompletion,
+} from '../latex-editor/latex-completion-data'
 import { useCollaborationStore } from '../../stores/collaborationStore'
 
 interface EditorColumnProps {
@@ -36,6 +41,7 @@ interface EditorColumnProps {
   citationCompletions?: LatexCitationCompletion[]
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
+  commandCompletions?: LatexCommandCompletion[]
   onAddComment?: (params: {
     range: { from: number; to: number }
     targetText: string
@@ -57,6 +63,7 @@ export function EditorColumn({
   citationCompletions,
   filePathCompletions,
   labelCompletions,
+  commandCompletions,
   onAddComment,
 }: EditorColumnProps) {
   const [toolbar, setToolbar] = useState<{
@@ -109,6 +116,7 @@ export function EditorColumn({
             citationCompletions={citationCompletions}
             filePathCompletions={filePathCompletions}
             labelCompletions={labelCompletions}
+            commandCompletions={commandCompletions}
             toolbar={toolbar}
             onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
@@ -135,6 +143,7 @@ function EditorWithCollab({
   citationCompletions,
   filePathCompletions,
   labelCompletions,
+  commandCompletions,
   toolbar,
   onAddComment,
 }: {
@@ -152,6 +161,7 @@ function EditorWithCollab({
   citationCompletions?: LatexCitationCompletion[]
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
+  commandCompletions?: LatexCommandCompletion[]
   toolbar: { x: number; y: number } | null
   onAddComment?: () => void
 }) {
@@ -179,6 +189,7 @@ function EditorWithCollab({
       citationCompletions={citationCompletions}
       filePathCompletions={filePathCompletions}
       labelCompletions={labelCompletions}
+      commandCompletions={commandCompletions}
       scrollTo={scrollTo}
       yText={isCollab ? provider!.yText : undefined}
       awareness={isCollab ? provider!.awareness : undefined}

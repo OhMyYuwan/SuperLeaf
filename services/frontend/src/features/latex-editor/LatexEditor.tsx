@@ -21,6 +21,7 @@ import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import { spellingFor } from './spelling'
 import { setLatexCompletionDataEffect } from './latex-language'
 import type { LatexCitationCompletion, LatexCompletionData, LatexFilePathCompletion, LatexLabelCompletion } from './latex-completion-data'
 import { collaborationExtensions } from './collaboration-extensions'
@@ -123,6 +124,7 @@ export function LatexEditor({
   const viewStateFrameRef = useRef<number | null>(null)
   const languageCompartment = useMemo(() => new Compartment(), [])
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
+  const spellingCompartment = useMemo(() => new Compartment(), [])
   const completionData = useMemo<LatexCompletionData>(
     () => ({ citations: citationCompletions ?? [], filePaths: filePathCompletions ?? [], labels: labelCompletions ?? [] }),
     [citationCompletions, filePathCompletions, labelCompletions],
@@ -212,6 +214,7 @@ export function LatexEditor({
         ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
         languageCompartment.of(languageFor(format, completionData)),
         shortcutsCompartment.of(shortcutKeymapFor(format)),
+        spellingCompartment.of(spellingFor(format)),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
         }),
@@ -307,9 +310,10 @@ export function LatexEditor({
       effects: [
         languageCompartment.reconfigure(languageFor(format, completionDataRef.current)),
         shortcutsCompartment.reconfigure(shortcutKeymapFor(format)),
+        spellingCompartment.reconfigure(spellingFor(format)),
       ],
     })
-  }, [format, languageCompartment, shortcutsCompartment])
+  }, [format, languageCompartment, shortcutsCompartment, spellingCompartment])
 
   // Push project-level completion metadata into the LaTeX language extension.
   useEffect(() => {

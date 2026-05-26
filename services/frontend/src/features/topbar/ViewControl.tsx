@@ -41,7 +41,9 @@ export function ViewControl() {
       <button
         className="ghost-btn"
         onClick={() => setOpen(!open)}
-        title="视图控制"
+        title="调整工作区布局"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <Eye size={16} />
         视图
@@ -54,7 +56,10 @@ export function ViewControl() {
               checked={leftPanel}
               onChange={toggleLeftPanel}
             />
-            <span>左侧面板</span>
+            <span className="view-control-text">
+              <span className="view-control-label">项目导航</span>
+              <span className="view-control-hint">文件与大纲</span>
+            </span>
           </label>
           <div className="view-control-divider" />
           <label className="view-control-item">
@@ -91,7 +96,10 @@ export function ViewControl() {
               checked={rightPanel}
               onChange={toggleRightPanel}
             />
-            <span>右侧面板</span>
+            <span className="view-control-text">
+              <span className="view-control-label">协作区</span>
+              <span className="view-control-hint">讨论、Agent 与自动化</span>
+            </span>
           </label>
         </div>
       )}

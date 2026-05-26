@@ -12,8 +12,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useParams } from 'react-router-dom'
-import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
+import {
+  Panel,
+  Group as PanelGroup,
+  Separator as PanelResizeHandle,
+  type PanelImperativeHandle,
+  type PanelSize,
+} from 'react-resizable-panels'
 import { Topbar } from '../features/topbar'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { FileTree, OutlineList } from '../features/file-tree'
@@ -48,12 +55,14 @@ import { collectLatexCitationCompletions, collectLatexFilePaths, collectLatexLab
 import type { Document } from '../types/document'
 
 const OUTER_PANEL_AUTO_COLLAPSE_PERCENT = 5
+const SIDE_PANEL_COLLAPSED_SIZE = 0
+const SIDE_PANEL_ANIMATION_MS = 180
 const OUTLINE_COLLAPSED_HEIGHT = '44px'
 const WORKSPACE_PANEL_SIZES = {
   outer: {
-    left: { defaultSize: 16, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
-    center: { defaultSize: 64, minSize: 40 },
-    right: { defaultSize: 20, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+    left: { defaultSize: 10, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
+    center: { defaultSize: 68, minSize: 40 },
+    right: { defaultSize: 22, minSize: OUTER_PANEL_AUTO_COLLAPSE_PERCENT },
   },
   inner: {
     annotation: { defaultSize: 12, minSize: 12 },
@@ -155,15 +164,113 @@ export function WorkspacePage() {
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [outlineCollapsed, setOutlineCollapsed] = useState(false)
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
+  const leftOuterPanelRef = useRef<PanelImperativeHandle | null>(null)
+  const rightOuterPanelRef = useRef<PanelImperativeHandle | null>(null)
+  const leftExpandedSizeRef = useRef<number>(WORKSPACE_PANEL_SIZES.outer.left.defaultSize)
+  const rightExpandedSizeRef = useRef<number>(WORKSPACE_PANEL_SIZES.outer.right.defaultSize)
+  const sidePanelAnimationFrameRef = useRef<{ left: number | null; right: number | null }>({
+    left: null,
+    right: null,
+  })
+  const sidePanelAnimatingRef = useRef({ left: false, right: false })
   const loadingBibDocIds = useRef(new Set<string>())
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectReady = !!projectId && currentProjectId === projectId
   const autoOpenAttemptedFor = useRef<string | null>(null)
 
+  const cancelSidePanelAnimation = (side: 'left' | 'right') => {
+    const frame = sidePanelAnimationFrameRef.current[side]
+    if (frame !== null) {
+      cancelAnimationFrame(frame)
+      sidePanelAnimationFrameRef.current[side] = null
+    }
+    sidePanelAnimatingRef.current[side] = false
+  }
+
+  const animateSidePanelSize = (
+    side: 'left' | 'right',
+    panel: PanelImperativeHandle,
+    targetSize: number,
+  ) => {
+    cancelSidePanelAnimation(side)
+    const startSize = panel.getSize().asPercentage
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    if (reduceMotion || Math.abs(startSize - targetSize) < 0.1) {
+      panel.resize(`${targetSize}%`)
+      return
+    }
+
+    sidePanelAnimatingRef.current[side] = true
+    const startedAt = performance.now()
+
+    const tick = (time: number) => {
+      const progress = Math.min(1, (time - startedAt) / SIDE_PANEL_ANIMATION_MS)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      const nextSize = startSize + (targetSize - startSize) * eased
+      panel.resize(`${nextSize}%`)
+
+      if (progress < 1) {
+        sidePanelAnimationFrameRef.current[side] = requestAnimationFrame(tick)
+        return
+      }
+
+      panel.resize(`${targetSize}%`)
+      sidePanelAnimationFrameRef.current[side] = null
+      sidePanelAnimatingRef.current[side] = false
+    }
+
+    sidePanelAnimationFrameRef.current[side] = requestAnimationFrame(tick)
+  }
+
+  const handleSidePanelResize = (side: 'left' | 'right', size: PanelSize) => {
+    if (
+      sidePanelAnimatingRef.current[side] ||
+      size.asPercentage <= OUTER_PANEL_AUTO_COLLAPSE_PERCENT
+    ) {
+      return
+    }
+
+    if (side === 'left') {
+      leftExpandedSizeRef.current = size.asPercentage
+      return
+    }
+
+    rightExpandedSizeRef.current = size.asPercentage
+  }
+
+  const toggleSidePanelCollapsed = (side: 'left' | 'right') => {
+    const isLeft = side === 'left'
+    const panel = isLeft ? leftOuterPanelRef.current : rightOuterPanelRef.current
+    const collapsed = isLeft ? leftCollapsed : rightCollapsed
+    const setCollapsed = isLeft ? setLeftCollapsed : setRightCollapsed
+    const expandedSizeRef = isLeft ? leftExpandedSizeRef : rightExpandedSizeRef
+    const nextCollapsed = !collapsed
+
+    if (panel && nextCollapsed) {
+      const currentSize = panel.getSize().asPercentage
+      if (currentSize > OUTER_PANEL_AUTO_COLLAPSE_PERCENT) {
+        expandedSizeRef.current = currentSize
+      }
+    }
+
+    setCollapsed(nextCollapsed)
+    if (!panel) return
+    animateSidePanelSize(
+      side,
+      panel,
+      nextCollapsed ? SIDE_PANEL_COLLAPSED_SIZE : expandedSizeRef.current,
+    )
+  }
+
   const handlePanelLayout = (sizes: number[]) => {
     let panelIndex = 0
-    if (leftPanelVisible && !leftCollapsed) {
+    if (leftPanelVisible) {
       if (
+        !leftCollapsed &&
+        !sidePanelAnimatingRef.current.left &&
         sizes[panelIndex] !== undefined &&
         sizes[panelIndex] < OUTER_PANEL_AUTO_COLLAPSE_PERCENT
       ) {
@@ -172,8 +279,10 @@ export function WorkspacePage() {
       panelIndex++
     }
     panelIndex++
-    if (rightPanelVisible && !rightCollapsed) {
+    if (rightPanelVisible) {
       if (
+        !rightCollapsed &&
+        !sidePanelAnimatingRef.current.right &&
         sizes[panelIndex] !== undefined &&
         sizes[panelIndex] < OUTER_PANEL_AUTO_COLLAPSE_PERCENT
       ) {
@@ -181,6 +290,21 @@ export function WorkspacePage() {
       }
     }
   }
+
+  useEffect(() => {
+    const animationFrames = sidePanelAnimationFrameRef.current
+    const animatingState = sidePanelAnimatingRef.current
+    return () => {
+      for (const side of ['left', 'right'] as const) {
+        const frame = animationFrames[side]
+        if (frame !== null) {
+          cancelAnimationFrame(frame)
+        }
+        animationFrames[side] = null
+        animatingState[side] = false
+      }
+    }
+  }, [])
 
   // Derived ------------------------------------------------------------------
   const activeDoc = activeDocumentId ? documents[activeDocumentId] : null
@@ -556,14 +680,25 @@ export function WorkspacePage() {
           className="workspace-panel-group"
           onLayoutChanged={(layout) => handlePanelLayout(Object.values(layout))}
         >
-          {leftPanelVisible && !leftCollapsed && (
+          {leftPanelVisible && (
             <>
               <Panel
+                id="project-navigation-panel"
+                panelRef={leftOuterPanelRef}
+                collapsible
+                collapsedSize={`${SIDE_PANEL_COLLAPSED_SIZE}%`}
                 defaultSize={WORKSPACE_PANEL_SIZES.outer.left.defaultSize}
                 minSize={WORKSPACE_PANEL_SIZES.outer.left.minSize}
+                onResize={(size) => handleSidePanelResize('left', size)}
               >
-                <ErrorBoundary label="文件树">
-                  <div className="panel left-panel">
+                <ErrorBoundary label="项目导航">
+                  <div
+                    className={`panel left-panel side-panel-content is-left ${
+                      leftCollapsed ? 'is-collapsed' : 'is-expanded'
+                    }`}
+                    aria-hidden={leftCollapsed}
+                    inert={leftCollapsed}
+                  >
                     <PanelGroup
                       key={outlineCollapsed ? 'left-outline-collapsed' : 'left-outline-open'}
                       orientation="vertical"
@@ -621,25 +756,22 @@ export function WorkspacePage() {
                   </div>
                 </ErrorBoundary>
               </Panel>
-              <PanelResizeHandle className="resize-handle" />
+              <PanelResizeHandle
+                disabled={leftCollapsed}
+                className={`resize-handle ${leftCollapsed ? 'is-hidden' : ''}`}
+              />
             </>
           )}
 
           {leftPanelVisible && (
             <button
+              type="button"
               className={`panel-collapse-btn left ${leftCollapsed ? 'collapsed' : ''}`}
-              onClick={() => setLeftCollapsed(!leftCollapsed)}
-              title={leftCollapsed ? '展开左侧面板' : '收起左侧面板'}
+              onClick={() => toggleSidePanelCollapsed('left')}
+              title={leftCollapsed ? '展开项目导航' : '收起项目导航'}
+              aria-label={leftCollapsed ? '展开项目导航' : '收起项目导航'}
             >
-              <svg width="8" height="12" viewBox="0 0 8 12" fill="none">
-                <path
-                  d={leftCollapsed ? 'M2 2L6 6L2 10' : 'M6 2L2 6L6 10'}
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              {leftCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             </button>
           )}
 
@@ -737,63 +869,69 @@ export function WorkspacePage() {
           {rightPanelVisible && (
             <>
               <button
+                type="button"
                 className={`panel-collapse-btn right ${rightCollapsed ? 'collapsed' : ''}`}
-                onClick={() => setRightCollapsed(!rightCollapsed)}
-                title={rightCollapsed ? '展开右侧面板' : '收起右侧面板'}
+                onClick={() => toggleSidePanelCollapsed('right')}
+                title={rightCollapsed ? '展开协作区' : '收起协作区'}
+                aria-label={rightCollapsed ? '展开协作区' : '收起协作区'}
               >
-                <svg width="8" height="12" viewBox="0 0 8 12" fill="none">
-                  <path
-                    d={rightCollapsed ? 'M6 2L2 6L6 10' : 'M2 2L6 6L2 10'}
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                {rightCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
               </button>
-              {!rightCollapsed && (
-                <>
-                  <PanelResizeHandle className="resize-handle" />
-                  <Panel
-                    defaultSize={WORKSPACE_PANEL_SIZES.outer.right.defaultSize}
-                    minSize={WORKSPACE_PANEL_SIZES.outer.right.minSize}
+              <PanelResizeHandle
+                disabled={rightCollapsed}
+                className={`resize-handle ${rightCollapsed ? 'is-hidden' : ''}`}
+              />
+              <Panel
+                id="collaboration-panel"
+                panelRef={rightOuterPanelRef}
+                collapsible
+                collapsedSize={`${SIDE_PANEL_COLLAPSED_SIZE}%`}
+                defaultSize={WORKSPACE_PANEL_SIZES.outer.right.defaultSize}
+                minSize={WORKSPACE_PANEL_SIZES.outer.right.minSize}
+                onResize={(size) => handleSidePanelResize('right', size)}
+              >
+                <ErrorBoundary label="协作区">
+                  <div
+                    className={`side-panel-content is-right ${
+                      rightCollapsed ? 'is-collapsed' : 'is-expanded'
+                    }`}
+                    aria-hidden={rightCollapsed}
+                    inert={rightCollapsed}
                   >
-                    <ErrorBoundary label="右侧面板">
-                      <RightPanel
-                  workflows={workflows}
-                  workflowsLoaded={workflowsLoaded}
-                  workflowError={workflowError}
-                  definitions={definitions}
-                  activeProvider={activeProvider}
-                  activeSelection={activeSelection}
-                  activeDocumentId={activeDocumentId}
-                  runningMap={runningMap}
-                  eventsMap={eventsMap}
-                  nodeStatusesMap={nodeStatusesMap}
-                  currentRoundMap={currentRoundMap}
-                  maxRoundsMap={maxRoundsMap}
-                  selectedTab={rightTab}
-                  onTabChange={setRightTab}
-                  onRunWorkflow={handleRunWorkflow}
-                  onRunDefinition={handleRunDefinition}
-                  onTestDefinition={handleTestDefinition}
-                  onCreateDefinition={createDefinition}
-                  onUpdateDefinition={updateDefinition}
-                  onDeleteDefinition={deleteDefinition}
-                  onReloadWorkflows={loadWorkflows}
-                  onJumpToRange={(range) => {
-                    if (!activeDocumentId) return
-                    setEditorScrollTo({
-                      documentId: activeDocumentId,
-                      pos: range.from,
-                      seq: Date.now(),
-                    })
-                  }}
-                />
-                    </ErrorBoundary>
-                  </Panel>
-                </>
-              )}
+                    <RightPanel
+                      workflows={workflows}
+                      workflowsLoaded={workflowsLoaded}
+                      workflowError={workflowError}
+                      definitions={definitions}
+                      activeProvider={activeProvider}
+                      activeSelection={activeSelection}
+                      activeDocumentId={activeDocumentId}
+                      runningMap={runningMap}
+                      eventsMap={eventsMap}
+                      nodeStatusesMap={nodeStatusesMap}
+                      currentRoundMap={currentRoundMap}
+                      maxRoundsMap={maxRoundsMap}
+                      selectedTab={rightTab}
+                      onTabChange={setRightTab}
+                      onRunWorkflow={handleRunWorkflow}
+                      onRunDefinition={handleRunDefinition}
+                      onTestDefinition={handleTestDefinition}
+                      onCreateDefinition={createDefinition}
+                      onUpdateDefinition={updateDefinition}
+                      onDeleteDefinition={deleteDefinition}
+                      onReloadWorkflows={loadWorkflows}
+                      onJumpToRange={(range) => {
+                        if (!activeDocumentId) return
+                        setEditorScrollTo({
+                          documentId: activeDocumentId,
+                          pos: range.from,
+                          seq: Date.now(),
+                        })
+                      }}
+                    />
+                  </div>
+                </ErrorBoundary>
+              </Panel>
             </>
           )}
         </PanelGroup>

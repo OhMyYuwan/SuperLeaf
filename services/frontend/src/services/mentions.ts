@@ -16,7 +16,7 @@ import type { ProjectTree, TreeDoc, TreeFile, TreeFolder } from './filesystemApi
 import { filesystemApi } from './filesystemApi'
 import type { DocumentFormat } from '../types/document'
 
-export type AgentCandidate = { kind: 'agent'; id: string; name: string }
+export type AgentCandidate = { kind: 'agent'; id: string; name: string; displayName?: string }
 export type WorkflowCandidate = { kind: 'workflow'; id: string; name: string; description?: string }
 export type FileCandidate = {
   kind: 'file'

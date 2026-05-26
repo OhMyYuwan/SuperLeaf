@@ -114,7 +114,6 @@ export function TeamTab({
   const error = useSettingsStore((s) => s.error)
   const backendReachable = useSettingsStore((s) => s.backendReachable)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
-  const nativeAgents = useNativeAgentStore((s) => s.agents)
   const nativeSkills = useNativeAgentStore((s) => s.skills)
   const marketplace = useNativeAgentStore((s) => s.marketplace)
   const marketplaceLoading = useNativeAgentStore((s) => s.marketplaceLoading)
@@ -154,10 +153,6 @@ export function TeamTab({
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [officialBadgeStyle, setOfficialBadgeStyle] = useState<OfficialBadgeStyle>('metal')
-  const configuredMcpCount = useMemo(
-    () => mcpServers.length + nativeAgents.reduce((sum, agent) => sum + mcpServersFromRuntime(agent.runtime_config).length, 0),
-    [mcpServers.length, nativeAgents],
-  )
 
   useEffect(() => {
     if (!loaded) load()
@@ -234,11 +229,12 @@ export function TeamTab({
           >
             Skill（{nativeSkills.length}）
           </button>
+          {/* MCP 标签统计用户已拥有的 MCP 配置数量；市场条目数量只在 MCP 面板内部展示。 */}
           <button
             className={subTab === 'mcps' ? 'active' : ''}
             onClick={() => setSubTab('mcps')}
           >
-            MCP（{mcpCatalog?.presets.length ?? configuredMcpCount}）
+            MCP（{mcpServers.length}）
           </button>
           <button
             className={subTab === 'workflows' ? 'active' : ''}
@@ -837,6 +833,98 @@ function parseEnvLines(value: string): Record<string, string> {
   return env
 }
 
+function parseEnvLinesStrict(value: string): { env: Record<string, string>; error?: string } {
+  const env: Record<string, string> = {}
+  const lines = value.split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim()
+    if (!trimmed) continue
+    if (!trimmed.includes('=')) {
+      return { env, error: `Env 第 ${index + 1} 行需要使用 KEY=value` }
+    }
+    const [key, ...rest] = trimmed.split('=')
+    const cleanKey = key.trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cleanKey)) {
+      return { env, error: `Env 第 ${index + 1} 行的 KEY 无效` }
+    }
+    env[cleanKey] = rest.join('=').trim()
+  }
+  return { env }
+}
+
+function parseDelimitedList(value: string): string[] {
+  return [...new Set(value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean))]
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean)
+  if (typeof value === 'string') return splitArgs(value)
+  return []
+}
+
+type ParsedMcpJson = {
+  id: string
+  name: string
+  description: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  allowedTools: string[]
+}
+
+function parseMcpJsonSnippet(value: string): { parsed?: ParsedMcpJson; error?: string } {
+  let root: unknown
+  try {
+    root = JSON.parse(value)
+  } catch {
+    return { error: 'JSON 格式无效' }
+  }
+  const rootRecord = asRecord(root)
+  if (!rootRecord) return { error: 'JSON 顶层需要是对象' }
+
+  const extract = (): { id: string; config: Record<string, unknown> } | null => {
+    const mcpServers = asRecord(rootRecord.mcpServers)
+    if (mcpServers) {
+      const entries = Object.entries(mcpServers).filter(([, config]) => asRecord(config))
+      if (entries.length !== 1) return null
+      return { id: entries[0][0], config: asRecord(entries[0][1]) || {} }
+    }
+    if ('command' in rootRecord || 'args' in rootRecord || 'env' in rootRecord) {
+      return { id: String(rootRecord.id || rootRecord.name || ''), config: rootRecord }
+    }
+    const entries = Object.entries(rootRecord).filter(([, config]) => asRecord(config))
+    if (entries.length === 1) return { id: entries[0][0], config: asRecord(entries[0][1]) || {} }
+    return null
+  }
+
+  const extracted = extract()
+  if (!extracted) return { error: '一次只支持粘贴一个 stdio MCP server 配置' }
+
+  const typeValue = String(extracted.config.type || extracted.config.transport || 'stdio').toLowerCase()
+  if (typeValue && typeValue !== 'stdio') return { error: '当前粘贴入口只支持 stdio MCP JSON' }
+
+  const commandValue = extracted.config.command
+  const command = Array.isArray(commandValue)
+    ? String(commandValue[0] || '').trim()
+    : String(commandValue || '').trim()
+  if (!command) return { error: 'JSON 中缺少 command' }
+  const commandArgs = Array.isArray(commandValue) ? commandValue.slice(1).map(String) : []
+  const args = [...commandArgs, ...stringArray(extracted.config.args)]
+  const envRecord = asRecord(extracted.config.env) || asRecord(extracted.config.environment) || {}
+  const env = Object.fromEntries(
+    Object.entries(envRecord).map(([key, val]) => [key, String(val)]).filter(([key]) => key.trim()),
+  )
+  const allowedTools = stringArray(extracted.config.allowed_tools || extracted.config.allowedTools)
+  const id = extracted.id.trim()
+  const name = String(extracted.config.name || id || command).trim()
+  const description = String(extracted.config.description || '').trim()
+  return { parsed: { id, name, description, command, args, env, allowedTools } }
+}
+
 function stringListFromRuntime(runtimeConfig: Record<string, unknown> | undefined, key: string): string[] {
   const value = runtimeConfig?.[key]
   if (!Array.isArray(value)) return []
@@ -937,6 +1025,97 @@ function mcpPresetSourceLabel(preset: McpPreset): string {
   const url = preset.source?.url
   if (typeof url === 'string' && url.trim()) return url
   return 'custom preset'
+}
+
+function mcpPresetSourceUrl(preset: McpPreset): string {
+  const url = preset.source?.url
+  if (typeof url === 'string' && url.trim()) return url.trim()
+  const repo = preset.source?.repo
+  if (typeof repo === 'string' && repo.includes('/')) return `https://github.com/${repo.trim()}`
+  return ''
+}
+
+function mcpPresetEnvSummary(preset: McpPreset): string {
+  if (preset.env_schema.length === 0) return '无 Env'
+  const required = preset.env_schema.filter((field) => field.required)
+  const reliable = preset.env_schema.filter((field) => field.required_for_reliable_use && !field.required)
+  if (required.length > 0) return `必填 Env: ${required.map((field) => field.name).join(', ')}`
+  if (reliable.length > 0) return `推荐 Env: ${reliable.map((field) => field.name).join(', ')}`
+  return `Env: ${preset.env_schema.map((field) => field.name).join(', ')}`
+}
+
+function mcpPresetVerificationSummary(preset: McpPreset): string {
+  const status = preset.verification.status || 'unknown'
+  const grade = preset.verification.grade ? ` · ${preset.verification.grade}` : ''
+  const golden = preset.verification.golden_tests?.length ? ` · ${preset.verification.golden_tests.length} golden` : ''
+  return `${status}${grade}${golden}`
+}
+
+function mcpPresetAllowedTools(preset: McpPreset): string[] {
+  return preset.tool_policy.default_allowed_tools?.length
+    ? preset.tool_policy.default_allowed_tools
+    : preset.tool_policy.recommended_tools ?? []
+}
+
+function mcpPresetTransportLabel(preset: McpPreset): string {
+  return (preset.transport.type || 'stdio').toUpperCase()
+}
+
+function mcpPresetTransportSupported(preset: McpPreset): boolean {
+  return (preset.transport.type || 'stdio') === 'stdio'
+}
+
+function mcpProbeDetailText(probe: McpProbeResult): string {
+  const warning = probe.warnings.length > 0 ? `; ${probe.warnings.join('; ')}` : ''
+  const missing = probe.missing_tools.length > 0 ? `; missing: ${probe.missing_tools.join(', ')}` : ''
+  return `${probe.tools.length} tools${missing}${warning}`
+}
+
+function mcpConnectivityOk(server: NativeMcpServerConfig, check?: McpCheckState): boolean {
+  return connectivityPassed(check) || (!check && (server.last_probe_status || server.status) === 'ok')
+}
+
+function mcpFunctionalityOk(server: NativeMcpServerConfig, check?: McpCheckState): boolean {
+  return goldenPassed(check) || (!check && server.last_golden_status === 'ok')
+}
+
+function mcpServerHealthLine(server: NativeMcpServerConfig, check?: McpCheckState): string {
+  if (check?.busy === 'probe') return '最近检查：连通性检查中'
+  if (check?.busy === 'golden') return '最近检查：功能性检查中'
+  const parts: string[] = []
+  if (check?.probe) {
+    parts.push(`连通性 ${check.probe.status} · ${mcpProbeDetailText(check.probe)}`)
+  } else {
+    const status = server.last_probe_status || (server.status !== 'unknown' ? server.status : '')
+    const detail = server.last_probe_detail || server.status_detail
+    if (status) parts.push(`连通性 ${status}${detail ? ` · ${detail}` : ''}`)
+  }
+  if (check?.golden) {
+    const detail = check.golden.error || check.golden.warnings?.join('; ') || check.golden.test_id
+    parts.push(`功能性 ${check.golden.passed ? 'ok' : 'error'}${detail ? ` · ${detail}` : ''}`)
+  } else if (server.last_golden_status) {
+    parts.push(`功能性 ${server.last_golden_status}${server.last_golden_detail ? ` · ${server.last_golden_detail}` : ''}`)
+  }
+  return parts.length ? `最近检查：${parts.join(' ｜ ')}` : ''
+}
+
+function mcpAgentPickerHint(server: NativeMcpServerConfig, preset?: McpPreset): { label: string; detail: string; tone: 'ok' | 'warn' | 'error' | 'neutral' } {
+  if (!server.is_enabled) {
+    return { label: '停用', detail: '不会在未选中时开放', tone: 'neutral' }
+  }
+  const status = server.last_probe_status || server.status
+  if (status === 'ok') {
+    return { label: 'ready', detail: server.last_probe_detail || `${server.last_tool_count || 0} tools`, tone: 'ok' }
+  }
+  if (status === 'error') {
+    return { label: 'failed', detail: server.last_probe_detail || server.status_detail || '连通性失败', tone: 'error' }
+  }
+  const requiredEnv = preset?.env_schema.filter((field) => field.required || field.required_for_reliable_use) ?? []
+  const missingEnv = requiredEnv.filter((field) => !server.env_keys.includes(field.name))
+  if (missingEnv.length > 0) {
+    return { label: 'needs config', detail: `缺少 ${missingEnv.map((field) => field.name).join(', ')}`, tone: 'warn' }
+  }
+  return { label: 'unchecked', detail: '尚未运行连通性检查', tone: 'neutral' }
 }
 
 type McpCheckState = {
@@ -1171,6 +1350,7 @@ function NativeAgentForm({
             const preset = presetById.get(server.preset_id)
             const legacySelected = legacyMcpServers.some((legacy) => legacy.id === server.preset_id && legacy.enabled)
             const checked = selectedServerIds.has(server.id) || selectedPresetIds.has(server.preset_id) || legacySelected
+            const hint = mcpAgentPickerHint(server, preset)
             return (
               <label key={server.id} className={`skill-check ${checked ? 'selected' : ''}`}>
                 <input
@@ -1180,12 +1360,17 @@ function NativeAgentForm({
                   onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
                 <span>{ownedMcpName(server, preset)}</span>
-                <small>{preset ? `${mcpRegistryLabel(preset)} · ${preset.category}` : '已拥有 MCP'} · {server.is_enabled ? '已启用' : '已停用'}</small>
+                <small>
+                  {preset ? `${mcpRegistryLabel(preset)} · ${preset.category}` : '已拥有 MCP'} · {server.is_enabled ? '已启用' : '已停用'}
+                  <span className={`mcp-picker-status ${hint.tone}`}>{hint.label}</span>
+                  {hint.detail ? ` · ${hint.detail}` : ''}
+                </small>
               </label>
             )
           })}
           {customMcpConfigs.map((server) => {
             const checked = selectedServerIds.has(server.id)
+            const hint = mcpAgentPickerHint(server)
             return (
               <label key={server.id} className={`skill-check ${checked ? 'selected' : ''}`}>
                 <input
@@ -1195,7 +1380,11 @@ function NativeAgentForm({
                   onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
                 <span>{ownedMcpName(server)}</span>
-                <small>自定义 · {server.is_enabled ? '已启用' : '已停用'} · {server.status}</small>
+                <small>
+                  自定义 · {server.is_enabled ? '已启用' : '已停用'}
+                  <span className={`mcp-picker-status ${hint.tone}`}>{hint.label}</span>
+                  {hint.detail ? ` · ${hint.detail}` : ''}
+                </small>
               </label>
             )
           })}
@@ -1243,6 +1432,7 @@ function McpManagementPanel({
   const [checks, setChecks] = useState<Record<string, McpCheckState>>({})
   const [addingCustom, setAddingCustom] = useState(false)
   const [marketSearch, setMarketSearch] = useState('')
+  const [installPresetId, setInstallPresetId] = useState<string | null>(null)
   const configuredByPreset = new Map(servers.filter((server) => server.preset_id).map((server) => [server.preset_id, server]))
   const presetById = new Map(presets.map((preset) => [preset.id, preset]))
   const officialCount = presets.filter((preset) => preset.registry === 'official').length
@@ -1367,27 +1557,61 @@ function McpManagementPanel({
           <div className="mcp-catalog-list">
             {filteredPresets.map((preset) => {
               const configured = configuredByPreset.get(preset.id)
+              const capabilities = preset.capabilities.slice(0, 4)
+              const remainingCapabilities = Math.max(0, preset.capabilities.length - capabilities.length)
+              const sourceUrl = mcpPresetSourceUrl(preset)
+              const transportSupported = mcpPresetTransportSupported(preset)
               return (
-                <div key={preset.id} className="mcp-catalog-row">
-                  <div className="skill-market-copy">
-                    <strong>{mcpQualifiedName(preset)}</strong>
-                    <span>{preset.description}</span>
-                    <small>{mcpRegistryLabel(preset)} · {preset.category} · {mcpPresetSourceLabel(preset)}</small>
+                <div key={preset.id} className="mcp-market-entry">
+                  <div className="mcp-catalog-row">
+                    <div className="skill-market-copy mcp-market-copy">
+                      <strong>{mcpQualifiedName(preset)}</strong>
+                      <span>{preset.description}</span>
+                      <small>{mcpRegistryLabel(preset)} · {preset.category} · {mcpPresetSourceLabel(preset)}</small>
+                      <div className="mcp-market-chips" aria-label="MCP preset metadata">
+                        <span className={`mcp-chip ${transportSupported ? 'ok' : 'warn'}`}>
+                          {mcpPresetTransportLabel(preset)}
+                          {transportSupported ? '' : ' 暂不支持运行'}
+                        </span>
+                        <span className="mcp-chip">{mcpPresetEnvSummary(preset)}</span>
+                        <span className="mcp-chip">验证: {mcpPresetVerificationSummary(preset)}</span>
+                        {capabilities.map((capability) => (
+                          <span key={capability} className="mcp-chip subtle">{capability}</span>
+                        ))}
+                        {remainingCapabilities > 0 && <span className="mcp-chip subtle">+{remainingCapabilities}</span>}
+                      </div>
+                    </div>
+                    <div className="mcp-row-actions">
+                      {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
+                      {sourceUrl && (
+                        <a className="ghost-btn small" href={sourceUrl} target="_blank" rel="noreferrer">
+                          文档
+                        </a>
+                      )}
+                      {configured ? (
+                        <span className="native-pill neutral">已添加</span>
+                      ) : (
+                        <button
+                          className="ghost-btn small"
+                          type="button"
+                          onClick={() => setInstallPresetId((current) => (current === preset.id ? null : preset.id))}
+                        >
+                          <Plus size={12} /> {installPresetId === preset.id ? '收起' : '添加 MCP'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="mcp-row-actions">
-                    {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
-                    {configured ? (
-                      <span className="native-pill neutral">已添加</span>
-                    ) : (
-                      <button
-                        className="ghost-btn small"
-                        type="button"
-                        onClick={() => void onEnsurePresetServer(preset.id)}
-                      >
-                        <Plus size={12} /> 添加 MCP
-                      </button>
-                    )}
-                  </div>
+                  {!configured && installPresetId === preset.id && (
+                    <McpPresetInstallPanel
+                      preset={preset}
+                      onCancel={() => setInstallPresetId(null)}
+                      onInstall={async (env) => {
+                        const created = await onEnsurePresetServer(preset.id, env)
+                        if (created) setInstallPresetId(null)
+                        return created
+                      }}
+                    />
+                  )}
                 </div>
               )
             })}
@@ -1395,6 +1619,112 @@ function McpManagementPanel({
         )}
       </section>
     </section>
+  )
+}
+
+function McpPresetInstallPanel({
+  preset,
+  onInstall,
+  onCancel,
+}: {
+  preset: McpPreset
+  onInstall: (env?: Record<string, string>) => Promise<NativeMcpServerConfig | null>
+  onCancel: () => void
+}) {
+  const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const supported = mcpPresetTransportSupported(preset)
+  const tools = mcpPresetAllowedTools(preset)
+
+  useEffect(() => {
+    setEnvDraft(Object.fromEntries(preset.env_schema.map((field) => [field.name, ''])))
+    setError(null)
+  }, [preset.id, preset.env_schema])
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setError(null)
+    if (!supported) {
+      setError('当前 MCP runtime 只支持 stdio transport。')
+      return
+    }
+    const env = Object.fromEntries(
+      Object.entries(envDraft)
+        .map(([key, value]) => [key, value.trim()] as const)
+        .filter(([, value]) => value),
+    )
+    setSaving(true)
+    const created = await onInstall(Object.keys(env).length ? env : undefined)
+    setSaving(false)
+    if (!created) setError('添加 MCP 失败，请稍后重试或检查 preset 配置。')
+  }
+
+  return (
+    <form className="mcp-install-panel" onSubmit={submit}>
+      <div className="mcp-install-head">
+        <div>
+          <strong>确认添加 {mcpQualifiedName(preset)}</strong>
+          <span>{preset.description}</span>
+        </div>
+        <span className={`mcp-chip ${supported ? 'ok' : 'warn'}`}>
+          {mcpPresetTransportLabel(preset)}
+          {supported ? ' 可运行' : ' 暂不支持运行'}
+        </span>
+      </div>
+
+      <div className="mcp-install-detail">
+        <span>Command</span>
+        <code>{preset.transport.command || '(empty)'}</code>
+      </div>
+      <div className="mcp-install-detail">
+        <span>Args</span>
+        <code>{preset.transport.args?.length ? preset.transport.args.join(' ') : '(none)'}</code>
+      </div>
+      <div className="mcp-install-detail">
+        <span>Allowed tools</span>
+        <code>{tools.length ? tools.join(', ') : '全部工具'}</code>
+      </div>
+      <div className="mcp-install-detail">
+        <span>Verification</span>
+        <code>{mcpPresetVerificationSummary(preset)}</code>
+      </div>
+
+      {preset.env_schema.length > 0 ? (
+        <div className="mcp-env-fields">
+          {preset.env_schema.map((field) => (
+            <label key={field.name}>
+              <span>
+                {field.label || field.name}
+                {field.required ? ' · 必填' : field.required_for_reliable_use ? ' · 推荐' : ''}
+              </span>
+              <input
+                type={field.secret ? 'password' : 'text'}
+                value={envDraft[field.name] ?? ''}
+                onChange={(event) => setEnvDraft((prev) => ({ ...prev, [field.name]: event.target.value }))}
+                placeholder={field.name}
+                autoComplete="off"
+              />
+              {field.description && <small>{field.description}</small>}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <div className="mcp-check-result ok">这个 preset 不需要环境变量。</div>
+      )}
+
+      {!supported && (
+        <div className="mcp-check-result warn">可以先查看配置，但当前 SuperLeaf runtime 只运行 stdio MCP。</div>
+      )}
+      {error && <div className="mcp-check-result error">{error}</div>}
+      <div className="mcp-install-actions">
+        <button type="button" className="ghost-btn small" onClick={onCancel} disabled={saving}>取消</button>
+        <button type="submit" className="primary-btn compact" disabled={saving || !supported}>
+          {saving ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+          确认添加
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -1416,8 +1746,9 @@ function McpOwnedServerRow({
   onGolden?: () => Promise<void>
 }) {
   const [expanded, setExpanded] = useState(false)
-  const connectivityOk = connectivityPassed(check)
-  const functionalityOk = goldenPassed(check)
+  const connectivityOk = mcpConnectivityOk(server, check)
+  const functionalityOk = mcpFunctionalityOk(server, check)
+  const healthLine = mcpServerHealthLine(server, check)
 
   return (
     <div className={`mcp-catalog-row ${expanded ? 'expanded' : ''}`}>
@@ -1427,6 +1758,7 @@ function McpOwnedServerRow({
           {preset ? mcpRegistryLabel(preset) : '自定义'} · {server.is_enabled ? '已启用' : '已停用'} · {server.env_keys.length ? `Env: ${server.env_keys.join(', ')}` : '无 Env'}
         </span>
         <small>{server.command} {joinArgs(server.args)}</small>
+        {healthLine && <small className="mcp-health-line">{healthLine}</small>}
       </div>
       <div className="mcp-row-actions">
         {isOfficialRecommendedMcp(preset) && <OfficialMcpBadge />}
@@ -1583,7 +1915,7 @@ function McpServerEditor({
         </button>
         <button
           type="button"
-          className={`ghost-btn small ${connectivityPassed(check) ? 'success' : ''}`}
+          className={`ghost-btn small ${mcpConnectivityOk(server, check) ? 'success' : ''}`}
           onClick={() => void onProbe()}
           disabled={Boolean(check?.busy) || !server.is_enabled}
         >
@@ -1592,7 +1924,7 @@ function McpServerEditor({
         {onGolden && (
           <button
             type="button"
-            className={`ghost-btn small ${goldenPassed(check) ? 'success' : ''}`}
+            className={`ghost-btn small ${mcpFunctionalityOk(server, check) ? 'success' : ''}`}
             onClick={() => void onGolden()}
             disabled={Boolean(check?.busy)}
           >
@@ -1623,14 +1955,43 @@ function CustomMcpForm({
     allowedTools: '',
     envText: '',
   })
+  const [jsonText, setJsonText] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const applyJsonPaste = () => {
+    setError(null)
+    const result = parseMcpJsonSnippet(jsonText)
+    if (result.error || !result.parsed) {
+      setError(result.error || '无法读取 MCP JSON')
+      return
+    }
+    const { parsed } = result
+    const [ownerFromId, nameFromId] = parsed.id.includes('@')
+      ? parsed.id.split('@', 2)
+      : ['', parsed.id]
+    setDraft((prev) => ({
+      ...prev,
+      owner: ownerFromId || prev.owner || 'local',
+      mcpName: nameFromId || parsed.name || prev.mcpName,
+      description: parsed.description || prev.description,
+      command: parsed.command,
+      args: joinArgs(parsed.args),
+      allowedTools: parsed.allowedTools.join(', '),
+      envText: Object.entries(parsed.env).map(([key, value]) => `${key}=${value}`).join('\n'),
+    }))
+  }
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     setError(null)
     if (!draft.command.trim()) {
       setError('Command 不能为空')
+      return
+    }
+    const envResult = parseEnvLinesStrict(draft.envText)
+    if (envResult.error) {
+      setError(envResult.error)
       return
     }
     const owner = draft.owner.trim() || 'local'
@@ -1643,8 +2004,8 @@ function CustomMcpForm({
       transport: 'stdio',
       command: draft.command.trim(),
       args: splitArgs(draft.args),
-      env: parseEnvLines(draft.envText),
-      allowed_tools: draft.allowedTools.split(',').map((item) => item.trim()).filter(Boolean),
+      env: envResult.env,
+      allowed_tools: parseDelimitedList(draft.allowedTools),
       is_enabled: true,
     })
     setSaving(false)
@@ -1686,6 +2047,20 @@ function CustomMcpForm({
           <span>Env</span>
           <textarea rows={3} value={draft.envText} onChange={(event) => setDraft((prev) => ({ ...prev, envText: event.target.value }))} placeholder="KEY=value" />
         </label>
+      </div>
+      <div className="mcp-json-paste">
+        <label>
+          <span>粘贴 stdio MCP JSON</span>
+          <textarea
+            rows={4}
+            value={jsonText}
+            onChange={(event) => setJsonText(event.target.value)}
+            placeholder='{ "mcpServers": { "paper-search": { "command": "npx", "args": ["-y", "..."], "env": {} } } }'
+          />
+        </label>
+        <button type="button" className="ghost-btn small" onClick={applyJsonPaste} disabled={!jsonText.trim() || saving}>
+          填充表单
+        </button>
       </div>
       {error && <div className="form-error">{error}</div>}
       <div className="form-actions">

@@ -60,6 +60,7 @@ def run_migrations(engine: Engine) -> None:
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
         _rebuild_native_mcp_servers_table(conn)
+        _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
 
 
@@ -472,3 +473,20 @@ def _rebuild_native_mcp_servers_table(conn) -> None:
     conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_preset_id ON native_mcp_servers(preset_id)")
     )
+
+
+def _add_native_mcp_health_columns(conn) -> None:
+    if not _table_exists(conn, "native_mcp_servers"):
+        return
+    additions = {
+        "last_probe_at": "DATETIME DEFAULT NULL",
+        "last_probe_status": "VARCHAR(32) DEFAULT ''",
+        "last_probe_detail": "TEXT DEFAULT ''",
+        "last_golden_at": "DATETIME DEFAULT NULL",
+        "last_golden_status": "VARCHAR(32) DEFAULT ''",
+        "last_golden_detail": "TEXT DEFAULT ''",
+        "last_tool_count": "INTEGER DEFAULT 0",
+    }
+    for column, ddl in additions.items():
+        if not _column_exists(conn, "native_mcp_servers", column):
+            conn.execute(text(f"ALTER TABLE native_mcp_servers ADD COLUMN {column} {ddl}"))

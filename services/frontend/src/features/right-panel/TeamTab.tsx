@@ -114,7 +114,6 @@ export function TeamTab({
   const error = useSettingsStore((s) => s.error)
   const backendReachable = useSettingsStore((s) => s.backendReachable)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
-  const nativeAgents = useNativeAgentStore((s) => s.agents)
   const nativeSkills = useNativeAgentStore((s) => s.skills)
   const marketplace = useNativeAgentStore((s) => s.marketplace)
   const marketplaceLoading = useNativeAgentStore((s) => s.marketplaceLoading)
@@ -154,10 +153,6 @@ export function TeamTab({
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [officialBadgeStyle, setOfficialBadgeStyle] = useState<OfficialBadgeStyle>('metal')
-  const configuredMcpCount = useMemo(
-    () => mcpServers.length + nativeAgents.reduce((sum, agent) => sum + mcpServersFromRuntime(agent.runtime_config).length, 0),
-    [mcpServers.length, nativeAgents],
-  )
 
   useEffect(() => {
     if (!loaded) load()
@@ -234,11 +229,12 @@ export function TeamTab({
           >
             Skill（{nativeSkills.length}）
           </button>
+          {/* MCP 标签统计用户已拥有的 MCP 配置数量；市场条目数量只在 MCP 面板内部展示。 */}
           <button
             className={subTab === 'mcps' ? 'active' : ''}
             onClick={() => setSubTab('mcps')}
           >
-            MCP（{mcpCatalog?.presets.length ?? configuredMcpCount}）
+            MCP（{mcpServers.length}）
           </button>
           <button
             className={subTab === 'workflows' ? 'active' : ''}

@@ -319,6 +319,13 @@ class NativeMcpServer(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(16), default="unknown")
     status_detail: Mapped[str] = mapped_column(Text, default="")
+    last_probe_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_probe_status: Mapped[str] = mapped_column(String(32), default="")
+    last_probe_detail: Mapped[str] = mapped_column(Text, default="")
+    last_golden_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_golden_status: Mapped[str] = mapped_column(String(32), default="")
+    last_golden_detail: Mapped[str] = mapped_column(Text, default="")
+    last_tool_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

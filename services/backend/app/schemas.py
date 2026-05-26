@@ -345,6 +345,13 @@ class NativeMcpServerOut(BaseModel):
     is_enabled: bool
     status: str
     status_detail: str
+    last_probe_at: datetime | None = None
+    last_probe_status: str = ""
+    last_probe_detail: str = ""
+    last_golden_at: datetime | None = None
+    last_golden_status: str = ""
+    last_golden_detail: str = ""
+    last_tool_count: int = 0
     created_at: datetime
     updated_at: datetime
 

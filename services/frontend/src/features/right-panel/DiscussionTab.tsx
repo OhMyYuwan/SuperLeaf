@@ -26,6 +26,7 @@ import { useConversationStore } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import type { CachedWorkflow, Conversation, Message } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import {
@@ -71,6 +72,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeDocFormat = useDocumentStore((s) =>
     documentId ? s.documents[documentId]?.format : undefined,
   )
+  const providers = useSettingsStore((s) => s.providers)
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [manualConversation, setManualConversation] = useState<{
@@ -86,9 +88,19 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     () => sortFilesCurrentFirst(flattenFileCandidates(tree), documentId),
     [tree, documentId],
   )
+  const providerNamesById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider.name])),
+    [providers],
+  )
   const agentCandidates: AgentCandidate[] = useMemo(
-    () => workflows.map((w) => ({ kind: 'agent', id: w.id, name: w.name })),
-    [workflows],
+    () =>
+      workflows.map((w) => ({
+        kind: 'agent',
+        id: w.id,
+        name: w.name,
+        displayName: formatAgentDisplayName(w, providerNamesById),
+      })),
+    [workflows, providerNamesById],
   )
   const workflowCandidates: WorkflowCandidate[] = useMemo(
     () =>
@@ -247,6 +259,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeConversation = effectiveConversationId
     ? conversations[effectiveConversationId]
     : null
+  const activeAgentName = useMemo(() => {
+    const agent = workflows.find((w) => w.id === validSelectedAgentId)
+    return agent?.name ?? 'Agent'
+  }, [workflows, validSelectedAgentId])
 
   useEffect(() => {
     const el = messageStreamRef.current
@@ -292,7 +308,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           >
             {workflows.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name}
+                {formatAgentDisplayName(w, providerNamesById)}
               </option>
             ))}
           </select>
@@ -392,18 +408,19 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   <MessageBubble
                     key={msg.id}
                     message={msg}
+                    agentDisplayName={activeAgentName}
                     onJumpToRange={onJumpToRange}
                   />
                 ))}
                 {isStreaming && delta && (
                   <div className="message-bubble agent streaming">
-                    <div className="message-role">Agent</div>
+                    <div className="message-role">{activeAgentName}</div>
                     <AgentMarkdown source={delta} className="message-content" />
                   </div>
                 )}
                 {isStreaming && !delta && (
                   <div className="message-bubble agent streaming">
-                    <div className="message-role">Agent</div>
+                    <div className="message-role">{activeAgentName}</div>
                     <div className="message-content">
                       <Loader2 size={14} className="spin" /> 思考中…
                     </div>
@@ -484,15 +501,19 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
 interface MessageBubbleProps {
   message: Message
+  agentDisplayName: string
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
-function MessageBubble({ message, onJumpToRange }: MessageBubbleProps) {
+function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
       {message.role === 'agent' ? (
-        <AgentMarkdown source={message.content} className="message-content" />
+        <>
+          <div className="message-role">{agentDisplayName}</div>
+          <AgentMarkdown source={message.content} className="message-content" />
+        </>
       ) : message.role === 'user' ? (
         <UserMessageContent content={message.content} />
       ) : (
@@ -567,6 +588,18 @@ function compareConversationsNewestFirst(a: Conversation, b: Conversation): numb
     timestampValue(b.created_at) - timestampValue(a.created_at) ||
     b.id.localeCompare(a.id)
   )
+}
+
+function formatAgentDisplayName(
+  agent: Pick<CachedWorkflow, 'id' | 'provider_id' | 'name'>,
+  providerNamesById: ReadonlyMap<string, string>,
+): string {
+  const providerName = providerNamesById.get(agent.provider_id)?.trim()
+  return `${agent.name} (${providerName || shortAgentId(agent.id)})`
+}
+
+function shortAgentId(id: string): string {
+  return id.trim().slice(0, 5) || '-----'
 }
 
 function timestampValue(iso: string): number {

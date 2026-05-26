@@ -110,7 +110,11 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       if (!menu) return [] as AgentCandidate[]
       const q = menu.query.toLowerCase()
       return agents
-        .filter((a) => a.name.toLowerCase().includes(q))
+        .filter((a) =>
+          a.name.toLowerCase().includes(q) ||
+          a.id.toLowerCase().includes(q) ||
+          (a.displayName ?? '').toLowerCase().includes(q),
+        )
         .slice(0, MAX_VISIBLE_CANDIDATES)
     }, [menu, agents])
 
@@ -335,7 +339,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
                       }}
                     >
                       <span className="mention-icon">🤖</span>
-                      <span className="mention-name">{a.name}</span>
+                      <span className="mention-name">{a.displayName ?? a.name}</span>
                     </div>
                   )
                 })}

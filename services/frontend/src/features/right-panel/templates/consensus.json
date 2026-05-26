@@ -1,7 +1,7 @@
 {
   "name": "Consensus · 多轮收敛",
-  "description": "两个 Agent 在 Loop 容器内并行评议，最外层的仲裁 Agent 在每轮结束后判断是否收敛。最多 3 轮。导入后需要把每个节点的 Agent 替换为真实 Agent。",
-  "execution_mode": "roundtable",
+  "description": "三个 Agent（学生作为写作者、Reviewer 提供意见、导师分析意见并给出新的写作建议）在 Loop 容器内依次协作，最外层的导师 Agent 在每轮结束后判断是否收敛。最多 3 轮。导入后需要把每个 Agent 节点替换为真实 Agent。",
+  "execution_mode": "graph",
   "graph": {
     "nodes": [
       {
@@ -9,50 +9,72 @@
         "type": "input",
         "label": "输入",
         "config": {
-          "position": { "x": 60, "y": 200 }
-        }
-      },
-      {
-        "id": "loop",
-        "type": "loop",
-        "label": "讨论循环",
-        "config": {
-          "position": { "x": 320, "y": 120 },
-          "width": 420,
-          "height": 260,
-          "max_rounds": 3
+          "position": {
+            "x": 60,
+            "y": 200
+          },
+          "_ui": {
+            "position": {
+              "x": -381.07444786160664,
+              "y": 29.207512102124298
+            }
+          }
         }
       },
       {
         "id": "voter_a",
         "type": "agent",
         "label": "意见 A",
-        "parent": "loop",
         "config": {
-          "agentId": "__PICK_AGENT__",
-          "position": { "x": 360, "y": 160 },
-          "promptHint": "给出你的立场与核心理由（不超过 80 字）。"
+          "position": {
+            "x": 360,
+            "y": 160
+          },
+          "promptHint": "给出你的立场与核心理由（不超过 80 字）。",
+          "_ui": {
+            "position": {
+              "x": -157.67872011113104,
+              "y": -64.35759718343621
+            },
+            "parent_id": "L1"
+          }
         }
       },
       {
         "id": "voter_b",
         "type": "agent",
-        "label": "意见 B",
-        "parent": "loop",
+        "label": "Reviewer",
         "config": {
-          "agentId": "__PICK_AGENT__",
-          "position": { "x": 360, "y": 260 },
-          "promptHint": "对意见 A 做反驳或补充（不超过 80 字）。"
+          "position": {
+            "x": 360,
+            "y": 260
+          },
+          "promptHint": "对意见 A 做反驳或补充（不超过 80 字）。",
+          "_ui": {
+            "position": {
+              "x": 96.0397330203818,
+              "y": 153.16777908174248
+            },
+            "parent_id": "L1"
+          }
         }
       },
       {
         "id": "judge",
         "type": "agent",
-        "label": "收敛判断",
+        "label": "最后确认",
         "config": {
-          "agentId": "__PICK_AGENT__",
-          "position": { "x": 800, "y": 200 },
-          "promptHint": "若本轮两个意见已经基本一致，则输出 CONVERGED 与综合结论；否则输出 CONTINUE 并给出下一轮提示。"
+          "position": {
+            "x": 800,
+            "y": 200
+          },
+          "promptHint": "若本轮两个意见已经基本一致，则输出 CONVERGED 与综合结论；否则输出 CONTINUE 并给出下一轮提示。",
+          "_ui": {
+            "position": {
+              "x": 370.842154173353,
+              "y": 0.7903153881153528
+            }
+          }
         }
       },
       {
@@ -60,23 +82,101 @@
         "type": "output",
         "label": "输出",
         "config": {
-          "position": { "x": 1060, "y": 200 }
+          "position": {
+            "x": 1060,
+            "y": 200
+          },
+          "_ui": {
+            "position": {
+              "x": 578.8123544080667,
+              "y": -7.229551122075492
+            }
+          }
+        }
+      },
+      {
+        "id": "a4",
+        "type": "agent",
+        "label": "写作",
+        "config": {
+          "_ui": {
+            "position": {
+              "x": -81.75402142692255,
+              "y": 44.27508334912894
+            },
+            "parent_id": "L1"
+          }
+        }
+      },
+      {
+        "id": "L1",
+        "type": "loop",
+        "label": "Loop",
+        "config": {
+          "rounds": 3,
+          "_ui": {
+            "position": {
+              "x": -197.67872011113104,
+              "y": -134.3575971834362
+            },
+            "size": {
+              "width": 360,
+              "height": 240
+            }
+          }
         }
       }
     ],
     "edges": [
-      { "source": "input", "target": "loop", "target_handle": "loop-in" },
-      { "source": "loop", "target": "voter_a", "source_handle": "loop-enter" },
-      { "source": "loop", "target": "voter_b", "source_handle": "loop-enter" },
-      { "source": "voter_a", "target": "loop", "target_handle": "loop-return" },
-      { "source": "voter_b", "target": "loop", "target_handle": "loop-return" },
-      { "source": "loop", "target": "judge", "source_handle": "loop-out" },
-      { "source": "judge", "target": "output" }
+      {
+        "source": "judge",
+        "target": "output",
+        "source_handle": null,
+        "target_handle": null
+      },
+      {
+        "source": "voter_a",
+        "target": "a4",
+        "source_handle": null,
+        "target_handle": null
+      },
+      {
+        "source": "a4",
+        "target": "voter_b",
+        "source_handle": null,
+        "target_handle": null
+      },
+      {
+        "source": "input",
+        "target": "L1",
+        "source_handle": null,
+        "target_handle": "loop-in-target"
+      },
+      {
+        "source": "L1",
+        "target": "voter_a",
+        "source_handle": "loop-in-source",
+        "target_handle": null
+      },
+      {
+        "source": "voter_b",
+        "target": "L1",
+        "source_handle": null,
+        "target_handle": "loop-out-target"
+      },
+      {
+        "source": "L1",
+        "target": "judge",
+        "source_handle": "loop-out-source",
+        "target_handle": null
+      }
     ]
   },
   "config": {
     "max_rounds": 3,
-    "stop_conditions": ["CONVERGED"],
+    "stop_conditions": [
+      "CONVERGED"
+    ],
     "merge_strategy": "concat"
   }
 }

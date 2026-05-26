@@ -244,7 +244,7 @@ export function TeamTab({
             className={subTab === 'workflows' ? 'active' : ''}
             onClick={() => setSubTab('workflows')}
           >
-            工作流（{definitions.length}）
+            Workflow（{definitions.length}）
           </button>
         </div>
 

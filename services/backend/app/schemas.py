@@ -459,6 +459,14 @@ class ProjectMemberOut(BaseModel):
         from_attributes = True
 
 
+class RecentCollaboratorOut(BaseModel):
+    id: str
+    user_id: str
+    email: str
+    display_name: str
+    last_collaborated_at: datetime
+
+
 class ProjectArchiveBindingIn(BaseModel):
     github_repo_url: str = Field(default="", max_length=512)
     github_owner: str = Field(default="", max_length=128)

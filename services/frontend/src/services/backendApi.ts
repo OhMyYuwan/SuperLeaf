@@ -1057,7 +1057,17 @@ export interface ProjectMemberAddIn {
   role?: 'editor' | 'viewer'
 }
 
+export interface RecentCollaborator {
+  id: string
+  user_id: string
+  email: string
+  display_name: string
+  last_collaborated_at: string
+}
+
 export const projectMemberApi = {
+  recentCollaborators: () =>
+    http<RecentCollaborator[]>('/api/projects/recent-collaborators', { scope: 'global' }),
   list: (projectId: string) =>
     http<ProjectMember[]>(`/api/projects/${encodeURIComponent(projectId)}/members`, { scope: 'global' }),
   add: (projectId: string, body: ProjectMemberAddIn) =>

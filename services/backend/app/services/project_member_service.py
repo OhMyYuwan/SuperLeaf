@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Project, ProjectMember, User
+from ..models import Project, ProjectMember, RecentCollaborator, User
 
 
 class ProjectMemberService:
@@ -33,6 +35,8 @@ class ProjectMemberService:
             )
         )
         if existing:
+            self.record_project_collaboration(project_id)
+            self.db.commit()
             return existing
 
         member = ProjectMember(
@@ -43,9 +47,107 @@ class ProjectMemberService:
             invited_by=invited_by_id,
         )
         self.db.add(member)
+        self.db.flush()
+        self.record_project_collaboration(project_id)
         self.db.commit()
         self.db.refresh(member)
         return member
+
+    def list_recent_collaborators(
+        self,
+        owner_user_id: str,
+        limit: int = 20,
+    ) -> list[RecentCollaborator]:
+        """List recently remembered collaborators for a user."""
+        self.seed_recent_collaborators_for_user(owner_user_id)
+        self.db.commit()
+        stmt = (
+            select(RecentCollaborator)
+            .where(RecentCollaborator.owner_user_id == owner_user_id)
+            .order_by(
+                RecentCollaborator.last_collaborated_at.desc(),
+                RecentCollaborator.updated_at.desc(),
+            )
+            .limit(max(1, min(limit, 100)))
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def seed_recent_collaborators_for_user(self, user_id: str) -> None:
+        """Backfill recent collaborators from projects the user already shares."""
+        project_ids = {
+            row
+            for row in self.db.scalars(
+                select(Project.id).where(Project.user_id == user_id)
+            ).all()
+        }
+        member_project_ids = self.db.scalars(
+            select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+        ).all()
+        project_ids.update(member_project_ids)
+        for project_id in project_ids:
+            self.record_project_collaboration(project_id)
+
+    def record_project_collaboration(self, project_id: str) -> None:
+        """Remember every current participant as a recent collaborator.
+
+        The project owner and all accepted project members become visible in
+        each other's recent collaborator lists. The caller owns the commit.
+        """
+        participants = self._project_participants(project_id)
+        if len(participants) < 2:
+            return
+        for owner in participants:
+            for collaborator in participants:
+                if owner.id == collaborator.id:
+                    continue
+                self._remember_collaborator(owner.id, collaborator)
+
+    def _project_participants(self, project_id: str) -> list[User]:
+        project = self.db.get(Project, project_id)
+        if project is None:
+            return []
+
+        participants: dict[str, User] = {}
+        owner = self.db.get(User, project.user_id)
+        if owner is not None:
+            participants[owner.id] = owner
+
+        member_users = (
+            self.db.scalars(
+                select(User)
+                .join(ProjectMember, ProjectMember.user_id == User.id)
+                .where(ProjectMember.project_id == project_id)
+            )
+            .all()
+        )
+        for user in member_users:
+            participants[user.id] = user
+        return list(participants.values())
+
+    def _remember_collaborator(self, owner_user_id: str, collaborator: User) -> None:
+        now = datetime.utcnow()
+        row = self.db.scalar(
+            select(RecentCollaborator).where(
+                RecentCollaborator.owner_user_id == owner_user_id,
+                RecentCollaborator.collaborator_user_id == collaborator.id,
+            )
+        )
+        display_name = collaborator.display_name or collaborator.email
+        if row is None:
+            self.db.add(
+                RecentCollaborator(
+                    owner_user_id=owner_user_id,
+                    collaborator_user_id=collaborator.id,
+                    collaborator_email=collaborator.email,
+                    collaborator_display_name=display_name,
+                    last_collaborated_at=now,
+                )
+            )
+            return
+
+        row.collaborator_email = collaborator.email
+        row.collaborator_display_name = display_name
+        row.last_collaborated_at = now
 
     def list_members(self, project_id: str) -> list[tuple[ProjectMember, User]]:
         """List all members of a project with their user info."""

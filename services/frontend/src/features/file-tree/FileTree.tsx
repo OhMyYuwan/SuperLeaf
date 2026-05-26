@@ -96,16 +96,21 @@ export function FileTree({
   const handleCreateRootDoc = async () => {
     const name = prompt('新建文档名称（例如 main.tex）')?.trim()
     if (!name) return
+    if (tree && !confirmReplaceExisting(tree.root, name)) return
     const format = inferFormat(name)
     const id = await onCreateDoc(null, name, format, defaultContent(format))
     if (id) onOpenDoc(id)
   }
 
   const handleUploadRoot = () => {
-    triggerUpload((file) => onUploadFile(file, null))
+    triggerUpload((file) => {
+      if (tree && !confirmReplaceExisting(tree.root, file.name)) return
+      onUploadFile(file, null)
+    })
   }
 
   const handleUploadFolderRoot = () => {
+    if (!confirmFolderUploadReplace()) return
     triggerUploadFolder((files) => onUploadFolder(files, null))
   }
 
@@ -164,7 +169,7 @@ export function FileTree({
         </span>
       </div>
 
-      {loading && <div className="outline-empty">正在加载文件树…</div>}
+      {loading && !tree && <div className="outline-empty">正在加载文件树…</div>}
       {error && <div className="tree-error">{error}</div>}
 
       <div className="file-list tree-list">
@@ -175,6 +180,7 @@ export function FileTree({
             depth={0}
             activeDocId={activeDocId}
             activeFileId={activeFileId ?? null}
+            loading={loading}
             expandedFolderIds={expandedFolderIds}
             onToggleFolder={onToggleFolder}
             onOpenDoc={onOpenDoc}
@@ -198,6 +204,7 @@ interface FolderNodeProps {
   depth: number
   activeDocId: string | null
   activeFileId: string | null
+  loading: boolean
   expandedFolderIds: Record<string, boolean>
   onToggleFolder: (folderId: string) => void
   onOpenDoc: (docId: string) => void
@@ -225,6 +232,7 @@ function FolderNode({
   depth,
   activeDocId,
   activeFileId,
+  loading,
   expandedFolderIds,
   onToggleFolder,
   onOpenDoc,
@@ -311,6 +319,7 @@ function FolderNode({
   const handleCreateDoc = async () => {
     const name = prompt(`在 ${folder.name} 下新建文档（例如 section.md）`)?.trim()
     if (!name) return
+    if (!confirmReplaceExisting(folder, name)) return
     const format = inferFormat(name)
     const id = await onCreateDoc(folderId, name, format, defaultContent(format))
     if (id) onOpenDoc(id)
@@ -331,11 +340,15 @@ function FolderNode({
 
   const handleUpload = (e: React.MouseEvent) => {
     e.stopPropagation()
-    triggerUpload((file) => onUploadFile(file, folderId))
+    triggerUpload((file) => {
+      if (!confirmReplaceExisting(folder, file.name)) return
+      onUploadFile(file, folderId)
+    })
   }
 
   const handleUploadFolder = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (!confirmFolderUploadReplace()) return
     triggerUploadFolder((files) => onUploadFolder(files, folderId))
   }
 
@@ -343,6 +356,7 @@ function FolderNode({
     e.stopPropagation()
     const name = prompt('重命名文档', doc.name)?.trim()
     if (!name || name === doc.name) return
+    if (!confirmReplaceExisting(folder, name, doc.id)) return
     onRenameEntity('doc', doc.id, name)
   }
 
@@ -370,6 +384,7 @@ function FolderNode({
     e.stopPropagation()
     const name = prompt('重命名文件', file.name)?.trim()
     if (!name || name === file.name) return
+    if (!confirmReplaceExisting(folder, name, file.id)) return
     onRenameEntity('file', file.id, name)
   }
 
@@ -397,6 +412,7 @@ function FolderNode({
           depth={depth + 1}
           activeDocId={activeDocId}
           activeFileId={activeFileId}
+          loading={false}
           expandedFolderIds={expandedFolderIds}
           onToggleFolder={onToggleFolder}
           onOpenDoc={onOpenDoc}
@@ -487,6 +503,7 @@ function FolderNode({
         >
           <FolderOpen size={14} />
           <span>项目根目录</span>
+          {loading && <span className="tree-inline-loading">正在加载文件树…</span>}
         </div>
         {children}
       </div>
@@ -571,6 +588,18 @@ function triggerUploadZip(onFile: (file: File) => void) {
     if (file) onFile(file)
   }
   input.click()
+}
+
+function confirmReplaceExisting(folder: TreeFolder, name: string, currentId?: string): boolean {
+  const existingDoc = folder.docs.find((doc) => doc.name === name && doc.id !== currentId)
+  const existingFile = folder.files.find((file) => file.name === name && file.id !== currentId)
+  const existing = existingDoc ?? existingFile
+  if (!existing) return true
+  return confirm(`「${name}」已存在。继续操作会替换现有文件，是否继续？`)
+}
+
+function confirmFolderUploadReplace(): boolean {
+  return confirm('上传文件夹时，如果目标目录中已有同名文件，将会被替换。是否继续？')
 }
 
 function inferFormat(name: string): 'tex' | 'md' | 'txt' {

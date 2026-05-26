@@ -6,7 +6,12 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, Plus, Trash2, Users } from 'lucide-react'
-import { projectMemberApi, type ProjectMember, type ProjectMemberAddIn } from '../../services/backendApi'
+import {
+  projectMemberApi,
+  type ProjectMember,
+  type ProjectMemberAddIn,
+  type RecentCollaborator,
+} from '../../services/backendApi'
 import { showToast } from '../shared/toast'
 import './settings.css'
 
@@ -18,6 +23,7 @@ interface ProjectMembersPanelProps {
 
 export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }: ProjectMembersPanelProps) {
   const [members, setMembers] = useState<ProjectMember[]>([])
+  const [recentCollaborators, setRecentCollaborators] = useState<RecentCollaborator[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
 
@@ -29,9 +35,13 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
     const loadMembers = async () => {
       try {
         setLoading(true)
-        const data = await projectMemberApi.list(projectId)
+        const [data, recent] = await Promise.all([
+          projectMemberApi.list(projectId),
+          isOwner ? projectMemberApi.recentCollaborators() : Promise.resolve([]),
+        ])
         if (cancelled) return
         setMembers(data)
+        setRecentCollaborators(recent)
       } catch (err) {
         if (cancelled) return
         console.error('Failed to load members:', err)
@@ -45,7 +55,7 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
     return () => {
       cancelled = true
     }
-  }, [projectId])
+  }, [projectId, isOwner])
 
   const handleRemove = async (userId: string, userName: string) => {
     if (!confirm(`确定移除成员 "${userName}"？`)) return
@@ -66,11 +76,16 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
         if (current.some((member) => member.id === newMember.id)) return current
         return [...current, newMember]
       })
+      void projectMemberApi
+        .recentCollaborators()
+        .then(setRecentCollaborators)
+        .catch((err) => console.warn('Failed to refresh recent collaborators:', err))
       setShowForm(false)
       showToast('成员已添加', { level: 'success' })
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to add member:', err)
-      const msg = err.message?.includes('404') ? '用户不存在' : '添加成员失败'
+      const message = err instanceof Error ? err.message : String(err)
+      const msg = message.includes('404') ? '用户不存在' : '添加成员失败'
       showToast(msg, { level: 'error' })
     }
   }
@@ -124,7 +139,11 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
           </ul>
 
           {showForm && (
-            <MemberInviteForm onSubmit={handleAdd} onCancel={() => setShowForm(false)} />
+            <MemberInviteForm
+              recentCollaborators={recentCollaborators}
+              onSubmit={handleAdd}
+              onCancel={() => setShowForm(false)}
+            />
           )}
         </>
       )}
@@ -133,9 +152,11 @@ export function ProjectMembersPanel({ projectId, projectOwnerId, currentUserId }
 }
 
 function MemberInviteForm({
+  recentCollaborators,
   onSubmit,
   onCancel,
 }: {
+  recentCollaborators: RecentCollaborator[]
   onSubmit: (body: ProjectMemberAddIn) => Promise<void>
   onCancel: () => void
 }) {
@@ -153,17 +174,39 @@ function MemberInviteForm({
 
   return (
     <form className="member-invite-form" onSubmit={handleSubmit}>
-      <label>
-        <span>邮箱地址</span>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="user@example.com"
-          autoFocus
-          required
-        />
-      </label>
+      <div className="member-invite-email-field">
+        <label>
+          <span>邮箱地址</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="user@example.com"
+            autoFocus
+            required
+          />
+        </label>
+        <div className="recent-collaborators" aria-label="近期合作者">
+          <div className="recent-collaborators-title">近期合作者</div>
+          {recentCollaborators.length > 0 ? (
+            <div className="recent-collaborator-list">
+              {recentCollaborators.map((item) => (
+                <button
+                  key={item.user_id}
+                  type="button"
+                  className="recent-collaborator-chip"
+                  onClick={() => setEmail(item.email)}
+                  title={`${item.display_name || item.email} · ${item.email}`}
+                >
+                  {(item.display_name || item.email)} · {item.email}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="recent-collaborators-empty">暂无近期合作者</div>
+          )}
+        </div>
+      </div>
       <label>
         <span>权限</span>
         <select value={role} onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')}>

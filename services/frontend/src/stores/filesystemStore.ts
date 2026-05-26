@@ -397,17 +397,21 @@ function insertTreeEntity(
     }
     if (entityType === 'doc') {
       const doc = entity as TreeDoc
-      if (folder.docs.some((item) => item.id === doc.id)) return folder
+      const docs = folder.docs.filter((item) => item.id !== doc.id && item.name !== doc.name)
+      const files = folder.files.filter((item) => item.name !== doc.name)
       return {
         ...folder,
-        docs: sortByName([...folder.docs, doc]),
+        docs: sortByName([...docs, doc]),
+        files,
       }
     }
     const file = entity as TreeFile
-    if (folder.files.some((item) => item.id === file.id)) return folder
+    const files = folder.files.filter((item) => item.id !== file.id && item.name !== file.name)
+    const docs = folder.docs.filter((item) => item.name !== file.name)
     return {
       ...folder,
-      files: sortByName([...folder.files, file]),
+      docs,
+      files: sortByName([...files, file]),
     }
   })
   return result.changed ? result.folder : null

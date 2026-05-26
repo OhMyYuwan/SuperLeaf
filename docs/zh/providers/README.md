@@ -21,11 +21,11 @@ SuperLeaf 本身不调用大模型，所有智能行为都通过你注册的 **p
 
 | `kind` | 场景 | 文档 |
 |---|---|---|
-| `nanobot` | 本地或局域网内跑一个 / 多个 Nanobot agent，OpenAI 兼容 HTTP | [nanobot.md](./nanobot.md) |
-| `native` | 由 SuperLeaf 后端直接运行的原生 Agent，使用 OpenAI 兼容 endpoint / API key / model | [原生 Agent](../agents/) |
-| `dify-local` | 用 `scripts/dify.sh` 在本机 docker-compose 起的 Dify | [dify.md](./dify.md) |
-| `dify-cloud` | Dify SaaS (api.dify.ai) | [dify.md](./dify.md) |
-| `claude-direct` | 旧版实验路径；当前推荐使用 Nanobot 或 OpenAI-compatible Provider 接入 Claude 类模型 | [claude.md](./claude.md) |
+| `nanobot` | 本地或局域网内跑一个 / 多个 Nanobot agent，OpenAI 兼容 HTTP | [Nanobot](./nanobot.html) |
+| `native` | 由 SuperLeaf 后端直接运行的原生 Agent，使用 OpenAI 兼容 endpoint / API key / model | [原生 Agent](../agents/README.html) |
+| `dify-local` | 用 `scripts/dify.sh` 在本机 docker-compose 起的 Dify | [Dify](./dify.html) |
+| `dify-cloud` | Dify SaaS (api.dify.ai) | [Dify](./dify.html) |
+| `claude-direct` | 旧版实验路径；当前推荐使用 Nanobot 或 OpenAI-compatible Provider 接入 Claude 类模型 | [Claude](./claude.html) |
 
 ## 加一个 provider 的通用流程
 

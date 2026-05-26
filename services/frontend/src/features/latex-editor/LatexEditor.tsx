@@ -332,20 +332,13 @@ export function LatexEditor({
     view.dispatch({ effects: setAnnotationsEffect.of(decorations ?? []) })
   }, [decorations])
 
-  // Highlight the active card and (optionally) scroll it into view.
+  // Highlight the active card. Navigation is driven separately by `scrollTo`
+  // so decoration updates during normal editing do not keep pulling focus back.
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
     view.dispatch({ effects: focusAnnotationEffect.of(activeDecorationId ?? null) })
-    if (!activeDecorationId || !decorations) return
-    const target = decorations.find((d) => d.id === activeDecorationId)
-    if (!target) return
-    const docLen = view.state.doc.length
-    if (target.from < 0 || target.to > docLen) return
-    view.dispatch({
-      effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
-    })
-  }, [activeDecorationId, decorations])
+  }, [activeDecorationId])
 
   // Flash the hovered-in-panel annotation without moving the caret or scroll.
   useEffect(() => {

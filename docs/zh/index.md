@@ -21,7 +21,7 @@ permalink: /zh/
   <div class="ylw-actions">
     <a class="btn btn-primary" href="getting-started/install.html">开始安装</a>
     <a class="btn" href="getting-started/first-run.html">跑通第一轮 Agent</a>
-    <a class="btn" href="agents/">了解 Agent / Skill / MCP</a>
+    <a class="btn" href="https://ohmyyuwan.github.io/AgentGO">了解 Agent / Skill / MCP</a>
   </div>
 </div>
 

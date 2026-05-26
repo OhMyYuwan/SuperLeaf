@@ -645,8 +645,35 @@ export function WorkspacePage() {
     updateSelection(activeDocumentId, { from: info.from, to: info.to })
   }
 
+  const clearActiveAnnotationIfSelectionLeft = (
+    documentId: string,
+    selection: { from: number; to: number },
+  ) => {
+    if (!activeAnnotationId) return
+    const item = annotationItemsById[activeAnnotationId]
+    if (!item || item.documentId !== documentId) {
+      setActiveAnnotationId(null)
+      return
+    }
+
+    const selectionFrom = Math.min(selection.from, selection.to)
+    const selectionTo = Math.max(selection.from, selection.to)
+    const caretInside =
+      selectionFrom === selectionTo &&
+      selectionFrom >= item.range.from &&
+      selectionFrom <= item.range.to
+    const selectionOverlaps =
+      selectionFrom < item.range.to &&
+      selectionTo > item.range.from
+
+    if (!caretInside && !selectionOverlaps) {
+      setActiveAnnotationId(null)
+    }
+  }
+
   const handleEditorViewStateChange = (documentId: string, state: EditorRestoreState) => {
     updateEditorViewState(documentId, state)
+    clearActiveAnnotationIfSelectionLeft(documentId, state.selectionRange)
     setEditorScrollTo((prev) => {
       if (!prev || prev.documentId !== documentId) return prev
       const expectedTo = prev.to ?? prev.pos
@@ -658,6 +685,19 @@ export function WorkspacePage() {
 
   const handleDecorationClick = (id: string) => {
     setActiveAnnotationId((prev) => (prev === id ? null : id))
+  }
+
+  const handleAnnotationFocus = (id: string | null) => {
+    setActiveAnnotationId(id)
+    if (!id) return
+    const item = annotationItemsById[id]
+    if (!item || item.documentId !== activeDocumentId) return
+    setEditorScrollTo({
+      documentId: item.documentId,
+      pos: item.range.from,
+      to: item.range.to,
+      seq: Date.now(),
+    })
   }
 
   const handlePreviewSourceJump = (jump: SourceJump) => {
@@ -799,7 +839,7 @@ export function WorkspacePage() {
                         <AnnotationColumn
                           documentId={activeDocumentId}
                           activeId={activeAnnotationId}
-                          onFocus={setActiveAnnotationId}
+                          onFocus={handleAnnotationFocus}
                           onHover={setHoveredAnnotationId}
                           pendingComment={pendingComment}
                           onDismissPendingComment={() => setPendingComment(null)}

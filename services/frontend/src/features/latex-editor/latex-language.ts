@@ -16,6 +16,7 @@ import {
   snippetCompletion,
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult } from '@codemirror/autocomplete'
+import { linter, type Diagnostic } from '@codemirror/lint'
 import { StateEffect, StateField, type Extension } from '@codemirror/state'
 import type { EditorView, Rect } from '@codemirror/view'
 import {
@@ -24,6 +25,8 @@ import {
   latexSnippetCommandTriggers,
 } from './latex-snippets'
 import {
+  collectLatexCitationKeyUsages,
+  collectLatexReferenceKeyUsages,
   completionBoostFor,
   filterCitationCompletions,
   findCitationArgumentContext,
@@ -32,6 +35,7 @@ import {
   type LatexCitationCompletion,
   type LatexCommandCompletion,
   type LatexCompletionData,
+  type LatexLabelCompletion,
 } from './latex-completion-data'
 import { latexFolding } from './latex-folding'
 
@@ -112,6 +116,8 @@ const LATEX_COMMANDS: string[] = [
 ]
 
 export const setLatexCompletionDataEffect = StateEffect.define<LatexCompletionData>()
+const MISSING_CITATION_MARK_CLASS = 'ylw-cm-missing-citation'
+const MISSING_REFERENCE_MARK_CLASS = 'ylw-cm-missing-reference'
 
 const latexCompletionDataState = StateField.define<LatexCompletionData>({
   create: () => normalizeLatexCompletionData(),
@@ -287,6 +293,62 @@ function citationToCompletion(citation: LatexCitationCompletion): Completion {
     apply: citation.key,
     boost: 80,
   }
+}
+
+export function missingCitationDiagnosticsForContent(
+  content: string,
+  citations: LatexCitationCompletion[],
+): Diagnostic[] {
+  if (citations.length === 0) return []
+  const knownKeys = new Set(citations.map((citation) => citation.key))
+  return collectLatexCitationKeyUsages(content)
+    .filter((usage) => !knownKeys.has(usage.key))
+    .map((usage) => ({
+      from: usage.from,
+      to: usage.to,
+      severity: 'warning',
+      source: 'citation',
+      markClass: MISSING_CITATION_MARK_CLASS,
+      message: `未找到引用: "${usage.key}"`,
+    }))
+}
+
+export function missingReferenceDiagnosticsForContent(
+  content: string,
+  labels: LatexLabelCompletion[],
+): Diagnostic[] {
+  if (labels.length === 0) return []
+  const knownKeys = new Set(labels.map((label) => label.key))
+  return collectLatexReferenceKeyUsages(content)
+    .filter((usage) => !knownKeys.has(usage.key))
+    .map((usage) => ({
+      from: usage.from,
+      to: usage.to,
+      severity: 'warning',
+      source: 'reference',
+      markClass: MISSING_REFERENCE_MARK_CLASS,
+      message: `未找到标签: "${usage.key}"`,
+    }))
+}
+
+function missingCrossReferenceLinter(): Extension {
+  return linter(
+    (view) => {
+      const completionData = view.state.field(latexCompletionDataState, false)
+      const content = view.state.doc.toString()
+      return [
+        ...missingCitationDiagnosticsForContent(content, completionData?.citations ?? []),
+        ...missingReferenceDiagnosticsForContent(content, completionData?.labels ?? []),
+      ]
+    },
+    {
+      delay: 400,
+      needsRefresh: (update) =>
+        update.docChanged ||
+        update.startState.field(latexCompletionDataState, false) !==
+          update.state.field(latexCompletionDataState, false),
+    },
+  )
 }
 
 const GRAPHIC_COMMANDS = /\\includegraphics(?:\[[^\]]*])?\{([^{}]*)$/
@@ -487,6 +549,7 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
     new LanguageSupport(StreamLanguage.define(stex)),
     latexFolding(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    missingCrossReferenceLinter(),
     autocompletion({
       override: [latexCompletionSource],
       activateOnTyping: true,

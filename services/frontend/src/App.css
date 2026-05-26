@@ -261,6 +261,21 @@ button {
   text-decoration-thickness: 1px !important;
   text-underline-offset: 4px;
 }
+.cm-content .ylw-cm-missing-citation,
+.cm-content .cm-lintRange-warning.ylw-cm-missing-citation,
+.cm-content .ylw-cm-missing-citation.cm-lintRange-warning,
+.cm-content .ylw-cm-missing-reference,
+.cm-content .cm-lintRange-warning.ylw-cm-missing-reference,
+.cm-content .ylw-cm-missing-reference.cm-lintRange-warning {
+  background-image: none !important;
+  background-position: initial !important;
+  background-repeat: initial !important;
+  text-decoration-line: underline !important;
+  text-decoration-style: wavy !important;
+  text-decoration-color: rgba(249, 115, 22, 0.95) !important;
+  text-decoration-thickness: 1.5px !important;
+  text-underline-offset: 4px;
+}
 .cm-content .ylw-sev-high {
   background: rgba(239, 68, 68, 0.12);
 }

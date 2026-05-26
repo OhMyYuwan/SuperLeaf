@@ -850,6 +850,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  text-decoration: none;
 }
 .ghost-btn.small:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.22);
@@ -2269,6 +2270,38 @@
   color: rgba(148, 163, 184, 0.7);
 }
 
+.skill-check small .mcp-picker-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+
+.mcp-picker-status.ok {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.mcp-picker-status.warn {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.mcp-picker-status.error {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.mcp-picker-status.neutral {
+  color: rgba(226, 232, 240, 0.78);
+  background: rgba(148, 163, 184, 0.12);
+}
+
 .mcp-picker-field {
   display: grid;
   gap: 8px;
@@ -2397,6 +2430,44 @@
   grid-column: 1 / -1;
 }
 
+.mcp-json-paste {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.mcp-json-paste label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-json-paste span {
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mcp-json-paste textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.72);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.mcp-json-paste textarea:focus {
+  border-color: rgba(249, 115, 22, 0.58);
+}
+
 .mcp-editor-actions {
   grid-column: 1 / -1;
 }
@@ -2438,6 +2509,11 @@
   gap: 8px;
 }
 
+.mcp-market-entry {
+  display: grid;
+  gap: 6px;
+}
+
 .mcp-catalog-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2456,6 +2532,167 @@
 
 .mcp-catalog-row .mcp-check-result {
   grid-column: 1 / -1;
+}
+
+.mcp-market-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.mcp-market-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.mcp-market-chips .mcp-chip,
+.mcp-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  color: rgba(226, 232, 240, 0.82);
+  background: rgba(15, 23, 42, 0.64);
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-chip.ok {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.11);
+}
+
+.mcp-chip.warn {
+  border-color: rgba(245, 158, 11, 0.28);
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.11);
+}
+
+.mcp-chip.subtle {
+  color: rgba(148, 163, 184, 0.86);
+}
+
+.mcp-health-line {
+  color: rgba(125, 211, 252, 0.76);
+}
+
+.mcp-install-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(249, 115, 22, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.mcp-install-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.mcp-install-head > div > strong,
+.mcp-install-head > div > span {
+  display: block;
+}
+
+.mcp-install-head > div > strong {
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 12px;
+}
+
+.mcp-install-head > div > span {
+  margin-top: 2px;
+  color: rgba(203, 213, 225, 0.76);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mcp-install-detail {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.mcp-install-detail > span {
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mcp-install-detail code {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 6px;
+  color: rgba(226, 232, 240, 0.88);
+  background: rgba(2, 6, 23, 0.36);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.mcp-env-fields {
+  display: grid;
+  gap: 7px;
+}
+
+.mcp-env-fields label {
+  display: grid;
+  gap: 4px;
+}
+
+.mcp-env-fields label > span {
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mcp-env-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.72);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.mcp-env-fields input:focus {
+  border-color: rgba(249, 115, 22, 0.58);
+}
+
+.mcp-env-fields small {
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.mcp-install-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.primary-btn.compact {
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 8px;
 }
 
 .mcp-check-result {

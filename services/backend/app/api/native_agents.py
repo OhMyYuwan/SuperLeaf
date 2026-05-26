@@ -109,6 +109,13 @@ def _mcp_server_out(row: NativeMcpServer) -> NativeMcpServerOut:
         is_enabled=row.is_enabled,
         status=row.status,
         status_detail=row.status_detail,
+        last_probe_at=row.last_probe_at,
+        last_probe_status=row.last_probe_status,
+        last_probe_detail=row.last_probe_detail,
+        last_golden_at=row.last_golden_at,
+        last_golden_status=row.last_golden_status,
+        last_golden_detail=row.last_golden_detail,
+        last_tool_count=row.last_tool_count,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -305,7 +312,8 @@ async def probe_saved_mcp_server(
     try:
         preset = catalog_svc.preset(row.preset_id) if row.preset_id else None
         result = await catalog_svc.probe(config_svc.to_runtime_server(row), preset=preset)
-        detail = f"{len(result.get('tools') or [])} tools"
+        tool_count = len(result.get("tools") or [])
+        detail = f"{tool_count} tools"
         warnings = result.get("warnings") or []
         if warnings:
             detail = f"{detail}; {'; '.join(str(item) for item in warnings)}"
@@ -314,10 +322,11 @@ async def probe_saved_mcp_server(
             user_id=user.id,
             status=str(result.get("status") or "unknown"),
             detail=detail,
+            tool_count=tool_count,
         )
         return result
     except McpCatalogError as exc:
-        config_svc.mark_probe(server_id, user_id=user.id, status="error", detail=str(exc))
+        config_svc.mark_probe(server_id, user_id=user.id, status="error", detail=str(exc), tool_count=0)
         raise HTTPException(400, str(exc)) from exc
 
 
@@ -335,12 +344,28 @@ async def run_saved_mcp_golden_test(
     if not row.preset_id:
         raise HTTPException(400, "golden test requires a catalog preset")
     try:
-        return await McpCatalogService().golden_test(
+        result = await McpCatalogService().golden_test(
             preset_id=row.preset_id,
             test_id=str((body or {}).get("test_id") or ""),
             server=config_svc.to_runtime_server(row),
         )
+        warnings = result.get("warnings") or []
+        error = str(result.get("error") or "").strip()
+        test_id = str(result.get("test_id") or "").strip()
+        detail_parts = [test_id] if test_id else []
+        if error:
+            detail_parts.append(error)
+        if warnings:
+            detail_parts.append("; ".join(str(item) for item in warnings))
+        config_svc.mark_golden(
+            server_id,
+            user_id=user.id,
+            status="ok" if result.get("passed") else "error",
+            detail=" · ".join(detail_parts) or ("passed" if result.get("passed") else "failed"),
+        )
+        return result
     except McpCatalogError as exc:
+        config_svc.mark_golden(server_id, user_id=user.id, status="error", detail=str(exc))
         raise HTTPException(400, str(exc)) from exc
 
 

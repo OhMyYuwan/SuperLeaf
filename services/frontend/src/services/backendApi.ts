@@ -415,6 +415,13 @@ export interface NativeMcpServerConfig {
   is_enabled: boolean
   status: 'unknown' | 'ok' | 'error' | string
   status_detail: string
+  last_probe_at: string | null
+  last_probe_status: string
+  last_probe_detail: string
+  last_golden_at: string | null
+  last_golden_status: string
+  last_golden_detail: string
+  last_tool_count: number
   created_at: string
   updated_at: string
 }

@@ -316,6 +316,10 @@ export interface SkillMarketplaceInstallResult {
   marketplace_entry: SkillMarketplaceEntry
 }
 
+export interface SkillMarketplaceCloneResult {
+  skill: Skill
+}
+
 export interface SkillDraft {
   name: string
   folder_name?: string
@@ -646,6 +650,11 @@ export const nativeAgentApi = {
     uninstall: (id: string) =>
       http<void>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/uninstall`, {
         method: 'DELETE',
+      }),
+    cloneToLocal: (id: string, name: string) =>
+      http<SkillMarketplaceCloneResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/clone-to-local`, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
       }),
   },
   mcp: {

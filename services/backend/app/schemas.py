@@ -202,6 +202,16 @@ class SkillMarketplaceInstallOut(BaseModel):
     marketplace_entry: SkillMarketplaceEntryOut
 
 
+class SkillMarketplaceCloneOut(BaseModel):
+    """Response for clone-to-local: returns the new editable local skill."""
+    skill: SkillOut
+
+
+class SkillMarketplaceCloneIn(BaseModel):
+    """Request body for clone-to-local: user-provided name for the local copy."""
+    name: str = Field(default="", max_length=128)
+
+
 class NativeAgentSkillRecipeIn(BaseModel):
     source: str = Field(default="marketplace", max_length=32)
     marketplace_id: str = Field(default="", max_length=256)

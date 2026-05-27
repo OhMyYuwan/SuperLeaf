@@ -10,6 +10,7 @@ from typing import Any
 from urllib.error import HTTPError
 
 from ..settings import settings
+from .mcp_policy import normalize_mcp_transport, remote_endpoint_from_server
 from .mcp_tool_service import call_mcp_tool, discover_mcp_tools
 
 
@@ -103,13 +104,19 @@ class McpCatalogService:
         transport = preset.get("transport") if isinstance(preset.get("transport"), dict) else {}
         policy = preset.get("tool_policy") if isinstance(preset.get("tool_policy"), dict) else {}
         tools = allowed_tools if allowed_tools is not None else policy.get("default_allowed_tools", [])
+        transport_type = normalize_mcp_transport(str(transport.get("type") or "stdio"))
+        endpoint = remote_endpoint_from_server(transport)
+        command = str(transport.get("command") or "")
+        if transport_type == "remote" and endpoint:
+            command = endpoint
         return {
             "id": preset.get("id", ""),
             "name": preset.get("name", preset.get("id", "")),
             "enabled": enabled,
-            "transport": transport.get("type", "stdio"),
-            "command": transport.get("command", ""),
-            "args": list(transport.get("args") or []),
+            "transport": transport_type,
+            "endpoint": endpoint,
+            "command": command,
+            "args": [] if transport_type == "remote" else list(transport.get("args") or []),
             "env": env or {},
             "allowed_tools": list(tools or []),
         }
@@ -175,7 +182,10 @@ class McpCatalogService:
         refs = await discover_mcp_tools({"mcp_servers": [server_config]})
         ref = next((item for item in refs if item.tool_name == test.get("tool")), None)
         if ref is None:
-            unavailable = next((item for item in refs if item.tool_name == "__mcp_server_unavailable__"), None)
+            unavailable = next(
+                (item for item in refs if item.tool_name == "__mcp_server_unavailable__"),
+                None,
+            )
             reason = unavailable.definition["function"]["description"] if unavailable else "tool not found"
             return {
                 "status": "failed",

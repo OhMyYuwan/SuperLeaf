@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # by default; local supports/ checkouts are only development/offline fallbacks.
     mcp_catalog_url: str = "https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json"
 
+    # MCP execution policy. Public deployments keep user-defined MCP through
+    # remote endpoints; stdio command execution is a Local Trusted opt-in.
+    mcp_remote_enabled: bool = True
+    mcp_stdio_enabled: bool = False
+    mcp_inline_config_enabled: bool = False
+    mcp_remote_private_networks_enabled: bool = False
+
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url

@@ -33,6 +33,15 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# User deployment runtime data
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+deploy/data/
+deploy/backups/
+deploy/dist/
+deploy/images/
+
 # ACP protocol package (external dependency)
 acp-protocol/
 
@@ -67,3 +76,4 @@ logs/
 
 # External support repositories are maintained separately.
 supports/
+SecurityReports/

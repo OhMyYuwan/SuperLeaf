@@ -39,6 +39,7 @@ services:
 
   backend:
     image: ${SUPERLEAF_BACKEND_IMAGE:-ghcr.io/ohmyyuwan/superleaf-backend:latest}
+    user: "${SUPERLEAF_RUNTIME_UID:-10001}:${SUPERLEAF_RUNTIME_GID:-10001}"
     environment:
       YLW_DATA_DIR: /data
       YLW_COLLAB_SERVER_URL: http://collab:4444
@@ -48,6 +49,13 @@ services:
       YLW_MCP_STDIO_ENABLED: ${YLW_MCP_STDIO_ENABLED:-false}
     volumes:
       - ./data/backend:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     expose:
       - "8000"
     healthcheck:
@@ -66,6 +74,7 @@ services:
 
   collab:
     image: ${SUPERLEAF_COLLAB_IMAGE:-ghcr.io/ohmyyuwan/superleaf-collab:latest}
+    user: "${SUPERLEAF_RUNTIME_UID:-10001}:${SUPERLEAF_RUNTIME_GID:-10001}"
     environment:
       BACKEND_URL: http://backend:8000
       COLLAB_HOST: 0.0.0.0
@@ -75,6 +84,13 @@ services:
       COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
     volumes:
       - ./data/collab:/data/collab
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     expose:
       - "4444"
     depends_on:

@@ -45,6 +45,7 @@ services:
       YLW_COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
       YLW_PUBLIC_REGISTRATION: ${YLW_PUBLIC_REGISTRATION:-false}
       YLW_BOOTSTRAP_TOKEN: ${YLW_BOOTSTRAP_TOKEN:-}
+      YLW_MCP_STDIO_ENABLED: ${YLW_MCP_STDIO_ENABLED:-false}
     volumes:
       - ./data/backend:/data
     expose:

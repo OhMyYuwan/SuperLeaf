@@ -1,0 +1,13 @@
+services:
+  gateway:
+    ports:
+      - "${SUPERLEAF_TLS_HTTP_BIND_ADDR:-0.0.0.0}:${SUPERLEAF_TLS_HTTP_PORT:-80}:80"
+      - "${SUPERLEAF_TLS_HTTPS_BIND_ADDR:-0.0.0.0}:${SUPERLEAF_TLS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./gateway/nginx.tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${SUPERLEAF_TLS_CERT_FILE:-./certs/fullchain.pem}:/etc/nginx/tls/fullchain.pem:ro
+      - ${SUPERLEAF_TLS_KEY_FILE:-./certs/privkey.pem}:/etc/nginx/tls/privkey.pem:ro
+
+  backend:
+    environment:
+      YLW_COOKIE_SECURE: "true"

@@ -12,9 +12,18 @@ This demonstrates:
 """
 
 import asyncio
+import os
+
+import pytest
+
 from app.database import SessionLocal
 from app.models import WorkflowDefinition
 from app.services.agent_orchestrator import WorkflowOrchestrator
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("YLW_RUN_NANOBOT_INTEGRATION_TESTS") != "1",
+    reason="requires live Nanobot integration services",
+)
 
 
 async def test_branch_and_merge():

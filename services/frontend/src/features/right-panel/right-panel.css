@@ -2430,6 +2430,54 @@
   grid-column: 1 / -1;
 }
 
+.mcp-policy-bar,
+.mcp-custom-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcp-policy-bar {
+  margin-top: -2px;
+}
+
+.mcp-custom-tabs {
+  padding: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.3);
+}
+
+.mcp-custom-tabs button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: rgba(203, 213, 225, 0.82);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mcp-custom-tabs button.active {
+  border-color: rgba(249, 115, 22, 0.3);
+  color: #fed7aa;
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.mcp-custom-tabs button:disabled {
+  color: rgba(148, 163, 184, 0.38);
+  cursor: not-allowed;
+}
+
+.mcp-custom-tab-panel {
+  display: grid;
+  gap: 8px;
+}
+
 .mcp-json-paste {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2530,6 +2578,10 @@
   background: rgba(15, 23, 42, 0.44);
 }
 
+.mcp-catalog-row.policy-blocked {
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
 .mcp-catalog-row .mcp-check-result {
   grid-column: 1 / -1;
 }
@@ -2582,6 +2634,10 @@
 
 .mcp-health-line {
   color: rgba(125, 211, 252, 0.76);
+}
+
+.mcp-health-line.warning {
+  color: #fde68a;
 }
 
 .mcp-install-panel {

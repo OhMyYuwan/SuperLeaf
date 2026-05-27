@@ -1,9 +1,9 @@
-"""Minimal stdio MCP client for Native Agent tools.
+"""Minimal MCP client for Native Agent tools.
 
 The integration is intentionally narrow: start a configured MCP server for a
-single list/call operation, speak JSON-RPC over stdio, then tear it down. That
-keeps MCP optional and avoids adding a resident process manager to the writing
-IDE.
+single list/call operation, speak JSON-RPC over stdio or a remote endpoint,
+then tear it down. That keeps MCP optional and avoids adding a resident process
+manager to the writing IDE.
 """
 
 from __future__ import annotations
@@ -15,10 +15,19 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
+from .mcp_policy import (
+    ensure_mcp_transport_allowed,
+    normalize_mcp_transport,
+    remote_endpoint_from_server,
+    validate_remote_endpoint,
+)
 
 MAX_MCP_RESULT_CHARS = 24_000
 MCP_TIMEOUT_SECONDS = 45.0
-ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3", "docker"}
+ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3"}
+MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
 class McpToolError(RuntimeError):
@@ -30,6 +39,8 @@ class McpServerConfig:
     id: str
     name: str
     command: str
+    transport: str = "remote"
+    endpoint: str = ""
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
@@ -53,12 +64,17 @@ def configured_mcp_servers(runtime_config: dict[str, Any] | None) -> list[McpSer
     for raw in raw_servers:
         if not isinstance(raw, dict) or raw.get("enabled") is False:
             continue
-        command = str(raw.get("command") or "").strip()
-        if not command:
+        try:
+            transport = normalize_mcp_transport(str(raw.get("transport") or "stdio"))
+        except ValueError:
+            continue
+        endpoint = remote_endpoint_from_server(raw) if transport == "remote" else ""
+        command = endpoint if transport == "remote" else str(raw.get("command") or "").strip()
+        if not command and not endpoint:
             continue
         ident = _safe_token(str(raw.get("id") or raw.get("name") or command))
         args = [str(item) for item in raw.get("args", []) if str(item).strip()]
-        if os.path.basename(command) == "uvx" and args == ["paper-search-mcp"]:
+        if transport == "stdio" and os.path.basename(command) == "uvx" and args == ["paper-search-mcp"]:
             args = ["--from", "paper-search-mcp", "python", "-m", "paper_search_mcp.server"]
         env = {
             str(key): str(value)
@@ -83,7 +99,9 @@ def configured_mcp_servers(runtime_config: dict[str, Any] | None) -> list[McpSer
                 id=ident,
                 name=str(raw.get("name") or ident).strip() or ident,
                 command=command,
-                args=args,
+                transport=transport,
+                endpoint=endpoint,
+                args=[] if transport == "remote" else args,
                 env=env,
                 enabled=True,
                 allowed_tools=allowed_tools,
@@ -168,6 +186,16 @@ def _error_tool_ref(server: McpServerConfig, exc: Exception) -> McpToolRef:
 
 
 async def _with_mcp_session(server: McpServerConfig, fn):
+    ensure_mcp_transport_allowed(server.transport)
+    if server.transport == "remote":
+        validate_remote_endpoint(server.endpoint or server.command)
+        session = _RemoteMcpSession(server)
+        try:
+            await session.initialize()
+            return await asyncio.wait_for(fn(session), timeout=MCP_TIMEOUT_SECONDS)
+        finally:
+            await session.close()
+
     command_name = os.path.basename(server.command)
     if command_name not in ALLOWED_COMMANDS:
         raise McpToolError(f"Command `{server.command}` is not allowed for MCP servers")
@@ -196,6 +224,73 @@ async def _with_mcp_session(server: McpServerConfig, fn):
                 proc.kill()
                 await proc.wait()
         stderr_task.cancel()
+
+
+class _RemoteMcpSession:
+    def __init__(self, server: McpServerConfig) -> None:
+        self.server = server
+        self.endpoint = server.endpoint or server.command
+        self._next_id = 1
+        self._client = httpx.AsyncClient(timeout=MCP_TIMEOUT_SECONDS)
+        self._session_id = ""
+
+    async def initialize(self) -> None:
+        try:
+            await self._request(
+                "initialize",
+                {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "SuperLeaf", "version": "0.1.0"},
+                },
+            )
+            await self._notify("notifications/initialized", {})
+        except Exception:
+            await self._client.aclose()
+            raise
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        result = await self._request("tools/list", {})
+        tools = result.get("tools") if isinstance(result, dict) else None
+        return tools if isinstance(tools, list) else []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        return await self._request("tools/call", {"name": name, "arguments": arguments})
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def _notify(self, method: str, params: dict[str, Any]) -> None:
+        await self._post({"jsonrpc": "2.0", "method": method, "params": params}, expect_response=False)
+
+    async def _request(self, method: str, params: dict[str, Any]) -> Any:
+        request_id = self._next_id
+        self._next_id += 1
+        msg = await self._post({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        if "error" in msg:
+            raise McpToolError(json.dumps(msg["error"], ensure_ascii=False))
+        return msg.get("result")
+
+    async def _post(self, payload: dict[str, Any], *, expect_response: bool = True) -> dict[str, Any]:
+        headers = {
+            "Accept": "application/json,text/event-stream",
+            "Content-Type": "application/json",
+            "Mcp-Protocol-Version": MCP_PROTOCOL_VERSION,
+        }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        token = _remote_auth_token(self.server.env)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            response = await self._client.post(self.endpoint, json=payload, headers=headers)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise McpToolError(f"Remote MCP request failed: {exc}") from exc
+        self._session_id = response.headers.get("mcp-session-id", self._session_id)
+        if not expect_response or response.status_code == 202 or not response.content:
+            return {}
+        return _parse_remote_response(response)
 
 
 class _McpSession:
@@ -283,6 +378,46 @@ def _serialize_result(result: Any) -> str:
     if len(text) <= MAX_MCP_RESULT_CHARS:
         return text
     return text[:MAX_MCP_RESULT_CHARS] + "\n...[truncated]"
+
+
+def _remote_auth_token(env: dict[str, str]) -> str:
+    for key in ("MCP_AUTH_TOKEN", "AUTH_TOKEN", "BEARER_TOKEN", "TOKEN", "API_KEY"):
+        token = str(env.get(key) or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _parse_remote_response(response: httpx.Response) -> dict[str, Any]:
+    content_type = response.headers.get("content-type", "")
+    text = response.text.strip()
+    if "text/event-stream" in content_type or text.startswith("event:") or text.startswith("data:"):
+        return _parse_sse_json(text)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise McpToolError("Remote MCP response is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise McpToolError("Remote MCP response must be a JSON object")
+    return payload
+
+
+def _parse_sse_json(text: str) -> dict[str, Any]:
+    data_parts: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            data = line.removeprefix("data:").strip()
+            if data and data != "[DONE]":
+                data_parts.append(data)
+    if not data_parts:
+        return {}
+    try:
+        payload = json.loads("\n".join(data_parts))
+    except json.JSONDecodeError as exc:
+        raise McpToolError("Remote MCP SSE response is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise McpToolError("Remote MCP SSE response must contain a JSON object")
+    return payload
 
 
 def _safe_token(value: str) -> str:

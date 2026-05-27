@@ -148,6 +148,40 @@ class SkillMarketplaceService:
         self.db.commit()
         return True
 
+    def clone_to_local(self, skill_id: str, *, user_id: str, name: str = ""):
+        """Fetch SKILL.md from marketplace catalog and create an editable local copy.
+
+        Returns the new local Skill row. The marketplace installation is removed
+        after the local copy is created successfully.
+
+        Args:
+            name: User-provided name for the local copy. If empty, falls back to
+                  the marketplace entry's display_name.
+        """
+        from .native_agent_service import NativeAgentService
+
+        entry = self._find_entry(skill_id, user_id=user_id)
+        installed = self._installed_by_catalog_id(user_id=user_id)
+        if entry.id not in installed:
+            raise SkillMarketplaceError("市场 Skill 尚未安装，请先安装后再复制到本地")
+
+        content = self._fetch_text(entry.entry_url)
+        if not content.strip():
+            raise SkillMarketplaceError("无法从市场仓库获取 SKILL.md 内容")
+
+        native_svc = NativeAgentService(self.db)
+        local_name = name.strip() or entry.display_name or entry.name or entry.id
+        local_skill = native_svc.create_skill(
+            user_id=user_id,
+            name=local_name,
+            description=entry.description,
+            content=content,
+            tags=list(entry.tags),
+        )
+
+        self.uninstall(skill_id, user_id=user_id)
+        return local_skill
+
     def _find_entry(self, skill_id: str, *, user_id: str) -> MarketplaceEntry:
         for entry in self.list_entries(user_id=user_id):
             if entry.id == skill_id:

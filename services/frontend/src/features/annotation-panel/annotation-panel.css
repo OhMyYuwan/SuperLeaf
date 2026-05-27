@@ -517,7 +517,9 @@
   flex-direction: column;
   gap: 6px;
 }
-.ann-composer textarea {
+/* Direct child only — avoids leaking into MentionInput's textarea (which
+   sits inside .mention-input-root → .mention-input-stack). */
+.ann-composer > textarea {
   resize: vertical;
   min-height: 56px;
   padding: 8px 10px;
@@ -529,7 +531,7 @@
   font-family: inherit;
   outline: none;
 }
-.ann-composer textarea:focus {
+.ann-composer > textarea:focus {
   border-color: rgba(59, 130, 246, 0.55);
 }
 .ann-composer-actions {
@@ -699,9 +701,11 @@
   font-weight: 500;
 }
 
-/* Highlighted @mention tags inside rendered comment body */
+/* Highlighted @mention tags inside rendered comment body.
+   Scoped to .ann-thread-content so these rules don't leak into the
+   MentionInput mirror layer (which has its own .mention-tag styles). */
 
-.mention-tag {
+.ann-thread-content .mention-tag {
   display: inline-block;
   padding: 1px 6px;
   margin: 0 1px;
@@ -714,13 +718,13 @@
   white-space: nowrap;
 }
 
-.mention-tag-file {
+.ann-thread-content .mention-tag-file {
   background: rgba(34, 197, 94, 0.18);
   color: #86efac;
   border-color: rgba(34, 197, 94, 0.32);
 }
 
-.mention-tag-workflow {
+.ann-thread-content .mention-tag-workflow {
   background: rgba(168, 85, 247, 0.18);
   color: #c084fc;
   border-color: rgba(168, 85, 247, 0.32);

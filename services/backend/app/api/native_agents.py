@@ -13,14 +13,20 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, object_session
 
 from ..database import get_session
-from ..models import NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, NativeMcpServer, Project, Skill, User
+from ..models import (
+    NativeAgent,
+    NativeAgentCredential,
+    NativeAgentSkillInstall,
+    NativeMcpServer,
+    Project,
+    Skill,
+    User,
+)
 from ..schemas import (
     AgentWorkspaceFileOut,
+    McpExecutionPolicyOut,
     McpGoldenTestIn,
     McpProbeIn,
-    NativeMcpServerIn,
-    NativeMcpServerOut,
-    NativeMcpServerPatch,
     NativeAgentCredentialIn,
     NativeAgentCredentialOut,
     NativeAgentCredentialPatch,
@@ -29,8 +35,13 @@ from ..schemas import (
     NativeAgentPatch,
     NativeAgentSkillInstallOut,
     NativeAgentSkillRecipeIn,
+    NativeMcpServerIn,
+    NativeMcpServerOut,
+    NativeMcpServerPatch,
     SkillIn,
     SkillMarketplaceEntryOut,
+    SkillMarketplaceCloneIn,
+    SkillMarketplaceCloneOut,
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
@@ -40,15 +51,16 @@ from ..schemas import (
 from ..services.agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from ..services.mcp_catalog_service import McpCatalogError, McpCatalogService
 from ..services.mcp_config_service import McpConfigService, env_keys
+from ..services.mcp_policy import McpExecutionPolicyError, ensure_mcp_transport_allowed
 from ..services.native_agent_service import NativeAgentService
+from ..services.skill_content_crypto import decrypt_skill_content
 from ..services.skill_marketplace_service import (
     MarketplaceEntry,
     SkillMarketplaceError,
     SkillMarketplaceService,
 )
-from ..services.skill_content_crypto import decrypt_skill_content
+from ..settings import settings
 from .deps import get_current_project, get_current_user, require_write_access
-
 
 router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
 
@@ -102,6 +114,7 @@ def _mcp_server_out(row: NativeMcpServer) -> NativeMcpServerOut:
         name=row.name,
         description=row.description,
         transport=row.transport,
+        endpoint=row.command if row.transport == "remote" else "",
         command=row.command,
         args=list(row.args or []),
         env_keys=env_keys(row.env_enc),
@@ -175,6 +188,24 @@ def get_mcp_catalog(
         raise HTTPException(500, str(exc)) from exc
 
 
+@router.get("/mcp/policy", response_model=McpExecutionPolicyOut)
+def get_mcp_execution_policy(
+    user: User = Depends(get_current_user),
+) -> McpExecutionPolicyOut:
+    allowed_transports: list[str] = []
+    if settings.mcp_remote_enabled:
+        allowed_transports.append("remote")
+    if settings.mcp_stdio_enabled:
+        allowed_transports.append("stdio")
+    return McpExecutionPolicyOut(
+        remote_enabled=settings.mcp_remote_enabled,
+        stdio_enabled=settings.mcp_stdio_enabled,
+        inline_config_enabled=settings.mcp_inline_config_enabled,
+        remote_private_networks_enabled=settings.mcp_remote_private_networks_enabled,
+        allowed_transports=allowed_transports,
+    )
+
+
 @router.post("/mcp/probe")
 async def probe_mcp_server(
     body: McpProbeIn,
@@ -193,7 +224,12 @@ async def probe_mcp_server(
             )
         else:
             raise HTTPException(400, "preset_id or server is required")
+        ensure_mcp_transport_allowed(str(server.get("transport") or "stdio"))
         return await svc.probe(server, preset=preset)
+    except McpExecutionPolicyError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except McpCatalogError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -206,12 +242,18 @@ async def run_mcp_golden_test(
     svc = McpCatalogService()
     try:
         server = body.server.model_dump() if body.server is not None else None
+        if server is not None:
+            ensure_mcp_transport_allowed(str(server.get("transport") or "stdio"))
         return await svc.golden_test(
             preset_id=body.preset_id,
             test_id=body.test_id,
             server=server,
             env=body.env,
         )
+    except McpExecutionPolicyError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except McpCatalogError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -235,7 +277,7 @@ def create_mcp_server(
         if body.source == "catalog" or body.preset_id:
             row = svc.ensure_preset_server(body.preset_id, user_id=user.id, env=body.env)
             patch: dict = {}
-            for key in ("name", "description", "transport", "command", "args", "allowed_tools", "is_enabled"):
+            for key in ("name", "description", "allowed_tools", "is_enabled"):
                 value = getattr(body, key)
                 if value not in ("", [], None):
                     patch[key] = value
@@ -247,6 +289,7 @@ def create_mcp_server(
                 name=body.name,
                 description=body.description,
                 transport=body.transport,
+                endpoint=body.endpoint,
                 command=body.command,
                 args=body.args,
                 env=body.env,
@@ -279,11 +322,14 @@ def update_mcp_server(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeMcpServerOut:
-    row = McpConfigService(db).update_server(
-        server_id,
-        user_id=user.id,
-        patch=body.model_dump(exclude_unset=True),
-    )
+    try:
+        row = McpConfigService(db).update_server(
+            server_id,
+            user_id=user.id,
+            patch=body.model_dump(exclude_unset=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if row is None:
         raise HTTPException(404, "MCP server not found")
     return _mcp_server_out(row)
@@ -311,7 +357,9 @@ async def probe_saved_mcp_server(
     catalog_svc = McpCatalogService()
     try:
         preset = catalog_svc.preset(row.preset_id) if row.preset_id else None
-        result = await catalog_svc.probe(config_svc.to_runtime_server(row), preset=preset)
+        runtime_server = config_svc.to_runtime_server(row)
+        ensure_mcp_transport_allowed(str(runtime_server.get("transport") or "stdio"))
+        result = await catalog_svc.probe(runtime_server, preset=preset)
         tool_count = len(result.get("tools") or [])
         detail = f"{tool_count} tools"
         warnings = result.get("warnings") or []
@@ -325,6 +373,10 @@ async def probe_saved_mcp_server(
             tool_count=tool_count,
         )
         return result
+    except McpExecutionPolicyError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except McpCatalogError as exc:
         config_svc.mark_probe(server_id, user_id=user.id, status="error", detail=str(exc), tool_count=0)
         raise HTTPException(400, str(exc)) from exc
@@ -344,10 +396,12 @@ async def run_saved_mcp_golden_test(
     if not row.preset_id:
         raise HTTPException(400, "golden test requires a catalog preset")
     try:
+        runtime_server = config_svc.to_runtime_server(row)
+        ensure_mcp_transport_allowed(str(runtime_server.get("transport") or "stdio"))
         result = await McpCatalogService().golden_test(
             preset_id=row.preset_id,
             test_id=str((body or {}).get("test_id") or ""),
-            server=config_svc.to_runtime_server(row),
+            server=runtime_server,
         )
         warnings = result.get("warnings") or []
         error = str(result.get("error") or "").strip()
@@ -364,6 +418,10 @@ async def run_saved_mcp_golden_test(
             detail=" · ".join(detail_parts) or ("passed" if result.get("passed") else "failed"),
         )
         return result
+    except McpExecutionPolicyError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except McpCatalogError as exc:
         config_svc.mark_golden(server_id, user_id=user.id, status="error", detail=str(exc))
         raise HTTPException(400, str(exc)) from exc
@@ -598,6 +656,23 @@ def uninstall_marketplace_skill(
     SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
 
 
+@router.post("/skill-marketplace/{skill_id}/clone-to-local", response_model=SkillMarketplaceCloneOut, status_code=201)
+def clone_marketplace_skill_to_local(
+    skill_id: str,
+    body: SkillMarketplaceCloneIn = SkillMarketplaceCloneIn(),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillMarketplaceCloneOut:
+    """Fetch the marketplace SKILL.md, create an editable local copy, and remove the marketplace installation."""
+    try:
+        row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
+    except SkillMarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return SkillMarketplaceCloneOut(skill=_skill_out(row, user.id))
+
+
 @router.get("/agents", response_model=list[NativeAgentOut])
 def list_agents(
     provider_id: str | None = None,
@@ -653,7 +728,11 @@ def list_agent_skill_installs(
     return [_install_out(row) for row in rows]
 
 
-@router.post("/agents/{agent_id}/skills/install-npx", response_model=NativeAgentSkillInstallOut, status_code=201)
+@router.post(
+    "/agents/{agent_id}/skills/install-npx",
+    response_model=NativeAgentSkillInstallOut,
+    status_code=201,
+)
 def install_agent_skill_recipe(
     agent_id: str,
     body: NativeAgentSkillRecipeIn,

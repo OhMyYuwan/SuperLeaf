@@ -90,28 +90,32 @@
   color: var(--mention-placeholder-color, var(--text-muted, rgba(255, 255, 255, 0.45)));
 }
 
-/* Inline mention chips inside the mirror layer. */
+/* Inline mention chips inside the mirror layer.
+   IMPORTANT: Only background-color and color are used for styling.  Any
+   padding, border, or margin on an inline element increases its inline-axis
+   width, which shifts subsequent text and desynchronises line breaks between
+   the textarea (plain text) and the mirror (styled spans).  text-decoration
+   is safe because it paints outside the inline box. */
 .mention-input-mirror .mention-tag {
-  display: inline;
-  padding: 0 3px;
-  margin: 0;
-  border-radius: 3px;
+  display: inline !important;
   background: rgba(59, 130, 246, 0.22);
   color: #93c5fd;
-  border: 1px solid rgba(59, 130, 246, 0.32);
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 130, 246, 0.5);
+  text-underline-offset: 2px;
   white-space: nowrap;
 }
 
 .mention-input-mirror .mention-tag-file {
   background: var(--mention-file-bg, rgba(34, 197, 94, 0.22));
   color: var(--mention-file-color, #86efac);
-  border-color: var(--mention-file-border, rgba(34, 197, 94, 0.4));
+  text-decoration-color: var(--mention-file-border, rgba(34, 197, 94, 0.4));
 }
 
 .mention-input-mirror .mention-tag-workflow {
   background: rgba(168, 85, 247, 0.22);
   color: #d8b4fe;
-  border-color: rgba(168, 85, 247, 0.4);
+  text-decoration-color: rgba(168, 85, 247, 0.4);
 }
 
 .mention-input-textarea:focus,

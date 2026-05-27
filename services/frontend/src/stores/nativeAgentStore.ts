@@ -8,6 +8,7 @@ import {
   type NativeAgentCredentialPatch,
   type NativeAgentDraft,
   type McpCatalog,
+  type McpExecutionPolicy,
   type McpProbeResult,
   type NativeAgentPatch,
   type NativeMcpServerConfig,
@@ -32,6 +33,9 @@ interface NativeAgentState {
   mcpCatalog: McpCatalog | null
   mcpCatalogLoading: boolean
   mcpCatalogError: string | null
+  mcpPolicy: McpExecutionPolicy | null
+  mcpPolicyLoading: boolean
+  mcpPolicyError: string | null
   mcpServers: NativeMcpServerConfig[]
   mcpServersLoading: boolean
   mcpServersLoaded: boolean
@@ -52,6 +56,7 @@ interface NativeAgentState {
   unpublishSkill: (id: string) => Promise<Skill | null>
   removeSkill: (id: string) => Promise<boolean>
   loadMarketplace: () => Promise<SkillMarketplace | null>
+  loadMcpPolicy: () => Promise<McpExecutionPolicy | null>
   loadMcpCatalog: () => Promise<McpCatalog | null>
   loadMcpServers: () => Promise<NativeMcpServerConfig[] | null>
   createMcpServer: (draft: NativeMcpServerConfigDraft) => Promise<NativeMcpServerConfig | null>
@@ -62,6 +67,7 @@ interface NativeAgentState {
   installMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   updateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   uninstallMarketplaceSkill: (id: string) => Promise<boolean>
+  cloneMarketplaceSkillToLocal: (id: string, name: string) => Promise<Skill | null>
   createAgent: (draft: NativeAgentDraft) => Promise<NativeAgent | null>
   updateAgent: (id: string, patch: NativeAgentPatch) => Promise<NativeAgent | null>
   installAgentSkill: (id: string, recipe: NativeAgentSkillRecipe) => Promise<NativeAgentSkillInstall | null>
@@ -77,6 +83,9 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
   mcpCatalog: null,
   mcpCatalogLoading: false,
   mcpCatalogError: null,
+  mcpPolicy: null,
+  mcpPolicyLoading: false,
+  mcpPolicyError: null,
   mcpServers: [],
   mcpServersLoading: false,
   mcpServersLoaded: false,
@@ -222,6 +231,18 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
     }
   },
 
+  loadMcpPolicy: async () => {
+    set({ mcpPolicyLoading: true, mcpPolicyError: null })
+    try {
+      const policy = await nativeAgentApi.mcp.policy()
+      set({ mcpPolicy: policy, mcpPolicyLoading: false, mcpPolicyError: null })
+      return policy
+    } catch (err) {
+      set({ mcpPolicyLoading: false, mcpPolicyError: toErrorMessage(err) })
+      return null
+    }
+  },
+
   loadMcpCatalog: async () => {
     set({ mcpCatalogLoading: true, mcpCatalogError: null })
     try {
@@ -354,6 +375,30 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
     } catch (err) {
       set({ marketplaceError: toErrorMessage(err) })
       return false
+    }
+  },
+
+  cloneMarketplaceSkillToLocal: async (id, name) => {
+    try {
+      const result = await nativeAgentApi.marketplace.cloneToLocal(id, name)
+      const currentEntry = get().marketplace?.skills.find((item) => item.id === id)
+      set({
+        skills: mergeById(get().skills, result.skill),
+        marketplace: currentEntry
+          ? patchMarketplaceEntry(get().marketplace, {
+            ...currentEntry,
+            installed: false,
+            installed_skill_id: null,
+            installed_version: '',
+            update_available: false,
+          })
+          : get().marketplace,
+        marketplaceError: null,
+      })
+      return result.skill
+    } catch (err) {
+      set({ marketplaceError: toErrorMessage(err) })
+      return null
     }
   },
 

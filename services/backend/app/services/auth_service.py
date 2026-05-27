@@ -4,7 +4,8 @@ Sessions are server-side opaque tokens stored in the `sessions` table. The
 token itself is the value of the `ylw_session` cookie. Revocation flips
 `revoked=True`; there's no refresh-token dance.
 
-The first user to register is automatically promoted to admin AND inherits
+The first user to register with deployment bootstrap authorization is promoted
+to admin AND inherits
 ownership of any pre-existing `user_id=''` rows across `projects`, `providers`,
 and `cached_workflows`. This is the migration path from single-user to
 multi-user — we cannot do it inside the startup migration because no user
@@ -15,7 +16,9 @@ from __future__ import annotations
 
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import Lock
 
 import bcrypt
 from sqlalchemy.orm import Session as DbSession
@@ -33,14 +36,27 @@ from ..models import (
     WorkflowDefinition,
     WorkflowRun,
 )
-
+from ..settings import settings
 
 SESSION_LIFETIME = timedelta(days=14)
 _PASSWORD_POLICY = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).{8,}$")
+_COLLAB_TOKEN_LOCK = Lock()
+_COLLAB_TOKENS: dict[str, "CollabTokenRecord"] = {}
+
+
+@dataclass(frozen=True)
+class CollabTokenRecord:
+    user_id: str
+    doc_id: str
+    expires_at: datetime
 
 
 class AuthError(Exception):
     """Raised for bad credentials / disabled / policy violations."""
+
+
+class RegistrationClosedError(AuthError):
+    """Raised when deployment registration policy blocks account creation."""
 
 
 class AuthService:
@@ -77,6 +93,7 @@ class AuthService:
         password: str,
         display_name: str = "",
         ip: str = "",
+        bootstrap_token: str = "",
     ) -> tuple[User, str]:
         email_normalized = email.strip().lower()
         if not email_normalized or "@" not in email_normalized:
@@ -88,6 +105,7 @@ class AuthService:
             raise AuthError("Email already registered")
 
         is_first = self.db.query(User).count() == 0
+        self._check_registration_policy(is_first=is_first, bootstrap_token=bootstrap_token)
         user = User(
             email=email_normalized,
             password_hash=self.hash_password(password),
@@ -107,6 +125,22 @@ class AuthService:
         self.db.refresh(user)
         return user, token
 
+    @staticmethod
+    def _check_registration_policy(*, is_first: bool, bootstrap_token: str) -> None:
+        if is_first:
+            required_token = settings.bootstrap_token.strip()
+            if required_token:
+                supplied_token = bootstrap_token.strip()
+                if not secrets.compare_digest(supplied_token, required_token):
+                    raise RegistrationClosedError("Registration requires a valid bootstrap token")
+                return
+            if settings.public_registration:
+                return
+            raise RegistrationClosedError("Registration requires a bootstrap token")
+
+        if not settings.public_registration:
+            raise RegistrationClosedError("Registration is disabled")
+
     def authenticate(self, email: str, password: str, ip: str = "") -> tuple[User, str]:
         email_normalized = email.strip().lower()
         user = self.db.query(User).filter(User.email == email_normalized).first()
@@ -120,6 +154,41 @@ class AuthService:
         self.db.commit()
         self.db.refresh(user)
         return user, token
+
+    # ---- short-lived collaboration tokens --------------------------------
+
+    def issue_collab_token(self, *, user_id: str, doc_id: str) -> tuple[str, int]:
+        lifetime_seconds = max(5, min(int(settings.collab_token_lifetime_seconds), 300))
+        now = datetime.utcnow()
+        token = secrets.token_urlsafe(32)
+        record = CollabTokenRecord(
+            user_id=user_id,
+            doc_id=doc_id,
+            expires_at=now + timedelta(seconds=lifetime_seconds),
+        )
+        with _COLLAB_TOKEN_LOCK:
+            self._prune_collab_tokens(now)
+            _COLLAB_TOKENS[token] = record
+        return token, lifetime_seconds
+
+    def verify_collab_token(self, token: str, *, doc_id: str | None = None) -> CollabTokenRecord | None:
+        if not token:
+            return None
+        now = datetime.utcnow()
+        with _COLLAB_TOKEN_LOCK:
+            self._prune_collab_tokens(now)
+            record = _COLLAB_TOKENS.get(token)
+        if record is None:
+            return None
+        if doc_id is not None and record.doc_id != doc_id:
+            return None
+        return record
+
+    @staticmethod
+    def _prune_collab_tokens(now: datetime) -> None:
+        expired = [token for token, record in _COLLAB_TOKENS.items() if record.expires_at < now]
+        for token in expired:
+            _COLLAB_TOKENS.pop(token, None)
 
     # ---- sessions --------------------------------------------------------
 

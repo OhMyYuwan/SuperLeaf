@@ -1,9 +1,18 @@
 """Test Roundtable workflow execution with real Nanobot agents."""
 
 import asyncio
+import os
+
+import pytest
+
 from app.database import SessionLocal
 from app.models import WorkflowDefinition
 from app.services.agent_orchestrator import WorkflowOrchestrator
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("YLW_RUN_NANOBOT_INTEGRATION_TESTS") != "1",
+    reason="requires live Nanobot integration services",
+)
 
 
 async def test_roundtable_workflow():
@@ -33,9 +42,9 @@ async def test_roundtable_workflow():
 
     print("🚀 Starting roundtable workflow execution...")
     print(f"   Workflow ID: {roundtable_wf.id}")
-    print(f"   Mode: roundtable (A ⇄ B)")
-    print(f"   Max rounds: 2")
-    print(f"   Agents: 8901, 8902")
+    print("   Mode: roundtable (A ⇄ B)")
+    print("   Max rounds: 2")
+    print("   Agents: 8901, 8902")
     print()
 
     orchestrator = WorkflowOrchestrator(db)

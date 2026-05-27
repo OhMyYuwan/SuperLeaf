@@ -13,7 +13,7 @@ orchestrator's static helpers:
 No LLM, no DB — pure Python.
 """
 
-from app.services.agent_orchestrator import _parent_id, _edge_source, _edge_target
+from app.services.agent_orchestrator import _edge_source, _edge_target, _parent_id
 
 
 def _build_sample_graph() -> dict:

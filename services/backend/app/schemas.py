@@ -202,6 +202,16 @@ class SkillMarketplaceInstallOut(BaseModel):
     marketplace_entry: SkillMarketplaceEntryOut
 
 
+class SkillMarketplaceCloneOut(BaseModel):
+    """Response for clone-to-local: returns the new editable local skill."""
+    skill: SkillOut
+
+
+class SkillMarketplaceCloneIn(BaseModel):
+    """Request body for clone-to-local: user-provided name for the local copy."""
+    name: str = Field(default="", max_length=128)
+
+
 class NativeAgentSkillRecipeIn(BaseModel):
     source: str = Field(default="marketplace", max_length=32)
     marketplace_id: str = Field(default="", max_length=256)
@@ -299,7 +309,8 @@ class McpServerConfigIn(BaseModel):
     id: str = Field(default="", max_length=128)
     name: str = Field(default="", max_length=256)
     enabled: bool = True
-    transport: str = Field(default="stdio", max_length=64)
+    transport: str = Field(default="remote", max_length=64)
+    endpoint: str = Field(default="", max_length=512)
     command: str = Field(default="", max_length=512)
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -311,7 +322,8 @@ class NativeMcpServerIn(BaseModel):
     source: str = Field(default="custom", pattern="^(catalog|custom)$")
     name: str = Field(default="", max_length=128)
     description: str = ""
-    transport: str = Field(default="stdio", max_length=32)
+    transport: str = Field(default="remote", max_length=32)
+    endpoint: str = Field(default="", max_length=512)
     command: str = Field(default="", max_length=256)
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -323,6 +335,7 @@ class NativeMcpServerPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     transport: str | None = None
+    endpoint: str | None = None
     command: str | None = None
     args: list[str] | None = None
     env: dict[str, str] | None = None
@@ -338,6 +351,7 @@ class NativeMcpServerOut(BaseModel):
     name: str
     description: str
     transport: str
+    endpoint: str = ""
     command: str
     args: list[str]
     env_keys: list[str] = Field(default_factory=list)
@@ -354,6 +368,14 @@ class NativeMcpServerOut(BaseModel):
     last_tool_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class McpExecutionPolicyOut(BaseModel):
+    remote_enabled: bool
+    stdio_enabled: bool
+    inline_config_enabled: bool
+    remote_private_networks_enabled: bool
+    allowed_transports: list[str] = Field(default_factory=list)
 
 
 class McpProbeIn(BaseModel):
@@ -849,6 +871,7 @@ class UserRegisterIn(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=128)
+    bootstrap_token: str = Field(default="", max_length=512)
 
 
 class UserLoginIn(BaseModel):

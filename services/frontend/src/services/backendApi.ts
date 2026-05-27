@@ -401,6 +401,7 @@ export interface NativeAgentMcpServer {
   name: string
   enabled: boolean
   transport?: string
+  endpoint?: string
   command: string
   args: string[]
   env?: Record<string, string>
@@ -415,6 +416,7 @@ export interface NativeMcpServerConfig {
   name: string
   description: string
   transport: string
+  endpoint: string
   command: string
   args: string[]
   env_keys: string[]
@@ -439,6 +441,7 @@ export interface NativeMcpServerConfigDraft {
   name?: string
   description?: string
   transport?: string
+  endpoint?: string
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -450,6 +453,7 @@ export interface NativeMcpServerConfigPatch {
   name?: string
   description?: string
   transport?: string
+  endpoint?: string
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -470,6 +474,8 @@ export interface McpPreset {
   source: Record<string, unknown>
   transport: {
     type: string
+    endpoint?: string
+    url?: string
     command: string
     args: string[]
   }
@@ -508,6 +514,14 @@ export interface McpCatalog {
   updated_at: string
   registries?: Array<{ id: string; name: string; description?: string }>
   presets: McpPreset[]
+}
+
+export interface McpExecutionPolicy {
+  remote_enabled: boolean
+  stdio_enabled: boolean
+  inline_config_enabled: boolean
+  remote_private_networks_enabled: boolean
+  allowed_transports: string[]
 }
 
 export interface McpProbeResult {
@@ -635,6 +649,7 @@ export const nativeAgentApi = {
       }),
   },
   mcp: {
+    policy: () => http<McpExecutionPolicy>('/api/native-agent/mcp/policy'),
     catalog: () => http<McpCatalog>('/api/native-agent/mcp/catalog'),
     servers: () => http<NativeMcpServerConfig[]>('/api/native-agent/mcp/servers'),
     createServer: (body: NativeMcpServerConfigDraft) =>

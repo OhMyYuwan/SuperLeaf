@@ -7,9 +7,18 @@ Tests:
 """
 
 import asyncio
+import os
+
+import pytest
+
 from app.database import SessionLocal
 from app.models import WorkflowDefinition
 from app.services.agent_orchestrator import WorkflowOrchestrator
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("YLW_RUN_NANOBOT_INTEGRATION_TESTS") != "1",
+    reason="requires live Nanobot integration services",
+)
 
 
 async def test_nested_parallel_roundtable():
@@ -98,8 +107,8 @@ async def test_nested_parallel_roundtable():
 
     # Step 3: Execute the nested workflow
     print("🚀 Starting nested workflow execution...")
-    print(f"   Mode: graph")
-    print(f"   Contains: 2 parallel roundtables")
+    print("   Mode: graph")
+    print("   Contains: 2 parallel roundtables")
     print()
 
     orchestrator = WorkflowOrchestrator(db)

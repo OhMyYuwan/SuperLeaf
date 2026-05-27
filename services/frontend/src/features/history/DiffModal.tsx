@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, ChevronUp, ChevronDown } from 'lucide-react'
 import { EditorState } from '@codemirror/state'
-import { EditorView, lineNumbers } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
 
 import { baseExtensions, languageFor, type EditorFormat } from '../latex-editor/extensions'
 import { useHistoryStore } from '../../stores/historyStore'
@@ -136,8 +136,7 @@ function DiffViewer({ text, highlights, locations, format }: DiffViewerProps) {
     const state = EditorState.create({
       doc: text,
       extensions: [
-        ...baseExtensions(),
-        lineNumbers(),
+        ...baseExtensions({ includeHistory: false }),
         languageFor(format),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),

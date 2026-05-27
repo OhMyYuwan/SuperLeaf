@@ -12,6 +12,18 @@ cp .env.example .env
 
 Open `http://localhost:8080` by default.
 
+The gateway binds to `127.0.0.1` by default. To intentionally expose it on a
+trusted LAN, set `SUPERLEAF_BIND_ADDR=0.0.0.0` in `.env` and review
+registration, TLS, and firewall settings first.
+
+Public registration is disabled by default. Before creating the first admin
+account, set a private `YLW_BOOTSTRAP_TOKEN` in `.env` and enter that token on
+the registration page. Do not use a shared or checked-in token.
+
+Set a separate private `YLW_COLLAB_INTERNAL_TOKEN` in `.env` before starting.
+Backend uses it when reading Yjs document snapshots from Collab Server, and
+Collab Server rejects `/docs/:docId/text` without this internal token.
+
 If you are testing with a local image archive before registry images are
 published, load it before starting:
 

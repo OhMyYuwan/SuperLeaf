@@ -77,3 +77,4 @@ logs/
 # External support repositories are maintained separately.
 supports/
 SecurityReports/
+memory/

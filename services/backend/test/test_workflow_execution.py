@@ -1,8 +1,17 @@
 """Test workflow execution with real Nanobot agents."""
 
 import asyncio
+import os
+
+import pytest
+
 from app.database import SessionLocal
 from app.services.agent_orchestrator import WorkflowOrchestrator
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("YLW_RUN_NANOBOT_INTEGRATION_TESTS") != "1",
+    reason="requires live Nanobot integration services",
+)
 
 
 async def test_parallel_workflow():
@@ -14,7 +23,7 @@ async def test_parallel_workflow():
 
     print("🚀 Starting parallel workflow execution...")
     print(f"   Workflow ID: {workflow_id}")
-    print(f"   Agents: nanobot-8901 (port 8901), nanobot-8902 (port 8902)")
+    print("   Agents: nanobot-8901 (port 8901), nanobot-8902 (port 8902)")
     print()
 
     try:

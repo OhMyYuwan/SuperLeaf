@@ -44,10 +44,12 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     }
     set({ provider: null, status: 'connecting', peers: [], currentProjectId: projectId, currentDocId: docId })
 
-    // Fetch a collab token from the backend (echoes the session cookie).
+    // Fetch a short-lived, document-scoped collab token from the backend.
     let token: string
     try {
-      const res = await http<{ token: string }>('/api/auth/collab-token')
+      const res = await http<{ token: string; expires_in: number }>(
+        `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
+      )
       token = res.token
     } catch {
       console.warn('[collaborationStore] failed to get collab token')

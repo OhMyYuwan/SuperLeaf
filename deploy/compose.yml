@@ -4,7 +4,7 @@ services:
   gateway:
     image: nginx:1.27-alpine
     ports:
-      - "${SUPERLEAF_HTTP_PORT:-8080}:80"
+      - "${SUPERLEAF_BIND_ADDR:-127.0.0.1}:${SUPERLEAF_HTTP_PORT:-8080}:80"
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -42,6 +42,9 @@ services:
     environment:
       YLW_DATA_DIR: /data
       YLW_COLLAB_SERVER_URL: http://collab:4444
+      YLW_COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
+      YLW_PUBLIC_REGISTRATION: ${YLW_PUBLIC_REGISTRATION:-false}
+      YLW_BOOTSTRAP_TOKEN: ${YLW_BOOTSTRAP_TOKEN:-}
     volumes:
       - ./data/backend:/data
     expose:
@@ -68,6 +71,7 @@ services:
       COLLAB_PORT: 4444
       COLLAB_DATA_DIR: /data/collab
       COLLAB_WS_PATH_PREFIX: /collab
+      COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
     volumes:
       - ./data/collab:/data/collab
     expose:

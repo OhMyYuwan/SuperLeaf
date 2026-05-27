@@ -1,11 +1,14 @@
 import http from 'node:http'
 import path from 'node:path'
 import os from 'node:os'
+import { timingSafeEqual } from 'node:crypto'
 import * as Y from 'yjs'
 import { LeveldbPersistence } from 'y-leveldb'
 
 const DATA_DIR = process.env.COLLAB_DATA_DIR ?? path.join(os.homedir(), '.yuwanlab', 'collab-data')
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000'
+const INTERNAL_TOKEN = process.env.COLLAB_INTERNAL_TOKEN?.trim() ?? ''
+const INTERNAL_TOKEN_HEADER = 'x-superleaf-internal-token'
 
 let persistence: LeveldbPersistence
 
@@ -31,7 +34,7 @@ export async function loadOrCreateDoc(docId: string, token?: string): Promise<Y.
     try {
       const headers: Record<string, string> = {}
       if (token) {
-        headers['Cookie'] = `ylw_session=${token}`
+        headers.Authorization = `Bearer ${token}`
       }
       const res = await fetch(`${BACKEND_URL}/api/internal/docs/${encodeURIComponent(docId)}/content`, { headers })
       if (res.ok) {
@@ -77,6 +80,11 @@ export function handleHttpRequest(req: http.IncomingMessage, res: http.ServerRes
 
   const textMatch = url.pathname.match(/^\/docs\/([^/]+)\/text$/)
   if (req.method === 'GET' && textMatch) {
+    if (!isAuthorizedInternalRequest(req)) {
+      res.writeHead(401)
+      res.end('Unauthorized')
+      return
+    }
     const docId = decodeURIComponent(textMatch[1])
     void getDocText(docId, res)
     return
@@ -98,4 +106,25 @@ async function getDocText(docId: string, res: http.ServerResponse): Promise<void
     res.writeHead(500)
     res.end('Internal Server Error')
   }
+}
+
+function isAuthorizedInternalRequest(req: http.IncomingMessage): boolean {
+  if (!INTERNAL_TOKEN) {
+    return false
+  }
+  const supplied = req.headers[INTERNAL_TOKEN_HEADER]
+  const candidate = Array.isArray(supplied) ? supplied[0] : supplied
+  if (!candidate) {
+    return false
+  }
+  return safeEqual(candidate, INTERNAL_TOKEN)
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  if (left.length !== right.length) {
+    return false
+  }
+  return timingSafeEqual(left, right)
 }

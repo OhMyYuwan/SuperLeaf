@@ -110,6 +110,8 @@ docker load -i images/superleaf-deploy-images.tar.gz
 http://localhost:8080
 ```
 
+Docker 用户版默认只绑定本机 `127.0.0.1`。首次创建管理员前，请在 `deploy/.env` 中设置私有的 `YLW_BOOTSTRAP_TOKEN`，注册页面会要求输入它；同时设置 `YLW_COLLAB_INTERNAL_TOKEN`，用于 Backend 与 Collab Server 之间的内部文档快照读取鉴权。默认情况下 `YLW_PUBLIC_REGISTRATION=false`，不会开放匿名自助注册。如果你确实要在可信局域网共享，在 `deploy/.env` 中设置 `SUPERLEAF_BIND_ADDR=0.0.0.0`；这样会让同网段设备也能访问 gateway，建议先确认注册、TLS 和防火墙策略。
+
 发行包命令：
 
 ```bash
@@ -139,7 +141,7 @@ http://localhost:8080
 | `deploy/data/collab/` | Yjs 协作持久化数据 |
 | `deploy/backups/` | `./superleaf backup` 生成的备份包 |
 
-修改 `.env` 中的 `SUPERLEAF_HTTP_PORT` 可以改变 gateway 对外端口。正式部署时建议把镜像 tag 固定到具体版本，而不是长期使用 `latest`。如果你使用自控镜像仓库，把 `.env` 中的 `SUPERLEAF_BACKEND_IMAGE`、`SUPERLEAF_FRONTEND_IMAGE` 和 `SUPERLEAF_COLLAB_IMAGE` 改成自己的镜像地址即可。
+修改 `.env` 中的 `SUPERLEAF_HTTP_PORT` 可以改变 gateway 对外端口，修改 `SUPERLEAF_BIND_ADDR` 可以改变监听地址。正式部署时建议把镜像 tag 固定到具体版本，而不是长期使用 `latest`。如果你使用自控镜像仓库，把 `.env` 中的 `SUPERLEAF_BACKEND_IMAGE`、`SUPERLEAF_FRONTEND_IMAGE` 和 `SUPERLEAF_COLLAB_IMAGE` 改成自己的镜像地址即可。
 
 ## 本地数据位置
 

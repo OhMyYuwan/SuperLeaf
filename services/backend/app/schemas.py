@@ -849,6 +849,7 @@ class UserRegisterIn(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=128)
+    bootstrap_token: str = Field(default="", max_length=512)
 
 
 class UserLoginIn(BaseModel):

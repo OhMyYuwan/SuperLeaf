@@ -207,15 +207,16 @@ modules:
       - services/backend/app/services/spelling_service.py
 
   - id: backend-tests
-    path: services/backend
+    path: services/backend/test
     kind: tests
-    description: Standalone backend workflow/native-agent tests and historical workflow test reports.
+    description: Canonical location for backend pytest files. New backend tests must live under services/backend/test/ rather than services/backend root.
     entry_files:
-      - services/backend/test_workflow_execution.py
-      - services/backend/test_nested_workflow.py
-      - services/backend/test_branch_merge.py
-      - services/backend/test_native_agent_skill_sync.py
-      - services/backend/test_conversation_history.py
+      - services/backend/test/
+      - services/backend/test/test_workflow_execution.py
+      - services/backend/test/test_nested_workflow.py
+      - services/backend/test/test_branch_merge.py
+      - services/backend/test/test_native_agent_skill_sync.py
+      - services/backend/test/test_conversation_history.py
       - services/backend/WORKFLOW_COMPLETE_TEST_REPORT.md
       - services/backend/WORKFLOW_TEST_RESULTS.md
 

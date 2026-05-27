@@ -64,14 +64,15 @@ cp .env.example .env
 ./superleaf up
 ```
 
-如果你使用的是本地导出的镜像包，在启动前先执行 `docker load -i images/superleaf-deploy-images.tar.gz`。启动后打开 `http://localhost:8080`。发行包通过 gateway 暴露一个入口，Backend 和 Collab Server 只在 Docker 内网中访问。运行数据保存在 `deploy/data/`，可以用 `./superleaf backup` 生成备份。正式发布到镜像仓库后，只需要在 `.env` 中把 `SUPERLEAF_*_IMAGE` 固定到对应版本标签。
+如果你使用的是本地导出的镜像包，在启动前先执行 `docker load -i images/superleaf-deploy-images.tar.gz`。启动前请在 `.env` 中设置私有的 `YLW_BOOTSTRAP_TOKEN`，首次注册管理员时需要填写它；同时设置 `YLW_COLLAB_INTERNAL_TOKEN`，用于 Backend 与 Collab Server 之间的内部文档快照读取鉴权。启动后打开 `http://localhost:8080`。发行包通过 gateway 暴露一个入口，默认只绑定本机 `127.0.0.1`；如需在可信局域网共享，必须在 `.env` 中显式设置 `SUPERLEAF_BIND_ADDR=0.0.0.0`，并先确认注册、TLS 和防火墙策略。Backend 和 Collab Server 只在 Docker 内网中访问。运行数据保存在 `deploy/data/`，可以用 `./superleaf backup` 生成备份。正式发布到镜像仓库后，只需要在 `.env` 中把 `SUPERLEAF_*_IMAGE` 固定到对应版本标签。
 
 ### 首次使用
 
 1. 本地 `start.sh` 环境打开 `http://localhost:5173`；Docker 用户版打开 `http://localhost:8080`
-2. 注册账号 → 创建项目 → 新建 `.tex` 文档
-3. 配置 Provider（Nanobot / Dify）或创建原生 Agent
-4. 安装/上传 Skill 后给 Agent 装配，选中文字运行 workflow 或 Agent
+2. 新实例首次启动前设置 `YLW_BOOTSTRAP_TOKEN` 和 `YLW_COLLAB_INTERNAL_TOKEN`（Docker 写入 `deploy/.env`，本地 `start.sh` 作为环境变量传入）
+3. 使用 Bootstrap Token 注册首位管理员 → 创建项目 → 新建 `.tex` 文档
+4. 配置 Provider（Nanobot / Dify）或创建原生 Agent
+5. 安装/上传 Skill 后给 Agent 装配，选中文字运行 workflow 或 Agent
 
 详细教程见 [文档站点](https://ohmyyuwan.github.io/SuperLeaf/)
 

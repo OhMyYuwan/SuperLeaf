@@ -56,9 +56,19 @@ cd SuperLeaf
 ./start.sh stop
 ```
 
+### 用户友好 Docker 部署
+
+```bash
+cd deploy
+cp .env.example .env
+./superleaf up
+```
+
+如果你使用的是本地导出的镜像包，在启动前先执行 `docker load -i images/superleaf-deploy-images.tar.gz`。启动后打开 `http://localhost:8080`。发行包通过 gateway 暴露一个入口，Backend 和 Collab Server 只在 Docker 内网中访问。运行数据保存在 `deploy/data/`，可以用 `./superleaf backup` 生成备份。正式发布到镜像仓库后，只需要在 `.env` 中把 `SUPERLEAF_*_IMAGE` 固定到对应版本标签。
+
 ### 首次使用
 
-1. 浏览器打开 `http://localhost:5173`
+1. 本地 `start.sh` 环境打开 `http://localhost:5173`；Docker 用户版打开 `http://localhost:8080`
 2. 注册账号 → 创建项目 → 新建 `.tex` 文档
 3. 配置 Provider（Nanobot / Dify）或创建原生 Agent
 4. 安装/上传 Skill 后给 Agent 装配，选中文字运行 workflow 或 Agent

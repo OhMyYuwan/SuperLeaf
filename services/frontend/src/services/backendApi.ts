@@ -2,14 +2,21 @@
  * backendApi — typed fetch helpers for our FastAPI.
  *
  * Base URL resolution:
- *   1. import.meta.env.VITE_BACKEND_URL if provided
- *   2. Auto-detect based on current hostname (for LAN access)
- *   3. http://localhost:8000 (fallback)
+ *   1. window.__SUPERLEAF_CONFIG__.backendUrl if provided by deployment
+ *   2. import.meta.env.VITE_BACKEND_URL if provided at build time
+ *   3. Auto-detect based on current hostname for local/LAN development
+ *   4. http://localhost:8000 fallback
  */
 
+import { getRuntimeConfigValue, normalizeHttpBase } from './runtimeConfig'
+
 function getBackendUrl(): string {
+  const runtimeBackendUrl = getRuntimeConfigValue('backendUrl')
+  if (runtimeBackendUrl !== undefined) {
+    return normalizeHttpBase(runtimeBackendUrl)
+  }
   if (import.meta.env.VITE_BACKEND_URL) {
-    return import.meta.env.VITE_BACKEND_URL
+    return normalizeHttpBase(import.meta.env.VITE_BACKEND_URL)
   }
   // Auto-detect: use current hostname with backend port
   // This allows LAN devices to access backend via server IP

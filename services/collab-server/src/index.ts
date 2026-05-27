@@ -6,6 +6,7 @@ import { initPersistence, handleHttpRequest } from './persistence.js'
 const PORT = parseInt(process.env.COLLAB_PORT ?? '4444', 10)
 const HOST = process.env.COLLAB_HOST ?? '0.0.0.0'
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000'
+const WS_PATH_PREFIX = normalizePathPrefix(process.env.COLLAB_WS_PATH_PREFIX ?? '')
 
 const server = http.createServer((req, res) => {
   // HTTP API for FastAPI to read document text / push initial content.
@@ -16,8 +17,9 @@ const wss = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', async (req, socket, head) => {
   // URL format: /<docId>?token=<sessionToken>
+  // Optional gateway format: /<COLLAB_WS_PATH_PREFIX>/<docId>?token=<sessionToken>
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
-  const docId = url.pathname.slice(1)
+  const docId = getDocIdFromPath(url.pathname)
   const token = url.searchParams.get('token')
 
   if (!docId) {
@@ -68,4 +70,31 @@ initPersistence()
 server.listen(PORT, HOST, () => {
   console.log(`[collab-server] listening on ${HOST}:${PORT}`)
   console.log(`[collab-server] backend: ${BACKEND_URL}`)
+  if (WS_PATH_PREFIX) {
+    console.log(`[collab-server] websocket path prefix: ${WS_PATH_PREFIX}`)
+  }
 })
+
+function normalizePathPrefix(raw: string): string {
+  const value = raw.trim()
+  if (!value || value === '/') return ''
+  return `/${value.replace(/^\/+/, '').replace(/\/+$/, '')}`
+}
+
+function getDocIdFromPath(pathname: string): string | null {
+  let docPath = pathname
+  if (WS_PATH_PREFIX) {
+    if (pathname === WS_PATH_PREFIX || !pathname.startsWith(`${WS_PATH_PREFIX}/`)) {
+      return null
+    }
+    docPath = pathname.slice(WS_PATH_PREFIX.length)
+  }
+
+  const encodedDocId = docPath.replace(/^\/+/, '')
+  if (!encodedDocId) return null
+  try {
+    return decodeURIComponent(encodedDocId)
+  } catch {
+    return null
+  }
+}

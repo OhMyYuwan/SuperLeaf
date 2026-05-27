@@ -1,6 +1,7 @@
 import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 import { Awareness } from 'y-protocols/awareness'
+import { getRuntimeConfigValue, resolveWebSocketBase } from './runtimeConfig'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'synced'
 
@@ -16,8 +17,12 @@ export interface PeerInfo {
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
 
 function getCollabWsUrl(): string {
+  const runtimeWsUrl = getRuntimeConfigValue('collabWsUrl')
+  if (runtimeWsUrl !== undefined) {
+    return resolveWebSocketBase(runtimeWsUrl)
+  }
   if (import.meta.env.VITE_COLLAB_WS_URL) {
-    return import.meta.env.VITE_COLLAB_WS_URL
+    return resolveWebSocketBase(import.meta.env.VITE_COLLAB_WS_URL)
   }
   if (typeof window !== 'undefined') {
     const { hostname } = window.location

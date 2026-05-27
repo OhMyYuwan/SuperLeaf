@@ -5,9 +5,51 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 ENV_FILE="${SUPERLEAF_ENV_FILE:-$ROOT/.env}"
 COMPOSE_FILE="$ROOT/compose.yml"
+GENERATED_BOOTSTRAP_TOKEN=""
+GENERATED_COLLAB_INTERNAL_TOKEN=0
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+generate_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  if command -v od >/dev/null 2>&1 && [ -r /dev/urandom ]; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    return
+  fi
+  echo "Unable to generate a secure token: openssl or /dev/urandom is required" >&2
+  exit 1
+}
+
+read_env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+}
+
+write_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  tmp="$(mktemp "$ENV_FILE.tmp.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { found = 0 }
+    $0 ~ "^" key "=" {
+      print key "=" value
+      found = 1
+      next
+    }
+    { print }
+    END {
+      if (!found) {
+        print key "=" value
+      }
+    }
+  ' "$ENV_FILE" > "$tmp"
+  mv "$tmp" "$ENV_FILE"
 }
 
 ensure_env() {
@@ -15,6 +57,53 @@ ensure_env() {
     cp "$ROOT/.env.example" "$ENV_FILE"
     echo "Created $ENV_FILE from .env.example"
   fi
+}
+
+ensure_secret() {
+  local key="$1"
+  local value
+  value="$(read_env_value "$key" | tr -d '[:space:]')"
+  if [ -n "$value" ]; then
+    return
+  fi
+
+  value="$(generate_secret)"
+  write_env_value "$key" "$value"
+
+  if [ "$key" = "YLW_BOOTSTRAP_TOKEN" ]; then
+    GENERATED_BOOTSTRAP_TOKEN="$value"
+  elif [ "$key" = "YLW_COLLAB_INTERNAL_TOKEN" ]; then
+    GENERATED_COLLAB_INTERNAL_TOKEN=1
+  fi
+}
+
+ensure_deploy_secrets() {
+  ensure_secret "YLW_BOOTSTRAP_TOKEN"
+  ensure_secret "YLW_COLLAB_INTERNAL_TOKEN"
+}
+
+print_generated_secret_hints() {
+  if [ -n "$GENERATED_BOOTSTRAP_TOKEN" ]; then
+    cat <<EOF
+
+Generated YLW_BOOTSTRAP_TOKEN in $ENV_FILE.
+Use this Bootstrap Token when registering the first admin:
+
+  $GENERATED_BOOTSTRAP_TOKEN
+
+Keep it private. It is not baked into any image.
+EOF
+  fi
+
+  if [ "$GENERATED_COLLAB_INTERNAL_TOKEN" -eq 1 ]; then
+    echo "Generated YLW_COLLAB_INTERNAL_TOKEN in $ENV_FILE for backend <-> collab-server internal auth."
+  fi
+}
+
+init_env() {
+  ensure_env
+  ensure_deploy_secrets
+  print_generated_secret_hints
 }
 
 ensure_dirs() {
@@ -26,6 +115,7 @@ usage() {
 SuperLeaf deployment helper
 
 Usage:
+  ./superleaf init
   ./superleaf up
   ./superleaf down
   ./superleaf restart
@@ -41,8 +131,13 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
+  init)
+    init_env
+    ensure_dirs
+    echo "Deployment environment is ready: $ENV_FILE"
+    ;;
   up)
-    ensure_env
+    init_env
     ensure_dirs
     compose up -d "$@"
     ;;
@@ -51,7 +146,7 @@ case "$cmd" in
     compose down "$@"
     ;;
   restart)
-    ensure_env
+    init_env
     ensure_dirs
     compose restart "$@"
     ;;
@@ -64,7 +159,7 @@ case "$cmd" in
     compose logs -f "$@"
     ;;
   update)
-    ensure_env
+    init_env
     ensure_dirs
     compose pull
     compose up -d

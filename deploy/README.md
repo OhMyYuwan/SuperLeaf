@@ -6,7 +6,6 @@ gateway so users only expose one HTTP port.
 ## Start
 
 ```bash
-cp .env.example .env
 ./superleaf up
 ```
 
@@ -16,13 +15,21 @@ The gateway binds to `127.0.0.1` by default. To intentionally expose it on a
 trusted LAN, set `SUPERLEAF_BIND_ADDR=0.0.0.0` in `.env` and review
 registration, TLS, and firewall settings first.
 
-Public registration is disabled by default. Before creating the first admin
-account, set a private `YLW_BOOTSTRAP_TOKEN` in `.env` and enter that token on
-the registration page. Do not use a shared or checked-in token.
+Public registration is disabled by default. `./superleaf up` creates `.env`
+when needed and fills blank `YLW_BOOTSTRAP_TOKEN` and
+`YLW_COLLAB_INTERNAL_TOKEN` values with random secrets. When a Bootstrap Token
+is generated, the helper prints it once; enter that value on the registration
+page to create the first admin account. Do not use a shared or checked-in token.
 
-Set a separate private `YLW_COLLAB_INTERNAL_TOKEN` in `.env` before starting.
-Backend uses it when reading Yjs document snapshots from Collab Server, and
-Collab Server rejects `/docs/:docId/text` without this internal token.
+You can also prepare the environment without starting containers:
+
+```bash
+./superleaf init
+```
+
+Backend uses `YLW_COLLAB_INTERNAL_TOKEN` when reading Yjs document snapshots
+from Collab Server, and Collab Server rejects `/docs/:docId/text` without this
+internal token.
 
 If you are testing with a local image archive before registry images are
 published, load it before starting:

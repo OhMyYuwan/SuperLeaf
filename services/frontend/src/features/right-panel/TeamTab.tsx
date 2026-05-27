@@ -2561,7 +2561,7 @@ function SkillManagementPanel({
           {skills.map((skill) => (
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
-                {skill.can_edit ? (
+                {skill.can_edit && skill.source !== 'marketplace' ? (
                   <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
                     {skillLabel(skill)}
                   </button>

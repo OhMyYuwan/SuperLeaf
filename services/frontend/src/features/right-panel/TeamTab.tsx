@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import type {
   CachedWorkflow,
+  McpExecutionPolicy,
   McpGoldenTestResult,
   McpPreset,
   McpProbeResult,
@@ -86,6 +87,15 @@ interface TeamTabProps {
 }
 
 type SubTab = 'agents' | 'skills' | 'mcps' | 'workflows'
+type McpCustomTab = 'remote' | 'stdio'
+
+const DEFAULT_MCP_POLICY: McpExecutionPolicy = {
+  remote_enabled: true,
+  stdio_enabled: false,
+  inline_config_enabled: false,
+  remote_private_networks_enabled: false,
+  allowed_transports: ['remote'],
+}
 
 const OfficialBadgeStyleContext = createContext<OfficialBadgeStyle>('metal')
 
@@ -119,6 +129,8 @@ export function TeamTab({
   const marketplaceLoading = useNativeAgentStore((s) => s.marketplaceLoading)
   const mcpCatalog = useNativeAgentStore((s) => s.mcpCatalog)
   const mcpCatalogLoading = useNativeAgentStore((s) => s.mcpCatalogLoading)
+  const mcpPolicy = useNativeAgentStore((s) => s.mcpPolicy)
+  const mcpPolicyLoading = useNativeAgentStore((s) => s.mcpPolicyLoading)
   const mcpServers = useNativeAgentStore((s) => s.mcpServers)
   const mcpServersLoading = useNativeAgentStore((s) => s.mcpServersLoading)
   const mcpServersLoaded = useNativeAgentStore((s) => s.mcpServersLoaded)
@@ -126,9 +138,11 @@ export function TeamTab({
   const nativeError = useNativeAgentStore((s) => s.error)
   const marketplaceError = useNativeAgentStore((s) => s.marketplaceError)
   const mcpCatalogError = useNativeAgentStore((s) => s.mcpCatalogError)
+  const mcpPolicyError = useNativeAgentStore((s) => s.mcpPolicyError)
   const mcpServersError = useNativeAgentStore((s) => s.mcpServersError)
   const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
   const loadMarketplace = useNativeAgentStore((s) => s.loadMarketplace)
+  const loadMcpPolicy = useNativeAgentStore((s) => s.loadMcpPolicy)
   const loadMcpCatalog = useNativeAgentStore((s) => s.loadMcpCatalog)
   const loadMcpServers = useNativeAgentStore((s) => s.loadMcpServers)
   const createMcpServer = useNativeAgentStore((s) => s.createMcpServer)
@@ -145,6 +159,7 @@ export function TeamTab({
   const installMarketplaceSkill = useNativeAgentStore((s) => s.installMarketplaceSkill)
   const updateMarketplaceSkill = useNativeAgentStore((s) => s.updateMarketplaceSkill)
   const uninstallMarketplaceSkill = useNativeAgentStore((s) => s.uninstallMarketplaceSkill)
+  const cloneMarketplaceSkillToLocal = useNativeAgentStore((s) => s.cloneMarketplaceSkillToLocal)
 
   const [subTab, setSubTab] = useState<SubTab>('agents')
   const [showForm, setShowForm] = useState(false)
@@ -173,6 +188,10 @@ export function TeamTab({
   useEffect(() => {
     if ((subTab === 'skills' || subTab === 'agents' || subTab === 'mcps') && !nativeLoaded) void loadNativeAgents()
   }, [subTab, nativeLoaded, loadNativeAgents])
+
+  useEffect(() => {
+    if ((subTab === 'agents' || subTab === 'mcps') && !mcpPolicy && !mcpPolicyLoading) void loadMcpPolicy()
+  }, [subTab, mcpPolicy, mcpPolicyLoading, loadMcpPolicy])
 
   useEffect(() => {
     if ((subTab === 'agents' || subTab === 'mcps') && !mcpCatalog && !mcpCatalogLoading) void loadMcpCatalog()
@@ -268,6 +287,7 @@ export function TeamTab({
 
           {workflowError && <div className="tab-error">{workflowError}</div>}
           {mcpCatalogError && <div className="tab-error">MCP catalog: {mcpCatalogError}</div>}
+          {mcpPolicyError && <div className="tab-error">MCP policy: {mcpPolicyError}</div>}
 
           <section className="agent-export-panel">
             <div>
@@ -346,6 +366,7 @@ export function TeamTab({
           onInstallMarketplaceSkill={installMarketplaceSkill}
           onUpdateMarketplaceSkill={updateMarketplaceSkill}
           onUninstallMarketplaceSkill={uninstallMarketplaceSkill}
+          onCloneMarketplaceSkillToLocal={cloneMarketplaceSkillToLocal}
           onUpdateSkill={updateSkill}
           onPublishSkill={publishSkill}
           onUnpublishSkill={unpublishSkill}
@@ -357,9 +378,12 @@ export function TeamTab({
         <McpManagementPanel
           presets={mcpCatalog?.presets ?? []}
           servers={mcpServers}
-          loading={mcpCatalogLoading || mcpServersLoading || !nativeLoaded}
-          error={mcpCatalogError || mcpServersError || nativeError}
+          policy={mcpPolicy}
+          policyLoading={mcpPolicyLoading}
+          loading={mcpCatalogLoading || mcpPolicyLoading || mcpServersLoading || !nativeLoaded}
+          error={mcpPolicyError || mcpCatalogError || mcpServersError || nativeError}
           onRefresh={() => {
+            void loadMcpPolicy()
             void loadMcpCatalog()
             void loadMcpServers()
             if (!nativeLoaded) void loadNativeAgents()
@@ -803,7 +827,8 @@ function mcpServersFromRuntime(runtimeConfig: Record<string, unknown> | undefine
       id: String(item.id || item.name || '').trim(),
       name: String(item.name || item.id || '').trim(),
       enabled: item.enabled !== false,
-      transport: String(item.transport || 'stdio'),
+      transport: String(item.transport || (item.endpoint ? 'remote' : 'stdio')),
+      endpoint: String(item.endpoint || item.url || '').trim(),
       command: String(item.command || '').trim(),
       args: Array.isArray(item.args) ? item.args.map(String).filter(Boolean) : [],
       env: item.env && typeof item.env === 'object' && !Array.isArray(item.env) ? Object.fromEntries(
@@ -811,7 +836,7 @@ function mcpServersFromRuntime(runtimeConfig: Record<string, unknown> | undefine
       ) : {},
       allowed_tools: Array.isArray(item.allowed_tools) ? item.allowed_tools.map(String).filter(Boolean) : [],
     }))
-    .filter((server) => server.id && server.command)
+    .filter((server) => server.id && (server.command || server.endpoint))
 }
 
 function splitArgs(value: string): string[] {
@@ -952,14 +977,97 @@ function writeMcpSelection(
   }
 }
 
+function mcpEffectivePolicy(policy: McpExecutionPolicy | null | undefined): McpExecutionPolicy {
+  return policy ?? DEFAULT_MCP_POLICY
+}
+
+function mcpTransportKind(value: string | undefined | null): 'remote' | 'stdio' | 'unsupported' {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-')
+  if (['remote', 'http', 'https', 'sse', 'streamable-http'].includes(normalized)) return 'remote'
+  if (!normalized || ['stdio', 'local', 'local-stdio'].includes(normalized)) return 'stdio'
+  return 'unsupported'
+}
+
+function mcpTransportLabel(value: string | undefined | null): string {
+  const kind = mcpTransportKind(value)
+  if (kind === 'remote') return 'REMOTE'
+  if (kind === 'stdio') return 'STDIO'
+  return String(value || 'UNKNOWN').toUpperCase()
+}
+
+function mcpTransportAllowed(value: string | undefined | null, policy: McpExecutionPolicy): boolean {
+  const kind = mcpTransportKind(value)
+  if (kind === 'remote') return policy.remote_enabled
+  if (kind === 'stdio') return policy.stdio_enabled
+  return false
+}
+
+function mcpTransportPolicyBlock(value: string | undefined | null, policy: McpExecutionPolicy): string {
+  const kind = mcpTransportKind(value)
+  if (kind === 'remote' && !policy.remote_enabled) return '当前部署未开启 Remote MCP endpoint。'
+  if (kind === 'stdio' && !policy.stdio_enabled) return '当前部署未开启 Local Trusted MCP（YLW_MCP_STDIO_ENABLED=false）。'
+  if (kind === 'unsupported') return `当前部署不支持 ${String(value || 'unknown')} MCP transport。`
+  return ''
+}
+
+function mcpServerTransportKind(server: NativeMcpServerConfig | NativeAgentMcpServer): 'remote' | 'stdio' | 'unsupported' {
+  return mcpTransportKind(server.transport || (server.endpoint ? 'remote' : 'stdio'))
+}
+
+function mcpServerAllowedByPolicy(server: NativeMcpServerConfig | NativeAgentMcpServer, policy: McpExecutionPolicy): boolean {
+  return mcpTransportAllowed(server.transport || (server.endpoint ? 'remote' : 'stdio'), policy)
+}
+
+function mcpServerPolicyBlock(server: NativeMcpServerConfig | NativeAgentMcpServer, policy: McpExecutionPolicy): string {
+  return mcpTransportPolicyBlock(server.transport || (server.endpoint ? 'remote' : 'stdio'), policy)
+}
+
+function mcpPresetTransportKind(preset: McpPreset): 'remote' | 'stdio' | 'unsupported' {
+  return mcpTransportKind(preset.transport.type || (mcpPresetEndpoint(preset) ? 'remote' : 'stdio'))
+}
+
+function mcpPresetPolicyBlock(preset: McpPreset, policy: McpExecutionPolicy): string {
+  return mcpTransportPolicyBlock(preset.transport.type || (mcpPresetEndpoint(preset) ? 'remote' : 'stdio'), policy)
+}
+
+function mcpPresetEndpoint(preset: McpPreset): string {
+  return String(preset.transport.endpoint || preset.transport.url || '').trim()
+}
+
+function mcpServerEndpoint(server: NativeMcpServerConfig | NativeAgentMcpServer): string {
+  return String(server.endpoint || (mcpServerTransportKind(server) === 'remote' ? server.command : '') || '').trim()
+}
+
+function mcpPresetTargetLine(preset: McpPreset): string {
+  if (mcpPresetTransportKind(preset) === 'remote') return mcpPresetEndpoint(preset) || preset.transport.command || '(empty)'
+  return preset.transport.command || '(empty)'
+}
+
+function mcpServerTargetLine(server: NativeMcpServerConfig): string {
+  if (mcpServerTransportKind(server) === 'remote') return mcpServerEndpoint(server) || '(empty endpoint)'
+  return `${server.command} ${joinArgs(server.args)}`.trim() || '(empty command)'
+}
+
+function mcpNameFromEndpoint(endpoint: string): string {
+  try {
+    const url = new URL(endpoint)
+    return url.hostname.replace(/^www\./, '') || 'remote-mcp'
+  } catch {
+    return endpoint.replace(/^https?:\/\//i, '').split('/')[0] || 'remote-mcp'
+  }
+}
+
 function serverFromPreset(preset: McpPreset): NativeAgentMcpServer {
+  const transport = mcpPresetTransportKind(preset)
+  const endpoint = transport === 'remote' ? mcpPresetEndpoint(preset) || preset.transport.command : ''
   return {
     id: preset.id,
     name: mcpQualifiedName(preset),
     enabled: true,
-    transport: preset.transport.type || 'stdio',
-    command: preset.transport.command,
-    args: preset.transport.args ?? [],
+    transport: transport === 'unsupported' ? preset.transport.type || 'stdio' : transport,
+    endpoint,
+    command: transport === 'remote' ? endpoint : preset.transport.command,
+    args: transport === 'remote' ? [] : preset.transport.args ?? [],
     env: {},
     allowed_tools: preset.tool_policy.default_allowed_tools ?? preset.tool_policy.recommended_tools ?? [],
   }
@@ -1007,8 +1115,9 @@ function OfficialBadge({ ariaLabel, title }: { ariaLabel: string; title: string 
 function ownedMcpName(server: NativeMcpServerConfig, preset?: McpPreset): string {
   if (preset) return mcpQualifiedName(preset)
   if (server.name.includes('@')) return server.name
-  const base = (server.name || server.command || 'custom-mcp').trim()
-  return `local@${base}`
+  const owner = mcpServerTransportKind(server) === 'remote' ? 'remote' : 'local'
+  const base = (server.name || mcpServerEndpoint(server) || server.command || 'custom-mcp').trim()
+  return `${owner}@${base}`
 }
 
 function goldenPassed(check?: McpCheckState): boolean {
@@ -1058,11 +1167,11 @@ function mcpPresetAllowedTools(preset: McpPreset): string[] {
 }
 
 function mcpPresetTransportLabel(preset: McpPreset): string {
-  return (preset.transport.type || 'stdio').toUpperCase()
+  return mcpTransportLabel(preset.transport.type || (mcpPresetEndpoint(preset) ? 'remote' : 'stdio'))
 }
 
-function mcpPresetTransportSupported(preset: McpPreset): boolean {
-  return (preset.transport.type || 'stdio') === 'stdio'
+function mcpPresetTransportSupported(preset: McpPreset, policy: McpExecutionPolicy): boolean {
+  return mcpTransportAllowed(preset.transport.type || (mcpPresetEndpoint(preset) ? 'remote' : 'stdio'), policy)
 }
 
 function mcpProbeDetailText(probe: McpProbeResult): string {
@@ -1099,9 +1208,17 @@ function mcpServerHealthLine(server: NativeMcpServerConfig, check?: McpCheckStat
   return parts.length ? `最近检查：${parts.join(' ｜ ')}` : ''
 }
 
-function mcpAgentPickerHint(server: NativeMcpServerConfig, preset?: McpPreset): { label: string; detail: string; tone: 'ok' | 'warn' | 'error' | 'neutral' } {
+function mcpAgentPickerHint(
+  server: NativeMcpServerConfig,
+  preset: McpPreset | undefined,
+  policy: McpExecutionPolicy,
+): { label: string; detail: string; tone: 'ok' | 'warn' | 'error' | 'neutral' } {
   if (!server.is_enabled) {
     return { label: '停用', detail: '不会在未选中时开放', tone: 'neutral' }
+  }
+  const policyBlock = mcpServerPolicyBlock(server, policy)
+  if (policyBlock) {
+    return { label: 'blocked', detail: policyBlock, tone: 'warn' }
   }
   const status = server.last_probe_status || server.status
   if (status === 'ok') {
@@ -1165,6 +1282,9 @@ function NativeAgentForm({
   const mcpCatalog = useNativeAgentStore((s) => s.mcpCatalog)
   const mcpCatalogLoading = useNativeAgentStore((s) => s.mcpCatalogLoading)
   const loadMcpCatalog = useNativeAgentStore((s) => s.loadMcpCatalog)
+  const mcpPolicy = useNativeAgentStore((s) => s.mcpPolicy)
+  const mcpPolicyLoading = useNativeAgentStore((s) => s.mcpPolicyLoading)
+  const loadMcpPolicy = useNativeAgentStore((s) => s.loadMcpPolicy)
   const mcpConfigs = useNativeAgentStore((s) => s.mcpServers)
   const mcpConfigsLoaded = useNativeAgentStore((s) => s.mcpServersLoaded)
   const mcpConfigsLoading = useNativeAgentStore((s) => s.mcpServersLoading)
@@ -1176,6 +1296,7 @@ function NativeAgentForm({
   const selectedPresetIds = useMemo(() => new Set(mcpPresetIdsFromRuntime(draft.runtime_config)), [draft.runtime_config])
   const selectedServerIds = useMemo(() => new Set(mcpServerIdsFromRuntime(draft.runtime_config)), [draft.runtime_config])
   const legacyMcpServers = mcpServersFromRuntime(draft.runtime_config)
+  const effectiveMcpPolicy = useMemo(() => mcpEffectivePolicy(mcpPolicy), [mcpPolicy])
 
   const modelInOptions = modelOptions.some((model) => model.id === draft.model)
   const effectiveModelMode = modelMode === 'select' && modelInOptions ? 'select' : 'custom'
@@ -1183,6 +1304,10 @@ function NativeAgentForm({
   useEffect(() => {
     if (!mcpCatalog && !mcpCatalogLoading) void loadMcpCatalog()
   }, [mcpCatalog, mcpCatalogLoading, loadMcpCatalog])
+
+  useEffect(() => {
+    if (!mcpPolicy && !mcpPolicyLoading) void loadMcpPolicy()
+  }, [mcpPolicy, mcpPolicyLoading, loadMcpPolicy])
 
   useEffect(() => {
     if (!mcpConfigsLoaded && !mcpConfigsLoading) void loadMcpServers()
@@ -1199,7 +1324,11 @@ function NativeAgentForm({
         return prev
       }
       const defaultServerIds = ownedPresetMcpConfigs
-        .filter((server) => server.is_enabled && presetById.get(server.preset_id)?.verification?.status === 'verified')
+        .filter((server) => (
+          server.is_enabled &&
+          mcpServerAllowedByPolicy(server, effectiveMcpPolicy) &&
+          presetById.get(server.preset_id)?.verification?.status === 'verified'
+        ))
         .map((server) => server.id)
       if (defaultServerIds.length === 0) return prev
       return {
@@ -1207,7 +1336,7 @@ function NativeAgentForm({
         runtime_config: writeMcpSelection(prev.runtime_config, [], defaultServerIds),
       }
     })
-  }, [agent, mcpConfigsLoaded, ownedPresetMcpConfigs, presetById])
+  }, [agent, effectiveMcpPolicy, mcpConfigsLoaded, ownedPresetMcpConfigs, presetById])
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -1350,13 +1479,14 @@ function NativeAgentForm({
             const preset = presetById.get(server.preset_id)
             const legacySelected = legacyMcpServers.some((legacy) => legacy.id === server.preset_id && legacy.enabled)
             const checked = selectedServerIds.has(server.id) || selectedPresetIds.has(server.preset_id) || legacySelected
-            const hint = mcpAgentPickerHint(server, preset)
+            const policyAllowed = mcpServerAllowedByPolicy(server, effectiveMcpPolicy)
+            const hint = mcpAgentPickerHint(server, preset, effectiveMcpPolicy)
             return (
               <label key={server.id} className={`skill-check ${checked ? 'selected' : ''}`}>
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={!server.is_enabled && !checked}
+                  disabled={!checked && (!server.is_enabled || !policyAllowed)}
                   onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
                 <span>{ownedMcpName(server, preset)}</span>
@@ -1370,13 +1500,14 @@ function NativeAgentForm({
           })}
           {customMcpConfigs.map((server) => {
             const checked = selectedServerIds.has(server.id)
-            const hint = mcpAgentPickerHint(server)
+            const policyAllowed = mcpServerAllowedByPolicy(server, effectiveMcpPolicy)
+            const hint = mcpAgentPickerHint(server, undefined, effectiveMcpPolicy)
             return (
               <label key={server.id} className={`skill-check ${checked ? 'selected' : ''}`}>
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={!server.is_enabled && !checked}
+                  disabled={!checked && (!server.is_enabled || !policyAllowed)}
                   onChange={(event) => toggleOwnedMcp(server, event.target.checked)}
                 />
                 <span>{ownedMcpName(server)}</span>
@@ -1390,7 +1521,7 @@ function NativeAgentForm({
           })}
         </div>
         {legacyMcpServers.length > 0 && (
-          <div className="agent-empty-inline">检测到 {legacyMcpServers.length} 个旧版内联 MCP 配置；未改动时仍会运行，下一次修改 MCP 选择后会迁移为引用式配置。</div>
+          <div className="agent-empty-inline">检测到 {legacyMcpServers.length} 个旧版内联 MCP 配置；公开部署默认不会执行内联配置，下一次修改 MCP 选择后会迁移为引用式配置。</div>
         )}
       </fieldset>
       {formError && <div className="form-error">{formError}</div>}
@@ -1409,6 +1540,8 @@ function NativeAgentForm({
 function McpManagementPanel({
   presets,
   servers,
+  policy,
+  policyLoading,
   loading,
   error,
   onRefresh,
@@ -1420,6 +1553,8 @@ function McpManagementPanel({
 }: {
   presets: McpPreset[]
   servers: NativeMcpServerConfig[]
+  policy: McpExecutionPolicy | null
+  policyLoading: boolean
   loading: boolean
   error: string | null
   onRefresh: () => void
@@ -1433,6 +1568,7 @@ function McpManagementPanel({
   const [addingCustom, setAddingCustom] = useState(false)
   const [marketSearch, setMarketSearch] = useState('')
   const [installPresetId, setInstallPresetId] = useState<string | null>(null)
+  const effectivePolicy = mcpEffectivePolicy(policy)
   const configuredByPreset = new Map(servers.filter((server) => server.preset_id).map((server) => [server.preset_id, server]))
   const presetById = new Map(presets.map((preset) => [preset.id, preset]))
   const officialCount = presets.filter((preset) => preset.registry === 'official').length
@@ -1440,6 +1576,14 @@ function McpManagementPanel({
   const filteredPresets = presets.filter((preset) => mcpMarketMatches(preset, marketSearch))
 
   const runServerProbe = async (key: string, server: NativeMcpServerConfig) => {
+    const policyBlock = mcpServerPolicyBlock(server, effectivePolicy)
+    if (policyBlock) {
+      setChecks((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], busy: null, error: policyBlock },
+      }))
+      return
+    }
     setChecks((prev) => ({
       ...prev,
       [key]: { ...prev[key], busy: 'probe', error: undefined },
@@ -1459,6 +1603,16 @@ function McpManagementPanel({
   }
 
   const runGoldenTest = async (key: string, preset: McpPreset, server?: NativeMcpServerConfig) => {
+    const policyBlock = server
+      ? mcpServerPolicyBlock(server, effectivePolicy)
+      : mcpPresetPolicyBlock(preset, effectivePolicy)
+    if (policyBlock) {
+      setChecks((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], busy: null, error: policyBlock },
+      }))
+      return
+    }
     setChecks((prev) => ({
       ...prev,
       [key]: { ...prev[key], busy: 'golden', error: undefined },
@@ -1482,10 +1636,24 @@ function McpManagementPanel({
   return (
     <section className="mcp-management-panel">
       <div className="tab-header-row">
-        <span>MCP：{presets.length} 个市场条目 · {servers.length} 个拥有 · 官方 {officialCount} · 外部 {externalCount}</span>
+        <span>
+          MCP：{presets.length} 个市场条目 · {servers.length} 个拥有 · 官方 {officialCount} · 外部 {externalCount}
+          {policyLoading ? ' · 策略读取中' : ''}
+        </span>
         <button className="small-btn" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 刷新
         </button>
+      </div>
+      <div className="mcp-policy-bar">
+        <span className={`mcp-chip ${effectivePolicy.remote_enabled ? 'ok' : 'warn'}`}>
+          Remote Endpoint {effectivePolicy.remote_enabled ? '可用' : '不可用'}
+        </span>
+        <span className={`mcp-chip ${effectivePolicy.stdio_enabled ? 'ok' : 'warn'}`}>
+          Local Trusted stdio {effectivePolicy.stdio_enabled ? '可用' : '不可用'}
+        </span>
+        {!effectivePolicy.remote_private_networks_enabled && (
+          <span className="mcp-chip subtle">Remote 禁止 localhost/private endpoint</span>
+        )}
       </div>
       {error && <div className="tab-error">{error}</div>}
 
@@ -1501,6 +1669,7 @@ function McpManagementPanel({
         </div>
         {addingCustom && (
           <CustomMcpForm
+            policy={effectivePolicy}
             onCancel={() => setAddingCustom(false)}
             onSave={async (draft) => {
               const created = await onCreateServer(draft)
@@ -1523,6 +1692,7 @@ function McpManagementPanel({
                   server={server}
                   preset={preset}
                   check={check}
+                  policy={effectivePolicy}
                   onUpdate={onUpdateServer}
                   onDelete={onDeleteServer}
                   onProbe={() => runServerProbe(key, server)}
@@ -1560,7 +1730,7 @@ function McpManagementPanel({
               const capabilities = preset.capabilities.slice(0, 4)
               const remainingCapabilities = Math.max(0, preset.capabilities.length - capabilities.length)
               const sourceUrl = mcpPresetSourceUrl(preset)
-              const transportSupported = mcpPresetTransportSupported(preset)
+              const transportSupported = mcpPresetTransportSupported(preset, effectivePolicy)
               return (
                 <div key={preset.id} className="mcp-market-entry">
                   <div className="mcp-catalog-row">
@@ -1604,6 +1774,7 @@ function McpManagementPanel({
                   {!configured && installPresetId === preset.id && (
                     <McpPresetInstallPanel
                       preset={preset}
+                      policy={effectivePolicy}
                       onCancel={() => setInstallPresetId(null)}
                       onInstall={async (env) => {
                         const created = await onEnsurePresetServer(preset.id, env)
@@ -1624,17 +1795,20 @@ function McpManagementPanel({
 
 function McpPresetInstallPanel({
   preset,
+  policy,
   onInstall,
   onCancel,
 }: {
   preset: McpPreset
+  policy: McpExecutionPolicy
   onInstall: (env?: Record<string, string>) => Promise<NativeMcpServerConfig | null>
   onCancel: () => void
 }) {
   const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const supported = mcpPresetTransportSupported(preset)
+  const supported = mcpPresetTransportSupported(preset, policy)
+  const policyBlock = mcpPresetPolicyBlock(preset, policy)
   const tools = mcpPresetAllowedTools(preset)
 
   useEffect(() => {
@@ -1646,7 +1820,7 @@ function McpPresetInstallPanel({
     event.preventDefault()
     setError(null)
     if (!supported) {
-      setError('当前 MCP runtime 只支持 stdio transport。')
+      setError(policyBlock || '当前部署策略不允许运行这个 MCP transport。')
       return
     }
     const env = Object.fromEntries(
@@ -1674,13 +1848,15 @@ function McpPresetInstallPanel({
       </div>
 
       <div className="mcp-install-detail">
-        <span>Command</span>
-        <code>{preset.transport.command || '(empty)'}</code>
+        <span>{mcpPresetTransportKind(preset) === 'remote' ? 'Endpoint' : 'Command'}</span>
+        <code>{mcpPresetTargetLine(preset)}</code>
       </div>
-      <div className="mcp-install-detail">
-        <span>Args</span>
-        <code>{preset.transport.args?.length ? preset.transport.args.join(' ') : '(none)'}</code>
-      </div>
+      {mcpPresetTransportKind(preset) === 'stdio' && (
+        <div className="mcp-install-detail">
+          <span>Args</span>
+          <code>{preset.transport.args?.length ? preset.transport.args.join(' ') : '(none)'}</code>
+        </div>
+      )}
       <div className="mcp-install-detail">
         <span>Allowed tools</span>
         <code>{tools.length ? tools.join(', ') : '全部工具'}</code>
@@ -1714,7 +1890,7 @@ function McpPresetInstallPanel({
       )}
 
       {!supported && (
-        <div className="mcp-check-result warn">可以先查看配置，但当前 SuperLeaf runtime 只运行 stdio MCP。</div>
+        <div className="mcp-check-result warn">{policyBlock || '当前部署策略不允许运行这个 MCP transport。'}</div>
       )}
       {error && <div className="mcp-check-result error">{error}</div>}
       <div className="mcp-install-actions">
@@ -1732,6 +1908,7 @@ function McpOwnedServerRow({
   server,
   preset,
   check,
+  policy,
   onUpdate,
   onDelete,
   onProbe,
@@ -1740,6 +1917,7 @@ function McpOwnedServerRow({
   server: NativeMcpServerConfig
   preset?: McpPreset
   check?: McpCheckState
+  policy: McpExecutionPolicy
   onUpdate: (id: string, patch: NativeMcpServerConfigPatch) => Promise<NativeMcpServerConfig | null>
   onDelete: (id: string) => Promise<boolean>
   onProbe: () => Promise<void>
@@ -1749,15 +1927,18 @@ function McpOwnedServerRow({
   const connectivityOk = mcpConnectivityOk(server, check)
   const functionalityOk = mcpFunctionalityOk(server, check)
   const healthLine = mcpServerHealthLine(server, check)
+  const policyBlock = mcpServerPolicyBlock(server, policy)
+  const transportLabel = mcpTransportLabel(server.transport)
 
   return (
-    <div className={`mcp-catalog-row ${expanded ? 'expanded' : ''}`}>
+    <div className={`mcp-catalog-row ${expanded ? 'expanded' : ''} ${policyBlock ? 'policy-blocked' : ''}`}>
       <div className="skill-market-copy">
         <strong>{ownedMcpName(server, preset)}</strong>
         <span>
-          {preset ? mcpRegistryLabel(preset) : '自定义'} · {server.is_enabled ? '已启用' : '已停用'} · {server.env_keys.length ? `Env: ${server.env_keys.join(', ')}` : '无 Env'}
+          {preset ? mcpRegistryLabel(preset) : '自定义'} · {transportLabel} · {server.is_enabled ? '已启用' : '已停用'} · {server.env_keys.length ? `Env: ${server.env_keys.join(', ')}` : '无 Env'}
         </span>
-        <small>{server.command} {joinArgs(server.args)}</small>
+        <small>{mcpServerTargetLine(server)}</small>
+        {policyBlock && <small className="mcp-health-line warning">{policyBlock}</small>}
         {healthLine && <small className="mcp-health-line">{healthLine}</small>}
       </div>
       <div className="mcp-row-actions">
@@ -1765,7 +1946,7 @@ function McpOwnedServerRow({
         <button
           className={`ghost-btn small ${connectivityOk ? 'success' : ''}`}
           type="button"
-          disabled={Boolean(check?.busy) || !server.is_enabled}
+          disabled={Boolean(check?.busy) || !server.is_enabled || Boolean(policyBlock)}
           onClick={() => void onProbe()}
         >
           {check?.busy === 'probe' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
@@ -1776,7 +1957,7 @@ function McpOwnedServerRow({
             className={`ghost-btn small ${functionalityOk ? 'success' : ''}`}
             type="button"
             onClick={() => void onGolden()}
-            disabled={Boolean(check?.busy)}
+            disabled={Boolean(check?.busy) || Boolean(policyBlock)}
           >
             {check?.busy === 'golden' ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />}
             功能性
@@ -1791,6 +1972,7 @@ function McpOwnedServerRow({
           server={server}
           preset={preset}
           check={check}
+          policy={policy}
           onUpdate={onUpdate}
           onDelete={onDelete}
           onProbe={onProbe}
@@ -1807,6 +1989,7 @@ function McpServerEditor({
   server,
   preset,
   check,
+  policy,
   onUpdate,
   onDelete,
   onProbe,
@@ -1816,15 +1999,19 @@ function McpServerEditor({
   server: NativeMcpServerConfig
   preset?: McpPreset
   check?: McpCheckState
+  policy: McpExecutionPolicy
   onUpdate: (id: string, patch: NativeMcpServerConfigPatch) => Promise<NativeMcpServerConfig | null>
   onDelete: (id: string) => Promise<boolean>
   onProbe: () => Promise<void>
   onGolden?: () => Promise<void>
   onSaved?: () => void
 }) {
+  const isRemote = mcpServerTransportKind(server) === 'remote'
+  const policyBlock = mcpServerPolicyBlock(server, policy)
   const [draft, setDraft] = useState({
     name: ownedMcpName(server, preset),
     description: server.description,
+    endpoint: mcpServerEndpoint(server),
     command: server.command,
     args: joinArgs(server.args),
     allowedTools: server.allowed_tools.join(', '),
@@ -1837,6 +2024,7 @@ function McpServerEditor({
     setDraft({
       name: ownedMcpName(server, preset),
       description: server.description,
+      endpoint: mcpServerEndpoint(server),
       command: server.command,
       args: joinArgs(server.args),
       allowedTools: server.allowed_tools.join(', '),
@@ -1850,10 +2038,15 @@ function McpServerEditor({
     const patch: NativeMcpServerConfigPatch = {
       name: draft.name.trim(),
       description: draft.description.trim(),
-      command: draft.command.trim(),
-      args: splitArgs(draft.args),
+      transport: isRemote ? 'remote' : 'stdio',
       allowed_tools: draft.allowedTools.split(',').map((item) => item.trim()).filter(Boolean),
       is_enabled: draft.isEnabled,
+    }
+    if (isRemote) {
+      patch.endpoint = draft.endpoint.trim()
+    } else {
+      patch.command = draft.command.trim()
+      patch.args = splitArgs(draft.args)
     }
     if (draft.envText.trim()) patch.env = parseEnvLines(draft.envText)
     const updated = await onUpdate(server.id, patch)
@@ -1871,13 +2064,26 @@ function McpServerEditor({
         <input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} />
       </label>
       <label>
-        <span>Command</span>
-        <input value={draft.command} onChange={(event) => setDraft((prev) => ({ ...prev, command: event.target.value }))} />
+        <span>{isRemote ? 'Endpoint' : 'Command'}</span>
+        <input
+          value={isRemote ? draft.endpoint : draft.command}
+          onChange={(event) => {
+            const value = event.target.value
+            setDraft((prev) => (isRemote ? { ...prev, endpoint: value } : { ...prev, command: value }))
+          }}
+          disabled={!isRemote && Boolean(policyBlock)}
+        />
       </label>
-      <label>
-        <span>Args</span>
-        <input value={draft.args} onChange={(event) => setDraft((prev) => ({ ...prev, args: event.target.value }))} />
-      </label>
+      {!isRemote && (
+        <label>
+          <span>Args</span>
+          <input
+            value={draft.args}
+            onChange={(event) => setDraft((prev) => ({ ...prev, args: event.target.value }))}
+            disabled={Boolean(policyBlock)}
+          />
+        </label>
+      )}
       <label>
         <span>Allowed tools</span>
         <input
@@ -1917,7 +2123,7 @@ function McpServerEditor({
           type="button"
           className={`ghost-btn small ${mcpConnectivityOk(server, check) ? 'success' : ''}`}
           onClick={() => void onProbe()}
-          disabled={Boolean(check?.busy) || !server.is_enabled}
+          disabled={Boolean(check?.busy) || !server.is_enabled || Boolean(policyBlock)}
         >
           <RefreshCw size={12} /> 连通性
         </button>
@@ -1926,7 +2132,7 @@ function McpServerEditor({
             type="button"
             className={`ghost-btn small ${mcpFunctionalityOk(server, check) ? 'success' : ''}`}
             onClick={() => void onGolden()}
-            disabled={Boolean(check?.busy)}
+            disabled={Boolean(check?.busy) || Boolean(policyBlock)}
           >
             <CheckCircle2 size={12} /> 功能性
           </button>
@@ -1940,13 +2146,25 @@ function McpServerEditor({
 }
 
 function CustomMcpForm({
+  policy,
   onSave,
   onCancel,
 }: {
+  policy: McpExecutionPolicy
   onSave: (draft: NativeMcpServerConfigDraft) => Promise<NativeMcpServerConfig | null>
   onCancel: () => void
 }) {
-  const [draft, setDraft] = useState({
+  const [activeTab, setActiveTab] = useState<McpCustomTab>('remote')
+  const [remoteDraft, setRemoteDraft] = useState({
+    owner: 'remote',
+    mcpName: '',
+    description: '',
+    endpoint: '',
+    authToken: '',
+    allowedTools: '',
+    envText: '',
+  })
+  const [stdioDraft, setStdioDraft] = useState({
     owner: 'local',
     mcpName: '',
     description: '',
@@ -1958,6 +2176,7 @@ function CustomMcpForm({
   const [jsonText, setJsonText] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const localTrustedAvailable = policy.stdio_enabled
 
   const applyJsonPaste = () => {
     setError(null)
@@ -1970,7 +2189,7 @@ function CustomMcpForm({
     const [ownerFromId, nameFromId] = parsed.id.includes('@')
       ? parsed.id.split('@', 2)
       : ['', parsed.id]
-    setDraft((prev) => ({
+    setStdioDraft((prev) => ({
       ...prev,
       owner: ownerFromId || prev.owner || 'local',
       mcpName: nameFromId || parsed.name || prev.mcpName,
@@ -1982,94 +2201,228 @@ function CustomMcpForm({
     }))
   }
 
-  const submit = async (event: React.FormEvent) => {
+  const submitRemote = async (event: React.FormEvent) => {
     event.preventDefault()
     setError(null)
-    if (!draft.command.trim()) {
-      setError('Command 不能为空')
+    if (!policy.remote_enabled) {
+      setError('当前部署未开启 Remote MCP endpoint。')
       return
     }
-    const envResult = parseEnvLinesStrict(draft.envText)
+    const endpoint = remoteDraft.endpoint.trim()
+    if (!endpoint) {
+      setError('Remote endpoint 不能为空')
+      return
+    }
+    if (!/^https?:\/\//i.test(endpoint)) {
+      setError('Remote endpoint 需要使用 http:// 或 https://')
+      return
+    }
+    const envResult = parseEnvLinesStrict(remoteDraft.envText)
     if (envResult.error) {
       setError(envResult.error)
       return
     }
-    const owner = draft.owner.trim() || 'local'
-    const mcpName = draft.mcpName.trim() || draft.command.trim()
+    const env = { ...envResult.env }
+    if (remoteDraft.authToken.trim()) env.MCP_AUTH_TOKEN = remoteDraft.authToken.trim()
+    const owner = remoteDraft.owner.trim() || 'remote'
+    const mcpName = remoteDraft.mcpName.trim() || mcpNameFromEndpoint(endpoint)
     setSaving(true)
     const created = await onSave({
       source: 'custom',
       name: `${owner}@${mcpName}`,
-      description: draft.description.trim(),
-      transport: 'stdio',
-      command: draft.command.trim(),
-      args: splitArgs(draft.args),
-      env: envResult.env,
-      allowed_tools: parseDelimitedList(draft.allowedTools),
+      description: remoteDraft.description.trim(),
+      transport: 'remote',
+      endpoint,
+      env,
+      allowed_tools: parseDelimitedList(remoteDraft.allowedTools),
       is_enabled: true,
     })
     setSaving(false)
-    if (!created) setError('创建 MCP 配置失败')
+    if (!created) setError('创建 Remote MCP 配置失败')
+  }
+
+  const submitStdio = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setError(null)
+    if (!localTrustedAvailable) {
+      setError('当前部署未开启 Local Trusted MCP（YLW_MCP_STDIO_ENABLED=false）')
+      return
+    }
+    if (!stdioDraft.command.trim()) {
+      setError('Command 不能为空')
+      return
+    }
+    const envResult = parseEnvLinesStrict(stdioDraft.envText)
+    if (envResult.error) {
+      setError(envResult.error)
+      return
+    }
+    const owner = stdioDraft.owner.trim() || 'local'
+    const mcpName = stdioDraft.mcpName.trim() || stdioDraft.command.trim()
+    setSaving(true)
+    const created = await onSave({
+      source: 'custom',
+      name: `${owner}@${mcpName}`,
+      description: stdioDraft.description.trim(),
+      transport: 'stdio',
+      command: stdioDraft.command.trim(),
+      args: splitArgs(stdioDraft.args),
+      env: envResult.env,
+      allowed_tools: parseDelimitedList(stdioDraft.allowedTools),
+      is_enabled: true,
+    })
+    setSaving(false)
+    if (!created) setError('创建 Local Trusted MCP 配置失败')
   }
 
   return (
-    <form className="native-agent-inline-form mcp-custom-form" onSubmit={submit}>
-      <div className="mcp-server-grid">
-        <label>
-          <span>Owner</span>
-          <input value={draft.owner} onChange={(event) => setDraft((prev) => ({ ...prev, owner: event.target.value }))} placeholder="local" />
-        </label>
-        <label>
-          <span>MCP 名称</span>
-          <input value={draft.mcpName} onChange={(event) => setDraft((prev) => ({ ...prev, mcpName: event.target.value }))} placeholder="context7" />
-        </label>
-        <label>
-          <span>Command</span>
-          <input value={draft.command} onChange={(event) => setDraft((prev) => ({ ...prev, command: event.target.value }))} />
-        </label>
-        <label>
-          <span>Args</span>
-          <input value={draft.args} onChange={(event) => setDraft((prev) => ({ ...prev, args: event.target.value }))} />
-        </label>
-        <label>
-          <span>Allowed tools</span>
-          <input
-            value={draft.allowedTools}
-            onChange={(event) => setDraft((prev) => ({ ...prev, allowedTools: event.target.value }))}
-            placeholder="tool_a, tool_b"
-          />
-        </label>
-        <label>
-          <span>Description</span>
-          <input value={draft.description} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} />
-        </label>
-        <label>
-          <span>Env</span>
-          <textarea rows={3} value={draft.envText} onChange={(event) => setDraft((prev) => ({ ...prev, envText: event.target.value }))} placeholder="KEY=value" />
-        </label>
-      </div>
-      <div className="mcp-json-paste">
-        <label>
-          <span>粘贴 stdio MCP JSON</span>
-          <textarea
-            rows={4}
-            value={jsonText}
-            onChange={(event) => setJsonText(event.target.value)}
-            placeholder='{ "mcpServers": { "paper-search": { "command": "npx", "args": ["-y", "..."], "env": {} } } }'
-          />
-        </label>
-        <button type="button" className="ghost-btn small" onClick={applyJsonPaste} disabled={!jsonText.trim() || saving}>
-          填充表单
+    <div className="native-agent-inline-form mcp-custom-form">
+      <div className="mcp-custom-tabs" role="tablist" aria-label="自定义 MCP 类型">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'remote'}
+          className={activeTab === 'remote' ? 'active' : ''}
+          onClick={() => {
+            setActiveTab('remote')
+            setError(null)
+          }}
+        >
+          Remote Endpoint
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'stdio'}
+          className={activeTab === 'stdio' ? 'active' : ''}
+          disabled={!localTrustedAvailable}
+          title={localTrustedAvailable ? 'Local Trusted stdio' : '当前部署未开启 Local Trusted MCP'}
+          onClick={() => {
+            setActiveTab('stdio')
+            setError(null)
+          }}
+        >
+          Local Trusted stdio
         </button>
       </div>
-      {error && <div className="form-error">{error}</div>}
-      <div className="form-actions">
-        <button type="button" className="ghost-btn" onClick={onCancel} disabled={saving}>取消</button>
-        <button type="submit" className="primary-btn" disabled={saving}>
-          {saving ? <Loader2 size={14} className="spin" /> : '添加 MCP'}
-        </button>
-      </div>
-    </form>
+      {!localTrustedAvailable && (
+        <div className="mcp-check-result warn">Local Trusted stdio 当前不可用：YLW_MCP_STDIO_ENABLED=false。</div>
+      )}
+      {activeTab === 'remote' ? (
+        <form className="mcp-custom-tab-panel" onSubmit={submitRemote}>
+          <div className="mcp-server-grid">
+            <label>
+              <span>Owner</span>
+              <input value={remoteDraft.owner} onChange={(event) => setRemoteDraft((prev) => ({ ...prev, owner: event.target.value }))} placeholder="remote" />
+            </label>
+            <label>
+              <span>MCP 名称</span>
+              <input value={remoteDraft.mcpName} onChange={(event) => setRemoteDraft((prev) => ({ ...prev, mcpName: event.target.value }))} placeholder="context7" />
+            </label>
+            <label>
+              <span>Endpoint</span>
+              <input
+                value={remoteDraft.endpoint}
+                onChange={(event) => setRemoteDraft((prev) => ({ ...prev, endpoint: event.target.value }))}
+                placeholder="https://mcp.example.com/rpc"
+              />
+              {!policy.remote_private_networks_enabled && <small>localhost/private endpoint 会被后端拒绝。</small>}
+            </label>
+            <label>
+              <span>Auth token</span>
+              <input
+                type="password"
+                value={remoteDraft.authToken}
+                onChange={(event) => setRemoteDraft((prev) => ({ ...prev, authToken: event.target.value }))}
+                placeholder="可选；保存为 MCP_AUTH_TOKEN"
+                autoComplete="off"
+              />
+            </label>
+            <label>
+              <span>Allowed tools</span>
+              <input
+                value={remoteDraft.allowedTools}
+                onChange={(event) => setRemoteDraft((prev) => ({ ...prev, allowedTools: event.target.value }))}
+                placeholder="tool_a, tool_b"
+              />
+            </label>
+            <label>
+              <span>Description</span>
+              <input value={remoteDraft.description} onChange={(event) => setRemoteDraft((prev) => ({ ...prev, description: event.target.value }))} />
+            </label>
+            <label>
+              <span>Env</span>
+              <textarea rows={3} value={remoteDraft.envText} onChange={(event) => setRemoteDraft((prev) => ({ ...prev, envText: event.target.value }))} placeholder="KEY=value" />
+            </label>
+          </div>
+          {error && <div className="form-error">{error}</div>}
+          <div className="form-actions">
+            <button type="button" className="ghost-btn" onClick={onCancel} disabled={saving}>取消</button>
+            <button type="submit" className="primary-btn" disabled={saving || !policy.remote_enabled}>
+              {saving ? <Loader2 size={14} className="spin" /> : '添加 Remote MCP'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form className="mcp-custom-tab-panel" onSubmit={submitStdio}>
+          <div className="mcp-server-grid">
+            <label>
+              <span>Owner</span>
+              <input value={stdioDraft.owner} onChange={(event) => setStdioDraft((prev) => ({ ...prev, owner: event.target.value }))} placeholder="local" />
+            </label>
+            <label>
+              <span>MCP 名称</span>
+              <input value={stdioDraft.mcpName} onChange={(event) => setStdioDraft((prev) => ({ ...prev, mcpName: event.target.value }))} placeholder="context7" />
+            </label>
+            <label>
+              <span>Command</span>
+              <input value={stdioDraft.command} onChange={(event) => setStdioDraft((prev) => ({ ...prev, command: event.target.value }))} />
+            </label>
+            <label>
+              <span>Args</span>
+              <input value={stdioDraft.args} onChange={(event) => setStdioDraft((prev) => ({ ...prev, args: event.target.value }))} />
+            </label>
+            <label>
+              <span>Allowed tools</span>
+              <input
+                value={stdioDraft.allowedTools}
+                onChange={(event) => setStdioDraft((prev) => ({ ...prev, allowedTools: event.target.value }))}
+                placeholder="tool_a, tool_b"
+              />
+            </label>
+            <label>
+              <span>Description</span>
+              <input value={stdioDraft.description} onChange={(event) => setStdioDraft((prev) => ({ ...prev, description: event.target.value }))} />
+            </label>
+            <label>
+              <span>Env</span>
+              <textarea rows={3} value={stdioDraft.envText} onChange={(event) => setStdioDraft((prev) => ({ ...prev, envText: event.target.value }))} placeholder="KEY=value" />
+            </label>
+          </div>
+          <div className="mcp-json-paste">
+            <label>
+              <span>粘贴 stdio MCP JSON</span>
+              <textarea
+                rows={4}
+                value={jsonText}
+                onChange={(event) => setJsonText(event.target.value)}
+                placeholder='{ "mcpServers": { "paper-search": { "command": "npx", "args": ["-y", "..."], "env": {} } } }'
+              />
+            </label>
+            <button type="button" className="ghost-btn small" onClick={applyJsonPaste} disabled={!jsonText.trim() || saving}>
+              填充表单
+            </button>
+          </div>
+          {error && <div className="form-error">{error}</div>}
+          <div className="form-actions">
+            <button type="button" className="ghost-btn" onClick={onCancel} disabled={saving}>取消</button>
+            <button type="submit" className="primary-btn" disabled={saving || !localTrustedAvailable}>
+              {saving ? <Loader2 size={14} className="spin" /> : '添加 Local Trusted MCP'}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   )
 }
 
@@ -2123,6 +2476,7 @@ function SkillManagementPanel({
   onInstallMarketplaceSkill,
   onUpdateMarketplaceSkill,
   onUninstallMarketplaceSkill,
+  onCloneMarketplaceSkillToLocal,
   onUpdateSkill,
   onPublishSkill,
   onUnpublishSkill,
@@ -2138,6 +2492,7 @@ function SkillManagementPanel({
   onInstallMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   onUpdateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   onUninstallMarketplaceSkill: (id: string) => Promise<boolean>
+  onCloneMarketplaceSkillToLocal: (id: string, name: string) => Promise<Skill | null>
   onUpdateSkill: (id: string, patch: SkillPatch) => Promise<Skill | null>
   onPublishSkill: (id: string) => Promise<Skill | null>
   onUnpublishSkill: (id: string) => Promise<Skill | null>
@@ -2210,7 +2565,7 @@ function SkillManagementPanel({
           {skills.map((skill) => (
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
-                {skill.can_edit ? (
+                {skill.can_edit && skill.source !== 'marketplace' ? (
                   <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
                     {skillLabel(skill)}
                   </button>
@@ -2332,6 +2687,21 @@ function SkillManagementPanel({
                         onClick={() => void run(entry.id, () => onUpdateMarketplaceSkill(entry.id))}
                       >
                         更新
+                      </button>
+                    )}
+                    {entry.installed && (
+                      <button
+                        className="ghost-btn small"
+                        type="button"
+                        disabled={busyId === entry.id}
+                        onClick={() => {
+                          const defaultName = `${entry.display_name || entry.name || entry.id}-local`
+                          const name = prompt('本地 Skill 名称：', defaultName)
+                          if (name === null) return
+                          void run(entry.id, () => onCloneMarketplaceSkillToLocal(entry.id, name.trim() || defaultName))
+                        }}
+                      >
+                        复制到本地
                       </button>
                     )}
                     <button

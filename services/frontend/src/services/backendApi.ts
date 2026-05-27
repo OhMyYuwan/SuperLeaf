@@ -2,14 +2,21 @@
  * backendApi — typed fetch helpers for our FastAPI.
  *
  * Base URL resolution:
- *   1. import.meta.env.VITE_BACKEND_URL if provided
- *   2. Auto-detect based on current hostname (for LAN access)
- *   3. http://localhost:8000 (fallback)
+ *   1. window.__SUPERLEAF_CONFIG__.backendUrl if provided by deployment
+ *   2. import.meta.env.VITE_BACKEND_URL if provided at build time
+ *   3. Auto-detect based on current hostname for local/LAN development
+ *   4. http://localhost:8000 fallback
  */
 
+import { getRuntimeConfigValue, normalizeHttpBase } from './runtimeConfig'
+
 function getBackendUrl(): string {
+  const runtimeBackendUrl = getRuntimeConfigValue('backendUrl')
+  if (runtimeBackendUrl !== undefined) {
+    return normalizeHttpBase(runtimeBackendUrl)
+  }
   if (import.meta.env.VITE_BACKEND_URL) {
-    return import.meta.env.VITE_BACKEND_URL
+    return normalizeHttpBase(import.meta.env.VITE_BACKEND_URL)
   }
   // Auto-detect: use current hostname with backend port
   // This allows LAN devices to access backend via server IP
@@ -309,6 +316,10 @@ export interface SkillMarketplaceInstallResult {
   marketplace_entry: SkillMarketplaceEntry
 }
 
+export interface SkillMarketplaceCloneResult {
+  skill: Skill
+}
+
 export interface SkillDraft {
   name: string
   folder_name?: string
@@ -394,6 +405,7 @@ export interface NativeAgentMcpServer {
   name: string
   enabled: boolean
   transport?: string
+  endpoint?: string
   command: string
   args: string[]
   env?: Record<string, string>
@@ -408,6 +420,7 @@ export interface NativeMcpServerConfig {
   name: string
   description: string
   transport: string
+  endpoint: string
   command: string
   args: string[]
   env_keys: string[]
@@ -432,6 +445,7 @@ export interface NativeMcpServerConfigDraft {
   name?: string
   description?: string
   transport?: string
+  endpoint?: string
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -443,6 +457,7 @@ export interface NativeMcpServerConfigPatch {
   name?: string
   description?: string
   transport?: string
+  endpoint?: string
   command?: string
   args?: string[]
   env?: Record<string, string>
@@ -463,6 +478,8 @@ export interface McpPreset {
   source: Record<string, unknown>
   transport: {
     type: string
+    endpoint?: string
+    url?: string
     command: string
     args: string[]
   }
@@ -501,6 +518,14 @@ export interface McpCatalog {
   updated_at: string
   registries?: Array<{ id: string; name: string; description?: string }>
   presets: McpPreset[]
+}
+
+export interface McpExecutionPolicy {
+  remote_enabled: boolean
+  stdio_enabled: boolean
+  inline_config_enabled: boolean
+  remote_private_networks_enabled: boolean
+  allowed_transports: string[]
 }
 
 export interface McpProbeResult {
@@ -626,8 +651,14 @@ export const nativeAgentApi = {
       http<void>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/uninstall`, {
         method: 'DELETE',
       }),
+    cloneToLocal: (id: string, name: string) =>
+      http<SkillMarketplaceCloneResult>(`/api/native-agent/skill-marketplace/${encodeURIComponent(id)}/clone-to-local`, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }),
   },
   mcp: {
+    policy: () => http<McpExecutionPolicy>('/api/native-agent/mcp/policy'),
     catalog: () => http<McpCatalog>('/api/native-agent/mcp/catalog'),
     servers: () => http<NativeMcpServerConfig[]>('/api/native-agent/mcp/servers'),
     createServer: (body: NativeMcpServerConfigDraft) =>

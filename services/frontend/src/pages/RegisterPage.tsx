@@ -1,10 +1,9 @@
 /**
  * RegisterPage — email + password + display name self-serve register.
  *
- * First-user heuristic: the register response includes `is_admin`. If the
- * server hands back an admin user, this is the bootstrap account that
- * inherits all pre-existing projects. We surface a small banner so the
- * operator knows.
+ * The first admin can require a deployment bootstrap token. The register
+ * response still includes `is_admin`, which tells the client whether this
+ * account inherited pre-existing resources.
  */
 
 import { useState } from 'react'
@@ -20,6 +19,7 @@ export function RegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [bootstrapToken, setBootstrapToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,6 +33,7 @@ export function RegisterPage() {
         email: email.trim(),
         password,
         display_name: displayName.trim(),
+        bootstrap_token: bootstrapToken.trim(),
       })
       navigate('/projects', { replace: true })
     } catch (e) {
@@ -48,7 +49,7 @@ export function RegisterPage() {
         <div className="auth-brand">SuperLeaf</div>
         <h1 className="auth-title">注册</h1>
         <p className="auth-subtle">
-          首位注册的用户将成为系统管理员，并继承已有的项目与服务凭据。
+          首位管理员需要部署配置中的 Bootstrap Token；开放注册关闭时，后续账号也需由管理员规划创建。
         </p>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="auth-label">
@@ -85,6 +86,17 @@ export function RegisterPage() {
               required
             />
             <span className="auth-hint">至少 8 位，需包含字母与数字。</span>
+          </label>
+          <label className="auth-label">
+            Bootstrap Token（首次初始化）
+            <input
+              type="password"
+              value={bootstrapToken}
+              onChange={(e) => setBootstrapToken(e.target.value)}
+              autoComplete="one-time-code"
+              maxLength={512}
+            />
+            <span className="auth-hint">由部署者在 `.env` 中设置；公开注册环境可留空。</span>
           </label>
           {error && <div className="auth-error">{error}</div>}
           <button type="submit" className="auth-primary" disabled={busy}>

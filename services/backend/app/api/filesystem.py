@@ -9,14 +9,13 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, Form
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
 from fastapi.responses import Response
-
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Doc, FileBlob, Folder, Project
+from ..models import Doc, FileBlob, Folder, Project, User
 from ..schemas import (
     DocCreateIn,
     DocOut,
@@ -25,9 +24,17 @@ from ..schemas import (
     FolderOut,
     ProjectTreeOut,
 )
+from ..services.auth_service import AuthService
 from ..services.event_bus import bus
 from ..services.project_fs_service import ProjectFsService
-from .deps import get_current_project, get_current_user, get_project_from_path, require_write_access
+from ..services.project_member_service import ProjectMemberService
+from .deps import (
+    get_current_project,
+    get_current_user,
+    get_optional_current_user,
+    get_project_from_path,
+    require_write_access,
+)
 
 router = APIRouter(tags=["filesystem"])
 
@@ -136,23 +143,37 @@ def get_doc(
 @router.get("/api/internal/docs/{doc_id}/content")
 def get_doc_content_internal(
     doc_id: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_session),
-    user=Depends(get_current_user),
+    user: User | None = Depends(get_optional_current_user),
 ):
     """Internal endpoint for collab-server to fetch doc content.
 
-    Requires valid session but no X-Project-Id header. Checks project
-    membership via the doc's project_id.
+    Requires a valid session cookie or document-scoped collab bearer token,
+    then checks membership via the doc's project_id.
     """
-    from ..models import Doc
-    from ..services.project_member_service import ProjectMemberService
-
     doc = db.get(Doc, doc_id)
     if doc is None:
         raise HTTPException(404, "doc not found")
+    if user is None:
+        token = _bearer_token_from_authorization(authorization)
+        record = AuthService(db).verify_collab_token(token, doc_id=doc.id)
+        if record is not None:
+            user = db.get(User, record.user_id)
+    if user is None or user.is_disabled:
+        raise HTTPException(401, "Not authenticated")
     if not ProjectMemberService(db).has_access(doc.project_id, user.id):
         raise HTTPException(404, "doc not found")
     return {"content": doc.content, "doc_id": doc.id, "project_id": doc.project_id}
+
+
+def _bearer_token_from_authorization(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return ""
+    return token.strip()
 
 
 @router.put("/api/docs/{doc_id}", response_model=DocOut)
@@ -450,9 +471,13 @@ def _guess_mime(name: str, stored: str) -> str:
 
 
 @router.get("/api/files/{file_id}")
-def get_file(file_id: str, db: Session = Depends(get_session)) -> Response:
+def get_file(
+    file_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> Response:
     f = db.get(FileBlob, file_id)
-    if f is None:
+    if f is None or not ProjectMemberService(db).has_access(f.project_id, user.id):
         raise HTTPException(404, "file not found")
     mime = _guess_mime(f.name, f.mime_type)
     inline = mime.startswith(_INLINE_MIME_PREFIXES) or mime in _INLINE_MIME_EXACT

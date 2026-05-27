@@ -5,11 +5,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 ENV_FILE="${SUPERLEAF_ENV_FILE:-$ROOT/.env}"
 COMPOSE_FILE="$ROOT/compose.yml"
+TLS_COMPOSE_FILE="$ROOT/compose.tls.yml"
 GENERATED_BOOTSTRAP_TOKEN=""
 GENERATED_COLLAB_INTERNAL_TOKEN=0
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+compose_tls() {
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
 }
 
 generate_secret() {
@@ -164,6 +169,7 @@ SuperLeaf deployment helper
 Usage:
   ./superleaf init
   ./superleaf up
+  ./superleaf tls-up
   ./superleaf down
   ./superleaf restart
   ./superleaf status
@@ -187,6 +193,11 @@ case "$cmd" in
     init_env
     ensure_dirs
     compose up -d "$@"
+    ;;
+  tls-up)
+    init_env
+    ensure_dirs
+    compose_tls up -d "$@"
     ;;
   down)
     ensure_env

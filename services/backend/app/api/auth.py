@@ -20,12 +20,28 @@ from ..services.auth_service import (
     RegistrationClosedError,
 )
 from ..services.project_member_service import ProjectMemberService
+from ..settings import settings
 from .deps import SESSION_COOKIE_NAME, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _set_session_cookie(response: Response, sid: str) -> None:
+def _request_uses_https(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_values = [value.strip().lower() for value in forwarded_proto.split(",")]
+    return request.url.scheme == "https" or "https" in forwarded_values
+
+
+def _session_cookie_secure(request: Request) -> bool:
+    value = settings.cookie_secure.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return _request_uses_https(request)
+
+
+def _set_session_cookie(response: Response, request: Request, sid: str) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=sid,
@@ -33,11 +49,12 @@ def _set_session_cookie(response: Response, sid: str) -> None:
         httponly=True,
         samesite="lax",
         path="/",
+        secure=_session_cookie_secure(request),
     )
 
 
-def _clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+def _clear_session_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/", secure=_session_cookie_secure(request))
 
 
 def _client_ip(request: Request) -> str:
@@ -75,7 +92,7 @@ def register(
         raise HTTPException(403, str(e)) from e
     except AuthError as e:
         raise HTTPException(400, str(e)) from e
-    _set_session_cookie(response, sid)
+    _set_session_cookie(response, request, sid)
     return UserOut.model_validate(user)
 
 
@@ -93,7 +110,7 @@ def login(
         )
     except AuthError as e:
         raise HTTPException(401, str(e)) from e
-    _set_session_cookie(response, sid)
+    _set_session_cookie(response, request, sid)
     return UserOut.model_validate(user)
 
 
@@ -106,7 +123,7 @@ def logout(
     sid = request.cookies.get(SESSION_COOKIE_NAME)
     if sid:
         AuthService(db).logout(sid)
-    _clear_session_cookie(response)
+    _clear_session_cookie(response, request)
 
 
 @router.get("/me", response_model=UserOut)

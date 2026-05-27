@@ -111,6 +111,31 @@ http://localhost:8080
 
 Docker 用户版默认只绑定本机 `127.0.0.1`。`./superleaf up` 会在缺少 `deploy/.env` 时自动创建它，并为 `YLW_BOOTSTRAP_TOKEN` 和 `YLW_COLLAB_INTERNAL_TOKEN` 填入随机值；如果生成了 Bootstrap Token，脚本会打印出来，注册首位管理员时填写这个值。你也可以先运行 `./superleaf init` 只初始化 `.env` 而不启动容器。默认情况下 `YLW_PUBLIC_REGISTRATION=false`，不会开放匿名自助注册。
 
+### 本地开启 Local Trusted MCP
+
+如果你只是在自己的电脑或可信服务器上调试 MCP，可以让 backend 执行本地 stdio MCP。先初始化部署环境：
+
+```bash
+cd deploy
+./superleaf init
+```
+
+然后编辑 `deploy/.env`，确认有这一行：
+
+```env
+YLW_MCP_STDIO_ENABLED=true
+```
+
+再启动或重启服务：
+
+```bash
+./superleaf up
+# 如果服务已经在运行：
+./superleaf restart backend
+```
+
+打开页面后进入 **团队管理 → MCP → 自定义 MCP**，`Local Trusted stdio` 子标签页会从禁用变为可用。这里填写的 `command` 和 `args` 会在 backend 容器里执行，只适合本机、单用户或可信团队调试；公网开放注册或多租户部署应保持 `YLW_MCP_STDIO_ENABLED=false`，改用 Remote MCP endpoint。
+
 关于开放到局域网或公网，请参考下方 [部署网络模式](#部署网络模式)。
 
 发行包命令：
@@ -195,16 +220,33 @@ ifconfig | grep 'inet ' | grep -v 127.0.0.1
 适用场景：服务器部署，供互联网用户访问。
 
 {: .important }
-SuperLeaf 内置 gateway 不支持 TLS。公网部署**必须**在前面加反向代理处理 HTTPS，不能直接暴露 8080 端口。
+公网部署**必须**提供 HTTPS。可以使用 SuperLeaf 部署包内置的 TLS gateway override，也可以在前面加 Caddy、Traefik、Cloudflare、Nginx Proxy Manager 等反向代理处理 HTTPS。不要直接把裸 HTTP 8080 暴露到公网。
 
 公开前 checklist：
 
-1. TLS 已配置 — 通过反代实现 HTTPS
+1. TLS 已配置 — 通过内置 TLS override 或外部反代实现 HTTPS
 2. `YLW_BOOTSTRAP_TOKEN` 已设置且保密
 3. `YLW_PUBLIC_REGISTRATION=false`
 4. `YLW_COLLAB_INTERNAL_TOKEN` 已设置
-5. 防火墙只开放 443（HTTPS），不开放 8080
-6. `SUPERLEAF_BIND_ADDR` 保持 `127.0.0.1`（由反代转发）
+5. `YLW_COOKIE_SECURE=true`，或确认外部反代发送 `X-Forwarded-Proto: https` 且使用 `YLW_COOKIE_SECURE=auto`
+6. 防火墙只开放 443（HTTPS），不开放 8080
+7. 如果使用外部反代，`SUPERLEAF_BIND_ADDR` 保持 `127.0.0.1`（由反代转发）
+
+使用内置 TLS gateway override：
+
+```bash
+cd deploy
+mkdir -p certs
+# 将证书放到 certs/fullchain.pem 和 certs/privkey.pem
+./superleaf tls-up
+```
+
+`tls-up` 会加载 `compose.tls.yml`，监听 80/443，将 HTTP 重定向到 HTTPS，并给后端注入 `YLW_COOKIE_SECURE=true`。如果证书不在默认路径，可以在 `.env` 中配置：
+
+```env
+SUPERLEAF_TLS_CERT_FILE=/absolute/path/fullchain.pem
+SUPERLEAF_TLS_KEY_FILE=/absolute/path/privkey.pem
+```
 
 推荐使用 Caddy 或 Nginx 做 TLS 终止。以下是 Caddy 示例（自动 HTTPS）：
 
@@ -214,7 +256,7 @@ yourdomain.com {
 }
 ```
 
-Nginx 示例：
+外部 Nginx 示例：
 
 ```nginx
 server {
@@ -245,6 +287,14 @@ server {
     client_max_body_size 100m;
 }
 ```
+
+没有域名时，不建议把 HTTP 直接暴露到公网。临时测试可以用 SSH tunnel：
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@server
+```
+
+然后在本机浏览器打开 `http://127.0.0.1:8080`。
 
 ## 本地数据位置
 

@@ -8,6 +8,7 @@ import {
   type NativeAgentCredentialPatch,
   type NativeAgentDraft,
   type McpCatalog,
+  type McpExecutionPolicy,
   type McpProbeResult,
   type NativeAgentPatch,
   type NativeMcpServerConfig,
@@ -32,6 +33,9 @@ interface NativeAgentState {
   mcpCatalog: McpCatalog | null
   mcpCatalogLoading: boolean
   mcpCatalogError: string | null
+  mcpPolicy: McpExecutionPolicy | null
+  mcpPolicyLoading: boolean
+  mcpPolicyError: string | null
   mcpServers: NativeMcpServerConfig[]
   mcpServersLoading: boolean
   mcpServersLoaded: boolean
@@ -52,6 +56,7 @@ interface NativeAgentState {
   unpublishSkill: (id: string) => Promise<Skill | null>
   removeSkill: (id: string) => Promise<boolean>
   loadMarketplace: () => Promise<SkillMarketplace | null>
+  loadMcpPolicy: () => Promise<McpExecutionPolicy | null>
   loadMcpCatalog: () => Promise<McpCatalog | null>
   loadMcpServers: () => Promise<NativeMcpServerConfig[] | null>
   createMcpServer: (draft: NativeMcpServerConfigDraft) => Promise<NativeMcpServerConfig | null>
@@ -77,6 +82,9 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
   mcpCatalog: null,
   mcpCatalogLoading: false,
   mcpCatalogError: null,
+  mcpPolicy: null,
+  mcpPolicyLoading: false,
+  mcpPolicyError: null,
   mcpServers: [],
   mcpServersLoading: false,
   mcpServersLoaded: false,
@@ -218,6 +226,18 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
       return marketplace
     } catch (err) {
       set({ marketplaceLoading: false, marketplaceError: toErrorMessage(err) })
+      return null
+    }
+  },
+
+  loadMcpPolicy: async () => {
+    set({ mcpPolicyLoading: true, mcpPolicyError: null })
+    try {
+      const policy = await nativeAgentApi.mcp.policy()
+      set({ mcpPolicy: policy, mcpPolicyLoading: false, mcpPolicyError: null })
+      return policy
+    } catch (err) {
+      set({ mcpPolicyLoading: false, mcpPolicyError: toErrorMessage(err) })
       return null
     }
   },

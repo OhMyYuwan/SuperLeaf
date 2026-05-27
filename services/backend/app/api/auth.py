@@ -7,13 +7,19 @@ record AND the Set-Cookie header.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import User
+from ..models import Doc, User
 from ..schemas import UserLoginIn, UserOut, UserRegisterIn
-from ..services.auth_service import AuthError, AuthService, SESSION_LIFETIME
+from ..services.auth_service import (
+    SESSION_LIFETIME,
+    AuthError,
+    AuthService,
+    RegistrationClosedError,
+)
+from ..services.project_member_service import ProjectMemberService
 from .deps import SESSION_COOKIE_NAME, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -40,6 +46,15 @@ def _client_ip(request: Request) -> str:
     return request.client.host or ""
 
 
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return ""
+    return token.strip()
+
+
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(
     body: UserRegisterIn,
@@ -54,7 +69,10 @@ def register(
             password=body.password,
             display_name=body.display_name,
             ip=_client_ip(request),
+            bootstrap_token=body.bootstrap_token,
         )
+    except RegistrationClosedError as e:
+        raise HTTPException(403, str(e)) from e
     except AuthError as e:
         raise HTTPException(400, str(e)) from e
     _set_session_cookie(response, sid)
@@ -98,33 +116,42 @@ def me(user: User = Depends(get_current_user)) -> UserOut:
 
 @router.get("/verify")
 def verify_token(
-    token: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    doc_id: str | None = None,
     db: Session = Depends(get_session),
 ):
-    """Verify a session token (used by collab-server on WebSocket upgrade).
+    """Verify a short-lived collab token.
 
-    Returns {user_id, display_name} or 401.
+    Used by collab-server on WebSocket upgrade. Tokens must arrive via the
+    Authorization header so they do not leak through URLs or access logs.
     """
-    sess = AuthService(db).get_session(token)
-    if sess is None:
+    auth_svc = AuthService(db)
+    record = auth_svc.verify_collab_token(_bearer_token(authorization), doc_id=doc_id)
+    if record is None:
         raise HTTPException(401, "Invalid or expired token")
-    user = db.get(User, sess.user_id)
+    user = db.get(User, record.user_id)
     if user is None or user.is_disabled:
         raise HTTPException(401, "User not found or disabled")
+    if doc_id is not None:
+        doc = db.get(Doc, doc_id)
+        if doc is None or not ProjectMemberService(db).has_access(doc.project_id, user.id):
+            raise HTTPException(404, "doc not found")
     return {"user_id": user.id, "display_name": user.display_name}
 
 
 @router.get("/collab-token")
 def get_collab_token(
-    request: Request,
+    doc_id: str,
+    db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Return the session ID as a collab token for WebSocket auth.
+    """Issue a short-lived, document-scoped token for WebSocket auth.
 
-    The frontend can't read the HttpOnly cookie directly, so this endpoint
-    echoes it back. The collab-server then verifies it via /api/auth/verify.
+    This deliberately does not return the HttpOnly session cookie. The token
+    is only useful for the requested document and expires quickly.
     """
-    sid = request.cookies.get(SESSION_COOKIE_NAME)
-    if not sid:
-        raise HTTPException(401, "No session")
-    return {"token": sid}
+    doc = db.get(Doc, doc_id)
+    if doc is None or not ProjectMemberService(db).has_access(doc.project_id, user.id):
+        raise HTTPException(404, "doc not found")
+    token, expires_in = AuthService(db).issue_collab_token(user_id=user.id, doc_id=doc.id)
+    return {"token": token, "expires_in": expires_in}

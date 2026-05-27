@@ -94,7 +94,6 @@ git checkout YuwanZ
 
 ```bash
 cd deploy
-cp .env.example .env
 ./superleaf up
 ```
 
@@ -109,6 +108,10 @@ docker load -i images/superleaf-deploy-images.tar.gz
 ```text
 http://localhost:8080
 ```
+
+Docker 用户版默认只绑定本机 `127.0.0.1`。`./superleaf up` 会在缺少 `deploy/.env` 时自动创建它，并为 `YLW_BOOTSTRAP_TOKEN` 和 `YLW_COLLAB_INTERNAL_TOKEN` 填入随机值；如果生成了 Bootstrap Token，脚本会打印出来，注册首位管理员时填写这个值。你也可以先运行 `./superleaf init` 只初始化 `.env` 而不启动容器。默认情况下 `YLW_PUBLIC_REGISTRATION=false`，不会开放匿名自助注册。
+
+关于开放到局域网或公网，请参考下方 [部署网络模式](#部署网络模式)。
 
 发行包命令：
 
@@ -139,7 +142,109 @@ http://localhost:8080
 | `deploy/data/collab/` | Yjs 协作持久化数据 |
 | `deploy/backups/` | `./superleaf backup` 生成的备份包 |
 
-修改 `.env` 中的 `SUPERLEAF_HTTP_PORT` 可以改变 gateway 对外端口。正式部署时建议把镜像 tag 固定到具体版本，而不是长期使用 `latest`。如果你使用自控镜像仓库，把 `.env` 中的 `SUPERLEAF_BACKEND_IMAGE`、`SUPERLEAF_FRONTEND_IMAGE` 和 `SUPERLEAF_COLLAB_IMAGE` 改成自己的镜像地址即可。
+修改 `.env` 中的 `SUPERLEAF_HTTP_PORT` 可以改变 gateway 对外端口，修改 `SUPERLEAF_BIND_ADDR` 可以改变监听地址。正式部署时建议把镜像 tag 固定到具体版本，而不是长期使用 `latest`。如果你使用自控镜像仓库，把 `.env` 中的 `SUPERLEAF_BACKEND_IMAGE`、`SUPERLEAF_FRONTEND_IMAGE` 和 `SUPERLEAF_COLLAB_IMAGE` 改成自己的镜像地址即可。
+
+## 部署网络模式
+
+SuperLeaf Docker 部署默认只允许本机访问。根据使用场景选择合适的模式：
+
+### 本机开发（默认）
+
+不需要任何额外配置。`./superleaf up` 后访问 `http://localhost:8080`。
+
+- 适合本地开发和单机使用
+- 其他设备无法访问此地址
+
+### 局域网共享
+
+适用场景：团队在同一网段协作、平板或手机访问本机部署。
+
+{: .note }
+开放前请确认以下事项已完成：
+
+1. `YLW_BOOTSTRAP_TOKEN` 已生成 — `./superleaf init` 或 `./superleaf up` 会自动填入
+2. `YLW_PUBLIC_REGISTRATION=false` — 默认值，确认未被改为 `true`
+3. 已用 Bootstrap Token 注册首位管理员账号
+
+操作步骤：
+
+```bash
+# 1. 编辑 .env，修改绑定地址
+cd deploy
+echo 'SUPERLEAF_BIND_ADDR=0.0.0.0' >> .env
+
+# 2. 重启服务
+./superleaf up
+
+# 3. 其他设备访问
+# http://<你的局域网IP>:8080
+```
+
+查看本机局域网 IP：
+
+```bash
+# macOS / Linux
+ifconfig | grep 'inet ' | grep -v 127.0.0.1
+```
+
+{: .warning }
+局域网共享时无 TLS 加密，密码和文档内容在网段内明文传输。同网段任何人都能访问注册页面。建议仅在可信网络（如办公室、家庭）使用。
+
+### 公网部署
+
+适用场景：服务器部署，供互联网用户访问。
+
+{: .important }
+SuperLeaf 内置 gateway 不支持 TLS。公网部署**必须**在前面加反向代理处理 HTTPS，不能直接暴露 8080 端口。
+
+公开前 checklist：
+
+1. TLS 已配置 — 通过反代实现 HTTPS
+2. `YLW_BOOTSTRAP_TOKEN` 已设置且保密
+3. `YLW_PUBLIC_REGISTRATION=false`
+4. `YLW_COLLAB_INTERNAL_TOKEN` 已设置
+5. 防火墙只开放 443（HTTPS），不开放 8080
+6. `SUPERLEAF_BIND_ADDR` 保持 `127.0.0.1`（由反代转发）
+
+推荐使用 Caddy 或 Nginx 做 TLS 终止。以下是 Caddy 示例（自动 HTTPS）：
+
+```text
+yourdomain.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Nginx 示例：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name yourdomain.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket 协作支持
+    location /collab/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+
+    client_max_body_size 100m;
+}
+```
 
 ## 本地数据位置
 

@@ -472,10 +472,10 @@ rules:
           - visual workflow authoring, graph conversion, node validation, palette, or inspector changes
       tests:
         start_with:
-          - services/backend/test_workflow_execution.py
-          - services/backend/test_nested_workflow.py
-          - services/backend/test_loop_membership_routing.py
-          - services/backend/test_branch_merge.py
+          - services/backend/test/test_workflow_execution.py
+          - services/backend/test/test_nested_workflow.py
+          - services/backend/test/test_loop_membership_routing.py
+          - services/backend/test/test_branch_merge.py
         expand_when:
           - backend workflow behavior changes need regression coverage
 

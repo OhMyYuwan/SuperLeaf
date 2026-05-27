@@ -15,6 +15,7 @@ export interface PeerInfo {
 }
 
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
+const COLLAB_TOKEN_PROTOCOL_PREFIX = 'superleaf-collab-token.'
 
 function getCollabWsUrl(): string {
   const runtimeWsUrl = getRuntimeConfigValue('collabWsUrl')
@@ -59,7 +60,7 @@ export class CollaborationProvider {
       this.doc,
       {
         connect: true,
-        params: { token },
+        protocols: [`${COLLAB_TOKEN_PROTOCOL_PREFIX}${token}`],
       },
     )
     this.awareness = this.provider.awareness

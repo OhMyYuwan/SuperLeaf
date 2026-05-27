@@ -19,6 +19,7 @@ from .project_fs_service import ProjectFsService
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
+_COLLAB_INTERNAL_TOKEN_HEADER = "X-SuperLeaf-Internal-Token"
 
 
 def start_snapshot_loop() -> None:
@@ -76,7 +77,10 @@ async def _snapshot_active_docs(base_url: str) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             for doc in recent_docs:
                 try:
-                    resp = await client.get(f"{base_url}/docs/{doc.id}/text")
+                    resp = await client.get(
+                        f"{base_url}/docs/{doc.id}/text",
+                        headers=_collab_internal_headers(),
+                    )
                     if resp.status_code != 200:
                         continue
                     data = resp.json()
@@ -104,3 +108,10 @@ async def _snapshot_active_docs(base_url: str) -> None:
                     continue
     finally:
         db.close()
+
+
+def _collab_internal_headers() -> dict[str, str]:
+    token = settings.collab_internal_token.strip()
+    if not token:
+        return {}
+    return {_COLLAB_INTERNAL_TOKEN_HEADER: token}

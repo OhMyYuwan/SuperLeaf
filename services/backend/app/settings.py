@@ -41,9 +41,17 @@ class Settings(BaseSettings):
     # 32-byte key for provider-credential encryption. Generated on first run if absent.
     secrets_key_file: str = "secrets.key"
 
+    # Deployments default to closed self-registration. The first admin can be
+    # created with a private bootstrap token, then the token is ignored after a
+    # user exists. Local/dev deployments can opt back into public registration.
+    public_registration: bool = False
+    bootstrap_token: str = ""
+
     # Collaboration server (Node.js y-websocket)
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30
+    collab_token_lifetime_seconds: int = 30
+    collab_internal_token: str = ""
 
     # Static Skill marketplace catalog. The default reads the official GitHub
     # repository main branch directly; GitHub Pages is optional for browsing.
@@ -53,6 +61,13 @@ class Settings(BaseSettings):
     # Static MCP catalog. Runtime reads the standalone SuperLeaf.MCPs repository
     # by default; local supports/ checkouts are only development/offline fallbacks.
     mcp_catalog_url: str = "https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json"
+
+    # MCP execution policy. Public deployments keep user-defined MCP through
+    # remote endpoints; stdio command execution is a Local Trusted opt-in.
+    mcp_remote_enabled: bool = True
+    mcp_stdio_enabled: bool = False
+    mcp_inline_config_enabled: bool = False
+    mcp_remote_private_networks_enabled: bool = False
 
     def resolved_database_url(self) -> str:
         if self.database_url:

@@ -82,11 +82,11 @@ export function AnnotationAutomationPanel() {
       </div>
 
       <div className="automation-status-grid">
-        <div>
+        <div className="automation-status-card automation-status-card-document">
           <span><FileText size={12} /> 当前文档</span>
           <strong>{activeDoc?.metadata.title || '未打开文档'}</strong>
         </div>
-        <div>
+        <div className="automation-status-card automation-status-card-metric">
           <span>段落</span>
           <strong>{paragraphCount}</strong>
         </div>

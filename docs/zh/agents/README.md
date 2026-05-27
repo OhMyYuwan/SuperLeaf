@@ -20,7 +20,7 @@ has_children: true
 | Native Agent | 名称、模型、系统指令、Skill/MCP 列表和运行参数 |
 | Skill | `SKILL.md` 描述的一组能力说明，运行时注入给指定 Agent |
 | AgentSkill | Agent 与 Skill 的绑定关系，一个 Agent 可以装配多个 Skill |
-| MCP | Agent 可按需调用的外部工具服务，先添加到拥有的 MCP，再在 Agent 定义里选择 |
+| MCP | Agent 可按需调用的外部工具服务。公开版默认通过 Remote MCP endpoint 接入；本地可信部署可显式开启 stdio |
 
 ## 为什么要有原生 Agent
 

@@ -67,6 +67,7 @@ interface NativeAgentState {
   installMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   updateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   uninstallMarketplaceSkill: (id: string) => Promise<boolean>
+  cloneMarketplaceSkillToLocal: (id: string, name: string) => Promise<Skill | null>
   createAgent: (draft: NativeAgentDraft) => Promise<NativeAgent | null>
   updateAgent: (id: string, patch: NativeAgentPatch) => Promise<NativeAgent | null>
   installAgentSkill: (id: string, recipe: NativeAgentSkillRecipe) => Promise<NativeAgentSkillInstall | null>
@@ -374,6 +375,30 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
     } catch (err) {
       set({ marketplaceError: toErrorMessage(err) })
       return false
+    }
+  },
+
+  cloneMarketplaceSkillToLocal: async (id, name) => {
+    try {
+      const result = await nativeAgentApi.marketplace.cloneToLocal(id, name)
+      const currentEntry = get().marketplace?.skills.find((item) => item.id === id)
+      set({
+        skills: mergeById(get().skills, result.skill),
+        marketplace: currentEntry
+          ? patchMarketplaceEntry(get().marketplace, {
+            ...currentEntry,
+            installed: false,
+            installed_skill_id: null,
+            installed_version: '',
+            update_available: false,
+          })
+          : get().marketplace,
+        marketplaceError: null,
+      })
+      return result.skill
+    } catch (err) {
+      set({ marketplaceError: toErrorMessage(err) })
+      return null
     }
   },
 

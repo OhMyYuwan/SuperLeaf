@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     public_registration: bool = False
     bootstrap_token: str = ""
 
+    # Session cookie transport policy:
+    # - auto: mark cookies Secure for HTTPS / X-Forwarded-Proto=https requests
+    # - true: always mark cookies Secure for public HTTPS deployments
+    # - false: allow local HTTP-only development
+    cookie_secure: str = "auto"
+
     # Collaboration server (Node.js y-websocket)
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30

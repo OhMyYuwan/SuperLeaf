@@ -159,6 +159,7 @@ export function TeamTab({
   const installMarketplaceSkill = useNativeAgentStore((s) => s.installMarketplaceSkill)
   const updateMarketplaceSkill = useNativeAgentStore((s) => s.updateMarketplaceSkill)
   const uninstallMarketplaceSkill = useNativeAgentStore((s) => s.uninstallMarketplaceSkill)
+  const cloneMarketplaceSkillToLocal = useNativeAgentStore((s) => s.cloneMarketplaceSkillToLocal)
 
   const [subTab, setSubTab] = useState<SubTab>('agents')
   const [showForm, setShowForm] = useState(false)
@@ -365,6 +366,7 @@ export function TeamTab({
           onInstallMarketplaceSkill={installMarketplaceSkill}
           onUpdateMarketplaceSkill={updateMarketplaceSkill}
           onUninstallMarketplaceSkill={uninstallMarketplaceSkill}
+          onCloneMarketplaceSkillToLocal={cloneMarketplaceSkillToLocal}
           onUpdateSkill={updateSkill}
           onPublishSkill={publishSkill}
           onUnpublishSkill={unpublishSkill}
@@ -2474,6 +2476,7 @@ function SkillManagementPanel({
   onInstallMarketplaceSkill,
   onUpdateMarketplaceSkill,
   onUninstallMarketplaceSkill,
+  onCloneMarketplaceSkillToLocal,
   onUpdateSkill,
   onPublishSkill,
   onUnpublishSkill,
@@ -2489,6 +2492,7 @@ function SkillManagementPanel({
   onInstallMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   onUpdateMarketplaceSkill: (id: string) => Promise<SkillMarketplaceEntry | null>
   onUninstallMarketplaceSkill: (id: string) => Promise<boolean>
+  onCloneMarketplaceSkillToLocal: (id: string, name: string) => Promise<Skill | null>
   onUpdateSkill: (id: string, patch: SkillPatch) => Promise<Skill | null>
   onPublishSkill: (id: string) => Promise<Skill | null>
   onUnpublishSkill: (id: string) => Promise<Skill | null>
@@ -2561,7 +2565,7 @@ function SkillManagementPanel({
           {skills.map((skill) => (
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
-                {skill.can_edit ? (
+                {skill.can_edit && skill.source !== 'marketplace' ? (
                   <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
                     {skillLabel(skill)}
                   </button>
@@ -2683,6 +2687,21 @@ function SkillManagementPanel({
                         onClick={() => void run(entry.id, () => onUpdateMarketplaceSkill(entry.id))}
                       >
                         更新
+                      </button>
+                    )}
+                    {entry.installed && (
+                      <button
+                        className="ghost-btn small"
+                        type="button"
+                        disabled={busyId === entry.id}
+                        onClick={() => {
+                          const defaultName = `${entry.display_name || entry.name || entry.id}-local`
+                          const name = prompt('本地 Skill 名称：', defaultName)
+                          if (name === null) return
+                          void run(entry.id, () => onCloneMarketplaceSkillToLocal(entry.id, name.trim() || defaultName))
+                        }}
+                      >
+                        复制到本地
                       </button>
                     )}
                     <button

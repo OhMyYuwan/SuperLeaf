@@ -40,6 +40,8 @@ from ..schemas import (
     NativeMcpServerPatch,
     SkillIn,
     SkillMarketplaceEntryOut,
+    SkillMarketplaceCloneIn,
+    SkillMarketplaceCloneOut,
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
@@ -652,6 +654,23 @@ def uninstall_marketplace_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
+
+
+@router.post("/skill-marketplace/{skill_id}/clone-to-local", response_model=SkillMarketplaceCloneOut, status_code=201)
+def clone_marketplace_skill_to_local(
+    skill_id: str,
+    body: SkillMarketplaceCloneIn = SkillMarketplaceCloneIn(),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SkillMarketplaceCloneOut:
+    """Fetch the marketplace SKILL.md, create an editable local copy, and remove the marketplace installation."""
+    try:
+        row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
+    except SkillMarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return SkillMarketplaceCloneOut(skill=_skill_out(row, user.id))
 
 
 @router.get("/agents", response_model=list[NativeAgentOut])

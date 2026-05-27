@@ -5,11 +5,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 ENV_FILE="${SUPERLEAF_ENV_FILE:-$ROOT/.env}"
 COMPOSE_FILE="$ROOT/compose.yml"
+TLS_COMPOSE_FILE="$ROOT/compose.tls.yml"
 GENERATED_BOOTSTRAP_TOKEN=""
 GENERATED_COLLAB_INTERNAL_TOKEN=0
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+compose_tls() {
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
 }
 
 generate_secret() {
@@ -28,6 +33,26 @@ generate_secret() {
 read_env_value() {
   local key="$1"
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+}
+
+detect_runtime_uid() {
+  local uid
+  uid="$(id -u 2>/dev/null || true)"
+  if [ -n "$uid" ] && [ "$uid" != "0" ]; then
+    echo "$uid"
+    return
+  fi
+  echo "10001"
+}
+
+detect_runtime_gid() {
+  local gid
+  gid="$(id -g 2>/dev/null || true)"
+  if [ -n "$gid" ] && [ "$gid" != "0" ]; then
+    echo "$gid"
+    return
+  fi
+  echo "10001"
 }
 
 write_env_value() {
@@ -82,6 +107,23 @@ ensure_deploy_secrets() {
   ensure_secret "YLW_COLLAB_INTERNAL_TOKEN"
 }
 
+ensure_runtime_identity() {
+  local uid
+  local gid
+
+  uid="$(read_env_value "SUPERLEAF_RUNTIME_UID" | tr -d '[:space:]')"
+  if [ -z "$uid" ]; then
+    uid="$(detect_runtime_uid)"
+    write_env_value "SUPERLEAF_RUNTIME_UID" "$uid"
+  fi
+
+  gid="$(read_env_value "SUPERLEAF_RUNTIME_GID" | tr -d '[:space:]')"
+  if [ -z "$gid" ]; then
+    gid="$(detect_runtime_gid)"
+    write_env_value "SUPERLEAF_RUNTIME_GID" "$gid"
+  fi
+}
+
 print_generated_secret_hints() {
   if [ -n "$GENERATED_BOOTSTRAP_TOKEN" ]; then
     cat <<EOF
@@ -102,12 +144,22 @@ EOF
 
 init_env() {
   ensure_env
+  ensure_runtime_identity
   ensure_deploy_secrets
   print_generated_secret_hints
 }
 
 ensure_dirs() {
   mkdir -p "$ROOT/data/backend" "$ROOT/data/collab" "$ROOT/backups"
+  if [ "$(id -u 2>/dev/null || echo 1)" = "0" ] && command -v chown >/dev/null 2>&1; then
+    local uid
+    local gid
+    uid="$(read_env_value "SUPERLEAF_RUNTIME_UID" | tr -d '[:space:]')"
+    gid="$(read_env_value "SUPERLEAF_RUNTIME_GID" | tr -d '[:space:]')"
+    if [ -n "$uid" ] && [ -n "$gid" ]; then
+      chown -R "$uid:$gid" "$ROOT/data/backend" "$ROOT/data/collab"
+    fi
+  fi
 }
 
 usage() {
@@ -117,6 +169,7 @@ SuperLeaf deployment helper
 Usage:
   ./superleaf init
   ./superleaf up
+  ./superleaf tls-up
   ./superleaf down
   ./superleaf restart
   ./superleaf status
@@ -140,6 +193,11 @@ case "$cmd" in
     init_env
     ensure_dirs
     compose up -d "$@"
+    ;;
+  tls-up)
+    init_env
+    ensure_dirs
+    compose_tls up -d "$@"
     ;;
   down)
     ensure_env

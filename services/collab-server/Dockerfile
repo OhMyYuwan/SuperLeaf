@@ -22,8 +22,12 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 
-RUN mkdir -p /data/collab
+RUN mkdir -p /data/collab /tmp && \
+    chown -R node:node /data/collab /app && \
+    chmod 1777 /tmp
 
 EXPOSE 4444
+
+USER node
 
 CMD ["node", "dist/index.js"]

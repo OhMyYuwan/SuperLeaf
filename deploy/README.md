@@ -31,6 +31,27 @@ Backend uses `YLW_COLLAB_INTERNAL_TOKEN` when reading Yjs document snapshots
 from Collab Server, and Collab Server rejects `/docs/:docId/text` without this
 internal token.
 
+## Local Trusted MCP
+
+Remote MCP is the safe default. For local debugging on your own machine or a
+trusted single-user server, you can enable stdio MCP execution in `.env`:
+
+```env
+YLW_MCP_STDIO_ENABLED=true
+```
+
+Then start or restart backend:
+
+```bash
+./superleaf up
+# or, if already running:
+./superleaf restart backend
+```
+
+After the backend restarts, open Team Management -> MCP -> Custom MCP and use
+the Local Trusted stdio tab. Keep this disabled for public registration,
+multi-user, or untrusted deployments.
+
 If you are testing with a local image archive before registry images are
 published, load it before starting:
 

@@ -111,6 +111,31 @@ http://localhost:8080
 
 Docker 用户版默认只绑定本机 `127.0.0.1`。`./superleaf up` 会在缺少 `deploy/.env` 时自动创建它，并为 `YLW_BOOTSTRAP_TOKEN` 和 `YLW_COLLAB_INTERNAL_TOKEN` 填入随机值；如果生成了 Bootstrap Token，脚本会打印出来，注册首位管理员时填写这个值。你也可以先运行 `./superleaf init` 只初始化 `.env` 而不启动容器。默认情况下 `YLW_PUBLIC_REGISTRATION=false`，不会开放匿名自助注册。
 
+### 本地开启 Local Trusted MCP
+
+如果你只是在自己的电脑或可信服务器上调试 MCP，可以让 backend 执行本地 stdio MCP。先初始化部署环境：
+
+```bash
+cd deploy
+./superleaf init
+```
+
+然后编辑 `deploy/.env`，确认有这一行：
+
+```env
+YLW_MCP_STDIO_ENABLED=true
+```
+
+再启动或重启服务：
+
+```bash
+./superleaf up
+# 如果服务已经在运行：
+./superleaf restart backend
+```
+
+打开页面后进入 **团队管理 → MCP → 自定义 MCP**，`Local Trusted stdio` 子标签页会从禁用变为可用。这里填写的 `command` 和 `args` 会在 backend 容器里执行，只适合本机、单用户或可信团队调试；公网开放注册或多租户部署应保持 `YLW_MCP_STDIO_ENABLED=false`，改用 Remote MCP endpoint。
+
 关于开放到局域网或公网，请参考下方 [部署网络模式](#部署网络模式)。
 
 发行包命令：

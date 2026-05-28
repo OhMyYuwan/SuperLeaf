@@ -14,24 +14,21 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Doc, Project, User
+from ..models import Annotation, Doc, Project, User
 from ..schemas import (
+    AnnotationIn,
+    AnnotationOut,
+    AnnotationPatchIn,
     EvaluationIn,
     EvaluationOut,
     EvaluationPatchIn,
     ReviewStateOut,
     ReviewStatusIn,
 )
-from ..models import Annotation
-from ..schemas import (
-    AnnotationIn,
-    AnnotationOut,
-    AnnotationPatchIn,
-)
 from ..services import annotation_service, evaluation_service
 from ..services.event_bus import bus
-from .deps import get_current_project, get_current_user
-
+from ..services.project_member_service import ProjectMemberService
+from .deps import get_current_project, get_current_user, require_write_access
 
 router = APIRouter(prefix="/api/annotations", tags=["annotation-evaluations"])
 
@@ -291,6 +288,30 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
+_RANGE_PATCH_FIELDS = {"range_from", "range_to"}
+
+
+def _is_range_only_patch(body: AnnotationPatchIn) -> bool:
+    touched = body.model_fields_set
+    return bool(touched) and touched <= _RANGE_PATCH_FIELDS
+
+
+def _ensure_annotation_patch_allowed(
+    db: Session,
+    project: Project,
+    row: Annotation,
+    user: User,
+    body: AnnotationPatchIn,
+) -> None:
+    if row.user_id == user.id:
+        return
+    if row.is_global and _is_range_only_patch(body):
+        if ProjectMemberService(db).can_write(project.id, user.id):
+            return
+        raise HTTPException(403, "Read-only access")
+    raise HTTPException(404, "annotation not found")
+
+
 @router.get("/by-doc/{doc_id}/items", response_model=list[AnnotationOut])
 def list_annotations(
     doc_id: str,
@@ -306,7 +327,7 @@ def list_annotations(
 @router.post("/items", response_model=AnnotationOut, status_code=201)
 def create_annotation(
     body: AnnotationIn,
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
@@ -363,9 +384,8 @@ def patch_annotation(
     row = annotation_service.get(db, annotation_id)
     if row is None:
         raise HTTPException(404, "annotation not found")
-    if row.user_id and row.user_id != user.id:
-        raise HTTPException(404, "annotation not found")
     _ensure_doc(db, project, row.doc_id)
+    _ensure_annotation_patch_allowed(db, project, row, user, body)
     annotation_service.patch(
         db,
         row,

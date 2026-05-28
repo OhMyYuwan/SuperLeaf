@@ -36,6 +36,16 @@ textarea {
   font: inherit;
 }
 
+input[type='checkbox'] {
+  accent-color: #ffffff;
+  color-scheme: light;
+}
+
+input[type='checkbox']:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.72);
+  outline-offset: 2px;
+}
+
 button {
   border: 0;
   cursor: pointer;

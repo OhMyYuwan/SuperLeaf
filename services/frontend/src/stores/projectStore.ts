@@ -13,6 +13,8 @@
 import { create } from 'zustand'
 import { projectsApi, type GitHubProjectImport, type ProjectSummary } from '../services/projectsApi'
 import { registerProjectIdReader } from '../services/backendApi'
+import { useNativeAgentStore } from './nativeAgentStore'
+import { useSettingsStore } from './settingsStore'
 
 const VIEW_MODE_KEY = 'yuwanlab.projectListViewMode'
 
@@ -76,6 +78,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (get().currentProjectId === id) return
     const project = get().projects.find((p) => p.id === id)
     set({ currentProjectId: id, currentProjectRole: project?.my_role ?? null })
+    useNativeAgentStore.getState().resetAgents()
+    useSettingsStore.getState().reset()
   },
 
   create: async (name) => {

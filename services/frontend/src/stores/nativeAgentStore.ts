@@ -72,6 +72,7 @@ interface NativeAgentState {
   updateAgent: (id: string, patch: NativeAgentPatch) => Promise<NativeAgent | null>
   installAgentSkill: (id: string, recipe: NativeAgentSkillRecipe) => Promise<NativeAgentSkillInstall | null>
   removeAgent: (id: string) => Promise<boolean>
+  resetAgents: () => void
 }
 
 export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
@@ -446,6 +447,8 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
       return false
     }
   },
+
+  resetAgents: () => set({ agents: [], loaded: false, error: null }),
 }))
 
 function mergeById<T extends { id: string }>(items: T[], next: T): T[] {

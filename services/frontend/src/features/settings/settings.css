@@ -427,7 +427,7 @@
   color: rgba(148, 163, 184, 0.65);
 }
 
-.provider-form input,
+.provider-form input:not([type='checkbox']),
 .provider-form select {
   background: rgba(2, 6, 23, 0.7);
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -438,7 +438,7 @@
   outline: none;
 }
 
-.provider-form input:focus,
+.provider-form input:not([type='checkbox']):focus,
 .provider-form select:focus {
   border-color: rgba(59, 130, 246, 0.55);
 }

@@ -432,7 +432,6 @@
 .form-label-inline input[type='checkbox'] {
   width: auto !important;
   margin: 0;
-  accent-color: #3b82f6;
 }
 
 .form-readonly-list {

@@ -22,6 +22,7 @@ interface SettingsState {
   activate: (id: string) => Promise<Provider | null>
   probe: (id: string) => Promise<Provider | null>
   getActive: () => Provider | null
+  reset: () => void
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -101,6 +102,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   getActive: () => get().providers.find((p) => p.is_active) ?? null,
+
+  reset: () => set({ providers: [], loaded: false, error: null }),
 }))
 
 function mergeById(providers: Provider[], next: Provider): Provider[] {

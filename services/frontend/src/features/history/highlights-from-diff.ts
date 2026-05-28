@@ -28,12 +28,12 @@ export interface ProjectedDiff {
 
 export function projectDiffToText(parts: DiffPart[]): ProjectedDiff {
   let cursor = 0
-  let text = ''
+  const chunks: string[] = []
   const highlights: HighlightSpec[] = []
 
   for (const part of parts) {
     if ('u' in part) {
-      text += part.u
+      chunks.push(part.u)
       cursor += part.u.length
       continue
     }
@@ -46,7 +46,7 @@ export function projectDiffToText(parts: DiffPart[]): ProjectedDiff {
           kind: 'deletion',
           startTs: part.meta?.start_ts,
         })
-        text += part.d
+        chunks.push(part.d)
         cursor += len
       }
       continue
@@ -60,14 +60,14 @@ export function projectDiffToText(parts: DiffPart[]): ProjectedDiff {
           kind: 'insertion',
           startTs: part.meta?.start_ts,
         })
-        text += part.i
+        chunks.push(part.i)
         cursor += len
       }
       continue
     }
   }
 
-  return { text, highlights }
+  return { text: chunks.join(''), highlights }
 }
 
 /**

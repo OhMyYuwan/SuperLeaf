@@ -244,6 +244,7 @@ def update_conversation(
         raise HTTPException(404, "Conversation not found")
     if body.title is not None:
         c.title = body.title
+        c.user_renamed = True
     c.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(c)
@@ -324,8 +325,8 @@ async def send_message(
     )
     db.add(user_msg)
 
-    # Auto-generate title from first user message if title is empty.
-    if not conv.title or conv.title == "新对话":
+    # Auto-generate title from first user message only if the user hasn't renamed it.
+    if not conv.user_renamed and (not conv.title or conv.title == "新对话"):
         conv.title = body.content[:50] + ("..." if len(body.content) > 50 else "")
 
     conv.updated_at = datetime.utcnow()

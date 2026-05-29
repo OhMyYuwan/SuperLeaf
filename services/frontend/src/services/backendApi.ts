@@ -996,6 +996,7 @@ export interface Conversation {
   document_id: string
   workflow_id: string
   title: string
+  user_renamed: boolean
   external_conversation_id: string
   created_at: string
   updated_at: string

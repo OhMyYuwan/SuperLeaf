@@ -465,6 +465,29 @@
   color: rgba(148, 163, 184, 0.65);
 }
 
+.conversation-dropdown-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.conversation-dropdown-rename {
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-dropdown-rename:hover {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
 .conversation-dropdown-delete {
   flex-shrink: 0;
   padding: 4px;
@@ -480,4 +503,51 @@
 .conversation-dropdown-delete:hover {
   background: rgba(239, 68, 68, 0.18);
   color: #fca5a5;
+}
+
+.conversation-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.conversation-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  background: rgba(2, 6, 23, 0.8);
+  color: #e5e7eb;
+  font-size: 12px;
+  outline: none;
+}
+.conversation-rename-input:focus {
+  border-color: #5a8fff;
+}
+
+.conversation-rename-confirm,
+.conversation-rename-cancel {
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+.conversation-rename-confirm {
+  color: #86efac;
+}
+.conversation-rename-confirm:hover {
+  background: rgba(34, 197, 94, 0.18);
+}
+.conversation-rename-cancel {
+  color: rgba(148, 163, 184, 0.65);
+}
+.conversation-rename-cancel:hover {
+  background: rgba(148, 163, 184, 0.12);
 }

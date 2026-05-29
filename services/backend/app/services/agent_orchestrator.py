@@ -1027,6 +1027,8 @@ class WorkflowOrchestrator:
                 instructions=native_agent.instructions,
                 skills=skills,
                 workspace_root=str(workspace_root),
+                project_id=ctx.workflow_def.project_id,
+                user_id=ctx.workflow_def.user_id,
                 temperature=float(runtime_config.get("temperature", 0.2)),
                 max_tokens=int(runtime_config.get("max_tokens", 4000)),
                 max_tool_rounds=int(runtime_config.get("max_tool_rounds", 8)),

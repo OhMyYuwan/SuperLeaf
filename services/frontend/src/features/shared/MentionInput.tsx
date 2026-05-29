@@ -12,6 +12,7 @@
 
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -60,6 +61,8 @@ interface MentionInputProps {
   renderMirrorLayer?: boolean
   /** Render multiline placeholders in the mirror layer for transparent textareas. */
   renderMirrorPlaceholder?: boolean
+  /** Auto-expand height as content grows, up to a CSS max-height. */
+  autoResize?: boolean
 }
 
 interface MentionMenuState {
@@ -88,6 +91,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       menuPlacement = 'bottom',
       renderMirrorLayer = true,
       renderMirrorPlaceholder = true,
+      autoResize = false,
     } = props
 
     const taRef = useRef<HTMLTextAreaElement>(null)
@@ -261,6 +265,13 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       mirrorRef.current.scrollLeft = taRef.current.scrollLeft
     }
 
+    useEffect(() => {
+      if (!autoResize || !taRef.current) return
+      const ta = taRef.current
+      ta.style.height = 'auto'
+      ta.style.height = `${ta.scrollHeight}px`
+    }, [value, autoResize])
+
     const showMenu = menu !== null && flatVisible.length > 0
 
     return (
@@ -299,14 +310,14 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             )}
             <textarea
               ref={taRef}
-              className={`mention-input-textarea ${shouldRenderMirrorLayer ? 'transparent-caret' : ''}`}
+              className={`mention-input-textarea ${shouldRenderMirrorLayer ? 'transparent-caret' : ''} ${autoResize ? 'auto-resize' : ''}`}
               value={value}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               onScroll={handleScroll}
               placeholder={nativePlaceholderText}
               disabled={disabled}
-              rows={rows}
+              rows={autoResize ? undefined : rows}
               spellCheck={false}
             />
           </div>

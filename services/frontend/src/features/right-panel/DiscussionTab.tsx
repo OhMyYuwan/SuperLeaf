@@ -475,7 +475,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   files={fileCandidates}
                   placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
                   disabled={isStreaming}
-                  rows={2}
+                  autoResize
                   className="discussion-mention-input"
                   menuPlacement="composer-panel"
                   onCandidatePicked={(c) =>

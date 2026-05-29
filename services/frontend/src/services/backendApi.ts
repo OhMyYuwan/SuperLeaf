@@ -997,6 +997,8 @@ export interface Conversation {
   workflow_id: string
   title: string
   user_renamed: boolean
+  is_pinned: boolean
+  sort_index: number | null
   external_conversation_id: string
   created_at: string
   updated_at: string
@@ -1012,6 +1014,9 @@ export interface ConversationCreate {
 
 export interface ConversationUpdate {
   title?: string
+  is_pinned?: boolean
+  sort_index?: number
+  clear_sort_index?: boolean
 }
 
 export interface Message {

@@ -500,3 +500,11 @@ def _add_conversation_user_renamed(conn) -> None:
         conn.execute(
             text("ALTER TABLE conversations ADD COLUMN user_renamed BOOLEAN DEFAULT 0")
         )
+    if not _column_exists(conn, "conversations", "is_pinned"):
+        conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN is_pinned BOOLEAN DEFAULT 0")
+        )
+    if not _column_exists(conn, "conversations", "sort_index"):
+        conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN sort_index FLOAT DEFAULT NULL")
+        )

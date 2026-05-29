@@ -454,15 +454,6 @@
   cursor: grabbing;
 }
 
-.conversation-pin-badge {
-  flex-shrink: 0;
-  color: #facc15;
-}
-.conversation-fixed-badge {
-  flex-shrink: 0;
-  color: rgba(148, 163, 184, 0.7);
-}
-
 .conversation-dropdown-pin,
 .conversation-dropdown-fix {
   flex-shrink: 0;

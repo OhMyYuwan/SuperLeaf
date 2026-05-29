@@ -687,8 +687,6 @@ function SortableConversationItem({
               <span className="conversation-dropdown-title">
                 {conv.title || '未命名对话'}
               </span>
-              {conv.is_pinned && <Pin size={10} className="conversation-pin-badge" />}
-              {isFixed && !conv.is_pinned && <Lock size={10} className="conversation-fixed-badge" />}
               {active && <Check size={12} className="active-check" />}
             </div>
             {conv.last_message_preview && (

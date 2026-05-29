@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .attached_files import render_attached_files_block
@@ -20,6 +21,8 @@ from .agent_workspace_service import (
 )
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
+from ..database import SessionLocal
+from ..models import Doc
 
 
 @dataclass(slots=True)
@@ -40,6 +43,11 @@ class NativeAgentRuntimeConfig:
     instructions: str
     skills: list[NativeSkillBlock] = field(default_factory=list)
     workspace_root: str = ""
+    # Project scope for the project_* tools. Both must be set for those tools
+    # to be usable; handlers re-check ownership so an Agent cannot reach docs
+    # outside this (project, user) tuple.
+    project_id: str = ""
+    user_id: str = ""
     temperature: float = 0.2
     max_tokens: int = 4000
     max_tool_rounds: int = 8
@@ -127,6 +135,15 @@ class NativeAgentRunner:
             "Your only readable workspace is `.agents/` for this Agent.",
             "Use list_agent_files and read_agent_file when you need Skill files.",
             "Never claim to read files outside `.agents/`.",
+            (
+                "Project context tools (read-only): "
+                "use project_list_docs to discover documents in the current project, "
+                "project_outline(doc_id) for a quick heading map, "
+                "project_read_doc(doc_id, range_start?, range_end?) to read content, "
+                "and project_grep(pattern, format?) to search across the project. "
+                "These tools cannot modify documents — they exist so you can gather context "
+                "before producing your reply."
+            ),
             "If MCP tools are available, call them only when the user explicitly asks for external retrieval, academic search, paper lookup, citation lookup, or source-backed evidence.",
             "Do not use MCP tools for ordinary editing, rewriting, style review, or summarization unless the user asks to search or verify external sources.",
             "If an MCP tool result reports `status: failed`, continue with the best available answer.",
@@ -325,6 +342,14 @@ class NativeAgentRunner:
                 path = str(args.get("path") or "")
                 content = read_agent_workspace_file(root, path)
                 return _ToolExecutionResult(content)
+            if name == "project_list_docs":
+                return self._tool_project_list_docs(args)
+            if name == "project_read_doc":
+                return self._tool_project_read_doc(args)
+            if name == "project_grep":
+                return self._tool_project_grep(args)
+            if name == "project_outline":
+                return self._tool_project_outline(args)
             if name in mcp_tool_map:
                 ref = mcp_tool_map[name]
                 try:
@@ -349,6 +374,155 @@ class NativeAgentRunner:
         except Exception as exc:  # noqa: BLE001
             return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
+
+    # ------------------------------------------------------------------
+    # project_* tools — read-only views over the user's docs in the
+    # current project. Every handler opens a short-lived session and
+    # filters by (project_id, user_id) from runtime config; Agent inputs
+    # never reach the WHERE clause.
+    # ------------------------------------------------------------------
+
+    def _project_scope_ok(self) -> bool:
+        return bool(self.config.project_id and self.config.user_id)
+
+    def _tool_project_list_docs(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        with SessionLocal() as db:
+            rows = (
+                db.query(Doc.id, Doc.name, Doc.format, Doc.folder_id, Doc.updated_at)
+                .filter(
+                    Doc.project_id == self.config.project_id,
+                )
+                .order_by(Doc.name.asc())
+                .limit(_PROJECT_LIST_LIMIT)
+                .all()
+            )
+        out = [
+            {
+                "id": r.id,
+                "name": r.name,
+                "format": r.format,
+                "folder_id": r.folder_id or "",
+                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+            }
+            for r in rows
+        ]
+        return _ToolExecutionResult(json.dumps(out, ensure_ascii=False))
+
+    def _tool_project_read_doc(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        doc_id = str(args.get("doc_id") or "").strip()
+        if not doc_id:
+            return _ToolExecutionResult("ERROR: doc_id is required", failed=True)
+        try:
+            range_start = int(args.get("range_start") or 0)
+            range_end_raw = args.get("range_end")
+            range_end = int(range_end_raw) if range_end_raw is not None else None
+        except (TypeError, ValueError):
+            return _ToolExecutionResult("ERROR: range_start/range_end must be integers", failed=True)
+        with SessionLocal() as db:
+            doc = db.get(Doc, doc_id)
+            if doc is None or doc.project_id != self.config.project_id:
+                return _ToolExecutionResult("ERROR: doc not found in this project", failed=True)
+            content = doc.content or ""
+            name = doc.name
+            fmt = doc.format
+        total = len(content)
+        start = max(0, min(range_start, total))
+        end = total if range_end is None else max(start, min(range_end, total))
+        if end - start > _PROJECT_READ_LIMIT:
+            end = start + _PROJECT_READ_LIMIT
+        slice_text = content[start:end]
+        out = {
+            "doc_id": doc_id,
+            "name": name,
+            "format": fmt,
+            "total_length": total,
+            "range_start": start,
+            "range_end": end,
+            "content": slice_text,
+            "truncated": end < total or start > 0,
+        }
+        return _ToolExecutionResult(json.dumps(out, ensure_ascii=False))
+
+    def _tool_project_grep(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        pattern = str(args.get("pattern") or "").strip()
+        if not pattern:
+            return _ToolExecutionResult("ERROR: pattern is required", failed=True)
+        format_filter = str(args.get("format") or "").strip().lower()
+        try:
+            max_results = int(args.get("max_results") or _PROJECT_GREP_DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            max_results = _PROJECT_GREP_DEFAULT_LIMIT
+        max_results = max(1, min(max_results, _PROJECT_GREP_HARD_LIMIT))
+        try:
+            regex = re.compile(pattern, re.MULTILINE)
+        except re.error as exc:
+            return _ToolExecutionResult(f"ERROR: invalid regex: {exc}", failed=True)
+        with SessionLocal() as db:
+            q = db.query(Doc.id, Doc.name, Doc.format, Doc.content).filter(
+                Doc.project_id == self.config.project_id,
+            )
+            if format_filter:
+                q = q.filter(Doc.format == format_filter)
+            rows = q.all()
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            content = row.content or ""
+            for m in regex.finditer(content):
+                line_start = content.rfind("\n", 0, m.start()) + 1
+                line_end = content.find("\n", m.end())
+                line_end = len(content) if line_end == -1 else line_end
+                line_no = content.count("\n", 0, m.start()) + 1
+                preview = content[line_start:line_end]
+                if len(preview) > _PROJECT_GREP_PREVIEW_CHARS:
+                    cut_at = max(0, m.start() - line_start - 60)
+                    preview = preview[cut_at : cut_at + _PROJECT_GREP_PREVIEW_CHARS]
+                hits.append(
+                    {
+                        "doc_id": row.id,
+                        "doc_name": row.name,
+                        "format": row.format,
+                        "offset": m.start(),
+                        "line": line_no,
+                        "preview": preview,
+                    }
+                )
+                if len(hits) >= max_results:
+                    break
+            if len(hits) >= max_results:
+                break
+        return _ToolExecutionResult(
+            json.dumps(
+                {"hits": hits, "truncated": len(hits) >= max_results},
+                ensure_ascii=False,
+            )
+        )
+
+    def _tool_project_outline(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        doc_id = str(args.get("doc_id") or "").strip()
+        if not doc_id:
+            return _ToolExecutionResult("ERROR: doc_id is required", failed=True)
+        with SessionLocal() as db:
+            doc = db.get(Doc, doc_id)
+            if doc is None or doc.project_id != self.config.project_id:
+                return _ToolExecutionResult("ERROR: doc not found in this project", failed=True)
+            content = doc.content or ""
+            fmt = (doc.format or "").lower()
+            name = doc.name
+        sections = _extract_outline(content, fmt)
+        return _ToolExecutionResult(
+            json.dumps(
+                {"doc_id": doc_id, "name": name, "format": fmt, "sections": sections},
+                ensure_ascii=False,
+            )
+        )
 
 
 def _mcp_failure_result(
@@ -533,6 +707,85 @@ def _workspace_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "project_list_docs",
+                "description": (
+                    "List all documents in the current project (read-only). "
+                    "Returns id, name, format, folder_id, updated_at. "
+                    "Use this to discover related files before editing."
+                ),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "project_read_doc",
+                "description": (
+                    "Read the contents of a project document by id. "
+                    "Optional range_start/range_end (character offsets) trim the slice. "
+                    "Returned content is capped at 40000 characters; pass a range to read more."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string"},
+                        "range_start": {
+                            "type": "integer",
+                            "description": "Character offset to start reading at (default 0).",
+                        },
+                        "range_end": {
+                            "type": "integer",
+                            "description": "Character offset to stop at (exclusive). Omit for end-of-doc.",
+                        },
+                    },
+                    "required": ["doc_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "project_grep",
+                "description": (
+                    "Search project documents with a Python regular expression. "
+                    "Returns up to max_results matches with surrounding line preview. "
+                    "Optionally filter by format (e.g. 'tex' or 'md')."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Python regex (multiline)."},
+                        "format": {
+                            "type": "string",
+                            "description": "Restrict to docs of this format, e.g. tex or md.",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Cap on hits returned (default 30, max 100).",
+                        },
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "project_outline",
+                "description": (
+                    "Return the heading outline (sections / chapters) of one document. "
+                    "Cheap way to understand a long doc before reading the body."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"doc_id": {"type": "string"}},
+                    "required": ["doc_id"],
+                },
+            },
+        },
     ]
 
 
@@ -588,3 +841,52 @@ class _ToolAccumulator:
                 call["id"] = f"tool-call-{index}"
             out.append(call)
         return out
+
+
+# project_* tool budget — keeps tool returns inside the model's context.
+_PROJECT_LIST_LIMIT = 200
+_PROJECT_READ_LIMIT = 40_000
+_PROJECT_GREP_DEFAULT_LIMIT = 30
+_PROJECT_GREP_HARD_LIMIT = 100
+_PROJECT_GREP_PREVIEW_CHARS = 240
+
+_LATEX_HEAD_RE = re.compile(
+    r"^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*\{([^}]*)\}",
+    re.MULTILINE,
+)
+_MARKDOWN_HEAD_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+_LATEX_LEVEL = {
+    "part": 0,
+    "chapter": 1,
+    "section": 2,
+    "subsection": 3,
+    "subsubsection": 4,
+    "paragraph": 5,
+    "subparagraph": 6,
+}
+
+
+def _extract_outline(content: str, fmt: str) -> list[dict[str, Any]]:
+    if fmt == "tex":
+        regex = _LATEX_HEAD_RE
+        out: list[dict[str, Any]] = []
+        for m in regex.finditer(content):
+            kind = m.group(1)
+            out.append({
+                "level": _LATEX_LEVEL.get(kind, 3),
+                "kind": kind,
+                "title": m.group(2).strip(),
+                "offset": m.start(),
+            })
+        return out
+    if fmt == "md":
+        out = []
+        for m in _MARKDOWN_HEAD_RE.finditer(content):
+            out.append({
+                "level": len(m.group(1)),
+                "kind": "h" + str(len(m.group(1))),
+                "title": m.group(2).strip(),
+                "offset": m.start(),
+            })
+        return out
+    return []

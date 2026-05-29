@@ -249,6 +249,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     // transparent-text mode it owns both normal text and highlighted mentions.
     const highlightSegments = useMemo(() => {
       if (!shouldRenderMirrorLayer) return []
+      if (!value.includes('@')) return [{ type: 'text' as const, content: value }]
       const mentions = parseMentions(value, allCandidates)
       return segmentText(value, mentions)
     }, [value, allCandidates, shouldRenderMirrorLayer])

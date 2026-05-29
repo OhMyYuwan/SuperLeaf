@@ -9,7 +9,7 @@
  * Conversation list is shown in a dropdown menu when clicking the history button.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   DndContext,
@@ -105,7 +105,6 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     scopeKey: string
     id: string
   } | null>(null)
-  const [inputText, setInputText] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -153,13 +152,6 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     [selectedAgentId, workflows],
   )
   const conversationScopeKey = `${documentId ?? ''}::${validSelectedAgentId ?? ''}`
-
-  // Files the user has @-mentioned in the current draft (for chip row preview).
-  const pendingFileMentions = useMemo(() => {
-    if (!inputText.trim() || !inputText.includes('@')) return [] as FileCandidate[]
-    const mentions = parseMentions(inputText, allCandidates)
-    return uniqueMentionedFiles(mentions)
-  }, [inputText, allCandidates])
 
   // Load conversations when document or agent changes.
   useEffect(() => {
@@ -274,8 +266,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     void reorderConversation(moved.id, nextIndex, targetGroupPinned)
   }
 
-  const handleSend = async () => {
-    const rawText = inputText.trim()
+  const handleSend = useCallback(async (rawText: string) => {
     if (!rawText || !effectiveConversationId) return
 
     const mentions = parseMentions(rawText, allCandidates)
@@ -287,10 +278,6 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         console.warn('[DiscussionTab] failed to fetch file', file.path),
     })
 
-    setInputText('')
-
-    // Build selection + attached-file context once; reused by both the agent
-    // send path and any workflow dispatch.
     const inputs: Record<string, unknown> = {}
     const body: Parameters<typeof sendMessage>[1] = { content: cleanedText }
     if (activeSelection && activeSelection.to > activeSelection.from) {
@@ -311,9 +298,6 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       body.inputs = inputs
     }
 
-    // If the user only @-mentioned workflows (no fresh agent question),
-    // dispatch workflow(s) without routing through sendMessage. Otherwise
-    // the Agent picker path runs normally AND any @workflow mentions fan out.
     await sendMessage(effectiveConversationId, body)
 
     if (mentionedWorkflows.length > 0 && documentId) {
@@ -332,20 +316,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         ),
       )
     }
-  }
-
-  const removeFileMention = (fileId: string) => {
-    const mentions = parseMentions(inputText, allCandidates)
-    // Walk in reverse so offsets stay valid as we delete.
-    const targets = [...mentions]
-      .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
-      .sort((a, b) => b.start - a.start)
-    let next = inputText
-    for (const m of targets) {
-      next = next.slice(0, m.start) + next.slice(m.end)
-    }
-    setInputText(next.replace(/\s{2,}/g, ' '))
-  }
+  }, [effectiveConversationId, allCandidates, activeSelection, activeDocFormat, sendMessage, documentId, executeDefinition, injectMessage])
 
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
@@ -516,70 +487,16 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   </div>
                 )}
               </div>
-              <div className="message-input-row">
-                {activeSelection && activeSelection.to > activeSelection.from && (
-                  <div
-                    className="discussion-selection-chip"
-                    title={activeSelection.text}
-                    onClick={() =>
-                      onJumpToRange?.({
-                        from: activeSelection.from,
-                        to: activeSelection.to,
-                      })
-                    }
-                  >
-                    <span className="chip-label">选区已附带</span>
-                    <span className="chip-preview">
-                      {activeSelection.text.length > 40
-                        ? `${activeSelection.text.slice(0, 40)}…`
-                        : activeSelection.text}
-                    </span>
-                    <span className="chip-range">
-                      {activeSelection.from}–{activeSelection.to}
-                    </span>
-                  </div>
-                )}
-                {pendingFileMentions.length > 0 && (
-                  <div className="discussion-attached-chips">
-                    {pendingFileMentions.map((f) => (
-                      <div key={f.id} className="discussion-attached-chip" title={f.path}>
-                        <span className="chip-label">附件</span>
-                        <span className="chip-preview">{f.name}</span>
-                        <button
-                          className="chip-remove"
-                          title="移除该附件"
-                          onClick={() => removeFileMention(f.id)}
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <MentionInput
-                  value={inputText}
-                  onChange={setInputText}
-                  agents={agentCandidates}
-                  workflows={workflowCandidates}
-                  files={fileCandidates}
-                  placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
-                  disabled={isStreaming}
-                  autoResize
-                  className="discussion-mention-input"
-                  menuPlacement="composer-panel"
-                  onCandidatePicked={(c) =>
-                    c.kind === 'file' ? confirmLargeFileAttachment(c) : true
-                  }
-                  onSubmit={handleSend}
-                />
-                <button
-                  className="primary-btn"
-                  onClick={handleSend}
-                  disabled={!inputText.trim() || isStreaming}
-                >
-                  <Send size={14} />
-                </button>
-              </div>
+              <DiscussionComposer
+                allCandidates={allCandidates}
+                agentCandidates={agentCandidates}
+                workflowCandidates={workflowCandidates}
+                fileCandidates={fileCandidates}
+                activeSelection={activeSelection}
+                isStreaming={isStreaming}
+                onSend={handleSend}
+                onJumpToRange={onJumpToRange}
+              />
             </>
           )}
         </div>
@@ -593,6 +510,119 @@ interface MessageBubbleProps {
   agentDisplayName: string
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
+
+interface DiscussionComposerProps {
+  allCandidates: MentionCandidate[]
+  agentCandidates: AgentCandidate[]
+  workflowCandidates: WorkflowCandidate[]
+  fileCandidates: FileCandidate[]
+  activeSelection: Selection | null
+  isStreaming: boolean
+  onSend: (rawText: string) => void
+  onJumpToRange?: (range: { from: number; to: number }) => void
+}
+
+const DiscussionComposer = memo(function DiscussionComposer({
+  allCandidates,
+  agentCandidates,
+  workflowCandidates,
+  fileCandidates,
+  activeSelection,
+  isStreaming,
+  onSend,
+  onJumpToRange,
+}: DiscussionComposerProps) {
+  const [inputText, setInputText] = useState('')
+
+  const pendingFileMentions = useMemo(() => {
+    if (!inputText.includes('@')) return [] as FileCandidate[]
+    const mentions = parseMentions(inputText, allCandidates)
+    return uniqueMentionedFiles(mentions)
+  }, [inputText, allCandidates])
+
+  const removeFileMention = (fileId: string) => {
+    const mentions = parseMentions(inputText, allCandidates)
+    const targets = [...mentions]
+      .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
+      .sort((a, b) => b.start - a.start)
+    let next = inputText
+    for (const m of targets) {
+      next = next.slice(0, m.start) + next.slice(m.end)
+    }
+    setInputText(next.replace(/\s{2,}/g, ' '))
+  }
+
+  const handleSubmit = () => {
+    const raw = inputText.trim()
+    if (!raw) return
+    onSend(raw)
+    setInputText('')
+  }
+
+  return (
+    <div className="message-input-row">
+      {activeSelection && activeSelection.to > activeSelection.from && (
+        <div
+          className="discussion-selection-chip"
+          title={activeSelection.text}
+          onClick={() =>
+            onJumpToRange?.({ from: activeSelection.from, to: activeSelection.to })
+          }
+        >
+          <span className="chip-label">选区已附带</span>
+          <span className="chip-preview">
+            {activeSelection.text.length > 40
+              ? `${activeSelection.text.slice(0, 40)}…`
+              : activeSelection.text}
+          </span>
+          <span className="chip-range">
+            {activeSelection.from}–{activeSelection.to}
+          </span>
+        </div>
+      )}
+      {pendingFileMentions.length > 0 && (
+        <div className="discussion-attached-chips">
+          {pendingFileMentions.map((f) => (
+            <div key={f.id} className="discussion-attached-chip" title={f.path}>
+              <span className="chip-label">附件</span>
+              <span className="chip-preview">{f.name}</span>
+              <button
+                className="chip-remove"
+                title="移除该附件"
+                onClick={() => removeFileMention(f.id)}
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <MentionInput
+        value={inputText}
+        onChange={setInputText}
+        agents={agentCandidates}
+        workflows={workflowCandidates}
+        files={fileCandidates}
+        placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
+        disabled={isStreaming}
+        autoResize
+        className="discussion-mention-input"
+        menuPlacement="composer-panel"
+        onCandidatePicked={(c) =>
+          c.kind === 'file' ? confirmLargeFileAttachment(c) : true
+        }
+        onSubmit={handleSubmit}
+      />
+      <button
+        className="primary-btn"
+        onClick={handleSubmit}
+        disabled={!inputText.trim() || isStreaming}
+      >
+        <Send size={14} />
+      </button>
+    </div>
+  )
+})
 
 interface SortableConversationItemProps {
   conv: Conversation

@@ -62,6 +62,9 @@ def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") 
         document_id=c.document_id,
         workflow_id=c.workflow_id,
         title=c.title,
+        user_renamed=c.user_renamed,
+        is_pinned=c.is_pinned,
+        sort_index=c.sort_index,
         external_conversation_id=c.external_conversation_id,
         created_at=c.created_at,
         updated_at=c.updated_at,
@@ -166,7 +169,14 @@ def list_conversations(
         q = q.filter(Conversation.document_id == document_id)
     if workflow_id:
         q = q.filter(Conversation.workflow_id == workflow_id)
-    rows = q.order_by(desc(Conversation.updated_at)).all()
+    rows = q.all()
+    rows.sort(
+        key=lambda r: (
+            1 if r.is_pinned else 0,
+            r.sort_index if r.sort_index is not None else r.updated_at.timestamp(),
+        ),
+        reverse=True,
+    )
 
     if not rows:
         return []
@@ -245,7 +255,13 @@ def update_conversation(
     if body.title is not None:
         c.title = body.title
         c.user_renamed = True
-    c.updated_at = datetime.utcnow()
+        c.updated_at = datetime.utcnow()
+    if body.is_pinned is not None:
+        c.is_pinned = body.is_pinned
+    if body.clear_sort_index:
+        c.sort_index = None
+    elif body.sort_index is not None:
+        c.sort_index = body.sort_index
     db.commit()
     db.refresh(c)
     return _to_out(c)

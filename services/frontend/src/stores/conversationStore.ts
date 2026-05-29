@@ -31,6 +31,10 @@ interface ConversationState {
   loadConversations: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   createConversation: (body: ConversationCreate) => Promise<Conversation | null>
   renameConversation: (id: string, title: string) => Promise<Conversation | null>
+  togglePinConversation: (id: string, pinned: boolean) => Promise<Conversation | null>
+  pinAtCurrentPosition: (id: string, sortIndex: number) => Promise<Conversation | null>
+  releaseFixedPosition: (id: string) => Promise<Conversation | null>
+  reorderConversation: (id: string, sortIndex: number, isPinned: boolean) => Promise<Conversation | null>
   deleteConversation: (id: string) => Promise<void>
   loadMessages: (conversationId: string) => Promise<void>
   sendMessage: (conversationId: string, body: MessageSend) => Promise<void>
@@ -84,6 +88,53 @@ export const useConversationStore = create<ConversationState>((set) => ({
       set((s) => ({
         conversations: { ...s.conversations, [id]: updated },
       }))
+      return updated
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  togglePinConversation: async (id, pinned) => {
+    try {
+      const updated = await conversationApi.update(id, { is_pinned: pinned })
+      set((s) => ({ conversations: { ...s.conversations, [id]: updated } }))
+      return updated
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  pinAtCurrentPosition: async (id, sortIndex) => {
+    try {
+      const updated = await conversationApi.update(id, { sort_index: sortIndex })
+      set((s) => ({ conversations: { ...s.conversations, [id]: updated } }))
+      return updated
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  releaseFixedPosition: async (id) => {
+    try {
+      const updated = await conversationApi.update(id, { clear_sort_index: true })
+      set((s) => ({ conversations: { ...s.conversations, [id]: updated } }))
+      return updated
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  reorderConversation: async (id, sortIndex, isPinned) => {
+    try {
+      const updated = await conversationApi.update(id, {
+        sort_index: sortIndex,
+        is_pinned: isPinned,
+      })
+      set((s) => ({ conversations: { ...s.conversations, [id]: updated } }))
       return updated
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })

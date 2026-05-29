@@ -416,11 +416,79 @@
   user-select: none;
   transition: background 0.15s ease;
 }
+.conversation-dropdown-item.active {
+  background: rgba(59, 130, 246, 0.14);
+}
+.conversation-dropdown-item.pinned {
+  background: rgba(250, 204, 21, 0.06);
+}
+.conversation-dropdown-item.dragging {
+  background: rgba(59, 130, 246, 0.22);
+}
 .conversation-dropdown-item:hover {
   background: rgba(148, 163, 184, 0.12);
 }
 .conversation-dropdown-item:focus {
   background: rgba(59, 130, 246, 0.18);
+}
+
+.conversation-drag-handle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin-top: 1px;
+  border: none;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.45);
+  cursor: grab;
+  border-radius: 4px;
+  touch-action: none;
+}
+.conversation-drag-handle:hover {
+  color: rgba(148, 163, 184, 0.85);
+  background: rgba(148, 163, 184, 0.12);
+}
+.conversation-drag-handle:active {
+  cursor: grabbing;
+}
+
+.conversation-pin-badge {
+  flex-shrink: 0;
+  color: #facc15;
+}
+.conversation-fixed-badge {
+  flex-shrink: 0;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.conversation-dropdown-pin,
+.conversation-dropdown-fix {
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-dropdown-pin:hover {
+  background: rgba(250, 204, 21, 0.18);
+  color: #facc15;
+}
+.conversation-dropdown-pin.on {
+  color: #facc15;
+}
+.conversation-dropdown-fix:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+.conversation-dropdown-fix.on {
+  color: #93c5fd;
 }
 
 .conversation-dropdown-item-content {

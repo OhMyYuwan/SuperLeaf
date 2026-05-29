@@ -11,6 +11,21 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import './discussion.css'
 import {
   MessageSquare,
@@ -22,6 +37,11 @@ import {
   Check,
   X,
   Pencil,
+  Pin,
+  PinOff,
+  Lock,
+  Unlock,
+  GripVertical,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
@@ -66,6 +86,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const loadConversations = useConversationStore((s) => s.loadConversations)
   const createConversation = useConversationStore((s) => s.createConversation)
   const renameConversation = useConversationStore((s) => s.renameConversation)
+  const togglePinConversation = useConversationStore((s) => s.togglePinConversation)
+  const pinAtCurrentPosition = useConversationStore((s) => s.pinAtCurrentPosition)
+  const releaseFixedPosition = useConversationStore((s) => s.releaseFixedPosition)
+  const reorderConversation = useConversationStore((s) => s.reorderConversation)
   const deleteConversation = useConversationStore((s) => s.deleteConversation)
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
@@ -84,6 +108,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const [inputText, setInputText] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
@@ -200,6 +225,53 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
   const handleCancelRename = () => {
     setRenamingId(null)
+  }
+
+  // Long-press to drag (250ms) so a normal click still selects/opens the conversation.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
+  )
+
+  const handleTogglePin = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    void togglePinConversation(conv.id, !conv.is_pinned)
+  }
+
+  const handleToggleFixed = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (conv.sort_index !== null) {
+      void releaseFixedPosition(conv.id)
+    } else {
+      // Snapshot current updated_at as the fixed sort key.
+      void pinAtCurrentPosition(conv.id, timestampValue(conv.updated_at))
+    }
+  }
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const list = filteredConversations
+    const oldIdx = list.findIndex((c) => c.id === active.id)
+    const newIdx = list.findIndex((c) => c.id === over.id)
+    if (oldIdx === -1 || newIdx === -1) return
+    const reordered = arrayMove(list, oldIdx, newIdx)
+    const moved = reordered[newIdx]
+    // Pin group is preserved: cross-group drags fall back to entering the group of the drop target.
+    const targetGroupPinned = list[newIdx].is_pinned
+    // Compute fractional sort_index between the two neighbours within the same group.
+    const sameGroup = (c: Conversation) => c.is_pinned === targetGroupPinned
+    const groupItems = reordered.filter(sameGroup)
+    const groupPos = groupItems.findIndex((c) => c.id === moved.id)
+    const above = groupItems[groupPos - 1]
+    const below = groupItems[groupPos + 1]
+    const aboveKey = above ? (above.sort_index ?? timestampValue(above.updated_at)) : null
+    const belowKey = below ? (below.sort_index ?? timestampValue(below.updated_at)) : null
+    let nextIndex: number
+    if (aboveKey === null && belowKey !== null) nextIndex = belowKey + 1
+    else if (aboveKey !== null && belowKey === null) nextIndex = aboveKey - 1
+    else if (aboveKey !== null && belowKey !== null) nextIndex = (aboveKey + belowKey) / 2
+    else nextIndex = timestampValue(moved.updated_at)
+    void reorderConversation(moved.id, nextIndex, targetGroupPinned)
   }
 
   const handleSend = async () => {
@@ -336,7 +408,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           </select>
         </label>
         <div className="discussion-header-actions">
-          <DropdownMenu.Root>
+          <DropdownMenu.Root open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenu.Trigger asChild>
               <button
                 className="ghost-btn small"
@@ -356,88 +428,37 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     还没有对话
                   </div>
                 )}
-                {filteredConversations.map((conv) => (
-                  <DropdownMenu.Item
-                    key={conv.id}
-                    className="conversation-dropdown-item"
-                    onSelect={(e) => {
-                      if (renamingId === conv.id) {
-                        e.preventDefault()
-                        return
-                      }
-                      setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
-                    }}
+                <DndContext
+                  sensors={dndSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={filteredConversations.map((c) => c.id)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    <div className="conversation-dropdown-item-content">
-                      {renamingId === conv.id ? (
-                        <div className="conversation-rename-row" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            className="conversation-rename-input"
-                            value={renameText}
-                            onChange={(e) => setRenameText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') { e.preventDefault(); void handleCommitRename(conv.id) }
-                              if (e.key === 'Escape') { e.preventDefault(); handleCancelRename() }
-                            }}
-                            autoFocus
-                          />
-                          <button
-                            className="conversation-rename-confirm"
-                            onClick={() => void handleCommitRename(conv.id)}
-                            title="确认"
-                          >
-                            <Check size={11} />
-                          </button>
-                          <button
-                            className="conversation-rename-cancel"
-                            onClick={handleCancelRename}
-                            title="取消"
-                          >
-                            <X size={11} />
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="conversation-dropdown-item-header">
-                            <MessageSquare size={12} />
-                            <span className="conversation-dropdown-title">
-                              {conv.title || '未命名对话'}
-                            </span>
-                            {conv.id === effectiveConversationId && (
-                              <Check size={12} className="active-check" />
-                            )}
-                          </div>
-                          {conv.last_message_preview && (
-                            <div className="conversation-dropdown-preview">
-                              {conv.last_message_preview}
-                            </div>
-                          )}
-                          <div className="conversation-dropdown-meta">
-                            {conv.message_count} 条 · {formatTime(conv.updated_at)}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    {renamingId !== conv.id && (
-                      <div className="conversation-dropdown-actions">
-                        <button
-                          className="conversation-dropdown-rename"
-                          onClick={(e) => handleStartRename(conv, e)}
-                          title="重命名"
-                        >
-                          <Pencil size={10} />
-                        </button>
-                        <button
-                          className="conversation-dropdown-delete"
-                          onClick={(e) => handleDeleteConversation(conv.id, e)}
-                          title="删除对话"
-                        >
-                          <Trash2 size={10} />
-                        </button>
-                      </div>
-                    )}
-                  </DropdownMenu.Item>
-                ))}
+                    {filteredConversations.map((conv) => (
+                      <SortableConversationItem
+                        key={conv.id}
+                        conv={conv}
+                        active={conv.id === effectiveConversationId}
+                        renamingId={renamingId}
+                        renameText={renameText}
+                        onRenameTextChange={setRenameText}
+                        onSelect={() => {
+                          setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
+                          setHistoryOpen(false)
+                        }}
+                        onStartRename={handleStartRename}
+                        onCommitRename={handleCommitRename}
+                        onCancelRename={handleCancelRename}
+                        onDelete={handleDeleteConversation}
+                        onTogglePin={handleTogglePin}
+                        onToggleFixed={handleToggleFixed}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -573,6 +594,150 @@ interface MessageBubbleProps {
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
+interface SortableConversationItemProps {
+  conv: Conversation
+  active: boolean
+  renamingId: string | null
+  renameText: string
+  onRenameTextChange: (next: string) => void
+  onSelect: () => void
+  onStartRename: (conv: Conversation, e: React.MouseEvent) => void
+  onCommitRename: (id: string) => void
+  onCancelRename: () => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  onTogglePin: (conv: Conversation, e: React.MouseEvent) => void
+  onToggleFixed: (conv: Conversation, e: React.MouseEvent) => void
+}
+
+function SortableConversationItem({
+  conv,
+  active,
+  renamingId,
+  renameText,
+  onRenameTextChange,
+  onSelect,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onDelete,
+  onTogglePin,
+  onToggleFixed,
+}: SortableConversationItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: conv.id })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  const isRenaming = renamingId === conv.id
+  const isFixed = conv.sort_index !== null
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`conversation-dropdown-item ${active ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${conv.is_pinned ? 'pinned' : ''}`}
+      onClick={() => {
+        if (isRenaming) return
+        onSelect()
+      }}
+    >
+      <button
+        className="conversation-drag-handle"
+        title="长按拖动调整顺序"
+        {...attributes}
+        {...listeners}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={12} />
+      </button>
+      <div className="conversation-dropdown-item-content">
+        {isRenaming ? (
+          <div className="conversation-rename-row" onClick={(e) => e.stopPropagation()}>
+            <input
+              className="conversation-rename-input"
+              value={renameText}
+              onChange={(e) => onRenameTextChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onCommitRename(conv.id) }
+                if (e.key === 'Escape') { e.preventDefault(); onCancelRename() }
+              }}
+              autoFocus
+            />
+            <button
+              className="conversation-rename-confirm"
+              onClick={() => onCommitRename(conv.id)}
+              title="确认"
+            >
+              <Check size={11} />
+            </button>
+            <button
+              className="conversation-rename-cancel"
+              onClick={onCancelRename}
+              title="取消"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="conversation-dropdown-item-header">
+              <MessageSquare size={12} />
+              <span className="conversation-dropdown-title">
+                {conv.title || '未命名对话'}
+              </span>
+              {conv.is_pinned && <Pin size={10} className="conversation-pin-badge" />}
+              {isFixed && !conv.is_pinned && <Lock size={10} className="conversation-fixed-badge" />}
+              {active && <Check size={12} className="active-check" />}
+            </div>
+            {conv.last_message_preview && (
+              <div className="conversation-dropdown-preview">
+                {conv.last_message_preview}
+              </div>
+            )}
+            <div className="conversation-dropdown-meta">
+              {conv.message_count} 条 · {formatTime(conv.updated_at)}
+            </div>
+          </>
+        )}
+      </div>
+      {!isRenaming && (
+        <div className="conversation-dropdown-actions">
+          <button
+            className={`conversation-dropdown-pin ${conv.is_pinned ? 'on' : ''}`}
+            onClick={(e) => onTogglePin(conv, e)}
+            title={conv.is_pinned ? '取消置顶' : '置顶'}
+          >
+            {conv.is_pinned ? <PinOff size={10} /> : <Pin size={10} />}
+          </button>
+          <button
+            className={`conversation-dropdown-fix ${isFixed ? 'on' : ''}`}
+            onClick={(e) => onToggleFixed(conv, e)}
+            title={isFixed ? '解除固定位置' : '固定在当前位置'}
+          >
+            {isFixed ? <Unlock size={10} /> : <Lock size={10} />}
+          </button>
+          <button
+            className="conversation-dropdown-rename"
+            onClick={(e) => onStartRename(conv, e)}
+            title="重命名"
+          >
+            <Pencil size={10} />
+          </button>
+          <button
+            className="conversation-dropdown-delete"
+            onClick={(e) => onDelete(conv.id, e)}
+            title="删除对话"
+          >
+            <Trash2 size={10} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
@@ -651,8 +816,11 @@ function formatTime(iso: string): string {
 }
 
 function compareConversationsNewestFirst(a: Conversation, b: Conversation): number {
+  if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
+  const ka = a.sort_index ?? timestampValue(a.updated_at)
+  const kb = b.sort_index ?? timestampValue(b.updated_at)
   return (
-    timestampValue(b.updated_at) - timestampValue(a.updated_at) ||
+    kb - ka ||
     timestampValue(b.created_at) - timestampValue(a.created_at) ||
     b.id.localeCompare(a.id)
   )

@@ -165,7 +165,22 @@ export const useConversationStore = create<ConversationState>((set) => ({
   },
 
   sendMessage: async (conversationId, body) => {
+    // Optimistic update: show user message immediately before backend confirms.
+    const optimisticMsg: Message = {
+      id: `optimistic-${Date.now()}`,
+      conversation_id: conversationId,
+      role: 'user',
+      content: body.content,
+      range_start: body.range_start ?? null,
+      range_end: body.range_end ?? null,
+      inputs: body.inputs ?? null,
+      created_at: new Date().toISOString(),
+    }
     set((s) => ({
+      messages: {
+        ...s.messages,
+        [conversationId]: [...(s.messages[conversationId] ?? []), optimisticMsg],
+      },
       streaming: { ...s.streaming, [conversationId]: true },
       streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
       error: null,
@@ -294,12 +309,18 @@ function handleMessageEvent(
 ) {
   if (evt.event === 'ylw.msg.user') {
     const msg = evt.data as Message
-    set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: [...(s.messages[conversationId] ?? []), msg],
-      },
-    }))
+    set((s) => {
+      const existing = s.messages[conversationId] ?? []
+      const optimisticIdx = existing.findIndex((m) => m.id.startsWith('optimistic-'))
+      if (optimisticIdx !== -1) {
+        const updated = [...existing]
+        updated[optimisticIdx] = msg
+        return { messages: { ...s.messages, [conversationId]: updated } }
+      }
+      return {
+        messages: { ...s.messages, [conversationId]: [...existing, msg] },
+      }
+    })
   } else if (evt.event === 'ylw.msg.delta') {
     const { delta } = evt.data as { delta: string }
     set((s) => ({

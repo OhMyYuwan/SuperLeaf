@@ -788,6 +788,7 @@ class ConversationOut(BaseModel):
     document_id: str
     workflow_id: str
     title: str
+    user_renamed: bool = False
     external_conversation_id: str
     created_at: datetime
     updated_at: datetime

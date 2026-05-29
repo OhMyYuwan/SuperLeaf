@@ -12,6 +12,7 @@ import {
   buildHeaders,
   type Conversation,
   type ConversationCreate,
+  type ConversationUpdate,
   type Message,
   type MessageInject,
   type MessageSend,
@@ -29,6 +30,7 @@ interface ConversationState {
 
   loadConversations: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   createConversation: (body: ConversationCreate) => Promise<Conversation | null>
+  renameConversation: (id: string, title: string) => Promise<Conversation | null>
   deleteConversation: (id: string) => Promise<void>
   loadMessages: (conversationId: string) => Promise<void>
   sendMessage: (conversationId: string, body: MessageSend) => Promise<void>
@@ -70,6 +72,19 @@ export const useConversationStore = create<ConversationState>((set) => ({
         messages: { ...s.messages, [created.id]: [] },
       }))
       return created
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  renameConversation: async (id, title) => {
+    try {
+      const updated = await conversationApi.update(id, { title })
+      set((s) => ({
+        conversations: { ...s.conversations, [id]: updated },
+      }))
+      return updated
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
       return null

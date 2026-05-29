@@ -21,6 +21,7 @@ import {
   History,
   Check,
   X,
+  Pencil,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
@@ -64,6 +65,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const error = useConversationStore((s) => s.error)
   const loadConversations = useConversationStore((s) => s.loadConversations)
   const createConversation = useConversationStore((s) => s.createConversation)
+  const renameConversation = useConversationStore((s) => s.renameConversation)
   const deleteConversation = useConversationStore((s) => s.deleteConversation)
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
@@ -80,6 +82,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     id: string
   } | null>(null)
   const [inputText, setInputText] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameText, setRenameText] = useState('')
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
@@ -178,6 +182,24 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     if (effectiveConversationId === id) {
       setManualConversation(null)
     }
+  }
+
+  const handleStartRename = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRenamingId(conv.id)
+    setRenameText(conv.title || '')
+  }
+
+  const handleCommitRename = async (id: string) => {
+    const trimmed = renameText.trim()
+    if (trimmed) {
+      await renameConversation(id, trimmed)
+    }
+    setRenamingId(null)
+  }
+
+  const handleCancelRename = () => {
+    setRenamingId(null)
   }
 
   const handleSend = async () => {
@@ -338,36 +360,82 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   <DropdownMenu.Item
                     key={conv.id}
                     className="conversation-dropdown-item"
-                    onSelect={() =>
+                    onSelect={(e) => {
+                      if (renamingId === conv.id) {
+                        e.preventDefault()
+                        return
+                      }
                       setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
-                    }
+                    }}
                   >
                     <div className="conversation-dropdown-item-content">
-                      <div className="conversation-dropdown-item-header">
-                        <MessageSquare size={12} />
-                        <span className="conversation-dropdown-title">
-                          {conv.title || '未命名对话'}
-                        </span>
-                        {conv.id === effectiveConversationId && (
-                          <Check size={12} className="active-check" />
-                        )}
-                      </div>
-                      {conv.last_message_preview && (
-                        <div className="conversation-dropdown-preview">
-                          {conv.last_message_preview}
+                      {renamingId === conv.id ? (
+                        <div className="conversation-rename-row" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            className="conversation-rename-input"
+                            value={renameText}
+                            onChange={(e) => setRenameText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); void handleCommitRename(conv.id) }
+                              if (e.key === 'Escape') { e.preventDefault(); handleCancelRename() }
+                            }}
+                            autoFocus
+                          />
+                          <button
+                            className="conversation-rename-confirm"
+                            onClick={() => void handleCommitRename(conv.id)}
+                            title="确认"
+                          >
+                            <Check size={11} />
+                          </button>
+                          <button
+                            className="conversation-rename-cancel"
+                            onClick={handleCancelRename}
+                            title="取消"
+                          >
+                            <X size={11} />
+                          </button>
                         </div>
+                      ) : (
+                        <>
+                          <div className="conversation-dropdown-item-header">
+                            <MessageSquare size={12} />
+                            <span className="conversation-dropdown-title">
+                              {conv.title || '未命名对话'}
+                            </span>
+                            {conv.id === effectiveConversationId && (
+                              <Check size={12} className="active-check" />
+                            )}
+                          </div>
+                          {conv.last_message_preview && (
+                            <div className="conversation-dropdown-preview">
+                              {conv.last_message_preview}
+                            </div>
+                          )}
+                          <div className="conversation-dropdown-meta">
+                            {conv.message_count} 条 · {formatTime(conv.updated_at)}
+                          </div>
+                        </>
                       )}
-                      <div className="conversation-dropdown-meta">
-                        {conv.message_count} 条 · {formatTime(conv.updated_at)}
-                      </div>
                     </div>
-                    <button
-                      className="conversation-dropdown-delete"
-                      onClick={(e) => handleDeleteConversation(conv.id, e)}
-                      title="删除对话"
-                    >
-                      <Trash2 size={10} />
-                    </button>
+                    {renamingId !== conv.id && (
+                      <div className="conversation-dropdown-actions">
+                        <button
+                          className="conversation-dropdown-rename"
+                          onClick={(e) => handleStartRename(conv, e)}
+                          title="重命名"
+                        >
+                          <Pencil size={10} />
+                        </button>
+                        <button
+                          className="conversation-dropdown-delete"
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          title="删除对话"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                    )}
                   </DropdownMenu.Item>
                 ))}
               </DropdownMenu.Content>

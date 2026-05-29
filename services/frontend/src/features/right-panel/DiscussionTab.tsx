@@ -156,7 +156,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 
   // Files the user has @-mentioned in the current draft (for chip row preview).
   const pendingFileMentions = useMemo(() => {
-    if (!inputText.trim()) return [] as FileCandidate[]
+    if (!inputText.trim() || !inputText.includes('@')) return [] as FileCandidate[]
     const mentions = parseMentions(inputText, allCandidates)
     return uniqueMentionedFiles(mentions)
   }, [inputText, allCandidates])

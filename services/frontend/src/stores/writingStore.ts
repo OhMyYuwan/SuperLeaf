@@ -608,9 +608,9 @@ function extractFencedBlock(raw: string): { text: string; fallback: boolean } {
 //  Write back (collab-aware)
 // =============================================================
 
-type ApplyMode = 'replace-doc' | 'append' | 'replace-range'
+export type ApplyMode = 'replace-doc' | 'append' | 'replace-range'
 
-function readCurrentText(docId: string, range: { from: number; to: number }): string {
+export function readCurrentText(docId: string, range: { from: number; to: number }): string {
   const collab = useCollaborationStore.getState()
   if (collab.provider && collab.currentDocId === docId) {
     const text = collab.provider.yText.toString()
@@ -620,7 +620,7 @@ function readCurrentText(docId: string, range: { from: number; to: number }): st
   return live.slice(range.from, Math.min(range.to, live.length))
 }
 
-function applyWriteOutput(args: {
+export function applyWriteOutput(args: {
   docId: string
   mode: ApplyMode
   range: { from: number; to: number }

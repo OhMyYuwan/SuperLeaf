@@ -490,6 +490,11 @@ async def send_message(
                                 "event": "ylw.msg.delta",
                                 "data": json.dumps({"delta": delta}),
                             }
+                    if kind == "native.agent.edit_proposal" and isinstance(data, dict):
+                        yield {
+                            "event": "ylw.msg.edit_proposal",
+                            "data": json.dumps(data),
+                        }
                     yield {"event": kind, "data": json.dumps(data)}
                 external_conv_id = native_conversation_id
             elif provider.kind == "nanobot":

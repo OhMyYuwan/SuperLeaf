@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+import uuid
 
 from .attached_files import render_attached_files_block
 from .agent_workspace_service import (
@@ -71,6 +72,9 @@ class _ToolExecutionResult:
     failed: bool = False
     failed_function_name: str = ""
     tool_kind: str = "workspace"
+    # Set when the tool wants the runner to surface a side-channel event
+    # (e.g. propose_doc_edit emits an edit proposal card to the chat UI).
+    side_event: dict[str, Any] | None = None
 
 
 class NativeAgentRunner:
@@ -98,7 +102,7 @@ class NativeAgentRunner:
         }
 
         if self.config.workspace_root:
-            async for evt in self._stream_with_workspace_tools(client, system_prompt, user_prompt, session_id):
+            async for evt in self._stream_with_workspace_tools(client, system_prompt, user_prompt, session_id, payload):
                 yield evt
             return
 
@@ -143,6 +147,15 @@ class NativeAgentRunner:
                 "and project_grep(pattern, format?) to search across the project. "
                 "These tools cannot modify documents — they exist so you can gather context "
                 "before producing your reply."
+            ),
+            (
+                "Document edit tool: when the user asks you to change the text of the "
+                "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
+                "This proposes the change as a card in the chat — the user must click accept "
+                "to actually apply it. Do NOT paste the replacement text directly into your "
+                "markdown reply; use the tool. After proposing, give a one-line summary of the "
+                "intent. Always read the surrounding context first (project_read_doc) to make "
+                "sure your character offsets are correct."
             ),
             "If MCP tools are available, call them only when the user explicitly asks for external retrieval, academic search, paper lookup, citation lookup, or source-backed evidence.",
             "Do not use MCP tools for ordinary editing, rewriting, style review, or summarization unless the user asks to search or verify external sources.",
@@ -252,6 +265,7 @@ class NativeAgentRunner:
         system_prompt: str,
         user_prompt: str,
         session_id: str | None,
+        payload: NativeRunPayload,
     ) -> AsyncIterator[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -292,7 +306,7 @@ class NativeAgentRunner:
             }
             messages.append(assistant_message)
             for call in tool_calls:
-                result = await self._execute_tool(call, mcp_tool_map)
+                result = await self._execute_tool(call, mcp_tool_map, payload)
                 yield {
                     "event": "native.agent.tool",
                     "data": {
@@ -302,6 +316,8 @@ class NativeAgentRunner:
                         "tool_kind": result.tool_kind,
                     },
                 }
+                if result.side_event:
+                    yield result.side_event
                 messages.append(
                     {
                         "role": "tool",
@@ -319,6 +335,7 @@ class NativeAgentRunner:
         self,
         call: dict[str, Any],
         mcp_tool_map: dict[str, McpToolRef],
+        payload: NativeRunPayload,
     ) -> _ToolExecutionResult:
         fn = call.get("function") if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "")
@@ -350,6 +367,8 @@ class NativeAgentRunner:
                 return self._tool_project_grep(args)
             if name == "project_outline":
                 return self._tool_project_outline(args)
+            if name == "propose_doc_edit":
+                return self._tool_propose_doc_edit(args, payload)
             if name in mcp_tool_map:
                 ref = mcp_tool_map[name]
                 try:
@@ -522,6 +541,78 @@ class NativeAgentRunner:
                 {"doc_id": doc_id, "name": name, "format": fmt, "sections": sections},
                 ensure_ascii=False,
             )
+        )
+
+    def _tool_propose_doc_edit(
+        self,
+        args: dict[str, Any],
+        payload: NativeRunPayload,
+    ) -> _ToolExecutionResult:
+        """Surface an edit proposal to the chat UI; never writes the doc.
+
+        Scope is locked to payload.document_id — the agent cannot target other
+        docs. The handler verifies the range against the live doc, captures
+        the original_text snapshot for stale detection on the frontend, and
+        emits a side event the runner forwards as native.agent.edit_proposal.
+        """
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        document_id = (payload.document_id or "").strip()
+        if not document_id:
+            return _ToolExecutionResult(
+                "ERROR: propose_doc_edit requires an active document; none is bound to this conversation",
+                failed=True,
+            )
+        try:
+            range_start = int(args.get("range_start"))
+            range_end = int(args.get("range_end"))
+        except (TypeError, ValueError):
+            return _ToolExecutionResult(
+                "ERROR: range_start and range_end must be integers", failed=True
+            )
+        new_text = args.get("new_text")
+        if not isinstance(new_text, str):
+            return _ToolExecutionResult("ERROR: new_text must be a string", failed=True)
+        reason = str(args.get("reason") or "").strip()
+
+        with SessionLocal() as db:
+            doc = db.get(Doc, document_id)
+            if doc is None or doc.project_id != self.config.project_id:
+                return _ToolExecutionResult(
+                    "ERROR: active document not found in this project", failed=True
+                )
+            content = doc.content or ""
+        total = len(content)
+        start = max(0, min(range_start, total))
+        end = max(start, min(range_end, total))
+        original_text = content[start:end]
+
+        proposal_id = uuid.uuid4().hex
+        proposal = {
+            "proposal_id": proposal_id,
+            "document_id": document_id,
+            "range_start": start,
+            "range_end": end,
+            "original_text": original_text,
+            "new_text": new_text,
+            "reason": reason,
+        }
+
+        tool_reply = {
+            "status": "proposed",
+            "proposal_id": proposal_id,
+            "document_id": document_id,
+            "range_start": start,
+            "range_end": end,
+            "note": (
+                "Proposal queued; awaiting user approval in chat. "
+                "Do not propose the same edit again — briefly explain the intent in plain text."
+            ),
+        }
+        return _ToolExecutionResult(
+            json.dumps(tool_reply, ensure_ascii=False),
+            tool_kind="edit_proposal",
+            side_event={"event": "native.agent.edit_proposal", "data": proposal},
         )
 
 
@@ -783,6 +874,42 @@ def _workspace_tools() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {"doc_id": {"type": "string"}},
                     "required": ["doc_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_doc_edit",
+                "description": (
+                    "Propose a text edit to the document currently open in this discussion. "
+                    "PROPOSE ONLY — the edit is NOT applied until the user clicks accept "
+                    "in the chat UI. Use this whenever the user asks you to change the text. "
+                    "Always read the surrounding context first (e.g. with project_read_doc) "
+                    "to compute correct character offsets. Scope is locked to the active "
+                    "document; you cannot target other docs."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "range_start": {
+                            "type": "integer",
+                            "description": "Character offset where the replacement starts (inclusive).",
+                        },
+                        "range_end": {
+                            "type": "integer",
+                            "description": "Character offset where the replacement ends (exclusive). Equal to range_start for a pure insertion.",
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "The replacement text. May be empty to delete the range.",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Short human-readable explanation of why this change is proposed.",
+                        },
+                    },
+                    "required": ["range_start", "range_end", "new_text"],
                 },
             },
         },

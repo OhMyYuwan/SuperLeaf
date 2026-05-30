@@ -45,6 +45,7 @@ from ..schemas import (
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
+    SkillUsageOut,
     SkillPatch,
     SkillRecipeIn,
 )
@@ -92,7 +93,10 @@ def _credential_out(row: NativeAgentCredential) -> NativeAgentCredentialOut:
 def _skill_out(row: Skill, user_id: str) -> SkillOut:
     out = SkillOut.model_validate(row, from_attributes=True)
     session = object_session(row)
-    out.can_edit = bool(session) and NativeAgentService(session).can_edit_skill(row, user_id=user_id)
+    if session:
+        svc = NativeAgentService(session)
+        out.can_edit = svc.can_edit_skill(row, user_id=user_id)
+        out.used_by_agent_count = len(svc.agents_using_skill(row.id, user_id=user_id))
     out.content = decrypt_skill_content(row.content)
     return out
 
@@ -603,6 +607,22 @@ def delete_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+
+
+@router.get("/skills/{skill_id}/usage", response_model=list[SkillUsageOut])
+def list_skill_usage(
+    skill_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[SkillUsageOut]:
+    """List Agents that currently bind this skill — used by the frontend's
+    delete-confirmation dialog so the user knows whose Agents will lose the
+    skill before clicking through."""
+    agents = NativeAgentService(db).agents_using_skill(skill_id, user_id=user.id)
+    return [
+        SkillUsageOut(agent_id=a.id, agent_name=a.name, project_id=a.project_id)
+        for a in agents
+    ]
 
 
 @router.get("/skill-marketplace", response_model=SkillMarketplaceOut)

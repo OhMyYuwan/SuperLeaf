@@ -1824,6 +1824,16 @@
   font-family: ui-monospace, monospace;
 }
 
+.workflow-test-node-round {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .workflow-test-io {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1863,6 +1873,33 @@
 .workflow-test-output.error {
   border-color: rgba(239, 68, 68, 0.35);
   color: #fecaca;
+}
+
+/* Per-round block in the test panel — shown for loop children so the user
+   can read every iteration's input + output, in chronological order. */
+.workflow-test-round {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  background: rgba(59, 130, 246, 0.06);
+}
+.workflow-test-round + .workflow-test-round {
+  margin-top: 6px;
+}
+.workflow-test-round.failed {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.05);
+}
+.workflow-test-round-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: #93c5fd;
+  letter-spacing: 0.02em;
+}
+.workflow-test-round.failed .workflow-test-round-head {
+  color: #fca5a5;
 }
 
 /* V3 Phase 4 — per-agent quality row under AgentStatsRow. */
@@ -2898,6 +2935,29 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.skill-market-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.skill-usage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  white-space: nowrap;
+  line-height: 1;
+}
+.skill-usage-badge svg {
+  flex-shrink: 0;
 }
 
 .skill-name-button {

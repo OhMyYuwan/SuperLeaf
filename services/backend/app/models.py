@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -619,6 +619,13 @@ class Conversation(Base):
     document_id: Mapped[str] = mapped_column(String(64), index=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("cached_workflows.id"), index=True)
     title: Mapped[str] = mapped_column(String(256), default="")
+    # True once the user has explicitly renamed this conversation; suppresses auto-naming.
+    user_renamed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pin to top of the list; pinned items sort above unpinned ones.
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Manual sort key. NULL → fall back to updated_at; non-NULL → pinned to that position
+    # (won't bubble on new messages). Higher value = higher in list.
+    sort_index: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # Dify's conversation id once we know it (after first message).
     external_conversation_id: Mapped[str] = mapped_column(String(128), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

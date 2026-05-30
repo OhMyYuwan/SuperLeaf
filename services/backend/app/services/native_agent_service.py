@@ -334,8 +334,41 @@ class NativeAgentService:
             self.db.delete(row)
         else:
             self._hide_skill(row, user_id=user_id)
+        # Strip the now-unreachable id from every Agent's skill_ids list. Without
+        # this, the orphan would resurface as `skill not available: <id>` the
+        # next time someone PATCHed an Agent that used to reference it.
+        self._cascade_strip_skill_ref(skill_id, user_id=user_id)
         self.db.commit()
         return True
+
+    def _cascade_strip_skill_ref(self, skill_id: str, *, user_id: str) -> None:
+        """Remove a deleted skill's id from any Agent owned by this user that
+        still references it. Hidden / public skills are scoped per user, so the
+        cleanup is also scoped — we don't touch other users' agents.
+        """
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(NativeAgent.owner_user_id == user_id)
+            .all()
+        )
+        for agent in agents:
+            ids = list(agent.skill_ids or [])
+            if skill_id not in ids:
+                continue
+            agent.skill_ids = [s for s in ids if s != skill_id]
+            self.db.add(agent)
+
+    def agents_using_skill(self, skill_id: str, *, user_id: str) -> list[NativeAgent]:
+        """Return Agents owned by this user whose skill_ids contains the id.
+        Used by the API to populate `used_by_agent_count` and to label the
+        delete-confirmation dialog with the impacted Agents.
+        """
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(NativeAgent.owner_user_id == user_id)
+            .all()
+        )
+        return [a for a in agents if skill_id in (a.skill_ids or [])]
 
     def can_edit_skill(self, row: Skill, *, user_id: str) -> bool:
         if row.source == "bundled" or row.owner_user_id != user_id:
@@ -454,7 +487,12 @@ class NativeAgentService:
             return None
         provider_id = patch.get("provider_id", row.provider_id)
         skill_ids = patch.get("skill_ids", row.skill_ids)
-        self._validate_agent_refs(user_id=user_id, provider_id=provider_id, skill_ids=skill_ids)
+        self._validate_agent_refs(
+            user_id=user_id,
+            provider_id=provider_id,
+            skill_ids=skill_ids,
+            existing_skill_ids=list(row.skill_ids or []),
+        )
 
         for key in ("name", "description", "provider_id", "model", "instructions", "agent_md", "skill_ids", "output_contract", "runtime_config", "is_enabled"):
             if key in patch and patch[key] is not None:
@@ -476,9 +514,42 @@ class NativeAgentService:
         row = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
         if row is None:
             return False
-        self.db.delete(row)
+        self._delete_agent_row(row)
         self.db.commit()
         return True
+
+    def _delete_agent_row(self, row: NativeAgent) -> None:
+        """Delete a NativeAgent and its dependent rows.
+
+        NativeAgentSkillInstall has a non-cascading FK to native_agents, so
+        without manual cleanup the agent delete fails on FK constraint
+        (or leaves orphan installs). This helper centralizes the cleanup
+        so both `delete_agent` and provider-cascade go through one path.
+        Caller is responsible for committing.
+        """
+        (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(NativeAgentSkillInstall.agent_id == row.id)
+            .delete(synchronize_session=False)
+        )
+        self.db.delete(row)
+
+    def delete_agents_for_provider(self, provider_id: str, *, user_id: str) -> int:
+        """Delete every NativeAgent owned by `user_id` that points to
+        `provider_id`. Returns the count. Used by ProviderService.delete to
+        cascade clean up; caller commits.
+        """
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(
+                NativeAgent.provider_id == provider_id,
+                NativeAgent.owner_user_id == user_id,
+            )
+            .all()
+        )
+        for agent in agents:
+            self._delete_agent_row(agent)
+        return len(agents)
 
     def list_agent_skill_installs(self, agent_id: str, *, project_id: str, user_id: str) -> list[NativeAgentSkillInstall]:
         agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
@@ -850,13 +921,27 @@ class NativeAgentService:
         self.db.add(agent)
         return installed_rows
 
-    def _validate_agent_refs(self, *, user_id: str, provider_id: str, skill_ids: list[str]) -> None:
+    def _validate_agent_refs(
+        self,
+        *,
+        user_id: str,
+        provider_id: str,
+        skill_ids: list[str],
+        existing_skill_ids: list[str] | None = None,
+    ) -> None:
         provider = self.db.get(Provider, provider_id) if provider_id else None
         if provider is None or provider.user_id != user_id:
             raise ValueError("provider not found")
         if provider.kind != "native":
             raise ValueError("provider is not native")
+        # When updating, only newly-added skill ids need to be reachable. An
+        # already-bound skill that has since become unreachable (deleted from
+        # the marketplace, hidden, ownership changed) shouldn't block an
+        # unrelated PATCH — the user can scrub it later by editing skill_ids.
+        existing = set(str(s) for s in (existing_skill_ids or []))
         for sid in skill_ids:
+            if str(sid) in existing:
+                continue
             if self.get_skill(str(sid), user_id=user_id) is None:
                 raise ValueError(f"skill not available: {sid}")
 

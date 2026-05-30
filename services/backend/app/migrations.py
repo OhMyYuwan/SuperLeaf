@@ -62,6 +62,7 @@ def run_migrations(engine: Engine) -> None:
         _rebuild_native_mcp_servers_table(conn)
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
+        _add_conversation_user_renamed(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -490,3 +491,20 @@ def _add_native_mcp_health_columns(conn) -> None:
     for column, ddl in additions.items():
         if not _column_exists(conn, "native_mcp_servers", column):
             conn.execute(text(f"ALTER TABLE native_mcp_servers ADD COLUMN {column} {ddl}"))
+
+
+def _add_conversation_user_renamed(conn) -> None:
+    if not _table_exists(conn, "conversations"):
+        return
+    if not _column_exists(conn, "conversations", "user_renamed"):
+        conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN user_renamed BOOLEAN DEFAULT 0")
+        )
+    if not _column_exists(conn, "conversations", "is_pinned"):
+        conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN is_pinned BOOLEAN DEFAULT 0")
+        )
+    if not _column_exists(conn, "conversations", "sort_index"):
+        conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN sort_index FLOAT DEFAULT NULL")
+        )

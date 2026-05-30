@@ -9,8 +9,23 @@
  * Conversation list is shown in a dropdown menu when clicking the history button.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo, Fragment } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import './discussion.css'
 import {
   MessageSquare,
@@ -21,8 +36,18 @@ import {
   History,
   Check,
   X,
+  Pencil,
+  Pin,
+  PinOff,
+  Lock,
+  Unlock,
+  GripVertical,
+  FileEdit,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
+import type { ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
@@ -31,6 +56,7 @@ import type { CachedWorkflow, Conversation, Message } from '../../services/backe
 import type { Selection } from '../../types/editor'
 import {
   parseMentions,
+  segmentText,
   stripMentions,
   flattenFileCandidates,
   sortFilesCurrentFirst,
@@ -62,8 +88,16 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const streaming = useConversationStore((s) => s.streaming)
   const streamingDelta = useConversationStore((s) => s.streamingDelta)
   const error = useConversationStore((s) => s.error)
+  const proposalsByConv = useConversationStore((s) => s.proposals)
+  const acceptProposal = useConversationStore((s) => s.acceptProposal)
+  const rejectProposal = useConversationStore((s) => s.rejectProposal)
   const loadConversations = useConversationStore((s) => s.loadConversations)
   const createConversation = useConversationStore((s) => s.createConversation)
+  const renameConversation = useConversationStore((s) => s.renameConversation)
+  const togglePinConversation = useConversationStore((s) => s.togglePinConversation)
+  const pinAtCurrentPosition = useConversationStore((s) => s.pinAtCurrentPosition)
+  const releaseFixedPosition = useConversationStore((s) => s.releaseFixedPosition)
+  const reorderConversation = useConversationStore((s) => s.reorderConversation)
   const deleteConversation = useConversationStore((s) => s.deleteConversation)
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
@@ -79,7 +113,15 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     scopeKey: string
     id: string
   } | null>(null)
-  const [inputText, setInputText] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameText, setRenameText] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  // Per-proposal collapsed state. New cards default to expanded; a user
+  // composing a new message collapses every existing card so the chat tail
+  // stays readable.
+  const [collapsedProposals, setCollapsedProposals] = useState<
+    Record<string, boolean>
+  >({})
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
@@ -124,13 +166,6 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     [selectedAgentId, workflows],
   )
   const conversationScopeKey = `${documentId ?? ''}::${validSelectedAgentId ?? ''}`
-
-  // Files the user has @-mentioned in the current draft (for chip row preview).
-  const pendingFileMentions = useMemo(() => {
-    if (!inputText.trim()) return [] as FileCandidate[]
-    const mentions = parseMentions(inputText, allCandidates)
-    return uniqueMentionedFiles(mentions)
-  }, [inputText, allCandidates])
 
   // Load conversations when document or agent changes.
   useEffect(() => {
@@ -180,12 +215,79 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     }
   }
 
-  const handleSend = async () => {
-    const rawText = inputText.trim()
+  const handleStartRename = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRenamingId(conv.id)
+    setRenameText(conv.title || '')
+  }
+
+  const handleCommitRename = async (id: string) => {
+    const trimmed = renameText.trim()
+    if (trimmed) {
+      await renameConversation(id, trimmed)
+    }
+    setRenamingId(null)
+  }
+
+  const handleCancelRename = () => {
+    setRenamingId(null)
+  }
+
+  // Long-press to drag (250ms) so a normal click still selects/opens the conversation.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
+  )
+
+  const handleTogglePin = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    void togglePinConversation(conv.id, !conv.is_pinned)
+  }
+
+  const handleToggleFixed = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (conv.sort_index !== null) {
+      void releaseFixedPosition(conv.id)
+    } else {
+      // Snapshot current updated_at as the fixed sort key.
+      void pinAtCurrentPosition(conv.id, timestampValue(conv.updated_at))
+    }
+  }
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const list = filteredConversations
+    const oldIdx = list.findIndex((c) => c.id === active.id)
+    const newIdx = list.findIndex((c) => c.id === over.id)
+    if (oldIdx === -1 || newIdx === -1) return
+    const reordered = arrayMove(list, oldIdx, newIdx)
+    const moved = reordered[newIdx]
+    // Pin group is preserved: cross-group drags fall back to entering the group of the drop target.
+    const targetGroupPinned = list[newIdx].is_pinned
+    // Compute fractional sort_index between the two neighbours within the same group.
+    const sameGroup = (c: Conversation) => c.is_pinned === targetGroupPinned
+    const groupItems = reordered.filter(sameGroup)
+    const groupPos = groupItems.findIndex((c) => c.id === moved.id)
+    const above = groupItems[groupPos - 1]
+    const below = groupItems[groupPos + 1]
+    const aboveKey = above ? (above.sort_index ?? timestampValue(above.updated_at)) : null
+    const belowKey = below ? (below.sort_index ?? timestampValue(below.updated_at)) : null
+    let nextIndex: number
+    if (aboveKey === null && belowKey !== null) nextIndex = belowKey + 1
+    else if (aboveKey !== null && belowKey === null) nextIndex = aboveKey - 1
+    else if (aboveKey !== null && belowKey !== null) nextIndex = (aboveKey + belowKey) / 2
+    else nextIndex = timestampValue(moved.updated_at)
+    void reorderConversation(moved.id, nextIndex, targetGroupPinned)
+  }
+
+  const handleSend = useCallback(async (rawText: string) => {
     if (!rawText || !effectiveConversationId) return
 
     const mentions = parseMentions(rawText, allCandidates)
-    const cleanedText = stripMentions(rawText, mentions) || rawText
+    // Keep the raw mention markers in the message body so the bubble can
+    // render them with the same colored highlight the input box uses. The
+    // backend gets attached_files via inputs separately, so the markers in
+    // the text are purely a human-readable trace of what the user invoked.
     const mentionedFiles = uniqueMentionedFiles(mentions)
     const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
     const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
@@ -193,12 +295,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         console.warn('[DiscussionTab] failed to fetch file', file.path),
     })
 
-    setInputText('')
-
-    // Build selection + attached-file context once; reused by both the agent
-    // send path and any workflow dispatch.
     const inputs: Record<string, unknown> = {}
-    const body: Parameters<typeof sendMessage>[1] = { content: cleanedText }
+    const body: Parameters<typeof sendMessage>[1] = { content: rawText }
     if (activeSelection && activeSelection.to > activeSelection.from) {
       body.range_start = activeSelection.from
       body.range_end = activeSelection.to
@@ -217,12 +315,12 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       body.inputs = inputs
     }
 
-    // If the user only @-mentioned workflows (no fresh agent question),
-    // dispatch workflow(s) without routing through sendMessage. Otherwise
-    // the Agent picker path runs normally AND any @workflow mentions fan out.
     await sendMessage(effectiveConversationId, body)
 
     if (mentionedWorkflows.length > 0 && documentId) {
+      // Workflow dispatch still uses a clean query (no @markers), since the
+      // workflow runner treats the query as a literal instruction.
+      const cleanedQuery = stripMentions(rawText, mentions) || rawText
       await Promise.all(
         mentionedWorkflows.map((wf) =>
           dispatchWorkflowToConversation({
@@ -231,31 +329,76 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
             documentId,
             selection: activeSelection,
             attachedFiles,
-            query: cleanedText,
+            query: cleanedQuery,
             executeDefinition,
             injectMessage,
           }),
         ),
       )
     }
-  }
-
-  const removeFileMention = (fileId: string) => {
-    const mentions = parseMentions(inputText, allCandidates)
-    // Walk in reverse so offsets stay valid as we delete.
-    const targets = [...mentions]
-      .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
-      .sort((a, b) => b.start - a.start)
-    let next = inputText
-    for (const m of targets) {
-      next = next.slice(0, m.start) + next.slice(m.end)
-    }
-    setInputText(next.replace(/\s{2,}/g, ' '))
-  }
+  }, [effectiveConversationId, allCandidates, activeSelection, activeDocFormat, sendMessage, documentId, executeDefinition, injectMessage])
 
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
   const delta = effectiveConversationId ? streamingDelta[effectiveConversationId] ?? '' : ''
+  const activeProposals = effectiveConversationId
+    ? proposalsByConv[effectiveConversationId] ?? []
+    : []
+  // Group proposals by their parent agent message. Proposals that arrived
+  // mid-stream have message_id === '' and live under the streaming bubble
+  // until ylw.msg.finished promotes them to the new message id.
+  const proposalsByMessage = useMemo(() => {
+    const map = new Map<string, ProposalEntry[]>()
+    for (const p of activeProposals) {
+      const list = map.get(p.message_id)
+      if (list) list.push(p)
+      else map.set(p.message_id, [p])
+    }
+    return map
+  }, [activeProposals])
+  const streamingProposals = proposalsByMessage.get('') ?? []
+  const handleAcceptProposal = useCallback(
+    async (proposalId: string) => {
+      if (!effectiveConversationId) return
+      const result = await acceptProposal(effectiveConversationId, proposalId)
+      if (result.stale) {
+        // Surface staleness inline via the card's status; nothing else to do.
+      }
+    },
+    [effectiveConversationId, acceptProposal],
+  )
+  const handleRejectProposal = useCallback(
+    (proposalId: string) => {
+      if (!effectiveConversationId) return
+      rejectProposal(effectiveConversationId, proposalId)
+    },
+    [effectiveConversationId, rejectProposal],
+  )
+  const handleToggleProposalCollapsed = useCallback((proposalId: string) => {
+    setCollapsedProposals((prev) => ({
+      ...prev,
+      [proposalId]: !prev[proposalId],
+    }))
+  }, [])
+  // Fold every visible card the moment the user starts composing again. We
+  // keep the cards on screen so the audit trail stays intact, but hide the
+  // diff body so the conversation tail feels uncluttered.
+  const handleComposerActivity = useCallback(() => {
+    if (!effectiveConversationId) return
+    const list = proposalsByConv[effectiveConversationId] ?? []
+    if (list.length === 0) return
+    setCollapsedProposals((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const p of list) {
+        if (!next[p.proposal_id]) {
+          next[p.proposal_id] = true
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [effectiveConversationId, proposalsByConv])
   const activeConversation = effectiveConversationId
     ? conversations[effectiveConversationId]
     : null
@@ -314,7 +457,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           </select>
         </label>
         <div className="discussion-header-actions">
-          <DropdownMenu.Root>
+          <DropdownMenu.Root open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenu.Trigger asChild>
               <button
                 className="ghost-btn small"
@@ -334,42 +477,37 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     还没有对话
                   </div>
                 )}
-                {filteredConversations.map((conv) => (
-                  <DropdownMenu.Item
-                    key={conv.id}
-                    className="conversation-dropdown-item"
-                    onSelect={() =>
-                      setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
-                    }
+                <DndContext
+                  sensors={dndSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={filteredConversations.map((c) => c.id)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    <div className="conversation-dropdown-item-content">
-                      <div className="conversation-dropdown-item-header">
-                        <MessageSquare size={12} />
-                        <span className="conversation-dropdown-title">
-                          {conv.title || '未命名对话'}
-                        </span>
-                        {conv.id === effectiveConversationId && (
-                          <Check size={12} className="active-check" />
-                        )}
-                      </div>
-                      {conv.last_message_preview && (
-                        <div className="conversation-dropdown-preview">
-                          {conv.last_message_preview}
-                        </div>
-                      )}
-                      <div className="conversation-dropdown-meta">
-                        {conv.message_count} 条 · {formatTime(conv.updated_at)}
-                      </div>
-                    </div>
-                    <button
-                      className="conversation-dropdown-delete"
-                      onClick={(e) => handleDeleteConversation(conv.id, e)}
-                      title="删除对话"
-                    >
-                      <Trash2 size={10} />
-                    </button>
-                  </DropdownMenu.Item>
-                ))}
+                    {filteredConversations.map((conv) => (
+                      <SortableConversationItem
+                        key={conv.id}
+                        conv={conv}
+                        active={conv.id === effectiveConversationId}
+                        renamingId={renamingId}
+                        renameText={renameText}
+                        onRenameTextChange={setRenameText}
+                        onSelect={() => {
+                          setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
+                          setHistoryOpen(false)
+                        }}
+                        onStartRename={handleStartRename}
+                        onCommitRename={handleCommitRename}
+                        onCancelRename={handleCancelRename}
+                        onDelete={handleDeleteConversation}
+                        onTogglePin={handleTogglePin}
+                        onToggleFixed={handleToggleFixed}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -404,14 +542,32 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           {effectiveConversationId && (
             <>
               <div className="message-stream" ref={messageStreamRef}>
-                {activeMessages.map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    message={msg}
-                    agentDisplayName={activeAgentName}
-                    onJumpToRange={onJumpToRange}
-                  />
-                ))}
+                {activeMessages.map((msg) => {
+                  const msgProposals = proposalsByMessage.get(msg.id)
+                  return (
+                    <Fragment key={msg.id}>
+                      <MessageBubble
+                        message={msg}
+                        agentDisplayName={activeAgentName}
+                        allCandidates={allCandidates}
+                        onJumpToRange={onJumpToRange}
+                      />
+                      {msgProposals?.map((proposal) => (
+                        <EditProposalCard
+                          key={proposal.proposal_id}
+                          proposal={proposal}
+                          collapsed={collapsedProposals[proposal.proposal_id] ?? false}
+                          onToggleCollapsed={() =>
+                            handleToggleProposalCollapsed(proposal.proposal_id)
+                          }
+                          onAccept={() => handleAcceptProposal(proposal.proposal_id)}
+                          onReject={() => handleRejectProposal(proposal.proposal_id)}
+                          onJumpToRange={onJumpToRange}
+                        />
+                      ))}
+                    </Fragment>
+                  )
+                })}
                 {isStreaming && delta && (
                   <div className="message-bubble agent streaming">
                     <div className="message-role">{activeAgentName}</div>
@@ -426,71 +582,31 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     </div>
                   </div>
                 )}
-              </div>
-              <div className="message-input-row">
-                {activeSelection && activeSelection.to > activeSelection.from && (
-                  <div
-                    className="discussion-selection-chip"
-                    title={activeSelection.text}
-                    onClick={() =>
-                      onJumpToRange?.({
-                        from: activeSelection.from,
-                        to: activeSelection.to,
-                      })
+                {streamingProposals.map((proposal) => (
+                  <EditProposalCard
+                    key={proposal.proposal_id}
+                    proposal={proposal}
+                    collapsed={collapsedProposals[proposal.proposal_id] ?? false}
+                    onToggleCollapsed={() =>
+                      handleToggleProposalCollapsed(proposal.proposal_id)
                     }
-                  >
-                    <span className="chip-label">选区已附带</span>
-                    <span className="chip-preview">
-                      {activeSelection.text.length > 40
-                        ? `${activeSelection.text.slice(0, 40)}…`
-                        : activeSelection.text}
-                    </span>
-                    <span className="chip-range">
-                      {activeSelection.from}–{activeSelection.to}
-                    </span>
-                  </div>
-                )}
-                {pendingFileMentions.length > 0 && (
-                  <div className="discussion-attached-chips">
-                    {pendingFileMentions.map((f) => (
-                      <div key={f.id} className="discussion-attached-chip" title={f.path}>
-                        <span className="chip-label">附件</span>
-                        <span className="chip-preview">{f.name}</span>
-                        <button
-                          className="chip-remove"
-                          title="移除该附件"
-                          onClick={() => removeFileMention(f.id)}
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <MentionInput
-                  value={inputText}
-                  onChange={setInputText}
-                  agents={agentCandidates}
-                  workflows={workflowCandidates}
-                  files={fileCandidates}
-                  placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
-                  disabled={isStreaming}
-                  rows={2}
-                  className="discussion-mention-input"
-                  menuPlacement="composer-panel"
-                  onCandidatePicked={(c) =>
-                    c.kind === 'file' ? confirmLargeFileAttachment(c) : true
-                  }
-                  onSubmit={handleSend}
-                />
-                <button
-                  className="primary-btn"
-                  onClick={handleSend}
-                  disabled={!inputText.trim() || isStreaming}
-                >
-                  <Send size={14} />
-                </button>
+                    onAccept={() => handleAcceptProposal(proposal.proposal_id)}
+                    onReject={() => handleRejectProposal(proposal.proposal_id)}
+                    onJumpToRange={onJumpToRange}
+                  />
+                ))}
               </div>
+              <DiscussionComposer
+                allCandidates={allCandidates}
+                agentCandidates={agentCandidates}
+                workflowCandidates={workflowCandidates}
+                fileCandidates={fileCandidates}
+                activeSelection={activeSelection}
+                isStreaming={isStreaming}
+                onSend={handleSend}
+                onJumpToRange={onJumpToRange}
+                onUserActivity={handleComposerActivity}
+              />
             </>
           )}
         </div>
@@ -502,10 +618,284 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 interface MessageBubbleProps {
   message: Message
   agentDisplayName: string
+  allCandidates: MentionCandidate[]
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
-function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubbleProps) {
+interface DiscussionComposerProps {
+  allCandidates: MentionCandidate[]
+  agentCandidates: AgentCandidate[]
+  workflowCandidates: WorkflowCandidate[]
+  fileCandidates: FileCandidate[]
+  activeSelection: Selection | null
+  isStreaming: boolean
+  onSend: (rawText: string) => void
+  onJumpToRange?: (range: { from: number; to: number }) => void
+  /**
+   * Fired the first keystroke after the input has been empty / a send has
+   * cleared it. Used to fold any open proposal cards once the user starts
+   * composing the next message.
+   */
+  onUserActivity?: () => void
+}
+
+const DiscussionComposer = memo(function DiscussionComposer({
+  allCandidates,
+  agentCandidates,
+  workflowCandidates,
+  fileCandidates,
+  activeSelection,
+  isStreaming,
+  onSend,
+  onJumpToRange,
+  onUserActivity,
+}: DiscussionComposerProps) {
+  const [inputText, setInputText] = useState('')
+  const handleInputChange = useCallback(
+    (next: string) => {
+      setInputText((prev) => {
+        if (prev.length === 0 && next.length > 0) {
+          onUserActivity?.()
+        }
+        return next
+      })
+    },
+    [onUserActivity],
+  )
+
+  const pendingFileMentions = useMemo(() => {
+    if (!inputText.includes('@')) return [] as FileCandidate[]
+    const mentions = parseMentions(inputText, allCandidates)
+    return uniqueMentionedFiles(mentions)
+  }, [inputText, allCandidates])
+
+  const removeFileMention = (fileId: string) => {
+    const mentions = parseMentions(inputText, allCandidates)
+    const targets = [...mentions]
+      .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
+      .sort((a, b) => b.start - a.start)
+    let next = inputText
+    for (const m of targets) {
+      next = next.slice(0, m.start) + next.slice(m.end)
+    }
+    setInputText(next.replace(/\s{2,}/g, ' '))
+  }
+
+  const handleSubmit = () => {
+    const raw = inputText.trim()
+    if (!raw) return
+    onSend(raw)
+    setInputText('')
+  }
+
+  return (
+    <div className="message-input-row">
+      {activeSelection && activeSelection.to > activeSelection.from && (
+        <div
+          className="discussion-selection-chip"
+          title={activeSelection.text}
+          onClick={() =>
+            onJumpToRange?.({ from: activeSelection.from, to: activeSelection.to })
+          }
+        >
+          <span className="chip-label">选区已附带</span>
+          <span className="chip-preview">
+            {activeSelection.text.length > 40
+              ? `${activeSelection.text.slice(0, 40)}…`
+              : activeSelection.text}
+          </span>
+          <span className="chip-range">
+            {activeSelection.from}–{activeSelection.to}
+          </span>
+        </div>
+      )}
+      {pendingFileMentions.length > 0 && (
+        <div className="discussion-attached-chips">
+          {pendingFileMentions.map((f) => (
+            <div key={f.id} className="discussion-attached-chip" title={f.path}>
+              <span className="chip-label">附件</span>
+              <span className="chip-preview">{f.name}</span>
+              <button
+                className="chip-remove"
+                title="移除该附件"
+                onClick={() => removeFileMention(f.id)}
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <MentionInput
+        value={inputText}
+        onChange={handleInputChange}
+        agents={agentCandidates}
+        workflows={workflowCandidates}
+        files={fileCandidates}
+        placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
+        disabled={isStreaming}
+        autoResize
+        className="discussion-mention-input"
+        menuPlacement="composer-panel"
+        onCandidatePicked={(c) =>
+          c.kind === 'file' ? confirmLargeFileAttachment(c) : true
+        }
+        onSubmit={handleSubmit}
+      />
+      <button
+        className="primary-btn"
+        onClick={handleSubmit}
+        disabled={!inputText.trim() || isStreaming}
+      >
+        <Send size={14} />
+      </button>
+    </div>
+  )
+})
+
+interface SortableConversationItemProps {
+  conv: Conversation
+  active: boolean
+  renamingId: string | null
+  renameText: string
+  onRenameTextChange: (next: string) => void
+  onSelect: () => void
+  onStartRename: (conv: Conversation, e: React.MouseEvent) => void
+  onCommitRename: (id: string) => void
+  onCancelRename: () => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  onTogglePin: (conv: Conversation, e: React.MouseEvent) => void
+  onToggleFixed: (conv: Conversation, e: React.MouseEvent) => void
+}
+
+function SortableConversationItem({
+  conv,
+  active,
+  renamingId,
+  renameText,
+  onRenameTextChange,
+  onSelect,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onDelete,
+  onTogglePin,
+  onToggleFixed,
+}: SortableConversationItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: conv.id })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  const isRenaming = renamingId === conv.id
+  const isFixed = conv.sort_index !== null
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`conversation-dropdown-item ${active ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${conv.is_pinned ? 'pinned' : ''}`}
+      onClick={() => {
+        if (isRenaming) return
+        onSelect()
+      }}
+    >
+      <button
+        className="conversation-drag-handle"
+        title="长按拖动调整顺序"
+        {...attributes}
+        {...listeners}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={12} />
+      </button>
+      <div className="conversation-dropdown-item-content">
+        {isRenaming ? (
+          <div className="conversation-rename-row" onClick={(e) => e.stopPropagation()}>
+            <input
+              className="conversation-rename-input"
+              value={renameText}
+              onChange={(e) => onRenameTextChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onCommitRename(conv.id) }
+                if (e.key === 'Escape') { e.preventDefault(); onCancelRename() }
+              }}
+              autoFocus
+            />
+            <button
+              className="conversation-rename-confirm"
+              onClick={() => onCommitRename(conv.id)}
+              title="确认"
+            >
+              <Check size={11} />
+            </button>
+            <button
+              className="conversation-rename-cancel"
+              onClick={onCancelRename}
+              title="取消"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="conversation-dropdown-item-header">
+              <MessageSquare size={12} />
+              <span className="conversation-dropdown-title">
+                {conv.title || '未命名对话'}
+              </span>
+              {active && <Check size={12} className="active-check" />}
+            </div>
+            {conv.last_message_preview && (
+              <div className="conversation-dropdown-preview">
+                {conv.last_message_preview}
+              </div>
+            )}
+            <div className="conversation-dropdown-meta">
+              {conv.message_count} 条 · {formatTime(conv.updated_at)}
+            </div>
+          </>
+        )}
+      </div>
+      {!isRenaming && (
+        <div className="conversation-dropdown-actions">
+          <button
+            className={`conversation-dropdown-pin ${conv.is_pinned ? 'on' : ''}`}
+            onClick={(e) => onTogglePin(conv, e)}
+            title={conv.is_pinned ? '取消置顶' : '置顶'}
+          >
+            {conv.is_pinned ? <PinOff size={10} /> : <Pin size={10} />}
+          </button>
+          <button
+            className={`conversation-dropdown-fix ${isFixed ? 'on' : ''}`}
+            onClick={(e) => onToggleFixed(conv, e)}
+            title={isFixed ? '解除固定位置' : '固定在当前位置'}
+          >
+            {isFixed ? <Unlock size={10} /> : <Lock size={10} />}
+          </button>
+          <button
+            className="conversation-dropdown-rename"
+            onClick={(e) => onStartRename(conv, e)}
+            title="重命名"
+          >
+            <Pencil size={10} />
+          </button>
+          <button
+            className="conversation-dropdown-delete"
+            onClick={(e) => onDelete(conv.id, e)}
+            title="删除对话"
+          >
+            <Trash2 size={10} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MessageBubble({ message, agentDisplayName, allCandidates, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
@@ -515,7 +905,7 @@ function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubb
           <AgentMarkdown source={message.content} className="message-content" />
         </>
       ) : message.role === 'user' ? (
-        <UserMessageContent content={message.content} />
+        <UserMessageContent content={message.content} allCandidates={allCandidates} />
       ) : (
         <div className="message-content">{message.content}</div>
       )}
@@ -534,13 +924,44 @@ function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubb
   )
 }
 
-function UserMessageContent({ content }: { content: string }) {
+function UserMessageContent({
+  content,
+  allCandidates,
+}: {
+  content: string
+  allCandidates: MentionCandidate[]
+}) {
   const [expanded, setExpanded] = useState(false)
   const preview = useMemo(() => createUserMessagePreview(content), [content])
   const collapsible = preview !== content
+  // Render with the same colored mention chips the input box uses, so the
+  // bubble keeps the visual identity of what the user actually typed.
+  const renderText = useCallback(
+    (text: string) => {
+      if (!text.includes('@')) return text
+      const mentions = parseMentions(text, allCandidates)
+      if (mentions.length === 0) return text
+      const segments = segmentText(text, mentions)
+      return segments.map((seg, i) => {
+        if (seg.type === 'text') return <Fragment key={i}>{seg.content}</Fragment>
+        const cls =
+          seg.candidate.kind === 'file'
+            ? 'mention-tag mention-tag-file'
+            : seg.candidate.kind === 'workflow'
+              ? 'mention-tag mention-tag-workflow'
+              : 'mention-tag'
+        return (
+          <span key={i} className={cls}>
+            {seg.raw}
+          </span>
+        )
+      })
+    },
+    [allCandidates],
+  )
 
   if (!collapsible) {
-    return <div className="message-content">{content}</div>
+    return <div className="message-content">{renderText(content)}</div>
   }
 
   return (
@@ -554,7 +975,7 @@ function UserMessageContent({ content }: { content: string }) {
       aria-label={expanded ? '收起完整输入' : '展开完整输入'}
       title={expanded ? '收起完整输入' : '展开完整输入'}
     >
-      {expanded ? content : preview}
+      {renderText(expanded ? content : preview)}
     </button>
   )
 }
@@ -574,6 +995,122 @@ function createUserMessagePreview(content: string): string {
   return preview === content ? content : `${preview}…`
 }
 
+interface EditProposalCardProps {
+  proposal: ProposalEntry
+  collapsed: boolean
+  onToggleCollapsed: () => void
+  onAccept: () => void
+  onReject: () => void
+  onJumpToRange?: (range: { from: number; to: number }) => void
+}
+
+function EditProposalCard({
+  proposal,
+  collapsed,
+  onToggleCollapsed,
+  onAccept,
+  onReject,
+  onJumpToRange,
+}: EditProposalCardProps) {
+  const isPending = proposal.status === 'pending'
+  const statusLabel = (() => {
+    switch (proposal.status) {
+      case 'accepted':
+        return '已采纳'
+      case 'rejected':
+        return '已拒绝'
+      case 'stale':
+        return '原文已变化'
+      default:
+        return '待确认'
+    }
+  })()
+  const summary =
+    proposal.reason ||
+    proposal.new_text.slice(0, 40) ||
+    proposal.original_text.slice(0, 40) ||
+    '空替换'
+  const handleJump = () => {
+    if (!onJumpToRange) return
+    // Use the literal range from the proposal — RelativePosition resolution
+    // happens at accept-time. Jumping is only a navigation hint, so an
+    // off-by-a-few from concurrent edits is acceptable.
+    onJumpToRange({ from: proposal.range_start, to: proposal.range_end })
+  }
+  return (
+    <div
+      className={`edit-proposal-card status-${proposal.status} ${
+        collapsed ? 'is-collapsed' : 'is-expanded'
+      }`}
+    >
+      <div className="edit-proposal-header">
+        <button
+          type="button"
+          className="edit-proposal-toggle"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          title={collapsed ? '展开提案详情' : '折叠提案详情'}
+        >
+          <span className="edit-proposal-chevron">
+            {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="edit-proposal-jump"
+          onClick={handleJump}
+          title="跳转到原文位置"
+        >
+          <FileEdit size={13} />
+          <span className="edit-proposal-title">Agent 提议修改</span>
+        </button>
+        <span className={`edit-proposal-status ${proposal.status}`}>{statusLabel}</span>
+      </div>
+      {collapsed ? (
+        <div className="edit-proposal-summary">{summary}</div>
+      ) : (
+        <>
+          {proposal.reason && (
+            <div className="edit-proposal-reason">{proposal.reason}</div>
+          )}
+          <div className="edit-proposal-diff">
+            {proposal.original_text && (
+              <div className="edit-proposal-diff-row removed">
+                <span className="diff-marker">−</span>
+                <span className="diff-text">{proposal.original_text}</span>
+              </div>
+            )}
+            {proposal.new_text && (
+              <div className="edit-proposal-diff-row added">
+                <span className="diff-marker">+</span>
+                <span className="diff-text">{proposal.new_text}</span>
+              </div>
+            )}
+            {!proposal.original_text && !proposal.new_text && (
+              <div className="edit-proposal-diff-empty">空替换</div>
+            )}
+          </div>
+          {proposal.status === 'stale' && (
+            <div className="edit-proposal-stale-hint">
+              原文在你接受前已经变化，自动应用会覆盖你的改动。请人工核对后再处理。
+            </div>
+          )}
+          {isPending && (
+            <div className="edit-proposal-actions">
+              <button className="edit-proposal-accept" onClick={onAccept}>
+                <Check size={12} /> 接受
+              </button>
+              <button className="edit-proposal-reject" onClick={onReject}>
+                <X size={12} /> 拒绝
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso)
   const now = new Date()
@@ -583,8 +1120,11 @@ function formatTime(iso: string): string {
 }
 
 function compareConversationsNewestFirst(a: Conversation, b: Conversation): number {
+  if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
+  const ka = a.sort_index ?? timestampValue(a.updated_at)
+  const kb = b.sort_index ?? timestampValue(b.updated_at)
   return (
-    timestampValue(b.updated_at) - timestampValue(a.updated_at) ||
+    kb - ka ||
     timestampValue(b.created_at) - timestampValue(a.created_at) ||
     b.id.localeCompare(a.id)
   )

@@ -20,11 +20,21 @@ import {
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
 import { applyWriteOutput, readCurrentText } from './writingStore'
+import { useCollaborationStore } from './collaborationStore'
+import * as Y from 'yjs'
 
 export interface ProposalEntry extends EditProposal {
   conversation_id: string
   status: 'pending' | 'accepted' | 'rejected' | 'stale'
   received_at: string
+  /**
+   * Yjs RelativePositions captured the moment the proposal arrived in the
+   * client. They follow the underlying characters as concurrent peers insert
+   * or delete around them, so accepting later still hits the right spot.
+   * Only set when the doc is in collab mode at proposal-receipt time.
+   */
+  rel_pos_start?: Y.RelativePosition
+  rel_pos_end?: Y.RelativePosition
 }
 
 interface ConversationState {
@@ -276,13 +286,36 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (!proposal || proposal.status !== 'pending') {
       return { ok: false }
     }
-    // Stale check: original_text must still match the live document range.
-    // If the user edited the doc between the proposal arriving and accepting,
-    // applying blindly would clobber their changes.
-    const live = readCurrentText(proposal.document_id, {
-      from: proposal.range_start,
-      to: proposal.range_end,
-    })
+    // Resolve anchors first: if the doc is in collab mode and we captured
+    // RelativePositions on receipt, they tell us where those characters live
+    // *now*, after any concurrent inserts/deletes. Falls back to the original
+    // offsets when no anchor exists (non-collab mode at receipt time).
+    let from = proposal.range_start
+    let to = proposal.range_end
+    const collab = useCollaborationStore.getState()
+    const inCollab =
+      !!collab.provider && collab.currentDocId === proposal.document_id
+    if (inCollab && proposal.rel_pos_start && proposal.rel_pos_end) {
+      const ydoc = collab.provider!.doc
+      const absStart = Y.createAbsolutePositionFromRelativePosition(
+        proposal.rel_pos_start,
+        ydoc,
+      )
+      const absEnd = Y.createAbsolutePositionFromRelativePosition(
+        proposal.rel_pos_end,
+        ydoc,
+      )
+      // Anchors can return null if the underlying type was deleted entirely;
+      // in that case we fall back to the literal offsets, which will then
+      // fail the content check below and surface as stale.
+      if (absStart && absEnd) {
+        from = absStart.index
+        to = absEnd.index
+      }
+    }
+    // Content check: even with anchors, the *interior* of the range may have
+    // been edited. Compare the current slice to the original_text snapshot.
+    const live = readCurrentText(proposal.document_id, { from, to })
     if (live !== proposal.original_text) {
       set((s) => ({
         proposals: {
@@ -297,7 +330,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     applyWriteOutput({
       docId: proposal.document_id,
       mode: 'replace-range',
-      range: { from: proposal.range_start, to: proposal.range_end },
+      range: { from, to },
       text: proposal.new_text,
     })
     set((s) => ({
@@ -317,8 +350,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           source: 'agent_propose_doc_edit',
           proposal_id: proposal.proposal_id,
           conversation_id: conversationId,
-          range_start: proposal.range_start,
-          range_end: proposal.range_end,
+          range_start: from,
+          range_end: to,
+          original_range_start: proposal.range_start,
+          original_range_end: proposal.range_end,
           reason: proposal.reason,
         },
       })
@@ -452,17 +487,42 @@ function handleMessageEvent(
   } else if (evt.event === 'ylw.msg.edit_proposal') {
     const data = evt.data as Partial<EditProposal> | null
     if (!data || !data.proposal_id || !data.document_id) return
+    const documentId = String(data.document_id)
+    const rangeStart = Number(data.range_start ?? 0)
+    const rangeEnd = Number(data.range_end ?? 0)
+    let originalText = String(data.original_text ?? '')
+    let relPosStart: Y.RelativePosition | undefined
+    let relPosEnd: Y.RelativePosition | undefined
+
+    // If the doc is in collab mode right now, replace the backend snapshot
+    // with the live yText slice (it can be ahead of the DB by hundreds of ms)
+    // and pin two RelativePositions so the offsets follow concurrent edits.
+    const collab = useCollaborationStore.getState()
+    if (collab.provider && collab.currentDocId === documentId) {
+      const yText = collab.provider.yText
+      const liveLen = yText.length
+      const safeStart = Math.max(0, Math.min(rangeStart, liveLen))
+      const safeEnd = Math.max(safeStart, Math.min(rangeEnd, liveLen))
+      originalText = yText.toString().slice(safeStart, safeEnd)
+      // assoc -1 / +1: start sticks to the char to its right, end to the char
+      // to its left, so insertions at the boundaries don't widen the range.
+      relPosStart = Y.createRelativePositionFromTypeIndex(yText, safeStart, -1)
+      relPosEnd = Y.createRelativePositionFromTypeIndex(yText, safeEnd, 1)
+    }
+
     const entry: ProposalEntry = {
       proposal_id: String(data.proposal_id),
-      document_id: String(data.document_id),
-      range_start: Number(data.range_start ?? 0),
-      range_end: Number(data.range_end ?? 0),
-      original_text: String(data.original_text ?? ''),
+      document_id: documentId,
+      range_start: rangeStart,
+      range_end: rangeEnd,
+      original_text: originalText,
       new_text: String(data.new_text ?? ''),
       reason: String(data.reason ?? ''),
       conversation_id: conversationId,
       status: 'pending',
       received_at: new Date().toISOString(),
+      rel_pos_start: relPosStart,
+      rel_pos_end: relPosEnd,
     }
     set((s) => {
       const existing = s.proposals[conversationId] ?? []

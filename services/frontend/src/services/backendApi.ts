@@ -275,9 +275,16 @@ export interface Skill {
   version: number
   tags: string[]
   can_edit: boolean
+  used_by_agent_count: number
   created_at: string
   updated_at: string
   published_at: string | null
+}
+
+export interface SkillUsage {
+  agent_id: string
+  agent_name: string
+  project_id: string
 }
 
 export interface SkillMarketplaceEntry {
@@ -636,6 +643,8 @@ export const nativeAgentApi = {
       }),
     remove: (id: string) =>
       http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    usage: (id: string) =>
+      http<SkillUsage[]>(`/api/native-agent/skills/${encodeURIComponent(id)}/usage`),
   },
   marketplace: {
     list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),

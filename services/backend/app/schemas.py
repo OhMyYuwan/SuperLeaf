@@ -161,9 +161,18 @@ class SkillOut(BaseModel):
     updated_at: datetime
     published_at: datetime | None
     can_edit: bool = False
+    used_by_agent_count: int = 0
 
     class Config:
         from_attributes = True
+
+
+class SkillUsageOut(BaseModel):
+    """Per-agent reference to a skill, used by the delete-confirmation UI to
+    name which Agents will lose this skill."""
+    agent_id: str
+    agent_name: str
+    project_id: str
 
 
 class SkillMarketplaceEntryOut(BaseModel):

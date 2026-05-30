@@ -444,7 +444,6 @@ def _extract_outputs(events: list[dict], provider_kind: str, accumulated_text: l
             "text": text,
             "outputs": {"text": text},
             "model": last.get("model", ""),
-            "raw": events[-20:],
         }
 
     final = next((e for e in reversed(events) if e.get("event") == "workflow_finished"), None)
@@ -532,7 +531,6 @@ def _run_native_agent(
         }
 
         accumulated_text: list[str] = []
-        raw_events: list[dict] = []
         try:
             attached_files = normalize_attached_files(body.inputs.get("attached_files"))
             if attached_files:
@@ -572,8 +570,6 @@ def _run_native_agent(
             )
             async for evt in runner.stream(payload):
                 data = evt.get("data") or {}
-                if evt.get("event") == "native.agent.raw" and isinstance(data, dict):
-                    raw_events.append(data)
                 if evt.get("event") == "native.agent.output.delta":
                     delta = data.get("delta") if isinstance(data, dict) else ""
                     if isinstance(delta, str):
@@ -593,7 +589,6 @@ def _run_native_agent(
             "outputs": {"text": text},
             "model": agent.model,
             "native_agent_id": agent.id,
-            "raw": raw_events[-20:],
         }
         run.status = "completed"
         run.outputs = outputs

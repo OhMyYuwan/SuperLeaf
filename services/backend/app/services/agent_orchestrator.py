@@ -391,13 +391,18 @@ class WorkflowOrchestrator:
                     # Start execution
                     task = asyncio.create_task(self._execute_node(ctx, node_id))
                     pending_tasks[node_id] = task
-                    yield {
-                        "event": "node.started",
-                        "data": {
-                            "node_id": node_id,
-                            "input": node.inputs,
-                        },
-                    }
+                    # Loop containers don't surface as their own row in the
+                    # test panel — their per-round per-child events convey
+                    # everything the user needs to see.
+                    if node.node_type != "loop":
+                        yield {
+                            "event": "node.started",
+                            "data": {
+                                "node_id": node_id,
+                                "node_type": node.node_type,
+                                "input": node.inputs,
+                            },
+                        }
 
                 ready_nodes = []
 
@@ -423,26 +428,45 @@ class WorkflowOrchestrator:
                             completed[completed_node_id] = output
                             ctx.all_outputs.append(output)
 
-                            yield {
-                                "event": "node.completed",
-                                "data": {
-                                    "node_id": completed_node_id,
-                                    "input": ctx.nodes[completed_node_id].inputs,
-                                    "output": output,
-                                },
-                            }
                             if ctx.nodes[completed_node_id].node_type == "loop":
-                                for child_id in _loop_child_ids(ctx, completed_node_id):
-                                    child = ctx.nodes[child_id]
-                                    if child.status == "completed":
+                                # Fan out per-round per-child events using the
+                                # snapshots captured in _execute_subgraph_once.
+                                # Each round's input/output is preserved (not
+                                # overwritten by later rounds), so the test UI
+                                # can show every iteration of every child.
+                                # Note: we intentionally do NOT yield the
+                                # loop's own node.completed above — its
+                                # aggregate output is not actionable for the
+                                # user, only the children are.
+                                round_traces = output.get("round_traces") or []
+                                for round_idx, traces in enumerate(round_traces, start=1):
+                                    if not isinstance(traces, dict):
+                                        continue
+                                    for child_id, trace in traces.items():
+                                        if not isinstance(trace, dict):
+                                            continue
+                                        child = ctx.nodes.get(child_id)
                                         yield {
                                             "event": "node.completed",
                                             "data": {
                                                 "node_id": child_id,
-                                                "input": child.inputs,
-                                                "output": child.outputs,
+                                                "node_type": child.node_type if child else "agent",
+                                                "loop_id": completed_node_id,
+                                                "round": round_idx,
+                                                "input": trace.get("input", {}),
+                                                "output": trace.get("output", {}),
                                             },
                                         }
+                            else:
+                                yield {
+                                    "event": "node.completed",
+                                    "data": {
+                                        "node_id": completed_node_id,
+                                        "node_type": ctx.nodes[completed_node_id].node_type,
+                                        "input": ctx.nodes[completed_node_id].inputs,
+                                        "output": output,
+                                    },
+                                }
 
                             # Check if any dependent nodes are now ready
                             for dependent_id in dependents[completed_node_id]:
@@ -781,6 +805,7 @@ class WorkflowOrchestrator:
             entry_child_ids = [child_id for child_id in child_ids if child_id not in internal_targets]
 
         round_outputs: list[dict] = []
+        round_traces: list[dict] = []
         next_round_feedback: dict[str, dict] | None = None
         for round_num in range(1, rounds + 1):
             loop_inputs = (
@@ -793,7 +818,7 @@ class WorkflowOrchestrator:
                 for child_id in entry_child_ids
                 if loop_inputs
             }
-            outputs_this_round = await self._execute_subgraph_once(
+            outputs_this_round, traces_this_round = await self._execute_subgraph_once(
                 ctx,
                 child_nodes,
                 child_edges,
@@ -801,6 +826,7 @@ class WorkflowOrchestrator:
                 initial_inputs=initial_inputs,
             )
             round_outputs.append(outputs_this_round)
+            round_traces.append(traces_this_round)
             next_round_feedback = _select_loop_feedback(
                 outputs_this_round,
                 child_edges,
@@ -811,6 +837,10 @@ class WorkflowOrchestrator:
             "rounds": rounds,
             "last_round_outputs": round_outputs[-1] if round_outputs else {},
             "all_rounds": round_outputs,
+            # Per-round per-child input/output snapshots used by _execute_graph
+            # to fan out node.completed events. Format:
+            #   [{child_id: {input, output}}, ...]   indexed by round - 1
+            "round_traces": round_traces,
             "node_id": node_id,
         }
         node.status = "completed"
@@ -824,12 +854,18 @@ class WorkflowOrchestrator:
         sub_edges: list[dict],
         round_num: int,
         initial_inputs: dict[str, dict[str, dict]] | None = None,
-    ) -> dict[str, dict]:
-        """Run a subgraph (loop body or similar) once, returning nodeId → output.
+    ) -> tuple[dict[str, dict], dict[str, dict]]:
+        """Run a subgraph (loop body or similar) once.
+
+        Returns (outputs, traces) where:
+          - outputs: nodeId → child output (used internally for downstream wiring)
+          - traces:  nodeId → {"input": <snapshot>, "output": <output>}; the
+            input snapshot is taken right before the child runs so each round
+            captures what *that round's* child saw, not the final state.
 
         Mirrors _execute_graph's DAG scheduler but scoped to a node subset.
-        Does NOT emit outer events — each iteration is reported as one
-        node.completed at the parent loop level.
+        Does NOT emit outer events — _execute_graph fans them out per round
+        once the loop completes.
         """
         ids = {n["id"] for n in sub_nodes}
         dependencies: dict[str, list[str]] = {nid: [] for nid in ids}
@@ -842,6 +878,8 @@ class WorkflowOrchestrator:
             in_degree[tgt] += 1
 
         completed: dict[str, dict] = {}
+        traces: dict[str, dict] = {}
+        input_snapshots: dict[str, dict] = {}
         pending: dict[str, asyncio.Task] = {}
         initial_inputs = initial_inputs or {}
         ready = [nid for nid, d in in_degree.items() if d == 0]
@@ -855,6 +893,9 @@ class WorkflowOrchestrator:
                 dependency_outputs.update(initial_inputs.get(nid, {}))
                 node_ctx.inputs["dependency_outputs"] = dependency_outputs
                 node_ctx.inputs["current_round"] = round_num
+                # Deep-ish copy of inputs so the trace survives subsequent
+                # rounds overwriting node_ctx.inputs.
+                input_snapshots[nid] = _snapshot_inputs(node_ctx.inputs)
                 pending[nid] = asyncio.create_task(self._execute_node(ctx, nid))
             ready = []
 
@@ -869,15 +910,25 @@ class WorkflowOrchestrator:
                     try:
                         output = await task
                         completed[done_id] = output
+                        traces[done_id] = {
+                            "input": input_snapshots.get(done_id, {}),
+                            "output": output,
+                        }
                         for dep_of in dependents[done_id]:
                             in_degree[dep_of] -= 1
                             if in_degree[dep_of] == 0:
                                 ready.append(dep_of)
                     except Exception as e:
-                        completed[done_id] = {"error": str(e), "node_id": done_id}
+                        err_output = {"error": str(e), "node_id": done_id}
+                        completed[done_id] = err_output
+                        traces[done_id] = {
+                            "input": input_snapshots.get(done_id, {}),
+                            "output": err_output,
+                            "error": str(e),
+                        }
                     del pending[done_id]
 
-        return completed
+        return completed, traces
 
     async def _execute_agent_node(self, ctx: OrchestrationContext, node_id: str) -> dict:
         """Execute a single agent node and return its output."""
@@ -1036,7 +1087,6 @@ class WorkflowOrchestrator:
             )
         )
         accumulated_text: list[str] = []
-        raw_events: list[dict] = []
         payload = NativeRunPayload(
             document_id=ctx.document_id,
             range_start=ctx.target_range.get("from", 0),
@@ -1051,8 +1101,6 @@ class WorkflowOrchestrator:
         )
         async for evt in runner.stream(payload):
             data = evt.get("data") or {}
-            if evt.get("event") == "native.agent.raw" and isinstance(data, dict):
-                raw_events.append(data)
             if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
                 delta = data.get("delta")
                 if isinstance(delta, str):
@@ -1064,7 +1112,6 @@ class WorkflowOrchestrator:
             "agent_source": "native",
             "model": native_agent.model,
             "native_agent_id": native_agent.id,
-            "raw": raw_events[-10:],
         }
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:
@@ -1283,6 +1330,21 @@ class WorkflowOrchestrator:
 #
 # Frontend canvas serializes edges as {source, target}; older backend code used
 # {from, to}. These helpers accept both so we don't break legacy workflows.
+
+
+def _snapshot_inputs(inputs: dict) -> dict:
+    """Shallow-copy a node's inputs dict so a later round's overwrite of
+    `dependency_outputs` doesn't mutate the trace we already captured.
+
+    Goes one level deep on `dependency_outputs` because that's the field the
+    loop scheduler rewrites between rounds; the upstream output dicts inside
+    it are themselves immutable enough (each round produces fresh dicts).
+    """
+    out = dict(inputs)
+    dep = out.get("dependency_outputs")
+    if isinstance(dep, dict):
+        out["dependency_outputs"] = dict(dep)
+    return out
 
 
 def _edge_source(edge: dict) -> str:

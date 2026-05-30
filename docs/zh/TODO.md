@@ -41,3 +41,26 @@ nav_order: 99
 - 决定 Agent peer 的生命周期：常驻 vs 按需建链
 - `propose_doc_edit` 的 RelativePosition 序列化与前端解析的契约
 
+## 讨论区 Agent：把 propose_doc_edit 重做成"创建批注"
+
+**背景**：当前 `propose_doc_edit` 工具在讨论区维护一套独立的提案数据流——SSE 临时事件 + 前端 in-memory `proposals` 字典 + `EditProposalCard` UI。批注系统其实已经把"范围 + 提议"做得相当完整：DB 持久化、`rangeTracker.mapRange` 自动跟随文档变化、CodeMirror 装饰高亮、点击跳转、accept/reject + 审计、`POST /api/annotations/items` 创建 API、event bus 多端同步、人工评价数据累积。
+
+把 Agent 提议重做成 `kind=suggestion` 的批注后，能够：
+- 与人工建立的 suggestion 完全等价，进入批注面板的过滤/聚类/评价管线
+- 编辑器里有装饰高亮（`ylw-ann-suggestion`），用户能直接在原文位置看到 Agent 的提议
+- 范围跟随用 `mapRange`（所有模式都生效），可以删除前端的 Yjs RelativePosition 锚点
+- 多设备/多标签页通过 event bus 自动同步
+- 用户的评价反馈天然累积到 annotation_evaluations，喂回训练数据闭环
+
+**改造点**：
+- 后端：`propose_doc_edit` 工具直接调 `annotation_service.upsert()` 写入 kind=suggestion 批注；SSE 仅推送 annotation_id 通知
+- 前端 store：删 `proposals` 字典；`conversationStore` 接收 annotation_id 后委托给 `annotationStore`
+- `annotationStore.accept` 增加 `applyProposed: boolean` 参数，控制接受时是否把 `proposed` 写入 yText / `documentStore`（默认仍是 git-style 仅归档，保持人工建批注的现有行为）
+- 批注卡片 UI 增加"应用并归档"按钮（仅 kind=suggestion 且有 proposed 时显示）
+- 讨论区：`EditProposalCard` 改为按 annotation_id 从 annotationStore 读，或干脆删除，让讨论区只发"我新建了一个 suggestion"的链接卡片，详情点击跳到批注面板
+
+**取舍**：
+- 改动比 [Agent 写入 第一版](#讨论区-agent让-agent-成为-yjs-peerb-方案) 那次更大，但消灭了一套并行数据流，长期更易维护
+- 需要保留兼容：现有已落库的 Operation `accept_suggestion` payload 现在带 `source: agent_propose_doc_edit` 字段，重做后这种 source 不会再出现，旧记录读取时按"如有 proposed 则视为已写入"理解
+- Yjs 锚点 + B 方案的优势是源头精度（亚秒级窗口），重做成批注后丢失这个精度，回到 `mapRange` 的 best-effort 漂移合并；多数场景够用，B 方案如做仍可在批注层之上叠加
+

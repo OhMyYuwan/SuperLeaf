@@ -626,24 +626,82 @@
   gap: 8px;
   font-size: 12.5px;
   color: #cbd5e1;
+  transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+.edit-proposal-card.is-collapsed {
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(59, 130, 246, 0.04);
+  border-color: rgba(96, 165, 250, 0.18);
+}
+.edit-proposal-card.is-expanded.status-pending {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(96, 165, 250, 0.5);
 }
 .edit-proposal-card.status-accepted {
   border-color: rgba(34, 197, 94, 0.4);
   background: rgba(34, 197, 94, 0.08);
 }
+.edit-proposal-card.status-accepted.is-collapsed {
+  background: rgba(34, 197, 94, 0.04);
+  border-color: rgba(34, 197, 94, 0.2);
+}
 .edit-proposal-card.status-rejected,
 .edit-proposal-card.status-stale {
-  opacity: 0.7;
+  opacity: 0.75;
   border-color: rgba(148, 163, 184, 0.3);
   background: rgba(148, 163, 184, 0.05);
 }
 
 .edit-proposal-header {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: 600;
+  font-size: 12.5px;
   color: #e2e8f0;
+}
+.edit-proposal-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  color: rgba(148, 163, 184, 0.7);
+  transition: all 0.12s ease;
+}
+.edit-proposal-toggle:hover {
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.12);
+}
+.edit-proposal-jump {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.edit-proposal-jump:hover {
+  background: rgba(96, 165, 250, 0.12);
+  color: #93c5fd;
+}
+.edit-proposal-chevron {
+  display: inline-flex;
+  align-items: center;
 }
 .edit-proposal-title {
   flex: 1;
@@ -669,26 +727,19 @@
   color: #fcd34d;
 }
 
+.edit-proposal-summary {
+  font-size: 11.5px;
+  color: rgba(148, 163, 184, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 32px;
+}
+
 .edit-proposal-reason {
   font-style: italic;
   color: rgba(203, 213, 225, 0.85);
   line-height: 1.45;
-}
-
-.edit-proposal-range {
-  align-self: flex-start;
-  border: none;
-  background: rgba(148, 163, 184, 0.12);
-  color: #94a3b8;
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  cursor: pointer;
-}
-.edit-proposal-range:hover {
-  background: rgba(148, 163, 184, 0.22);
-  color: #e2e8f0;
 }
 
 .edit-proposal-diff {

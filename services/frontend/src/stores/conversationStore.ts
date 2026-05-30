@@ -28,6 +28,12 @@ export interface ProposalEntry extends EditProposal {
   status: 'pending' | 'accepted' | 'rejected' | 'stale'
   received_at: string
   /**
+   * The agent message this proposal belongs to. Empty string while the
+   * reply is still streaming; filled in when ylw.msg.finished arrives so
+   * the card renders directly under its source message.
+   */
+  message_id: string
+  /**
    * Yjs RelativePositions captured the moment the proposal arrived in the
    * client. They follow the underlying characters as concurrent peers insert
    * or delete around them, so accepting later still hits the right spot.
@@ -463,13 +469,28 @@ function handleMessageEvent(
     }))
   } else if (evt.event === 'ylw.msg.finished') {
     const msg = evt.data as Message
-    set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: [...(s.messages[conversationId] ?? []), msg],
-      },
-      streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
-    }))
+    set((s) => {
+      // Bind any proposals that arrived during this stream (message_id === '')
+      // to the freshly-persisted agent message id, so the cards render under
+      // the right reply instead of accumulating at the bottom.
+      const existingProposals = s.proposals[conversationId] ?? []
+      const boundProposals = existingProposals.some((p) => p.message_id === '')
+        ? existingProposals.map((p) =>
+            p.message_id === '' ? { ...p, message_id: msg.id } : p,
+          )
+        : existingProposals
+      return {
+        messages: {
+          ...s.messages,
+          [conversationId]: [...(s.messages[conversationId] ?? []), msg],
+        },
+        proposals:
+          boundProposals === existingProposals
+            ? s.proposals
+            : { ...s.proposals, [conversationId]: boundProposals },
+        streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
+      }
+    })
     // Reload conversation to get updated title (auto-generated from first message).
     conversationApi.get(conversationId).then((conv) => {
       set((s) => ({
@@ -521,6 +542,7 @@ function handleMessageEvent(
       conversation_id: conversationId,
       status: 'pending',
       received_at: new Date().toISOString(),
+      message_id: '',
       rel_pos_start: relPosStart,
       rel_pos_end: relPosEnd,
     }

@@ -9,7 +9,7 @@
  * Conversation list is shown in a dropdown menu when clicking the history button.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo, Fragment } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   DndContext,
@@ -43,6 +43,8 @@ import {
   Unlock,
   GripVertical,
   FileEdit,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
 import type { ProposalEntry } from '../../stores/conversationStore'
@@ -113,6 +115,12 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  // Per-proposal collapsed state. New cards default to expanded; a user
+  // composing a new message collapses every existing card so the chat tail
+  // stays readable.
+  const [collapsedProposals, setCollapsedProposals] = useState<
+    Record<string, boolean>
+  >({})
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
@@ -329,6 +337,19 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeProposals = effectiveConversationId
     ? proposalsByConv[effectiveConversationId] ?? []
     : []
+  // Group proposals by their parent agent message. Proposals that arrived
+  // mid-stream have message_id === '' and live under the streaming bubble
+  // until ylw.msg.finished promotes them to the new message id.
+  const proposalsByMessage = useMemo(() => {
+    const map = new Map<string, ProposalEntry[]>()
+    for (const p of activeProposals) {
+      const list = map.get(p.message_id)
+      if (list) list.push(p)
+      else map.set(p.message_id, [p])
+    }
+    return map
+  }, [activeProposals])
+  const streamingProposals = proposalsByMessage.get('') ?? []
   const handleAcceptProposal = useCallback(
     async (proposalId: string) => {
       if (!effectiveConversationId) return
@@ -346,6 +367,31 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     },
     [effectiveConversationId, rejectProposal],
   )
+  const handleToggleProposalCollapsed = useCallback((proposalId: string) => {
+    setCollapsedProposals((prev) => ({
+      ...prev,
+      [proposalId]: !prev[proposalId],
+    }))
+  }, [])
+  // Fold every visible card the moment the user starts composing again. We
+  // keep the cards on screen so the audit trail stays intact, but hide the
+  // diff body so the conversation tail feels uncluttered.
+  const handleComposerActivity = useCallback(() => {
+    if (!effectiveConversationId) return
+    const list = proposalsByConv[effectiveConversationId] ?? []
+    if (list.length === 0) return
+    setCollapsedProposals((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const p of list) {
+        if (!next[p.proposal_id]) {
+          next[p.proposal_id] = true
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [effectiveConversationId, proposalsByConv])
   const activeConversation = effectiveConversationId
     ? conversations[effectiveConversationId]
     : null
@@ -489,14 +535,31 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           {effectiveConversationId && (
             <>
               <div className="message-stream" ref={messageStreamRef}>
-                {activeMessages.map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    message={msg}
-                    agentDisplayName={activeAgentName}
-                    onJumpToRange={onJumpToRange}
-                  />
-                ))}
+                {activeMessages.map((msg) => {
+                  const msgProposals = proposalsByMessage.get(msg.id)
+                  return (
+                    <Fragment key={msg.id}>
+                      <MessageBubble
+                        message={msg}
+                        agentDisplayName={activeAgentName}
+                        onJumpToRange={onJumpToRange}
+                      />
+                      {msgProposals?.map((proposal) => (
+                        <EditProposalCard
+                          key={proposal.proposal_id}
+                          proposal={proposal}
+                          collapsed={collapsedProposals[proposal.proposal_id] ?? false}
+                          onToggleCollapsed={() =>
+                            handleToggleProposalCollapsed(proposal.proposal_id)
+                          }
+                          onAccept={() => handleAcceptProposal(proposal.proposal_id)}
+                          onReject={() => handleRejectProposal(proposal.proposal_id)}
+                          onJumpToRange={onJumpToRange}
+                        />
+                      ))}
+                    </Fragment>
+                  )
+                })}
                 {isStreaming && delta && (
                   <div className="message-bubble agent streaming">
                     <div className="message-role">{activeAgentName}</div>
@@ -511,10 +574,14 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     </div>
                   </div>
                 )}
-                {activeProposals.map((proposal) => (
+                {streamingProposals.map((proposal) => (
                   <EditProposalCard
                     key={proposal.proposal_id}
                     proposal={proposal}
+                    collapsed={collapsedProposals[proposal.proposal_id] ?? false}
+                    onToggleCollapsed={() =>
+                      handleToggleProposalCollapsed(proposal.proposal_id)
+                    }
                     onAccept={() => handleAcceptProposal(proposal.proposal_id)}
                     onReject={() => handleRejectProposal(proposal.proposal_id)}
                     onJumpToRange={onJumpToRange}
@@ -530,6 +597,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                 isStreaming={isStreaming}
                 onSend={handleSend}
                 onJumpToRange={onJumpToRange}
+                onUserActivity={handleComposerActivity}
               />
             </>
           )}
@@ -554,6 +622,12 @@ interface DiscussionComposerProps {
   isStreaming: boolean
   onSend: (rawText: string) => void
   onJumpToRange?: (range: { from: number; to: number }) => void
+  /**
+   * Fired the first keystroke after the input has been empty / a send has
+   * cleared it. Used to fold any open proposal cards once the user starts
+   * composing the next message.
+   */
+  onUserActivity?: () => void
 }
 
 const DiscussionComposer = memo(function DiscussionComposer({
@@ -565,8 +639,20 @@ const DiscussionComposer = memo(function DiscussionComposer({
   isStreaming,
   onSend,
   onJumpToRange,
+  onUserActivity,
 }: DiscussionComposerProps) {
   const [inputText, setInputText] = useState('')
+  const handleInputChange = useCallback(
+    (next: string) => {
+      setInputText((prev) => {
+        if (prev.length === 0 && next.length > 0) {
+          onUserActivity?.()
+        }
+        return next
+      })
+    },
+    [onUserActivity],
+  )
 
   const pendingFileMentions = useMemo(() => {
     if (!inputText.includes('@')) return [] as FileCandidate[]
@@ -633,7 +719,7 @@ const DiscussionComposer = memo(function DiscussionComposer({
       )}
       <MentionInput
         value={inputText}
-        onChange={setInputText}
+        onChange={handleInputChange}
         agents={agentCandidates}
         workflows={workflowCandidates}
         files={fileCandidates}
@@ -871,6 +957,8 @@ function createUserMessagePreview(content: string): string {
 
 interface EditProposalCardProps {
   proposal: ProposalEntry
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onAccept: () => void
   onReject: () => void
   onJumpToRange?: (range: { from: number; to: number }) => void
@@ -878,6 +966,8 @@ interface EditProposalCardProps {
 
 function EditProposalCard({
   proposal,
+  collapsed,
+  onToggleCollapsed,
   onAccept,
   onReject,
   onJumpToRange,
@@ -895,57 +985,87 @@ function EditProposalCard({
         return '待确认'
     }
   })()
+  const summary =
+    proposal.reason ||
+    proposal.new_text.slice(0, 40) ||
+    proposal.original_text.slice(0, 40) ||
+    '空替换'
+  const handleJump = () => {
+    if (!onJumpToRange) return
+    // Use the literal range from the proposal — RelativePosition resolution
+    // happens at accept-time. Jumping is only a navigation hint, so an
+    // off-by-a-few from concurrent edits is acceptable.
+    onJumpToRange({ from: proposal.range_start, to: proposal.range_end })
+  }
   return (
-    <div className={`edit-proposal-card status-${proposal.status}`}>
+    <div
+      className={`edit-proposal-card status-${proposal.status} ${
+        collapsed ? 'is-collapsed' : 'is-expanded'
+      }`}
+    >
       <div className="edit-proposal-header">
-        <FileEdit size={13} />
-        <span className="edit-proposal-title">Agent 提议修改</span>
+        <button
+          type="button"
+          className="edit-proposal-toggle"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          title={collapsed ? '展开提案详情' : '折叠提案详情'}
+        >
+          <span className="edit-proposal-chevron">
+            {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="edit-proposal-jump"
+          onClick={handleJump}
+          title="跳转到原文位置"
+        >
+          <FileEdit size={13} />
+          <span className="edit-proposal-title">Agent 提议修改</span>
+        </button>
         <span className={`edit-proposal-status ${proposal.status}`}>{statusLabel}</span>
       </div>
-      {proposal.reason && (
-        <div className="edit-proposal-reason">{proposal.reason}</div>
-      )}
-      <button
-        type="button"
-        className="edit-proposal-range"
-        onClick={() =>
-          onJumpToRange?.({ from: proposal.range_start, to: proposal.range_end })
-        }
-        title="跳转到原文位置"
-      >
-        位置 {proposal.range_start}–{proposal.range_end}
-      </button>
-      <div className="edit-proposal-diff">
-        {proposal.original_text && (
-          <div className="edit-proposal-diff-row removed">
-            <span className="diff-marker">−</span>
-            <span className="diff-text">{proposal.original_text}</span>
+      {collapsed ? (
+        <div className="edit-proposal-summary">{summary}</div>
+      ) : (
+        <>
+          {proposal.reason && (
+            <div className="edit-proposal-reason">{proposal.reason}</div>
+          )}
+          <div className="edit-proposal-diff">
+            {proposal.original_text && (
+              <div className="edit-proposal-diff-row removed">
+                <span className="diff-marker">−</span>
+                <span className="diff-text">{proposal.original_text}</span>
+              </div>
+            )}
+            {proposal.new_text && (
+              <div className="edit-proposal-diff-row added">
+                <span className="diff-marker">+</span>
+                <span className="diff-text">{proposal.new_text}</span>
+              </div>
+            )}
+            {!proposal.original_text && !proposal.new_text && (
+              <div className="edit-proposal-diff-empty">空替换</div>
+            )}
           </div>
-        )}
-        {proposal.new_text && (
-          <div className="edit-proposal-diff-row added">
-            <span className="diff-marker">+</span>
-            <span className="diff-text">{proposal.new_text}</span>
-          </div>
-        )}
-        {!proposal.original_text && !proposal.new_text && (
-          <div className="edit-proposal-diff-empty">空替换</div>
-        )}
-      </div>
-      {proposal.status === 'stale' && (
-        <div className="edit-proposal-stale-hint">
-          原文在你接受前已经变化，自动应用会覆盖你的改动。请人工核对后再处理。
-        </div>
-      )}
-      {isPending && (
-        <div className="edit-proposal-actions">
-          <button className="edit-proposal-accept" onClick={onAccept}>
-            <Check size={12} /> 接受
-          </button>
-          <button className="edit-proposal-reject" onClick={onReject}>
-            <X size={12} /> 拒绝
-          </button>
-        </div>
+          {proposal.status === 'stale' && (
+            <div className="edit-proposal-stale-hint">
+              原文在你接受前已经变化，自动应用会覆盖你的改动。请人工核对后再处理。
+            </div>
+          )}
+          {isPending && (
+            <div className="edit-proposal-actions">
+              <button className="edit-proposal-accept" onClick={onAccept}>
+                <Check size={12} /> 接受
+              </button>
+              <button className="edit-proposal-reject" onClick={onReject}>
+                <X size={12} /> 拒绝
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

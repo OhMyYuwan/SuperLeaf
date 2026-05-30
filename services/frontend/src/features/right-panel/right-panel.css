@@ -2937,6 +2937,29 @@
   gap: 6px;
 }
 
+.skill-market-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.skill-usage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  white-space: nowrap;
+  line-height: 1;
+}
+.skill-usage-badge svg {
+  flex-shrink: 0;
+}
+
 .skill-name-button {
   display: block;
   width: 100%;

@@ -198,6 +198,29 @@
   border-radius: 6px;
 }
 
+/* Mention chips inside user bubbles — visually match the input box's mirror
+   layer so what the user typed and what they sent look identical. */
+.message-bubble.user .mention-tag {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 130, 246, 0.5);
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.message-bubble.user .mention-tag-file {
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+  text-decoration-color: rgba(34, 197, 94, 0.4);
+}
+.message-bubble.user .mention-tag-workflow {
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
+  text-decoration-color: rgba(168, 85, 247, 0.4);
+}
+
 .message-error {
   font-size: 11px;
   color: #fca5a5;

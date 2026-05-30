@@ -50,6 +50,14 @@ export interface RunEvent {
   at: number
 }
 
+export interface NodeRoundEntry {
+  round: number
+  input: string
+  output: string
+  status: 'completed' | 'failed'
+  error?: string
+}
+
 export interface NodeStatus {
   nodeId: string
   status: 'pending' | 'running' | 'completed' | 'failed'
@@ -58,6 +66,14 @@ export interface NodeStatus {
   input?: string
   output?: string
   error?: string
+  /**
+   * For loop children: one entry per round. Empty / undefined for nodes
+   * outside any loop. The selected node panel renders these in order so
+   * the user can read the per-iteration input + output.
+   */
+  rounds?: NodeRoundEntry[]
+  /** Set when this node is a loop child, names the parent loop container. */
+  loopId?: string
 }
 
 interface InFlight {
@@ -570,16 +586,15 @@ function handleOrchestratedEvent(
     if (!nodeId) return
     const input = formatNodeJson(payload.input)
     const output = formatNodeJson(payload.output)
+    const round = typeof payload.round === 'number' ? payload.round : undefined
+    const loopId = typeof payload.loop_id === 'string' ? payload.loop_id : undefined
     set((s) => ({
       nodeStatuses: {
         ...s.nodeStatuses,
-        [definitionId]: upsertNodeStatus(s.nodeStatuses[definitionId] ?? [], {
-          nodeId,
-          status: 'completed',
-          endTime: Date.now(),
-          input,
-          output,
-        }),
+        [definitionId]: upsertNodeStatusWithRound(
+          s.nodeStatuses[definitionId] ?? [],
+          { nodeId, input, output, round, loopId, status: 'completed' },
+        ),
       },
     }))
   }
@@ -589,16 +604,15 @@ function handleOrchestratedEvent(
     if (!nodeId) return
     const input = formatNodeJson(payload.input)
     const error = payload.error as string
+    const round = typeof payload.round === 'number' ? payload.round : undefined
+    const loopId = typeof payload.loop_id === 'string' ? payload.loop_id : undefined
     set((s) => ({
       nodeStatuses: {
         ...s.nodeStatuses,
-        [definitionId]: upsertNodeStatus(s.nodeStatuses[definitionId] ?? [], {
-          nodeId,
-          status: 'failed',
-          endTime: Date.now(),
-          input,
-          error,
-        }),
+        [definitionId]: upsertNodeStatusWithRound(
+          s.nodeStatuses[definitionId] ?? [],
+          { nodeId, input, output: '', error, round, loopId, status: 'failed' },
+        ),
       },
     }))
   }
@@ -660,6 +674,59 @@ function upsertNodeStatus(nodes: NodeStatus[], patch: NodeStatus): NodeStatus[] 
   const idx = nodes.findIndex((n) => n.nodeId === patch.nodeId)
   if (idx === -1) return [...nodes, patch]
   return nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n))
+}
+
+interface RoundUpsert {
+  nodeId: string
+  input: string
+  output: string
+  status: 'completed' | 'failed'
+  error?: string
+  round?: number
+  loopId?: string
+}
+
+/**
+ * Specialized upsert for node.completed / node.failed events that may carry
+ * a `round` field (loop children). When round is set, append/replace the
+ * matching entry in `rounds[]` and surface the *latest round*'s I/O on the
+ * top-level fields so the panel without a selection still has something to
+ * show. When round is undefined, behave like the plain upsert.
+ */
+function upsertNodeStatusWithRound(
+  nodes: NodeStatus[],
+  patch: RoundUpsert,
+): NodeStatus[] {
+  const idx = nodes.findIndex((n) => n.nodeId === patch.nodeId)
+  const existing = idx === -1 ? null : nodes[idx]
+  const next: NodeStatus = {
+    nodeId: patch.nodeId,
+    status: patch.status,
+    startTime: existing?.startTime,
+    endTime: Date.now(),
+    input: patch.input,
+    output: patch.output,
+    error: patch.error,
+    loopId: patch.loopId ?? existing?.loopId,
+    rounds: existing?.rounds,
+  }
+  if (typeof patch.round === 'number') {
+    const entry: NodeRoundEntry = {
+      round: patch.round,
+      input: patch.input,
+      output: patch.output,
+      status: patch.status,
+      error: patch.error,
+    }
+    const prevRounds = existing?.rounds ?? []
+    const rIdx = prevRounds.findIndex((r) => r.round === patch.round)
+    next.rounds =
+      rIdx === -1
+        ? [...prevRounds, entry].sort((a, b) => a.round - b.round)
+        : prevRounds.map((r, i) => (i === rIdx ? entry : r))
+  }
+  if (idx === -1) return [...nodes, next]
+  return nodes.map((n, i) => (i === idx ? next : n))
 }
 
 /**

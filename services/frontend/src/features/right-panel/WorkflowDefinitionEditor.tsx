@@ -13,7 +13,7 @@
  * together — one paste fully reconstructs a workflow.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   WorkflowDefinition,
   WorkflowDefinitionDraft,
@@ -395,8 +395,13 @@ function WorkflowTestPanel({
   const [fixturesError, setFixturesError] = useState<string | null>(null)
   const failed = nodeStatuses.find((n) => n.status === 'failed')
   const latestEvent = events.at(-1)
-  const selectedNode =
-    nodeStatuses.find((n) => n.nodeId === selectedNodeId) ?? nodeStatuses[0] ?? null
+  // Build a chronological timeline directly from the event stream so each
+  // node execution shows up as its own row — including loop children that
+  // run multiple times. The order is preserved from how the backend emitted
+  // events (node.completed / node.failed in arrival order).
+  const timeline = useMemo(() => buildTimeline(events), [events])
+  const selectedTimelineItem =
+    timeline.find((t) => t.key === selectedNodeId) ?? timeline[timeline.length - 1] ?? null
 
   useEffect(() => {
     if (!definitionId) {
@@ -447,16 +452,16 @@ function WorkflowTestPanel({
   }
 
   useEffect(() => {
-    if (nodeStatuses.length === 0) {
+    // Reset selection when the run resets; otherwise keep the user's pick if
+    // it still maps to a timeline item, else fall through to "latest".
+    if (timeline.length === 0) {
       setSelectedNodeId(null)
       return
     }
     setSelectedNodeId((curr) =>
-      curr && nodeStatuses.some((n) => n.nodeId === curr)
-        ? curr
-        : nodeStatuses[0].nodeId,
+      curr && timeline.some((t) => t.key === curr) ? curr : timeline[timeline.length - 1].key,
     )
-  }, [nodeStatuses])
+  }, [timeline])
 
   return (
     <div className="workflow-test-panel">
@@ -535,53 +540,134 @@ function WorkflowTestPanel({
       />
       {!definitionId && <div className="workflow-test-hint">新建 Workflow 需要先保存，才能运行测试。</div>}
       <div className="workflow-test-trace">
-        {nodeStatuses.length === 0 && !latestEvent && (
-          <span className="workflow-test-muted">运行后这里会显示每个 Agent 的进度和输出。</span>
+        {timeline.length === 0 && !latestEvent && (
+          <span className="workflow-test-muted">运行后这里会显示每次节点执行的进度和输出。</span>
         )}
-        {nodeStatuses.map((node) => (
+        {timeline.map((item) => (
           <button
-            key={node.nodeId}
+            key={item.key}
             type="button"
-            className={`workflow-test-node ${node.status}${
-              selectedNode?.nodeId === node.nodeId ? ' selected' : ''
+            className={`workflow-test-node ${item.status}${
+              selectedTimelineItem?.key === item.key ? ' selected' : ''
             }`}
-            onClick={() => setSelectedNodeId(node.nodeId)}
+            onClick={() => setSelectedNodeId(item.key)}
           >
-            <span className="workflow-test-node-id">{node.nodeId}</span>
-            <span className="workflow-test-node-state">{nodeStatusLabel(node.status)}</span>
+            <span className="workflow-test-node-id">
+              {item.nodeId}
+              {item.round !== undefined && (
+                <span className="workflow-test-node-round">·R{item.round}</span>
+              )}
+            </span>
+            <span className="workflow-test-node-state">{nodeStatusLabel(item.status)}</span>
           </button>
         ))}
       </div>
-      {selectedNode && (
+      {selectedTimelineItem && (
         <div className="workflow-test-io">
           <div className="workflow-test-io-block">
-            <div className="workflow-test-io-title">Input · {selectedNode.nodeId}</div>
+            <div className="workflow-test-io-title">
+              Input · {selectedTimelineItem.nodeId}
+              {selectedTimelineItem.round !== undefined && (
+                <span> · Round {selectedTimelineItem.round}</span>
+              )}
+            </div>
             <pre className="workflow-test-output">
-              {selectedNode.input?.trim() || '{}'}
+              {selectedTimelineItem.input?.trim() || '{}'}
             </pre>
           </div>
           <div className="workflow-test-io-block">
             <div className="workflow-test-io-title">
-              {selectedNode.status === 'failed' ? 'Error' : 'Output'} · {selectedNode.nodeId}
+              {selectedTimelineItem.status === 'failed' ? 'Error' : 'Output'} ·{' '}
+              {selectedTimelineItem.nodeId}
+              {selectedTimelineItem.round !== undefined && (
+                <span> · Round {selectedTimelineItem.round}</span>
+              )}
             </div>
-            <div className={`workflow-test-output markdown${selectedNode.status === 'failed' ? ' error' : ''}`}>
+            <div
+              className={`workflow-test-output markdown${selectedTimelineItem.status === 'failed' ? ' error' : ''}`}
+            >
               <AgentMarkdown
                 source={
-                  selectedNode.status === 'failed'
-                    ? selectedNode.error || failed?.error || '节点执行失败'
-                    : selectedNode.output?.trim() || '{}'
+                  selectedTimelineItem.status === 'failed'
+                    ? selectedTimelineItem.error || failed?.error || '节点执行失败'
+                    : selectedTimelineItem.output?.trim() || '{}'
                 }
-                tone={selectedNode.status === 'failed' ? 'error' : 'default'}
+                tone={selectedTimelineItem.status === 'failed' ? 'error' : 'default'}
               />
             </div>
           </div>
         </div>
       )}
-      {!selectedNode && latestEvent && (
+      {!selectedTimelineItem && latestEvent && (
         <div className="workflow-test-muted">{eventLabel(latestEvent)}</div>
       )}
     </div>
   )
+}
+
+interface TimelineItem {
+  key: string
+  nodeId: string
+  round?: number
+  loopId?: string
+  status: 'completed' | 'failed'
+  input: string
+  output: string
+  error?: string
+  at: number
+}
+
+/**
+ * Flatten the event stream into one TimelineItem per node execution. Loop
+ * children produce one item per round; non-loop nodes produce a single item.
+ * Items are returned in event arrival order, which mirrors the actual
+ * runtime: input → node1 → node2 → node3 → node1 (round 2) → ...
+ *
+ * If the same (node_id, round) re-appears (defensive — shouldn't happen but
+ * could if backend re-emits), the latest entry wins to keep state coherent.
+ */
+function buildTimeline(events: RunEvent[]): TimelineItem[] {
+  const out: TimelineItem[] = []
+  const indexByKey = new Map<string, number>()
+  for (const evt of events) {
+    if (evt.kind !== 'node.completed' && evt.kind !== 'node.failed') continue
+    const p = (evt.payload ?? {}) as Record<string, unknown>
+    const nodeId = String(p.nodeId ?? p.node_id ?? '')
+    if (!nodeId) continue
+    const round = typeof p.round === 'number' ? p.round : undefined
+    const loopId = typeof p.loop_id === 'string' ? p.loop_id : undefined
+    const status: 'completed' | 'failed' = evt.kind === 'node.failed' ? 'failed' : 'completed'
+    const key = round !== undefined ? `${nodeId}#${round}` : nodeId
+    const item: TimelineItem = {
+      key,
+      nodeId,
+      round,
+      loopId,
+      status,
+      input: formatNodeJsonInline(p.input),
+      output: formatNodeJsonInline(p.output),
+      error: typeof p.error === 'string' ? p.error : undefined,
+      at: evt.at,
+    }
+    const existing = indexByKey.get(key)
+    if (existing !== undefined) {
+      out[existing] = item
+    } else {
+      indexByKey.set(key, out.length)
+      out.push(item)
+    }
+  }
+  return out
+}
+
+function formatNodeJsonInline(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function nodeStatusLabel(status: string): string {

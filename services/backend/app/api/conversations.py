@@ -62,6 +62,9 @@ def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") 
         document_id=c.document_id,
         workflow_id=c.workflow_id,
         title=c.title,
+        user_renamed=c.user_renamed,
+        is_pinned=c.is_pinned,
+        sort_index=c.sort_index,
         external_conversation_id=c.external_conversation_id,
         created_at=c.created_at,
         updated_at=c.updated_at,
@@ -166,7 +169,14 @@ def list_conversations(
         q = q.filter(Conversation.document_id == document_id)
     if workflow_id:
         q = q.filter(Conversation.workflow_id == workflow_id)
-    rows = q.order_by(desc(Conversation.updated_at)).all()
+    rows = q.all()
+    rows.sort(
+        key=lambda r: (
+            1 if r.is_pinned else 0,
+            r.sort_index if r.sort_index is not None else r.updated_at.timestamp(),
+        ),
+        reverse=True,
+    )
 
     if not rows:
         return []
@@ -244,7 +254,14 @@ def update_conversation(
         raise HTTPException(404, "Conversation not found")
     if body.title is not None:
         c.title = body.title
-    c.updated_at = datetime.utcnow()
+        c.user_renamed = True
+        c.updated_at = datetime.utcnow()
+    if body.is_pinned is not None:
+        c.is_pinned = body.is_pinned
+    if body.clear_sort_index:
+        c.sort_index = None
+    elif body.sort_index is not None:
+        c.sort_index = body.sort_index
     db.commit()
     db.refresh(c)
     return _to_out(c)
@@ -324,8 +341,8 @@ async def send_message(
     )
     db.add(user_msg)
 
-    # Auto-generate title from first user message if title is empty.
-    if not conv.title or conv.title == "新对话":
+    # Auto-generate title from first user message only if the user hasn't renamed it.
+    if not conv.user_renamed and (not conv.title or conv.title == "新对话"):
         conv.title = body.content[:50] + ("..." if len(body.content) > 50 else "")
 
     conv.updated_at = datetime.utcnow()
@@ -446,6 +463,8 @@ async def send_message(
                         instructions=agent.instructions,
                         skills=skills,
                         workspace_root=str(workspace_root),
+                        project_id=project.id,
+                        user_id=user.id,
                         temperature=float(runtime_config.get("temperature", 0.2)),
                         max_tokens=int(runtime_config.get("max_tokens", 4000)),
                         max_tool_rounds=int(runtime_config.get("max_tool_rounds", 8)),
@@ -471,6 +490,11 @@ async def send_message(
                                 "event": "ylw.msg.delta",
                                 "data": json.dumps({"delta": delta}),
                             }
+                    if kind == "native.agent.edit_proposal" and isinstance(data, dict):
+                        yield {
+                            "event": "ylw.msg.edit_proposal",
+                            "data": json.dumps(data),
+                        }
                     yield {"event": kind, "data": json.dumps(data)}
                 external_conv_id = native_conversation_id
             elif provider.kind == "nanobot":

@@ -198,6 +198,29 @@
   border-radius: 6px;
 }
 
+/* Mention chips inside user bubbles — visually match the input box's mirror
+   layer so what the user typed and what they sent look identical. */
+.message-bubble.user .mention-tag {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 130, 246, 0.5);
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.message-bubble.user .mention-tag-file {
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+  text-decoration-color: rgba(34, 197, 94, 0.4);
+}
+.message-bubble.user .mention-tag-workflow {
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
+  text-decoration-color: rgba(168, 85, 247, 0.4);
+}
+
 .message-error {
   font-size: 11px;
   color: #fca5a5;
@@ -416,11 +439,70 @@
   user-select: none;
   transition: background 0.15s ease;
 }
+.conversation-dropdown-item.active {
+  background: rgba(59, 130, 246, 0.14);
+}
+.conversation-dropdown-item.pinned {
+  background: rgba(250, 204, 21, 0.06);
+}
+.conversation-dropdown-item.dragging {
+  background: rgba(59, 130, 246, 0.22);
+}
 .conversation-dropdown-item:hover {
   background: rgba(148, 163, 184, 0.12);
 }
 .conversation-dropdown-item:focus {
   background: rgba(59, 130, 246, 0.18);
+}
+
+.conversation-drag-handle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin-top: 1px;
+  border: none;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.45);
+  cursor: grab;
+  border-radius: 4px;
+  touch-action: none;
+}
+.conversation-drag-handle:hover {
+  color: rgba(148, 163, 184, 0.85);
+  background: rgba(148, 163, 184, 0.12);
+}
+.conversation-drag-handle:active {
+  cursor: grabbing;
+}
+
+.conversation-dropdown-pin,
+.conversation-dropdown-fix {
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-dropdown-pin:hover {
+  background: rgba(250, 204, 21, 0.18);
+  color: #facc15;
+}
+.conversation-dropdown-pin.on {
+  color: #facc15;
+}
+.conversation-dropdown-fix:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+.conversation-dropdown-fix.on {
+  color: #93c5fd;
 }
 
 .conversation-dropdown-item-content {
@@ -465,6 +547,29 @@
   color: rgba(148, 163, 184, 0.65);
 }
 
+.conversation-dropdown-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.conversation-dropdown-rename {
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-dropdown-rename:hover {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
 .conversation-dropdown-delete {
   flex-shrink: 0;
   padding: 4px;
@@ -480,4 +585,266 @@
 .conversation-dropdown-delete:hover {
   background: rgba(239, 68, 68, 0.18);
   color: #fca5a5;
+}
+
+.conversation-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.conversation-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  background: rgba(2, 6, 23, 0.8);
+  color: #e5e7eb;
+  font-size: 12px;
+  outline: none;
+}
+.conversation-rename-input:focus {
+  border-color: #5a8fff;
+}
+
+.conversation-rename-confirm,
+.conversation-rename-cancel {
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+.conversation-rename-confirm {
+  color: #86efac;
+}
+.conversation-rename-confirm:hover {
+  background: rgba(34, 197, 94, 0.18);
+}
+.conversation-rename-cancel {
+  color: rgba(148, 163, 184, 0.65);
+}
+.conversation-rename-cancel:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+/* =========================================
+   Edit proposal card (Agent → user accept)
+   ========================================= */
+.edit-proposal-card {
+  align-self: stretch;
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #cbd5e1;
+  transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+.edit-proposal-card.is-collapsed {
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(59, 130, 246, 0.04);
+  border-color: rgba(96, 165, 250, 0.18);
+}
+.edit-proposal-card.is-expanded.status-pending {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(96, 165, 250, 0.5);
+}
+.edit-proposal-card.status-accepted {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+.edit-proposal-card.status-accepted.is-collapsed {
+  background: rgba(34, 197, 94, 0.04);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+.edit-proposal-card.status-rejected,
+.edit-proposal-card.status-stale {
+  opacity: 0.75;
+  border-color: rgba(148, 163, 184, 0.3);
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.edit-proposal-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #e2e8f0;
+}
+.edit-proposal-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  color: rgba(148, 163, 184, 0.7);
+  transition: all 0.12s ease;
+}
+.edit-proposal-toggle:hover {
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.12);
+}
+.edit-proposal-jump {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.edit-proposal-jump:hover {
+  background: rgba(96, 165, 250, 0.12);
+  color: #93c5fd;
+}
+.edit-proposal-chevron {
+  display: inline-flex;
+  align-items: center;
+}
+.edit-proposal-title {
+  flex: 1;
+}
+.edit-proposal-status {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: rgba(148, 163, 184, 0.18);
+  color: #94a3b8;
+}
+.edit-proposal-status.pending {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+.edit-proposal-status.accepted {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+.edit-proposal-status.stale {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+
+.edit-proposal-summary {
+  font-size: 11.5px;
+  color: rgba(148, 163, 184, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 32px;
+}
+
+.edit-proposal-reason {
+  font-style: italic;
+  color: rgba(203, 213, 225, 0.85);
+  line-height: 1.45;
+}
+
+.edit-proposal-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 5px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+.edit-proposal-diff-row {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.edit-proposal-diff-row.removed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+.edit-proposal-diff-row.added {
+  background: rgba(34, 197, 94, 0.1);
+  color: #86efac;
+}
+.diff-marker {
+  flex-shrink: 0;
+  font-weight: 700;
+  opacity: 0.6;
+}
+.diff-text {
+  flex: 1;
+}
+.edit-proposal-diff-empty {
+  font-style: italic;
+  color: rgba(148, 163, 184, 0.7);
+  padding: 4px 8px;
+}
+
+.edit-proposal-stale-hint {
+  font-size: 11.5px;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 2px solid rgba(245, 158, 11, 0.5);
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+
+.edit-proposal-actions {
+  display: flex;
+  gap: 6px;
+}
+.edit-proposal-accept,
+.edit-proposal-reject {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.edit-proposal-accept {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.edit-proposal-accept:hover {
+  background: rgba(34, 197, 94, 0.3);
+}
+.edit-proposal-reject {
+  background: rgba(148, 163, 184, 0.1);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.25);
+}
+.edit-proposal-reject:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
 }

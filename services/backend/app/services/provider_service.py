@@ -109,6 +109,13 @@ class ProviderService:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
             return False
+        # NativeAgent.provider_id is a non-cascading FK, so deleting the
+        # Provider would otherwise leave orphan agents that don't show up in
+        # the UI (the list query INNER-JOINs Provider) but still occupy the
+        # database. Clean them up explicitly. Local import avoids a circular
+        # dep with native_agent_service.
+        from .native_agent_service import NativeAgentService
+        NativeAgentService(self.db).delete_agents_for_provider(provider_id, user_id=user_id)
         self.db.delete(p)
         self.db.commit()
         return True

@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Trash2,
   Ban,
+  Bot,
   CheckCircle,
   Download,
   FileText,
@@ -2565,13 +2566,23 @@ function SkillManagementPanel({
           {skills.map((skill) => (
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
-                {skill.can_edit && skill.source !== 'marketplace' ? (
-                  <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
-                    {skillLabel(skill)}
-                  </button>
-                ) : (
-                  <strong>{skillLabel(skill)}</strong>
-                )}
+                <div className="skill-market-name-row">
+                  {skill.can_edit && skill.source !== 'marketplace' ? (
+                    <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
+                      {skillLabel(skill)}
+                    </button>
+                  ) : (
+                    <strong>{skillLabel(skill)}</strong>
+                  )}
+                  {skill.used_by_agent_count > 0 && (
+                    <span
+                      className="skill-usage-badge"
+                      title={`有 ${skill.used_by_agent_count} 个 Agent 在使用这个 Skill`}
+                    >
+                      <Bot size={11} />×{skill.used_by_agent_count}
+                    </span>
+                  )}
+                </div>
                 <span>{skill.description || '无描述'}</span>
               </div>
               <div className="skill-market-actions">
@@ -2584,8 +2595,25 @@ function SkillManagementPanel({
                   className="ghost-btn small danger"
                   type="button"
                   disabled={busyId === skill.id}
-                  onClick={() => {
-                    if (!confirm(`从本地 Skill 库移除「${skillLabel(skill)}」？`)) return
+                  onClick={async () => {
+                    // Fetch usage on-demand so the confirm names the impacted
+                    // agents. Falls back to a generic prompt if the lookup
+                    // fails — better to allow delete than to block on a
+                    // network error.
+                    let usage: Awaited<ReturnType<typeof nativeAgentApi.skills.usage>> = []
+                    try {
+                      usage = await nativeAgentApi.skills.usage(skill.id)
+                    } catch {
+                      // ignore; treat as "no usage info"
+                    }
+                    const lines = [`从本地 Skill 库移除「${skillLabel(skill)}」？`]
+                    if (usage.length > 0) {
+                      lines.push('')
+                      lines.push(`以下 ${usage.length} 个 Agent 正在使用，删除后这个 Skill 会从它们身上自动解绑：`)
+                      for (const u of usage.slice(0, 8)) lines.push(`  · ${u.agent_name}`)
+                      if (usage.length > 8) lines.push(`  · 还有 ${usage.length - 8} 个…`)
+                    }
+                    if (!confirm(lines.join('\n'))) return
                     void run(skill.id, () => onRemoveSkill(skill.id))
                   }}
                 >

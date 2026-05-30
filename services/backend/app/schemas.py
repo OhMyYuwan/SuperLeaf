@@ -161,9 +161,18 @@ class SkillOut(BaseModel):
     updated_at: datetime
     published_at: datetime | None
     can_edit: bool = False
+    used_by_agent_count: int = 0
 
     class Config:
         from_attributes = True
+
+
+class SkillUsageOut(BaseModel):
+    """Per-agent reference to a skill, used by the delete-confirmation UI to
+    name which Agents will lose this skill."""
+    agent_id: str
+    agent_name: str
+    project_id: str
 
 
 class SkillMarketplaceEntryOut(BaseModel):
@@ -788,6 +797,9 @@ class ConversationOut(BaseModel):
     document_id: str
     workflow_id: str
     title: str
+    user_renamed: bool = False
+    is_pinned: bool = False
+    sort_index: float | None = None
     external_conversation_id: str
     created_at: datetime
     updated_at: datetime
@@ -807,6 +819,11 @@ class ConversationCreateIn(BaseModel):
 
 class ConversationUpdateIn(BaseModel):
     title: str | None = None
+    is_pinned: bool | None = None
+    sort_index: float | None = None
+    # Explicitly clear sort_index (since None means "no change"). Set to True to
+    # release a manually-pinned position back to updated_at-based ordering.
+    clear_sort_index: bool = False
 
 
 class MessageOut(BaseModel):

@@ -275,9 +275,16 @@ export interface Skill {
   version: number
   tags: string[]
   can_edit: boolean
+  used_by_agent_count: number
   created_at: string
   updated_at: string
   published_at: string | null
+}
+
+export interface SkillUsage {
+  agent_id: string
+  agent_name: string
+  project_id: string
 }
 
 export interface SkillMarketplaceEntry {
@@ -636,6 +643,8 @@ export const nativeAgentApi = {
       }),
     remove: (id: string) =>
       http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    usage: (id: string) =>
+      http<SkillUsage[]>(`/api/native-agent/skills/${encodeURIComponent(id)}/usage`),
   },
   marketplace: {
     list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),
@@ -996,6 +1005,9 @@ export interface Conversation {
   document_id: string
   workflow_id: string
   title: string
+  user_renamed: boolean
+  is_pinned: boolean
+  sort_index: number | null
   external_conversation_id: string
   created_at: string
   updated_at: string
@@ -1011,6 +1023,9 @@ export interface ConversationCreate {
 
 export interface ConversationUpdate {
   title?: string
+  is_pinned?: boolean
+  sort_index?: number
+  clear_sort_index?: boolean
 }
 
 export interface Message {
@@ -1038,6 +1053,21 @@ export interface MessageInject {
   range_start?: number
   range_end?: number
   error?: string
+}
+
+/**
+ * Edit proposal emitted by the native Agent's `propose_doc_edit` tool.
+ * The backend never applies it; the frontend renders a card and writes
+ * through writingStore.applyDocEdit on user accept.
+ */
+export interface EditProposal {
+  proposal_id: string
+  document_id: string
+  range_start: number
+  range_end: number
+  original_text: string
+  new_text: string
+  reason: string
 }
 
 export interface ConversationListQuery {

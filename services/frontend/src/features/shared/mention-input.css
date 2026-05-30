@@ -123,6 +123,13 @@
   border-color: var(--accent, #5a8fff);
 }
 
+.mention-input-textarea.auto-resize {
+  resize: none;
+  overflow-y: auto;
+  min-height: 56px;
+  max-height: min(240px, 45vh);
+}
+
 .mention-input-textarea[disabled],
 .mention-input-text[disabled] {
   opacity: 0.6;

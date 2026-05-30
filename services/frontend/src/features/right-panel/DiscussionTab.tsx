@@ -56,6 +56,7 @@ import type { CachedWorkflow, Conversation, Message } from '../../services/backe
 import type { Selection } from '../../types/editor'
 import {
   parseMentions,
+  segmentText,
   stripMentions,
   flattenFileCandidates,
   sortFilesCurrentFirst,
@@ -283,7 +284,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     if (!rawText || !effectiveConversationId) return
 
     const mentions = parseMentions(rawText, allCandidates)
-    const cleanedText = stripMentions(rawText, mentions) || rawText
+    // Keep the raw mention markers in the message body so the bubble can
+    // render them with the same colored highlight the input box uses. The
+    // backend gets attached_files via inputs separately, so the markers in
+    // the text are purely a human-readable trace of what the user invoked.
     const mentionedFiles = uniqueMentionedFiles(mentions)
     const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
     const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
@@ -292,7 +296,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     })
 
     const inputs: Record<string, unknown> = {}
-    const body: Parameters<typeof sendMessage>[1] = { content: cleanedText }
+    const body: Parameters<typeof sendMessage>[1] = { content: rawText }
     if (activeSelection && activeSelection.to > activeSelection.from) {
       body.range_start = activeSelection.from
       body.range_end = activeSelection.to
@@ -314,6 +318,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     await sendMessage(effectiveConversationId, body)
 
     if (mentionedWorkflows.length > 0 && documentId) {
+      // Workflow dispatch still uses a clean query (no @markers), since the
+      // workflow runner treats the query as a literal instruction.
+      const cleanedQuery = stripMentions(rawText, mentions) || rawText
       await Promise.all(
         mentionedWorkflows.map((wf) =>
           dispatchWorkflowToConversation({
@@ -322,7 +329,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
             documentId,
             selection: activeSelection,
             attachedFiles,
-            query: cleanedText,
+            query: cleanedQuery,
             executeDefinition,
             injectMessage,
           }),
@@ -542,6 +549,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                       <MessageBubble
                         message={msg}
                         agentDisplayName={activeAgentName}
+                        allCandidates={allCandidates}
                         onJumpToRange={onJumpToRange}
                       />
                       {msgProposals?.map((proposal) => (
@@ -610,6 +618,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 interface MessageBubbleProps {
   message: Message
   agentDisplayName: string
+  allCandidates: MentionCandidate[]
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
@@ -886,7 +895,7 @@ function SortableConversationItem({
   )
 }
 
-function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubbleProps) {
+function MessageBubble({ message, agentDisplayName, allCandidates, onJumpToRange }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
@@ -896,7 +905,7 @@ function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubb
           <AgentMarkdown source={message.content} className="message-content" />
         </>
       ) : message.role === 'user' ? (
-        <UserMessageContent content={message.content} />
+        <UserMessageContent content={message.content} allCandidates={allCandidates} />
       ) : (
         <div className="message-content">{message.content}</div>
       )}
@@ -915,13 +924,44 @@ function MessageBubble({ message, agentDisplayName, onJumpToRange }: MessageBubb
   )
 }
 
-function UserMessageContent({ content }: { content: string }) {
+function UserMessageContent({
+  content,
+  allCandidates,
+}: {
+  content: string
+  allCandidates: MentionCandidate[]
+}) {
   const [expanded, setExpanded] = useState(false)
   const preview = useMemo(() => createUserMessagePreview(content), [content])
   const collapsible = preview !== content
+  // Render with the same colored mention chips the input box uses, so the
+  // bubble keeps the visual identity of what the user actually typed.
+  const renderText = useCallback(
+    (text: string) => {
+      if (!text.includes('@')) return text
+      const mentions = parseMentions(text, allCandidates)
+      if (mentions.length === 0) return text
+      const segments = segmentText(text, mentions)
+      return segments.map((seg, i) => {
+        if (seg.type === 'text') return <Fragment key={i}>{seg.content}</Fragment>
+        const cls =
+          seg.candidate.kind === 'file'
+            ? 'mention-tag mention-tag-file'
+            : seg.candidate.kind === 'workflow'
+              ? 'mention-tag mention-tag-workflow'
+              : 'mention-tag'
+        return (
+          <span key={i} className={cls}>
+            {seg.raw}
+          </span>
+        )
+      })
+    },
+    [allCandidates],
+  )
 
   if (!collapsible) {
-    return <div className="message-content">{content}</div>
+    return <div className="message-content">{renderText(content)}</div>
   }
 
   return (
@@ -935,7 +975,7 @@ function UserMessageContent({ content }: { content: string }) {
       aria-label={expanded ? '收起完整输入' : '展开完整输入'}
       title={expanded ? '收起完整输入' : '展开完整输入'}
     >
-      {expanded ? content : preview}
+      {renderText(expanded ? content : preview)}
     </button>
   )
 }

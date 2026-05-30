@@ -42,8 +42,10 @@ import {
   Lock,
   Unlock,
   GripVertical,
+  FileEdit,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
+import type { ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
@@ -83,6 +85,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const streaming = useConversationStore((s) => s.streaming)
   const streamingDelta = useConversationStore((s) => s.streamingDelta)
   const error = useConversationStore((s) => s.error)
+  const proposalsByConv = useConversationStore((s) => s.proposals)
+  const acceptProposal = useConversationStore((s) => s.acceptProposal)
+  const rejectProposal = useConversationStore((s) => s.rejectProposal)
   const loadConversations = useConversationStore((s) => s.loadConversations)
   const createConversation = useConversationStore((s) => s.createConversation)
   const renameConversation = useConversationStore((s) => s.renameConversation)
@@ -321,6 +326,26 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
   const delta = effectiveConversationId ? streamingDelta[effectiveConversationId] ?? '' : ''
+  const activeProposals = effectiveConversationId
+    ? proposalsByConv[effectiveConversationId] ?? []
+    : []
+  const handleAcceptProposal = useCallback(
+    async (proposalId: string) => {
+      if (!effectiveConversationId) return
+      const result = await acceptProposal(effectiveConversationId, proposalId)
+      if (result.stale) {
+        // Surface staleness inline via the card's status; nothing else to do.
+      }
+    },
+    [effectiveConversationId, acceptProposal],
+  )
+  const handleRejectProposal = useCallback(
+    (proposalId: string) => {
+      if (!effectiveConversationId) return
+      rejectProposal(effectiveConversationId, proposalId)
+    },
+    [effectiveConversationId, rejectProposal],
+  )
   const activeConversation = effectiveConversationId
     ? conversations[effectiveConversationId]
     : null
@@ -486,6 +511,15 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                     </div>
                   </div>
                 )}
+                {activeProposals.map((proposal) => (
+                  <EditProposalCard
+                    key={proposal.proposal_id}
+                    proposal={proposal}
+                    onAccept={() => handleAcceptProposal(proposal.proposal_id)}
+                    onReject={() => handleRejectProposal(proposal.proposal_id)}
+                    onJumpToRange={onJumpToRange}
+                  />
+                ))}
               </div>
               <DiscussionComposer
                 allCandidates={allCandidates}
@@ -833,6 +867,88 @@ function createUserMessagePreview(content: string): string {
       : lineLimited
   const preview = charLimited.trimEnd()
   return preview === content ? content : `${preview}…`
+}
+
+interface EditProposalCardProps {
+  proposal: ProposalEntry
+  onAccept: () => void
+  onReject: () => void
+  onJumpToRange?: (range: { from: number; to: number }) => void
+}
+
+function EditProposalCard({
+  proposal,
+  onAccept,
+  onReject,
+  onJumpToRange,
+}: EditProposalCardProps) {
+  const isPending = proposal.status === 'pending'
+  const statusLabel = (() => {
+    switch (proposal.status) {
+      case 'accepted':
+        return '已采纳'
+      case 'rejected':
+        return '已拒绝'
+      case 'stale':
+        return '原文已变化'
+      default:
+        return '待确认'
+    }
+  })()
+  return (
+    <div className={`edit-proposal-card status-${proposal.status}`}>
+      <div className="edit-proposal-header">
+        <FileEdit size={13} />
+        <span className="edit-proposal-title">Agent 提议修改</span>
+        <span className={`edit-proposal-status ${proposal.status}`}>{statusLabel}</span>
+      </div>
+      {proposal.reason && (
+        <div className="edit-proposal-reason">{proposal.reason}</div>
+      )}
+      <button
+        type="button"
+        className="edit-proposal-range"
+        onClick={() =>
+          onJumpToRange?.({ from: proposal.range_start, to: proposal.range_end })
+        }
+        title="跳转到原文位置"
+      >
+        位置 {proposal.range_start}–{proposal.range_end}
+      </button>
+      <div className="edit-proposal-diff">
+        {proposal.original_text && (
+          <div className="edit-proposal-diff-row removed">
+            <span className="diff-marker">−</span>
+            <span className="diff-text">{proposal.original_text}</span>
+          </div>
+        )}
+        {proposal.new_text && (
+          <div className="edit-proposal-diff-row added">
+            <span className="diff-marker">+</span>
+            <span className="diff-text">{proposal.new_text}</span>
+          </div>
+        )}
+        {!proposal.original_text && !proposal.new_text && (
+          <div className="edit-proposal-diff-empty">空替换</div>
+        )}
+      </div>
+      {proposal.status === 'stale' && (
+        <div className="edit-proposal-stale-hint">
+          原文在你接受前已经变化，自动应用会覆盖你的改动。请人工核对后再处理。
+        </div>
+      )}
+      {isPending && (
+        <div className="edit-proposal-actions">
+          <button className="edit-proposal-accept" onClick={onAccept}>
+            <Check size={12} /> 接受
+          </button>
+          <button className="edit-proposal-reject" onClick={onReject}>
+            <X size={12} /> 拒绝
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function formatTime(iso: string): string {

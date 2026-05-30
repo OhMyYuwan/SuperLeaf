@@ -13,10 +13,19 @@ import {
   type Conversation,
   type ConversationCreate,
   type ConversationUpdate,
+  type EditProposal,
   type Message,
   type MessageInject,
   type MessageSend,
 } from '../services/backendApi'
+import { operationApi } from '../services/operationApi'
+import { applyWriteOutput, readCurrentText } from './writingStore'
+
+export interface ProposalEntry extends EditProposal {
+  conversation_id: string
+  status: 'pending' | 'accepted' | 'rejected' | 'stale'
+  received_at: string
+}
 
 interface ConversationState {
   conversations: Record<string, Conversation>
@@ -27,6 +36,11 @@ interface ConversationState {
   // Streaming state: which conversation is currently receiving a message.
   streaming: Record<string, boolean>
   streamingDelta: Record<string, string>
+
+  // Edit proposals from native Agents, keyed by conversation_id. Lives in
+  // memory only — refreshing the page drops them. Persisting them would
+  // require a new table since they sit between SSE events and user action.
+  proposals: Record<string, ProposalEntry[]>
 
   loadConversations: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   createConversation: (body: ConversationCreate) => Promise<Conversation | null>
@@ -40,15 +54,18 @@ interface ConversationState {
   sendMessage: (conversationId: string, body: MessageSend) => Promise<void>
   injectMessage: (conversationId: string, body: MessageInject) => Promise<Message | null>
   clearStreamingDelta: (conversationId: string) => void
+  acceptProposal: (conversationId: string, proposalId: string) => Promise<{ ok: boolean; stale?: boolean }>
+  rejectProposal: (conversationId: string, proposalId: string) => void
 }
 
-export const useConversationStore = create<ConversationState>((set) => ({
+export const useConversationStore = create<ConversationState>((set, get) => ({
   conversations: {},
   messages: {},
   loading: false,
   error: null,
   streaming: {},
   streamingDelta: {},
+  proposals: {},
 
   loadConversations: async (filter) => {
     set({ loading: true, error: null })
@@ -253,6 +270,86 @@ export const useConversationStore = create<ConversationState>((set) => ({
     set((s) => ({ streamingDelta: { ...s.streamingDelta, [conversationId]: '' } }))
   },
 
+  acceptProposal: async (conversationId, proposalId) => {
+    const list = get().proposals[conversationId] ?? []
+    const proposal = list.find((p) => p.proposal_id === proposalId)
+    if (!proposal || proposal.status !== 'pending') {
+      return { ok: false }
+    }
+    // Stale check: original_text must still match the live document range.
+    // If the user edited the doc between the proposal arriving and accepting,
+    // applying blindly would clobber their changes.
+    const live = readCurrentText(proposal.document_id, {
+      from: proposal.range_start,
+      to: proposal.range_end,
+    })
+    if (live !== proposal.original_text) {
+      set((s) => ({
+        proposals: {
+          ...s.proposals,
+          [conversationId]: (s.proposals[conversationId] ?? []).map((p) =>
+            p.proposal_id === proposalId ? { ...p, status: 'stale' } : p,
+          ),
+        },
+      }))
+      return { ok: false, stale: true }
+    }
+    applyWriteOutput({
+      docId: proposal.document_id,
+      mode: 'replace-range',
+      range: { from: proposal.range_start, to: proposal.range_end },
+      text: proposal.new_text,
+    })
+    set((s) => ({
+      proposals: {
+        ...s.proposals,
+        [conversationId]: (s.proposals[conversationId] ?? []).map((p) =>
+          p.proposal_id === proposalId ? { ...p, status: 'accepted' } : p,
+        ),
+      },
+    }))
+    // Audit-log the acceptance via the existing operations endpoint. Failures
+    // are non-fatal — the edit has already landed in the editor.
+    void operationApi
+      .record(proposal.document_id, {
+        type: 'accept_suggestion',
+        payload: {
+          source: 'agent_propose_doc_edit',
+          proposal_id: proposal.proposal_id,
+          conversation_id: conversationId,
+          range_start: proposal.range_start,
+          range_end: proposal.range_end,
+          reason: proposal.reason,
+        },
+      })
+      .catch(() => undefined)
+    return { ok: true }
+  },
+
+  rejectProposal: (conversationId, proposalId) => {
+    const list = get().proposals[conversationId] ?? []
+    const proposal = list.find((p) => p.proposal_id === proposalId)
+    if (!proposal) return
+    set((s) => ({
+      proposals: {
+        ...s.proposals,
+        [conversationId]: (s.proposals[conversationId] ?? []).map((p) =>
+          p.proposal_id === proposalId ? { ...p, status: 'rejected' } : p,
+        ),
+      },
+    }))
+    void operationApi
+      .record(proposal.document_id, {
+        type: 'reject_suggestion',
+        payload: {
+          source: 'agent_propose_doc_edit',
+          proposal_id: proposal.proposal_id,
+          conversation_id: conversationId,
+        },
+      })
+      .catch(() => undefined)
+  },
+
   injectMessage: async (conversationId, body) => {
     try {
       const msg = await conversationApi.injectMessage(conversationId, body)
@@ -352,5 +449,30 @@ function handleMessageEvent(
       error,
       streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
     }))
+  } else if (evt.event === 'ylw.msg.edit_proposal') {
+    const data = evt.data as Partial<EditProposal> | null
+    if (!data || !data.proposal_id || !data.document_id) return
+    const entry: ProposalEntry = {
+      proposal_id: String(data.proposal_id),
+      document_id: String(data.document_id),
+      range_start: Number(data.range_start ?? 0),
+      range_end: Number(data.range_end ?? 0),
+      original_text: String(data.original_text ?? ''),
+      new_text: String(data.new_text ?? ''),
+      reason: String(data.reason ?? ''),
+      conversation_id: conversationId,
+      status: 'pending',
+      received_at: new Date().toISOString(),
+    }
+    set((s) => {
+      const existing = s.proposals[conversationId] ?? []
+      if (existing.some((p) => p.proposal_id === entry.proposal_id)) return s
+      return {
+        proposals: {
+          ...s.proposals,
+          [conversationId]: [...existing, entry],
+        },
+      }
+    })
   }
 }

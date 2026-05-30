@@ -1046,6 +1046,21 @@ export interface MessageInject {
   error?: string
 }
 
+/**
+ * Edit proposal emitted by the native Agent's `propose_doc_edit` tool.
+ * The backend never applies it; the frontend renders a card and writes
+ * through writingStore.applyDocEdit on user accept.
+ */
+export interface EditProposal {
+  proposal_id: string
+  document_id: string
+  range_start: number
+  range_end: number
+  original_text: string
+  new_text: string
+  reason: string
+}
+
 export interface ConversationListQuery {
   document_id?: string
   workflow_id?: string

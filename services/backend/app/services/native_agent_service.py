@@ -514,9 +514,42 @@ class NativeAgentService:
         row = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
         if row is None:
             return False
-        self.db.delete(row)
+        self._delete_agent_row(row)
         self.db.commit()
         return True
+
+    def _delete_agent_row(self, row: NativeAgent) -> None:
+        """Delete a NativeAgent and its dependent rows.
+
+        NativeAgentSkillInstall has a non-cascading FK to native_agents, so
+        without manual cleanup the agent delete fails on FK constraint
+        (or leaves orphan installs). This helper centralizes the cleanup
+        so both `delete_agent` and provider-cascade go through one path.
+        Caller is responsible for committing.
+        """
+        (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(NativeAgentSkillInstall.agent_id == row.id)
+            .delete(synchronize_session=False)
+        )
+        self.db.delete(row)
+
+    def delete_agents_for_provider(self, provider_id: str, *, user_id: str) -> int:
+        """Delete every NativeAgent owned by `user_id` that points to
+        `provider_id`. Returns the count. Used by ProviderService.delete to
+        cascade clean up; caller commits.
+        """
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(
+                NativeAgent.provider_id == provider_id,
+                NativeAgent.owner_user_id == user_id,
+            )
+            .all()
+        )
+        for agent in agents:
+            self._delete_agent_row(agent)
+        return len(agents)
 
     def list_agent_skill_installs(self, agent_id: str, *, project_id: str, user_id: str) -> list[NativeAgentSkillInstall]:
         agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)

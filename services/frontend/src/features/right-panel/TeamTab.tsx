@@ -9,6 +9,7 @@
  */
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   CheckCircle2,
@@ -2499,6 +2500,7 @@ function SkillManagementPanel({
   onUnpublishSkill: (id: string) => Promise<Skill | null>
   onRemoveSkill: (id: string) => Promise<boolean>
 }) {
+  const navigate = useNavigate()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [showPrivateForm, setShowPrivateForm] = useState(false)
   const [showRecipeForm, setShowRecipeForm] = useState(false)
@@ -2518,6 +2520,11 @@ function SkillManagementPanel({
     } finally {
       setBusyId(null)
     }
+  }
+
+  const openProjectSkill = (skill: Skill) => {
+    if (!skill.project_id) return
+    navigate(`/projects/${skill.project_id}`)
   }
 
   return (
@@ -2571,7 +2578,16 @@ function SkillManagementPanel({
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
                 <div className="skill-market-name-row">
-                  {skill.can_edit && skill.source !== 'marketplace' && skill.source !== 'project' ? (
+                  {skill.source === 'project' && skill.project_id ? (
+                    <button
+                      className="skill-name-button"
+                      type="button"
+                      title="打开对应的 Skill project"
+                      onClick={() => openProjectSkill(skill)}
+                    >
+                      {skillLabel(skill)}
+                    </button>
+                  ) : skill.can_edit && skill.source !== 'marketplace' && skill.source !== 'project' ? (
                     <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
                       {skillLabel(skill)}
                     </button>

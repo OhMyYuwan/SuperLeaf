@@ -8,6 +8,8 @@ reference/
 # Local tool state
 .claude/
 .agents/
+skills-lock.json
+
 
 # Environment files
 .env

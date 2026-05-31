@@ -2512,8 +2512,11 @@ function SkillManagementPanel({
 
   const run = async (id: string, action: () => Promise<unknown>) => {
     setBusyId(id)
-    await action()
-    setBusyId(null)
+    try {
+      await action()
+    } finally {
+      setBusyId(null)
+    }
   }
 
   return (
@@ -2591,6 +2594,17 @@ function SkillManagementPanel({
                 ) : (
                   <span className={`native-pill ${skillPillTone(skill)}`}>{skillPillLabel(skill, pendingShareIds.has(skill.id))}</span>
                 )}
+                <button
+                  className="ghost-btn small"
+                  type="button"
+                  title="下载 Skill"
+                  disabled={busyId === skill.id}
+                  onClick={() => {
+                    void run(skill.id, () => nativeAgentApi.skills.download(skill.id, `${skill.name || 'skill'}.zip`))
+                  }}
+                >
+                  <Download size={12} /> 下载
+                </button>
                 <button
                   className="ghost-btn small danger"
                   type="button"

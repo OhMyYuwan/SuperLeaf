@@ -65,16 +65,22 @@ export function WorkflowDefinitionsPanel({
   const [draftFromTemplate, setDraftFromTemplate] = useState<WorkflowDefinitionDraft | undefined>()
 
   const handleCreateDefinition = async (draft: WorkflowDefinitionDraft) => {
-    await onCreateDefinition(draft)
-    setShowEditor(false)
-    setDraftFromTemplate(undefined)
+    const created = await onCreateDefinition(draft)
+    if (created) {
+      setEditingDefinition(created)
+      setDraftFromTemplate(undefined)
+    }
+    return created
   }
   const handleUpdateDefinition = async (draft: WorkflowDefinitionDraft) => {
     if (editingDefinition) {
-      await onUpdateDefinition(editingDefinition.id, draft)
-      setShowEditor(false)
-      setEditingDefinition(undefined)
+      const updated = await onUpdateDefinition(editingDefinition.id, draft)
+      if (updated) {
+        setEditingDefinition(updated)
+      }
+      return updated
     }
+    return undefined
   }
   const handleEditDefinition = (def: WorkflowDefinition) => {
     setEditingDefinition(def)

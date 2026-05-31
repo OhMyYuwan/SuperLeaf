@@ -45,7 +45,7 @@ export function graphToFlow(graph: WorkflowGraph): {
   edges: Edge[]
 } {
   const nodes: FlowNode[] = graph.nodes.map((n, i) => {
-    const config = { ...(n.config ?? {}) }
+    const config = normalizeNodeConfig(n.config ?? {})
     const ui = readUi(config)
     const position = ui.position ?? {
       x: DEFAULT_POSITION.x + (i % 3) * 220,
@@ -154,7 +154,7 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
   }
 
   const outNodes: WorkflowNode[] = nodes.map((n) => {
-    const config = { ...(n.data.config ?? {}) }
+    const config = normalizeNodeConfig(n.data.config ?? {})
     const ui: UiMeta = { position: n.position }
     if (n.data.nodeType === 'loop') {
       const w = typeof n.style?.width === 'number' ? n.style.width : DEFAULT_LOOP_SIZE.width
@@ -183,6 +183,19 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
   }))
 
   return { nodes: outNodes, edges: outEdges }
+}
+
+function normalizeNodeConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...config }
+  if (
+    typeof next.additional_prompt !== 'string'
+    && typeof next.promptHint === 'string'
+    && next.promptHint.trim()
+  ) {
+    next.additional_prompt = next.promptHint
+  }
+  delete next.promptHint
+  return next
 }
 
 export function generateNodeId(existing: FlowNode[], type: CanvasNodeType): string {

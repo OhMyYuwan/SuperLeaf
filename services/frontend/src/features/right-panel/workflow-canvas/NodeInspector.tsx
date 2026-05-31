@@ -69,6 +69,10 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
 
       {data.nodeType === 'agent' && (() => {
         const currentAgentId = readAgentId(data.config)
+        const allowProjectContext = Boolean(
+          data.config.allow_project_context ?? data.config.allowProjectContext,
+        )
+        const additionalPrompt = readVisibleAdditionalPrompt(data.config)
         const activeAgents = allWorkflows.filter((w) => !w.is_disabled)
         const disabledAgents = allWorkflows.filter((w) => w.is_disabled)
         const selectedAgent = allWorkflows.find((w) => w.id === currentAgentId)
@@ -132,13 +136,34 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
             <div className="form-group">
               <label>额外提示词（可选）</label>
               <textarea
-                value={(data.config.additional_prompt as string) ?? ''}
-                onChange={(e) => setConfig({ additional_prompt: e.target.value })}
+                value={additionalPrompt}
+                onChange={(e) =>
+                  setConfig({ additional_prompt: e.target.value, promptHint: undefined })
+                }
                 placeholder="在 workflow 中给这个 agent 的额外指令，例如：&#10;- 你的输入来自上游节点的输出&#10;- 请输出 JSON 格式：{result, confidence}&#10;- 保持简洁，不超过 100 字"
                 rows={4}
               />
               <div className="form-hint-sm">
                 节点级提示词，会注入到 agent 的系统提示中，告诉它在 workflow 中的角色和输出要求。
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label-inline">
+                <input
+                  type="checkbox"
+                  checked={allowProjectContext}
+                  onChange={(e) =>
+                    setConfig({
+                      allow_project_context: e.target.checked,
+                      allowProjectContext: undefined,
+                    })
+                  }
+                />
+                允许读取项目文档
+              </label>
+              <div className="form-hint-sm">
+                默认关闭。打开后，该节点可以在提示词明确要求时读取项目文档；接龙、投票、收敛判断等纯群聊节点建议保持关闭。
               </div>
             </div>
           </>
@@ -190,6 +215,11 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
 function readAgentId(config: Record<string, unknown>): string {
   const raw = config.agent_id ?? config.agentId
   return typeof raw === 'string' ? raw.trim() : ''
+}
+
+function readVisibleAdditionalPrompt(config: Record<string, unknown>): string {
+  const raw = config.additional_prompt ?? config.promptHint
+  return typeof raw === 'string' ? raw : ''
 }
 
 function inspectorHeaderLabel(type: FlowNodeData['nodeType']): string {

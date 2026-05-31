@@ -1563,6 +1563,30 @@
   gap: 4px;
 }
 
+.editor-name-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.editor-name-field {
+  min-width: 0;
+}
+
+.editor-save-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 1px;
+}
+
+.editor-save-actions button {
+  min-width: 64px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
 .editor-metadata .form-group label {
   font-size: 11px;
   color: rgba(148, 163, 184, 0.85);
@@ -1648,10 +1672,7 @@
 }
 
 .editor-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: end;
-  gap: 8px;
+  display: block;
   padding-top: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.18);
   margin-top: auto;
@@ -1767,6 +1788,14 @@
 .workflow-test-muted {
   font-size: 11px;
   color: rgba(148, 163, 184, 0.78);
+}
+
+.workflow-test-hint.warning {
+  color: #fbbf24;
+}
+
+.workflow-test-hint.error {
+  color: #fca5a5;
 }
 
 .workflow-test-trace {

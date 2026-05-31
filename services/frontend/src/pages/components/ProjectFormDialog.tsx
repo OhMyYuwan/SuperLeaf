@@ -9,13 +9,15 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 
+type ProjectType = 'paper' | 'skill'
+
 interface Props {
   open: boolean
   mode: 'create' | 'rename'
   initialName?: string
   busy?: boolean
   error?: string | null
-  onSubmit: (name: string) => void | Promise<void>
+  onSubmit: (name: string, projectType?: ProjectType) => void | Promise<void>
   onOpenChange: (open: boolean) => void
 }
 
@@ -23,9 +25,17 @@ export function ProjectFormDialog({
   open, mode, initialName = '', busy, error, onSubmit, onOpenChange,
 }: Props) {
   const [name, setName] = useState(initialName)
+  const [projectType, setProjectType] = useState<ProjectType>('paper')
 
   useEffect(() => {
-    if (open) setName(initialName)
+    if (open) {
+      const timer = window.setTimeout(() => {
+        setName(initialName)
+        setProjectType('paper')
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
+    return undefined
   }, [open, initialName])
 
   const title = mode === 'create' ? '新建项目' : '重命名项目'
@@ -35,7 +45,7 @@ export function ProjectFormDialog({
     e.preventDefault()
     const trimmed = name.trim()
     if (!trimmed || busy) return
-    onSubmit(trimmed)
+    onSubmit(trimmed, mode === 'create' ? projectType : undefined)
   }
 
   return (
@@ -60,6 +70,28 @@ export function ProjectFormDialog({
                 className="project-form-input"
               />
             </label>
+            {mode === 'create' && (
+              <div className="project-type-picker" role="radiogroup" aria-label="项目类型">
+                <button
+                  type="button"
+                  className={`project-type-option ${projectType === 'paper' ? 'active' : ''}`}
+                  aria-pressed={projectType === 'paper'}
+                  onClick={() => setProjectType('paper')}
+                >
+                  <strong>Paper</strong>
+                  <span>论文写作项目，使用默认文稿模板。</span>
+                </button>
+                <button
+                  type="button"
+                  className={`project-type-option ${projectType === 'skill' ? 'active' : ''}`}
+                  aria-pressed={projectType === 'skill'}
+                  onClick={() => setProjectType('skill')}
+                >
+                  <strong>Skill</strong>
+                  <span>开发本地 Skill，创建 README.md 和 SKILL.md。</span>
+                </button>
+              </div>
+            )}
             {error && <div className="project-form-error">{error}</div>}
             <div className="project-form-actions">
               <button type="button" className="ghost-btn" onClick={() => onOpenChange(false)} disabled={busy}>

@@ -96,6 +96,46 @@ Replace this starter document with your own project brief whenever you are
 ready.
 """
 
+_DEFAULT_SKILL_README = """# Skill Project
+
+This project is an editable local Skill package.
+
+## Files
+
+- `SKILL.md` contains the instructions and metadata the Agent reads.
+- `README.md` is for human notes, examples, and maintenance context.
+
+Update the Skill cache from the project major-version panel when you want
+Agents using this Skill to pick up the latest files.
+"""
+
+_DEFAULT_SKILL_MD = """---
+name: skill-project
+description: Describe what this Skill helps the Agent do.
+version: 0.1.0
+---
+
+# Skill Instructions
+
+Describe when this Skill should be used and what rules the Agent must follow.
+
+## Inputs
+
+List the information the user should provide before the Agent applies this
+Skill.
+
+## Workflow
+
+1. Inspect the user's request and any provided files.
+2. Follow the constraints in this file.
+3. Produce the requested output without inventing unsupported requirements.
+
+## Constraints
+
+- Keep domain-specific terminology grounded in user-provided wording.
+- Ask for missing information when a safe assumption would change the result.
+"""
+
 
 def _default_banner_path() -> Path:
     return (
@@ -142,10 +182,16 @@ class ProjectService:
             return None
         return p
 
-    def create(self, *, user_id: str, name: str) -> Project:
-        p = Project(name=name, user_id=user_id)
+    def create(self, *, user_id: str, name: str, project_type: str = "paper") -> Project:
+        is_skill = project_type == "skill"
+        p = Project(name=name, user_id=user_id, is_skill_project=is_skill)
         self.db.add(p)
         self.db.flush()
+        if is_skill:
+            self._seed_skill_content(p)
+            self.db.commit()
+            self.db.refresh(p)
+            return p
         if self._seed_template_content(p):
             self.db.refresh(p)
             return p
@@ -153,6 +199,27 @@ class ProjectService:
         self.db.commit()
         self.db.refresh(p)
         return p
+
+    def _seed_skill_content(self, project: Project) -> None:
+        readme = Doc(
+            project_id=project.id,
+            folder_id=None,
+            name="README.md",
+            format="md",
+            content=_DEFAULT_SKILL_README,
+            version=1,
+        )
+        skill = Doc(
+            project_id=project.id,
+            folder_id=None,
+            name="SKILL.md",
+            format="md",
+            content=_DEFAULT_SKILL_MD,
+            version=1,
+        )
+        self.db.add_all([readme, skill])
+        self.db.flush()
+        project.main_doc_id = readme.id
 
     def _seed_template_content(self, project: Project) -> bool:
         try:

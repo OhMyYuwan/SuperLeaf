@@ -26,6 +26,7 @@ export interface ProjectSummary {
 
 export interface ProjectCreate {
   name: string
+  project_type?: 'paper' | 'skill'
 }
 
 export interface GitHubProjectImport {

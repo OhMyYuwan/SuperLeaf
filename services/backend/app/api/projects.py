@@ -77,7 +77,7 @@ def create_project(
     db: Session = Depends(get_session),
 ) -> ProjectOut:
     svc = ProjectService(db)
-    p = svc.create(user_id=user.id, name=body.name)
+    p = svc.create(user_id=user.id, name=body.name, project_type=body.project_type)
     return ProjectOut.model_validate(p)
 
 

@@ -162,14 +162,35 @@
   min-height: 64px;
 }
 
+.project-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
 .project-card-name {
   font-size: 15px;
   font-weight: 600;
   color: #e5e7eb;
-  margin-bottom: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-type-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  color: #a5f3fc;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .project-card-meta {
@@ -247,6 +268,11 @@
   text-decoration: underline;
 }
 
+.project-row-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
 .project-row-meta {
   color: rgba(148, 163, 184, 0.85);
   font-size: 12px;
@@ -284,6 +310,44 @@
 }
 .project-form-input:focus {
   border-color: rgba(59, 130, 246, 0.6);
+}
+
+.project-type-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.project-type-option {
+  display: grid;
+  gap: 4px;
+  min-height: 86px;
+  padding: 11px 12px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.58);
+  color: #e5e7eb;
+}
+
+.project-type-option:hover {
+  border-color: rgba(59, 130, 246, 0.42);
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.project-type-option.active {
+  border-color: rgba(59, 130, 246, 0.7);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.project-type-option strong {
+  font-size: 13px;
+}
+
+.project-type-option span {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.86);
 }
 
 .project-form-desc {

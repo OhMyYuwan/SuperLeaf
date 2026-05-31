@@ -13,7 +13,10 @@ export function ProjectCard({ project, onRename, onDelete, onSettings }: Props) 
   return (
     <div className="project-card">
       <Link to={`/projects/${project.id}`} className="project-card-body">
-        <div className="project-card-name">{project.name}</div>
+        <div className="project-card-name-row">
+          <span className="project-card-name">{project.name}</span>
+          {project.is_skill_project && <span className="project-type-badge">Skill</span>}
+        </div>
         <div className="project-card-meta">
           更新于 {formatDate(project.updated_at)}
         </div>

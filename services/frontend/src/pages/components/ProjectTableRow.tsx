@@ -16,6 +16,7 @@ export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Pro
         <Link to={`/projects/${project.id}`} className="project-row-name">
           {project.name}
         </Link>
+        {project.is_skill_project && <span className="project-type-badge project-row-badge">Skill</span>}
       </td>
       <td className="project-row-meta">{formatDate(project.updated_at)}</td>
       <td className="project-row-meta">{formatDate(project.created_at)}</td>

@@ -6,24 +6,24 @@ SuperLeaf. It has no database/session handle and no filesystem access.
 
 from __future__ import annotations
 
+import json
+import re
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
-import re
 from typing import Any
-import uuid
 
-from .attached_files import render_attached_files_block
+from ..database import SessionLocal
+from ..models import Doc
 from .agent_workspace_service import (
     AgentWorkspaceError,
     list_agent_workspace_files,
     read_agent_workspace_file,
 )
+from .attached_files import render_attached_files_block
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
-from ..database import SessionLocal
-from ..models import Doc
 
 
 @dataclass(slots=True)
@@ -64,6 +64,8 @@ class NativeRunPayload:
     query: str = ""
     conversation_id: str = ""
     context_files: list[dict[str, Any]] = field(default_factory=list)
+    prior_messages: list[dict[str, Any]] = field(default_factory=list)
+    allow_project_context: bool = False
 
 
 @dataclass(slots=True)
@@ -89,7 +91,9 @@ class NativeAgentRunner:
         )
         system_prompt = self._system_prompt(payload)
         user_prompt = self._user_prompt(payload)
-        session_id = payload.conversation_id or None
+        in_workflow_chat = bool(payload.prior_messages)
+        allow_project_context = _payload_allows_project_context(payload)
+        session_id = None if in_workflow_chat else (payload.conversation_id or None)
 
         yield {
             "event": "native.agent.step",
@@ -101,8 +105,15 @@ class NativeAgentRunner:
             },
         }
 
-        if self.config.workspace_root:
-            async for evt in self._stream_with_workspace_tools(client, system_prompt, user_prompt, session_id, payload):
+        if self.config.workspace_root and (not in_workflow_chat or allow_project_context):
+            async for evt in self._stream_with_workspace_tools(
+                client,
+                system_prompt,
+                user_prompt,
+                session_id,
+                payload,
+                project_context_only=in_workflow_chat and allow_project_context,
+            ):
                 yield evt
             return
 
@@ -110,6 +121,7 @@ class NativeAgentRunner:
             model=self.config.model,
             messages=[
                 {"role": "system", "content": system_prompt},
+                *payload.prior_messages,
                 {"role": "user", "content": user_prompt},
             ],
             session_id=session_id,
@@ -132,37 +144,105 @@ class NativeAgentRunner:
         write_mode = str(inputs.get("write_mode") or "").strip()
         legacy_output_mode = str(inputs.get("automation_output_mode") or "").strip()
         is_write_mode = bool(write_mode) or legacy_output_mode == "write"
+        in_workflow_chat = bool(payload and payload.prior_messages)
+        allow_project_context = _payload_allows_project_context(payload)
 
         parts = [
             "You are a native SuperLeaf Agent.",
-            "You must only use the user message and your assigned Agent workspace.",
-            "Your only readable workspace is `.agents/` for this Agent.",
-            "Use list_agent_files and read_agent_file when you need Skill files.",
-            "Never claim to read files outside `.agents/`.",
-            (
-                "Project context tools (read-only): "
-                "use project_list_docs to discover documents in the current project, "
-                "project_outline(doc_id) for a quick heading map, "
-                "project_read_doc(doc_id, range_start?, range_end?) to read content, "
-                "and project_grep(pattern, format?) to search across the project. "
-                "These tools cannot modify documents — they exist so you can gather context "
-                "before producing your reply."
-            ),
-            (
-                "Document edit tool: when the user asks you to change the text of the "
-                "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
-                "This proposes the change as a card in the chat — the user must click accept "
-                "to actually apply it. Do NOT paste the replacement text directly into your "
-                "markdown reply; use the tool. After proposing, give a one-line summary of the "
-                "intent. Always read the surrounding context first (project_read_doc) to make "
-                "sure your character offsets are correct."
-            ),
-            "If MCP tools are available, call them only when the user explicitly asks for external retrieval, academic search, paper lookup, citation lookup, or source-backed evidence.",
-            "Do not use MCP tools for ordinary editing, rewriting, style review, or summarization unless the user asks to search or verify external sources.",
-            "If an MCP tool result reports `status: failed`, continue with the best available answer.",
-            "Explicitly tell the user the external MCP retrieval failed, include the failure reason,",
-            "ask the user to check MCP configuration/API key/quota, and avoid presenting failed tool results as facts.",
         ]
+        if in_workflow_chat:
+            parts.extend(
+                [
+                    "This call is one node in a workflow group chat.",
+                    "Use only the provided prior messages and current node context.",
+                    (
+                        "The original user task inside prior messages has highest "
+                        "priority; Agent or node instructions may shape role or "
+                        "format only when they do not conflict with that task."
+                    ),
+                    (
+                        "Speaker labels such as [node round N] in prior messages are "
+                        "metadata. Do not copy, continue, or invent bracketed speaker "
+                        "labels in your own output unless the user explicitly asks for them."
+                    ),
+                ]
+            )
+            if allow_project_context:
+                parts.extend(
+                    [
+                        (
+                            "Read-only project document tools are available because this "
+                            "node explicitly asks for project context."
+                        ),
+                        (
+                            "Prefer the visible prior messages. Use project tools only when "
+                            "the current node instructions require reading, searching, or "
+                            "checking project documents."
+                        ),
+                        (
+                            "Do not use project documents to replace or ignore the visible "
+                            "group-chat history."
+                        ),
+                    ]
+                )
+            else:
+                parts.extend(
+                    [
+                        (
+                            "Do not read project documents, active editor content, "
+                            "workspace files, or external sources."
+                        ),
+                        (
+                            "If required information is not in the visible messages, "
+                            "say so briefly instead of inventing it."
+                        ),
+                    ]
+                )
+        else:
+            parts.extend(
+                [
+                    "You must only use the user message and your assigned Agent workspace.",
+                    "Your only readable workspace is `.agents/` for this Agent.",
+                    "Use list_agent_files and read_agent_file when you need Skill files.",
+                    "Never claim to read files outside `.agents/`.",
+                    (
+                        "Project context tools (read-only): "
+                        "use project_list_docs to discover documents in the current project, "
+                        "project_outline(doc_id) for a quick heading map, "
+                        "project_read_doc(doc_id, range_start?, range_end?) to read content, "
+                        "and project_grep(pattern, format?) to search across the project. "
+                        "These tools cannot modify documents — they exist so you can gather context "
+                        "before producing your reply."
+                    ),
+                    (
+                        "Document edit tool: when the user asks you to change the text of the "
+                        "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
+                        "This proposes the change as a card in the chat — the user must click accept "
+                        "to actually apply it. Do NOT paste the replacement text directly into your "
+                        "markdown reply; use the tool. After proposing, give a one-line summary of the "
+                        "intent. Always read the surrounding context first (project_read_doc) to make "
+                        "sure your character offsets are correct."
+                    ),
+                    (
+                        "If MCP tools are available, call them only when the user explicitly asks "
+                        "for external retrieval, academic search, paper lookup, citation lookup, "
+                        "or source-backed evidence."
+                    ),
+                    (
+                        "Do not use MCP tools for ordinary editing, rewriting, style review, "
+                        "or summarization unless the user asks to search or verify external sources."
+                    ),
+                    (
+                        "If an MCP tool result reports `status: failed`, "
+                        "continue with the best available answer."
+                    ),
+                    "Explicitly tell the user the external MCP retrieval failed, include the failure reason,",
+                    (
+                        "ask the user to check MCP configuration/API key/quota, "
+                        "and avoid presenting failed tool results as facts."
+                    ),
+                ]
+            )
         if not is_write_mode:
             parts.append("Do not propose direct file mutations. Return review output only.")
         if self.config.instructions.strip():
@@ -179,10 +259,20 @@ class NativeAgentRunner:
             parts.extend(
                 [
                     "",
-                    "Output mode: WRITE. The user has requested direct text output that will be written into the document.",
+                    (
+                        "Output mode: WRITE. The user has requested direct text output "
+                        "that will be written into the document."
+                    ),
                     f"Wrap the full target text in a fenced code block: ```{fence_lang} ... ```",
-                    "Do NOT output JSON, do NOT output annotation cards, do NOT add explanation outside the fence.",
-                    "If the user message contains [PRE-EXISTING TEXT], preserve its preamble, style, and indentation; modify only what the user instruction asks.",
+                    (
+                        "Do NOT output JSON, do NOT output annotation cards, "
+                        "do NOT add explanation outside the fence."
+                    ),
+                    (
+                        "If the user message contains [PRE-EXISTING TEXT], preserve its "
+                        "preamble, style, and indentation; modify only what the user "
+                        "instruction asks."
+                    ),
                 ]
             )
             if doc_format == "tex":
@@ -190,10 +280,26 @@ class NativeAgentRunner:
                     [
                         "",
                         "TARGET FORMAT: LaTeX (.tex).",
-                        "- Use LaTeX commands: \\section{...}, \\subsection{...}, \\textbf{...}, \\emph{...}, \\cite{key}, \\ref{label}, inline math $...$, display math \\[...\\] or equation environment, lists via itemize/enumerate.",
-                        "- DO NOT use Markdown syntax: no `# heading`, no `**bold**`, no `*italic*`, no `- bullet` outside itemize, no `[text](url)`, no inner triple-backtick code fences (the only fence is the outermost output fence).",
-                        "- Preserve every existing \\command{...} and citation key verbatim. Do not rewrite \\cite{X} as [X].",
-                        "- Escape LaTeX special characters correctly when they appear as text: % & _ # $ { }.",
+                        (
+                            "- Use LaTeX commands: \\section{...}, \\subsection{...}, "
+                            "\\textbf{...}, \\emph{...}, \\cite{key}, \\ref{label}, "
+                            "inline math $...$, display math \\[...\\] or equation "
+                            "environment, lists via itemize/enumerate."
+                        ),
+                        (
+                            "- DO NOT use Markdown syntax: no `# heading`, no `**bold**`, "
+                            "no `*italic*`, no `- bullet` outside itemize, no `[text](url)`, "
+                            "no inner triple-backtick code fences (the only fence is the "
+                            "outermost output fence)."
+                        ),
+                        (
+                            "- Preserve every existing \\command{...} and citation key "
+                            "verbatim. Do not rewrite \\cite{X} as [X]."
+                        ),
+                        (
+                            "- Escape LaTeX special characters correctly when they appear "
+                            "as text: % & _ # $ { }."
+                        ),
                     ]
                 )
             elif doc_format == "md":
@@ -201,9 +307,19 @@ class NativeAgentRunner:
                     [
                         "",
                         "TARGET FORMAT: Markdown (.md).",
-                        "- Use Markdown syntax: `# heading`, `**bold**`, `*italic*`, `-` / `1.` lists, `[text](url)`, inline code with backticks.",
-                        "- DO NOT use LaTeX commands such as \\section, \\textbf, \\cite, \\ref. If the source has math, keep it as `$...$` or `$$...$$`.",
-                        "- If you need a nested code block inside the output, use `~~~` or more backticks to avoid colliding with the outer ``` fence.",
+                        (
+                            "- Use Markdown syntax: `# heading`, `**bold**`, `*italic*`, "
+                            "`-` / `1.` lists, `[text](url)`, inline code with backticks."
+                        ),
+                        (
+                            "- DO NOT use LaTeX commands such as \\section, \\textbf, "
+                            "\\cite, \\ref. If the source has math, keep it as `$...$` "
+                            "or `$$...$$`."
+                        ),
+                        (
+                            "- If you need a nested code block inside the output, use `~~~` "
+                            "or more backticks to avoid colliding with the outer ``` fence."
+                        ),
                     ]
                 )
             else:
@@ -211,7 +327,10 @@ class NativeAgentRunner:
                     [
                         "",
                         "TARGET FORMAT: Plain text (.txt).",
-                        "- Output plain prose only — no LaTeX commands, no Markdown syntax. Use blank lines between paragraphs.",
+                        (
+                            "- Output plain prose only — no LaTeX commands, no Markdown "
+                            "syntax. Use blank lines between paragraphs."
+                        ),
                     ]
                 )
         else:
@@ -219,8 +338,15 @@ class NativeAgentRunner:
                 [
                     "",
                     "Return a direct Markdown response that can be rendered as-is in SuperLeaf.",
-                    "Do NOT output JSON or split the answer into annotations, suggestions, or risks unless the user or workflow explicitly asks for that structured schema.",
-                    "If you include replaceable text, put that snippet in one fenced code block and keep its source format from the user's selected text.",
+                    (
+                        "Do NOT output JSON or split the answer into annotations, "
+                        "suggestions, or risks unless the user or workflow explicitly asks "
+                        "for that structured schema."
+                    ),
+                    (
+                        "If you include replaceable text, put that snippet in one fenced "
+                        "code block and keep its source format from the user's selected text."
+                    ),
                     "Keep the review concise, actionable, and anchored to the selected text.",
                 ]
             )
@@ -233,21 +359,39 @@ class NativeAgentRunner:
         before = str(inputs.get("before") or "").strip()
         after = str(inputs.get("after") or "").strip()
         section_title = str(inputs.get("section_title") or "").strip()
+        in_workflow_chat = bool(payload.prior_messages)
+        allow_project_context = _payload_allows_project_context(payload)
         attached_files = inputs.get("attached_files")
         if not isinstance(attached_files, list):
             attached_files = payload.context_files
 
-        parts: list[str] = [
-            f"Document id: {payload.document_id}",
-            f"Selected range: {payload.range_start}-{payload.range_end}",
-        ]
+        parts: list[str] = []
+        if not in_workflow_chat:
+            parts.extend(
+                [
+                    f"Document id: {payload.document_id}",
+                    f"Selected range: {payload.range_start}-{payload.range_end}",
+                ]
+            )
+        elif allow_project_context:
+            parts.extend(
+                [
+                    "Project context access: enabled for this node.",
+                    f"Active document id: {payload.document_id}",
+                    f"Selected range: {payload.range_start}-{payload.range_end}",
+                    "Use these only if the current node instruction requires project context.",
+                ]
+            )
         if section_title:
             parts.append(f"Section: {section_title}")
         if instruction:
-            parts.extend(["", "User instruction:", instruction])
-        if selection_text:
+            if in_workflow_chat:
+                parts.extend(["", instruction])
+            else:
+                parts.extend(["", "User instruction:", instruction])
+        if selection_text and not in_workflow_chat:
             parts.extend(["", "Selected text:", selection_text])
-        if before or after:
+        if (before or after) and not in_workflow_chat:
             parts.append("")
             parts.append("Surrounding context:")
             if before:
@@ -266,14 +410,18 @@ class NativeAgentRunner:
         user_prompt: str,
         session_id: str | None,
         payload: NativeRunPayload,
+        *,
+        project_context_only: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
+            *payload.prior_messages,
             {"role": "user", "content": user_prompt},
         ]
-        mcp_refs = await discover_mcp_tools(self.config.runtime_config)
+        mcp_refs = [] if project_context_only else await discover_mcp_tools(self.config.runtime_config)
         mcp_tool_map = {ref.function_name: ref for ref in mcp_refs}
-        tools = _workspace_tools() + [ref.definition for ref in mcp_refs]
+        base_tools = _project_context_tools() if project_context_only else _workspace_tools()
+        tools = base_tools + [ref.definition for ref in mcp_refs]
 
         for _round in range(max(1, self.config.max_tool_rounds)):
             tool_acc = _ToolAccumulator()
@@ -763,6 +911,20 @@ def _delta_text(evt: dict[str, Any]) -> str:
     return text if isinstance(text, str) else ""
 
 
+def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:
+    if payload is None:
+        return False
+    if payload.allow_project_context:
+        return True
+    inputs = payload.inputs or {}
+    raw = inputs.get("allow_project_context") or inputs.get("allowProjectContext")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().casefold() in {"1", "true", "yes", "on"}
+    return False
+
+
 def _workspace_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -791,7 +953,10 @@ def _workspace_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "File path under .agents, for example .agents/skills/name/SKILL.md.",
+                            "description": (
+                                "File path under .agents, for example "
+                                ".agents/skills/name/SKILL.md."
+                            ),
                         }
                     },
                     "required": ["path"],
@@ -898,7 +1063,10 @@ def _workspace_tools() -> list[dict[str, Any]]:
                         },
                         "range_end": {
                             "type": "integer",
-                            "description": "Character offset where the replacement ends (exclusive). Equal to range_start for a pure insertion.",
+                            "description": (
+                                "Character offset where the replacement ends (exclusive). "
+                                "Equal to range_start for a pure insertion."
+                            ),
                         },
                         "new_text": {
                             "type": "string",
@@ -913,6 +1081,22 @@ def _workspace_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+    ]
+
+
+_PROJECT_CONTEXT_TOOL_NAMES = {
+    "project_list_docs",
+    "project_read_doc",
+    "project_grep",
+    "project_outline",
+}
+
+
+def _project_context_tools() -> list[dict[str, Any]]:
+    return [
+        tool
+        for tool in _workspace_tools()
+        if tool.get("function", {}).get("name") in _PROJECT_CONTEXT_TOOL_NAMES
     ]
 
 

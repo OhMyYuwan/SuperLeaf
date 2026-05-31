@@ -471,6 +471,7 @@ class ProjectOut(BaseModel):
 
 class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
+    project_type: str = Field(default="paper", pattern="^(paper|skill)$")
 
 
 class GitHubProjectImportIn(BaseModel):

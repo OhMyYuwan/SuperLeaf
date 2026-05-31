@@ -10,6 +10,7 @@ from app.database import Base
 from app.models import Doc, Folder, NativeAgentSkillInstall, Project, Provider, Skill, User
 from app.services.agent_registry_service import AgentRegistryService
 from app.services.native_agent_service import NativeAgentService
+from app.services.project_service import ProjectService
 from app.settings import settings
 
 
@@ -49,6 +50,22 @@ def _seed_project(db, *, name: str = "Security Paper Skill") -> tuple[User, Proj
     )
     db.commit()
     return user, project
+
+
+def test_create_skill_project_seeds_readme_and_skill_md_only():
+    db = _db()
+    user = User(id="user1", email="user@example.com", password_hash="hash")
+    db.add(user)
+    db.commit()
+
+    project = ProjectService(db).create(user_id=user.id, name="Security Skill", project_type="skill")
+    docs = db.query(Doc).filter_by(project_id=project.id).order_by(Doc.name.asc()).all()
+
+    assert project.is_skill_project is True
+    assert [doc.name for doc in docs] == ["README.md", "SKILL.md"]
+    assert project.main_doc_id == docs[0].id
+    assert "metadata" not in {doc.name.lower() for doc in docs}
+    assert "version:" in next(doc.content for doc in docs if doc.name == "SKILL.md")
 
 
 def test_project_skill_cache_materializes_project_files_and_runtime_reads_cache(tmp_path):

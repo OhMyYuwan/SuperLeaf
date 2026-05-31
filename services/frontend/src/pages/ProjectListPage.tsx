@@ -72,11 +72,11 @@ export function ProjectListPage() {
     setDialogBusy(false)
   }
 
-  const handleCreate = async (name: string) => {
+  const handleCreate = async (name: string, projectType: 'paper' | 'skill' = 'paper') => {
     setDialogBusy(true)
     setDialogError(null)
     try {
-      const created = await create(name)
+      const created = await create(name, projectType)
       closeDialog()
       navigate(`/projects/${created.id}`)
     } catch (e) {

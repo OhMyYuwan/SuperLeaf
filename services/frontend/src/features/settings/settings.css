@@ -455,6 +455,22 @@
   font-size: 12px !important;
 }
 
+.project-skill-toggle {
+  justify-content: flex-start;
+}
+
+.project-skill-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-skill-actions span {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.75);
+}
+
 .form-error {
   font-size: 12px;
   color: #fca5a5;

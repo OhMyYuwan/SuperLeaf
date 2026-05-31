@@ -311,6 +311,9 @@ export interface Skill {
   content: string
   visibility: 'system' | 'private' | 'public' | string
   source: 'bundled' | 'upload' | string
+  project_id: string
+  cache_version: number
+  cache_updated_at: string | null
   version: number
   tags: string[]
   can_edit: boolean

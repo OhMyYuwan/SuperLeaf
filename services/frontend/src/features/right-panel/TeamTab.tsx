@@ -2508,6 +2508,7 @@ function SkillManagementPanel({
   const privateSkills = skills.filter((skill) => skill.source === 'upload')
   const marketplaceInstalled = skills.filter((skill) => skill.source === 'marketplace')
   const customRecipeSkills = skills.filter((skill) => skill.source === 'custom')
+  const projectSkills = skills.filter((skill) => skill.source === 'project')
   const filteredMarketplaceSkills = marketplaceSkills.filter((entry) => skillMarketMatches(entry, marketSearch))
 
   const run = async (id: string, action: () => Promise<unknown>) => {
@@ -2522,7 +2523,7 @@ function SkillManagementPanel({
   return (
     <section className="skill-management-panel">
       <div className="tab-header-row">
-        <span>Skill 管理：{skills.length} 个可用 · {marketplaceInstalled.length} 个市场 · {customRecipeSkills.length} 个自定义 · {privateSkills.length} 个私有</span>
+        <span>Skill 管理：{skills.length} 个可用 · {projectSkills.length} 个项目 · {marketplaceInstalled.length} 个市场 · {customRecipeSkills.length} 个自定义 · {privateSkills.length} 个私有</span>
         <button className="small-btn" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 同步市场
         </button>
@@ -2570,7 +2571,7 @@ function SkillManagementPanel({
             <div key={skill.id} className="skill-local-row">
               <div className="skill-market-copy">
                 <div className="skill-market-name-row">
-                  {skill.can_edit && skill.source !== 'marketplace' ? (
+                  {skill.can_edit && skill.source !== 'marketplace' && skill.source !== 'project' ? (
                     <button className="skill-name-button" type="button" onClick={() => setEditingSkill(skill)}>
                       {skillLabel(skill)}
                     </button>
@@ -2587,6 +2588,9 @@ function SkillManagementPanel({
                   )}
                 </div>
                 <span>{skill.description || '无描述'}</span>
+                {skill.source === 'project' && (
+                  <small>项目缓存 v{skill.cache_version || 0}{skill.cache_updated_at ? ` · ${new Date(skill.cache_updated_at).toLocaleString()}` : ''}</small>
+                )}
               </div>
               <div className="skill-market-actions">
                 {skill.source === 'marketplace' ? (
@@ -3220,6 +3224,7 @@ function recipePreviewName(source: string, skillName: string, command: string): 
 
 function skillPillLabel(skill: Skill, pendingShare = false): string {
   if (skill.visibility === 'system' || skill.source === 'bundled') return '内置'
+  if (skill.source === 'project') return '项目'
   if (skill.source === 'marketplace') return '市场'
   if (skill.source === 'custom') return '自定义 npx'
   if (skill.visibility === 'public') return pendingShare ? '共享·待更新' : '共享'
@@ -3228,6 +3233,7 @@ function skillPillLabel(skill: Skill, pendingShare = false): string {
 
 function skillPillTone(skill: Skill): string {
   if (skill.visibility === 'public' || skill.source === 'bundled' || skill.source === 'marketplace') return 'ok'
+  if (skill.source === 'project') return 'ok'
   if (skill.source === 'custom') return 'neutral'
   return ''
 }

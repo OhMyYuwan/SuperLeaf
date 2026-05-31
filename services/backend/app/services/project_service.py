@@ -211,6 +211,7 @@ class ProjectService:
         name: str | None = None,
         main_doc_id: str | None = None,
         compiler: str | None = None,
+        is_skill_project: bool | None = None,
     ) -> Project | None:
         p = self.db.get(Project, project_id)
         if p is None or p.user_id != user_id:
@@ -221,6 +222,8 @@ class ProjectService:
             p.main_doc_id = main_doc_id
         if compiler is not None:
             p.compiler = compiler
+        if is_skill_project is not None:
+            p.is_skill_project = bool(is_skill_project)
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)

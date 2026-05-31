@@ -14,10 +14,10 @@ Supports four execution modes:
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -65,6 +65,9 @@ class OrchestrationContext:
     all_outputs: list[dict] = field(default_factory=list)
     # Current round (for roundtable mode)
     current_round: int = 0
+    # Chronological, run-local conversation history. This mirrors Dify's
+    # query/answer thread projection, but only for one workflow run.
+    chat_log: list[dict] = field(default_factory=list)
 
 
 class WorkflowOrchestrator:
@@ -193,6 +196,7 @@ class WorkflowOrchestrator:
     async def _execute_parallel(self, ctx: OrchestrationContext) -> AsyncIterator[dict]:
         """Execute agents in parallel and merge results."""
         yield {"event": "workflow.started", "data": {"mode": "parallel"}}
+        _seed_chat_from_request(ctx)
 
         # Find all agent nodes
         agent_nodes = [
@@ -206,6 +210,7 @@ class WorkflowOrchestrator:
         # Execute all agents in parallel
         tasks = []
         for node in agent_nodes:
+            ctx.nodes[node["id"]].inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
             task = self._execute_agent_node(ctx, node["id"])
             tasks.append(task)
 
@@ -241,6 +246,7 @@ class WorkflowOrchestrator:
     async def _execute_pipeline(self, ctx: OrchestrationContext) -> AsyncIterator[dict]:
         """Execute agents sequentially A → B → C."""
         yield {"event": "workflow.started", "data": {"mode": "pipeline"}}
+        _seed_chat_from_request(ctx)
 
         # Build execution order from edges
         nodes = ctx.workflow_def.graph.get("nodes", [])
@@ -258,6 +264,7 @@ class WorkflowOrchestrator:
                 # Pass previous output as context
                 if previous_output:
                     node.inputs["previous_output"] = previous_output
+                node.inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
 
                 output = await self._execute_agent_node(ctx, node_id)
                 previous_output = output
@@ -275,6 +282,7 @@ class WorkflowOrchestrator:
     async def _execute_roundtable(self, ctx: OrchestrationContext) -> AsyncIterator[dict]:
         """Execute agents in circular discussion A → B → C → A."""
         yield {"event": "workflow.started", "data": {"mode": "roundtable"}}
+        _seed_chat_from_request(ctx)
 
         agent_nodes = [
             node for node in ctx.workflow_def.graph.get("nodes", [])
@@ -304,6 +312,7 @@ class WorkflowOrchestrator:
                 # Pass all previous outputs as context
                 ctx.nodes[node["id"]].inputs["previous_outputs"] = ctx.all_outputs
                 ctx.nodes[node["id"]].inputs["current_round"] = round_num
+                ctx.nodes[node["id"]].inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
 
                 output = await self._execute_agent_node(ctx, node["id"])
                 round_outputs.append(output)
@@ -385,9 +394,17 @@ class WorkflowOrchestrator:
                 for node_id in ready_nodes:
                     node = ctx.nodes[node_id]
                     # Collect inputs from dependencies
-                    node.inputs["dependency_outputs"] = {
-                        dep_id: completed[dep_id] for dep_id in dependencies[node_id]
-                    }
+                    node.inputs["dependency_outputs"] = _dependency_outputs_for_node(
+                        ctx,
+                        completed,
+                        dependencies[node_id],
+                    )
+                    node.inputs["dependency_output_aliases"] = _dependency_output_aliases_for_node(
+                        ctx,
+                        completed,
+                        dependencies[node_id],
+                    )
+                    node.inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
                     # Start execution
                     task = asyncio.create_task(self._execute_node(ctx, node_id))
                     pending_tasks[node_id] = task
@@ -539,6 +556,7 @@ class WorkflowOrchestrator:
             node.outputs = output
             node.status = "completed"
             node.finished_at = datetime.utcnow()
+            _seed_chat_from_input_node(ctx, node_id, output, include_instruction=include_instruction)
             return output
 
         except Exception as e:
@@ -565,13 +583,19 @@ class WorkflowOrchestrator:
 
         try:
             dep_outputs = node.inputs.get("dependency_outputs") or {}
+            dep_aliases = node.inputs.get("dependency_output_aliases") or {}
             source_ids = node.config.get("source_node_ids") or []
             fmt = node.config.get("format", "text")
 
             # If source_node_ids is specified, restrict to those; otherwise use
             # every dependency the DAG scheduler wired into this node.
             if isinstance(source_ids, list) and source_ids:
-                dep_outputs = {k: v for k, v in dep_outputs.items() if k in source_ids}
+                allowed_ids = set(source_ids)
+                for source_id in source_ids:
+                    alias_targets = dep_aliases.get(source_id)
+                    if isinstance(alias_targets, list):
+                        allowed_ids.update(str(target) for target in alias_targets)
+                dep_outputs = {k: v for k, v in dep_outputs.items() if k in allowed_ids}
 
             if fmt == "text":
                 aggregated = _aggregate_as_text(dep_outputs)
@@ -834,8 +858,13 @@ class WorkflowOrchestrator:
             )
 
         node.outputs = {
+            "text": _aggregate_as_text(next_round_feedback or {}),
             "rounds": rounds,
             "last_round_outputs": round_outputs[-1] if round_outputs else {},
+            # Consumable data-flow output for downstream nodes. The loop itself
+            # is only a control-flow container; information comes from the
+            # exit/terminal child nodes that produced it.
+            "data_outputs": next_round_feedback or {},
             "all_rounds": round_outputs,
             # Per-round per-child input/output snapshots used by _execute_graph
             # to fan out node.completed events. Format:
@@ -887,12 +916,20 @@ class WorkflowOrchestrator:
         while ready or pending:
             for nid in ready:
                 node_ctx = ctx.nodes[nid]
-                dependency_outputs = {
-                    dep: completed[dep] for dep in dependencies[nid]
-                }
+                dependency_outputs = _dependency_outputs_for_node(
+                    ctx,
+                    completed,
+                    dependencies[nid],
+                )
                 dependency_outputs.update(initial_inputs.get(nid, {}))
                 node_ctx.inputs["dependency_outputs"] = dependency_outputs
+                node_ctx.inputs["dependency_output_aliases"] = _dependency_output_aliases_for_node(
+                    ctx,
+                    completed,
+                    dependencies[nid],
+                )
                 node_ctx.inputs["current_round"] = round_num
+                node_ctx.inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
                 # Deep-ish copy of inputs so the trace survives subsequent
                 # rounds overwriting node_ctx.inputs.
                 input_snapshots[nid] = _snapshot_inputs(node_ctx.inputs)
@@ -981,39 +1018,53 @@ class WorkflowOrchestrator:
 
             if provider.kind.startswith("dify"):
                 if not isinstance(client, DifyClient):
-                    raise TypeError(f"Expected DifyClient for dify provider")
+                    raise TypeError("Expected DifyClient for dify provider")
 
                 # Collect streaming output
                 accumulated_text = ""
+                prior_messages = node.inputs.get("prior_messages")
+                if not isinstance(prior_messages, list):
+                    prior_messages = _chat_log_to_messages(ctx.chat_log)
+                dify_prompt = _messages_to_text_prompt(prior_messages, prompt)
                 async for evt in client.run_streaming(
                     workflow_id=cached_workflow.external_id,
-                    inputs={"query": prompt},
+                    inputs={"query": dify_prompt},
                     user="orchestrator",
                 ):
                     if evt.get("event") == "text_chunk":
                         accumulated_text += evt.get("data", "")
 
-                output = {"text": accumulated_text, "agent_id": agent_id}
+                output = {"text": _strip_thinking(accumulated_text).strip(), "agent_id": agent_id}
 
             elif provider.kind == "nanobot":
                 if not isinstance(client, NanobotClient):
-                    raise TypeError(f"Expected NanobotClient for nanobot provider")
+                    raise TypeError("Expected NanobotClient for nanobot provider")
 
                 # Collect streaming output
                 accumulated_text = ""
+                prior_messages = node.inputs.get("prior_messages")
+                if not isinstance(prior_messages, list):
+                    prior_messages = _chat_log_to_messages(ctx.chat_log)
                 async for evt in client.run_streaming(
                     model=cached_workflow.external_id,
-                    messages=[{"role": "user", "content": prompt}],
-                    session_id=ctx.workflow_run.id,
+                    messages=[*prior_messages, {"role": "user", "content": prompt}],
+                    session_id=None,
                 ):
                     delta = evt.get("choices", [{}])[0].get("delta", {}).get("content", "")
                     accumulated_text += delta
 
-                output = {"text": accumulated_text, "agent_id": agent_id}
+                output = {"text": _strip_thinking(accumulated_text).strip(), "agent_id": agent_id}
 
             else:
                 raise ValueError(f"Unsupported provider kind: {provider.kind}")
 
+            _append_agent_turn(
+                ctx,
+                node,
+                agent_id=agent_id,
+                agent_name=cached_workflow.name if cached_workflow else agent_id,
+                text=output.get("text", ""),
+            )
             node.outputs = output
             node.status = "completed"
             node.finished_at = datetime.utcnow()
@@ -1087,6 +1138,10 @@ class WorkflowOrchestrator:
             )
         )
         accumulated_text: list[str] = []
+        prior_messages = node.inputs.get("prior_messages")
+        if not isinstance(prior_messages, list):
+            prior_messages = _chat_log_to_messages(ctx.chat_log)
+        allow_project_context = _node_allows_project_context(node)
         payload = NativeRunPayload(
             document_id=ctx.document_id,
             range_start=ctx.target_range.get("from", 0),
@@ -1094,10 +1149,13 @@ class WorkflowOrchestrator:
             inputs={
                 "target_text": ctx.target_text,
                 "instruction": prompt,
+                "allow_project_context": allow_project_context,
             },
             query=prompt,
-            conversation_id=f"ylw-workflow-{ctx.workflow_run.id}-{node.node_id}",
+            conversation_id="",
             context_files=list(ctx.context_files or []),
+            prior_messages=prior_messages,
+            allow_project_context=allow_project_context,
         )
         async for evt in runner.stream(payload):
             data = evt.get("data") or {}
@@ -1105,7 +1163,14 @@ class WorkflowOrchestrator:
                 delta = data.get("delta")
                 if isinstance(delta, str):
                     accumulated_text.append(delta)
-        text = "".join(accumulated_text).strip()
+        text = _strip_thinking("".join(accumulated_text)).strip()
+        _append_agent_turn(
+            ctx,
+            node,
+            agent_id=agent_id,
+            agent_name=native_agent.name,
+            text=text,
+        )
         return {
             "text": text,
             "agent_id": agent_id,
@@ -1136,19 +1201,54 @@ class WorkflowOrchestrator:
         # === Workflow context header ===
         additional_prompt = node.config.get("additional_prompt")
         dependency_outputs = node.inputs.get("dependency_outputs", {})
+        prior_messages = node.inputs.get("prior_messages")
+        in_workflow_chat = isinstance(prior_messages, list) and bool(prior_messages)
+        allow_project_context = _node_allows_project_context(node)
 
-        if additional_prompt or dependency_outputs:
+        if additional_prompt or dependency_outputs or in_workflow_chat:
             parts.append("[WORKFLOW CONTEXT]")
             parts.append("You are part of a multi-agent workflow.")
+            parts.append(
+                "Read prior_messages as the shared group-chat history. "
+                "Continue from it, but output only this Agent node's final answer. "
+                "Do not include hidden reasoning, scratchpad, or <think> blocks."
+            )
+            if in_workflow_chat:
+                parts.append(
+                    "The original user task inside prior_messages has highest priority. "
+                    "Node-specific instructions are lower-priority role or format "
+                    "guidance; follow them only when they do not conflict with the "
+                    "visible user task or group-chat history."
+                )
+                parts.append(
+                    "Speaker labels such as [node round N] in prior_messages are "
+                    "metadata. Do not copy, continue, or invent bracketed speaker "
+                    "labels in your own output unless the user explicitly asks for them."
+                )
+                if allow_project_context:
+                    parts.append(
+                        "Project document access is enabled for this node; use it only "
+                        "when the current node instructions explicitly require project context."
+                    )
+                else:
+                    parts.append(
+                        "Project document access is disabled for this node; do not infer "
+                        "or fetch context outside prior_messages."
+                    )
 
             if dependency_outputs:
                 parts.append(f"\nYou have {len(dependency_outputs)} upstream input(s):")
                 for dep_id, dep_output in dependency_outputs.items():
-                    preview = str(dep_output.get("text", ""))[:150]
-                    parts.append(f"  - {dep_id}: {preview}{'...' if len(str(dep_output.get('text', ''))) > 150 else ''}")
+                    dep_text = str(dep_output.get("text", ""))
+                    preview = dep_text[:150]
+                    suffix = "..." if len(dep_text) > 150 else ""
+                    parts.append(f"  - {dep_id}: {preview}{suffix}")
 
             if additional_prompt:
-                parts.append(f"\nNode-specific instructions:\n{additional_prompt}")
+                parts.append(
+                    "\nNode-specific role/format guidance "
+                    f"(lower priority than prior_messages):\n{additional_prompt}"
+                )
 
             parts.append("\n[END WORKFLOW CONTEXT]\n")
 
@@ -1166,13 +1266,13 @@ class WorkflowOrchestrator:
                 parts.append(f"\n--- {name} ---\n{content}")
             parts.append("\n[END REFERENCE FILES]\n")
 
-        # === Original prompt building logic ===
-        # User instruction
-        if ctx.user_instruction:
-            parts.append(f"User instruction: {ctx.user_instruction}")
-
-        # Target text
-        parts.append(f"\nTarget text:\n{ctx.target_text}")
+        # In workflow-chat mode, the user's original instruction and target
+        # text already live in prior_messages as the input-node/user turn.
+        # Legacy direct modes keep the old single-prompt behavior.
+        if not in_workflow_chat:
+            if ctx.user_instruction:
+                parts.append(f"User instruction: {ctx.user_instruction}")
+            parts.append(f"\nTarget text:\n{ctx.target_text}")
 
         # Previous outputs (for pipeline/roundtable)
         if "previous_output" in node.inputs:
@@ -1344,7 +1444,270 @@ def _snapshot_inputs(inputs: dict) -> dict:
     dep = out.get("dependency_outputs")
     if isinstance(dep, dict):
         out["dependency_outputs"] = dict(dep)
+    aliases = out.get("dependency_output_aliases")
+    if isinstance(aliases, dict):
+        out["dependency_output_aliases"] = {
+            key: list(value) if isinstance(value, list) else value
+            for key, value in aliases.items()
+        }
+    pm = out.get("prior_messages")
+    if isinstance(pm, list):
+        out["prior_messages"] = [dict(m) if isinstance(m, dict) else m for m in pm]
     return out
+
+
+def _dependency_outputs_for_node(
+    ctx: OrchestrationContext,
+    completed: dict[str, dict],
+    dependency_ids: list[str],
+) -> dict[str, dict]:
+    """Build data-flow inputs for a node from completed control dependencies.
+
+    Loop containers remain in the DAG so they can order execution, but their
+    downstream data must come from the child nodes that actually produced the
+    final loop output.
+    """
+    outputs: dict[str, dict] = {}
+    for dep_id in dependency_ids:
+        dep_output = completed[dep_id]
+        dep_node = ctx.nodes.get(dep_id)
+        if dep_node and dep_node.node_type == "loop":
+            data_outputs = _loop_data_outputs(dep_output)
+            if data_outputs:
+                outputs.update(data_outputs)
+                continue
+        outputs[dep_id] = dep_output
+    return outputs
+
+
+def _dependency_output_aliases_for_node(
+    ctx: OrchestrationContext,
+    completed: dict[str, dict],
+    dependency_ids: list[str],
+) -> dict[str, list[str]]:
+    aliases: dict[str, list[str]] = {}
+    for dep_id in dependency_ids:
+        dep_node = ctx.nodes.get(dep_id)
+        if not dep_node or dep_node.node_type != "loop":
+            continue
+        data_outputs = _loop_data_outputs(completed[dep_id])
+        if data_outputs:
+            aliases[dep_id] = list(data_outputs.keys())
+    return aliases
+
+
+def _loop_data_outputs(output: dict) -> dict[str, dict]:
+    if not isinstance(output, dict):
+        return {}
+    data_outputs = output.get("data_outputs")
+    if not isinstance(data_outputs, dict):
+        return {}
+    return {
+        node_id: node_output
+        for node_id, node_output in data_outputs.items()
+        if isinstance(node_id, str) and isinstance(node_output, dict)
+    }
+
+
+def _producer_outputs(outputs_by_id: dict[str, dict], node_ids: list[str]) -> dict[str, dict]:
+    """Return concrete producer outputs, flattening nested loop summaries."""
+    outputs: dict[str, dict] = {}
+    for node_id in node_ids:
+        node_output = outputs_by_id.get(node_id)
+        if not isinstance(node_output, dict):
+            continue
+        nested = _loop_data_outputs(node_output)
+        if nested:
+            outputs.update(nested)
+        else:
+            outputs[node_id] = node_output
+    return outputs
+
+
+def _node_allows_project_context(node: NodeContext) -> bool:
+    config = node.config or {}
+    for key in (
+        "allow_project_context",
+        "allowProjectContext",
+        "allow_file_context",
+        "allowFileContext",
+    ):
+        if key in config:
+            return _truthy(config.get(key))
+
+    prompt = str(config.get("additional_prompt") or "")
+    return _prompt_requests_project_context(prompt)
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on", "允许", "是"}
+    return bool(value)
+
+
+_PROJECT_CONTEXT_INTENT_PATTERNS = (
+    "读取项目",
+    "读取文档",
+    "读项目",
+    "读文档",
+    "检索项目",
+    "检索文档",
+    "搜索项目",
+    "搜索文档",
+    "参考项目",
+    "参考文档",
+    "查看项目",
+    "查看文档",
+    "当前文档",
+    "项目文档",
+    "read project",
+    "read document",
+    "read file",
+    "search project",
+    "search document",
+    "project context",
+    "project documents",
+    "active document",
+    "current document",
+    "project_read_doc",
+    "project_grep",
+)
+
+
+def _prompt_requests_project_context(prompt: str) -> bool:
+    text = prompt.casefold()
+    return any(pattern in text for pattern in _PROJECT_CONTEXT_INTENT_PATTERNS)
+
+
+def _seed_chat_from_request(ctx: OrchestrationContext) -> None:
+    if ctx.chat_log:
+        return
+    output = {
+        "target_text": ctx.target_text,
+        "user_instruction": ctx.user_instruction,
+    }
+    _seed_chat_from_input_node(ctx, "input", output, include_instruction=True)
+
+
+def _seed_chat_from_input_node(
+    ctx: OrchestrationContext,
+    node_id: str,
+    output: dict,
+    *,
+    include_instruction: bool,
+) -> None:
+    if any(entry.get("role") == "user" and entry.get("node_id") == node_id for entry in ctx.chat_log):
+        return
+    instruction = str(output.get("user_instruction") or "").strip() if include_instruction else ""
+    target = str(output.get("target_text") or output.get("text") or "").strip()
+    parts: list[str] = []
+    if instruction:
+        parts.append(instruction)
+    if target and target != instruction:
+        parts.append(target)
+    content = "\n\n".join(parts).strip()
+    if not content:
+        return
+    ctx.chat_log.append(
+        {
+            "role": "user",
+            "agent_id": "",
+            "agent_name": "user",
+            "node_id": node_id,
+            "loop_id": None,
+            "round": None,
+            "content": content,
+        }
+    )
+
+
+def _append_agent_turn(
+    ctx: OrchestrationContext,
+    node: NodeContext,
+    *,
+    agent_id: str,
+    agent_name: str,
+    text: str,
+) -> None:
+    content = _strip_thinking(text).strip()
+    if not content:
+        return
+    ctx.chat_log.append(
+        {
+            "role": "assistant",
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "node_id": node.node_id,
+            "loop_id": _node_loop_id(ctx, node.node_id),
+            "round": node.inputs.get("current_round"),
+            "content": content,
+        }
+    )
+
+
+def _chat_log_to_messages(chat_log: list[dict]) -> list[dict]:
+    messages: list[dict] = []
+    for entry in chat_log:
+        text = _strip_thinking(str(entry.get("content") or "")).strip()
+        if not text:
+            continue
+        role = entry.get("role") or "assistant"
+        if role == "user":
+            messages.append({"role": "user", "content": text})
+            continue
+        speaker = entry.get("node_id") or entry.get("agent_name") or "agent"
+        round_num = entry.get("round")
+        prefix = f"[{speaker}"
+        if isinstance(round_num, int):
+            prefix += f" round {round_num}"
+        prefix += "]\n"
+        messages.append({"role": "assistant", "content": prefix + text})
+    return messages
+
+
+def _messages_to_text_prompt(prior_messages: list[dict], current_prompt: str) -> str:
+    if not prior_messages:
+        return current_prompt
+    lines: list[str] = [
+        "[PRIOR MESSAGES]",
+        "Treat this as the shared workflow group chat so far.",
+    ]
+    for message in prior_messages:
+        role = str(message.get("role") or "assistant").strip() or "assistant"
+        content = str(message.get("content") or "").strip()
+        if content:
+            lines.append(f"\n{role.upper()}:\n{content}")
+    lines.extend(
+        [
+            "\n[END PRIOR MESSAGES]",
+            "\n[CURRENT NODE CONTEXT]",
+            current_prompt.strip() or "Continue from the prior messages.",
+            "[END CURRENT NODE CONTEXT]",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+_THINKING_RE = re.compile(
+    r"<\s*(think|thinking|thought|reasoning|reflection)\s*>.*?<\s*/\s*\1\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_thinking(text: str) -> str:
+    if not text:
+        return text
+    cleaned = _THINKING_RE.sub("", text)
+    half_open = re.search(
+        r"<\s*(think|thinking|thought|reasoning|reflection)\s*>",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if half_open:
+        cleaned = cleaned[: half_open.start()]
+    return cleaned
 
 
 def _edge_source(edge: dict) -> str:
@@ -1363,6 +1726,14 @@ def _parent_id(node: dict) -> str | None:
     config = node.get("config") or {}
     ui = config.get("_ui") or {}
     return ui.get("parent_id")
+
+
+def _node_loop_id(ctx: OrchestrationContext, node_id: str) -> str | None:
+    """Return the loop/container id for a graph node when it is nested."""
+    for node in ctx.workflow_def.graph.get("nodes", []):
+        if node.get("id") == node_id:
+            return _parent_id(node)
+    return None
 
 
 def _loop_child_ids(ctx: OrchestrationContext, loop_id: str) -> list[str]:
@@ -1396,11 +1767,7 @@ def _select_loop_feedback(
     exit_child_ids: list[str],
 ) -> dict[str, dict]:
     if exit_child_ids:
-        return {
-            child_id: outputs_this_round[child_id]
-            for child_id in exit_child_ids
-            if child_id in outputs_this_round
-        }
+        return _producer_outputs(outputs_this_round, exit_child_ids)
 
     # Fallback for older graphs that have no explicit loop-out-target edge:
     # treat terminal child nodes as the loop's feedback output.
@@ -1408,11 +1775,7 @@ def _select_loop_feedback(
     targets = {_edge_target(e) for e in child_edges}
     terminal_ids = targets - sources
     if terminal_ids:
-        return {
-            child_id: outputs_this_round[child_id]
-            for child_id in terminal_ids
-            if child_id in outputs_this_round
-        }
+        return _producer_outputs(outputs_this_round, list(terminal_ids))
     return dict(outputs_this_round)
 
 
@@ -1427,6 +1790,34 @@ def _aggregate_as_text(dep_outputs: dict[str, dict]) -> str:
         if text:
             parts.append(f"[{nid}]\n{text}")
     return "\n\n---\n\n".join(parts)
+
+
+def _aggregate_as_json(dep_outputs: dict[str, dict]) -> dict:
+    """Shallow-merge upstream structured outputs for Output(format=json)."""
+    import json as _json
+
+    merged: dict = {}
+    for nid, out in dep_outputs.items():
+        if not isinstance(out, dict):
+            merged[nid] = out
+            continue
+
+        payload = out.get("outputs") if isinstance(out.get("outputs"), dict) else out
+        if isinstance(payload, dict):
+            merged.update(payload)
+            continue
+
+        raw_text = str(out.get("text") or out.get("answer") or out.get("result") or "").strip()
+        if raw_text:
+            try:
+                parsed = _json.loads(raw_text)
+                if isinstance(parsed, dict):
+                    merged.update(parsed)
+                else:
+                    merged[nid] = parsed
+            except Exception:
+                merged[nid] = raw_text
+    return merged
 
 
 def _aggregate_as_annotation_schema(dep_outputs: dict[str, dict]) -> dict:

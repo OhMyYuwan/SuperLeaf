@@ -7,6 +7,7 @@
  */
 
 import { http } from './backendApi'
+import type { Skill } from './backendApi'
 
 export interface ProjectSummary {
   id: string
@@ -14,6 +15,10 @@ export interface ProjectSummary {
   name: string
   main_doc_id: string
   compiler: string
+  is_skill_project: boolean
+  project_skill_id: string
+  skill_cache_version: number
+  skill_cache_updated_at: string | null
   created_at: string
   updated_at: string
   my_role: 'owner' | 'editor' | 'viewer'
@@ -33,6 +38,12 @@ export interface ProjectUpdate {
   name?: string
   main_doc_id?: string
   compiler?: string
+  is_skill_project?: boolean
+}
+
+export interface ProjectSkillCacheResult {
+  project: ProjectSummary
+  skill: Skill
 }
 
 export const projectsApi = {
@@ -59,6 +70,11 @@ export const projectsApi = {
     http<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+      scope: 'global',
+    }),
+  updateSkillCache: (id: string) =>
+    http<ProjectSkillCacheResult>(`/api/projects/${encodeURIComponent(id)}/skill-cache`, {
+      method: 'POST',
       scope: 'global',
     }),
   remove: (id: string) =>

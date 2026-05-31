@@ -244,6 +244,10 @@ class Skill(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     visibility: Mapped[str] = mapped_column(String(16), default="private")
     source: Mapped[str] = mapped_column(String(16), default="upload")
+    project_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    cache_path: Mapped[str] = mapped_column(String(1024), default="")
+    cache_version: Mapped[int] = mapped_column(Integer, default=0)
+    cache_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -439,6 +443,10 @@ class Project(Base):
     # LaTeX compile settings
     main_doc_id: Mapped[str] = mapped_column(String(32), default="")
     compiler: Mapped[str] = mapped_column(String(32), default="")
+    is_skill_project: Mapped[bool] = mapped_column(Boolean, default=False)
+    project_skill_id: Mapped[str] = mapped_column(String(32), default="")
+    skill_cache_version: Mapped[int] = mapped_column(Integer, default=0)
+    skill_cache_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

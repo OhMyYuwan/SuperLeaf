@@ -8,16 +8,21 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+from pathlib import Path
 import re
+import shutil
 import shlex
+from uuid import uuid4
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import GitHubAccount, NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Provider, Skill, SkillHidden
+from ..models import Doc, GitHubAccount, NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Project, Provider, Skill, SkillHidden
 from ..secrets_vault import encrypt
 from ..schemas import NativeAgentSkillRecipeIn
-from .agent_workspace_service import AgentWorkspaceService
+from ..settings import settings
+from .agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
+from .project_fs_service import ProjectFsService
 from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstallError, SkillNpxInstaller
 from .skill_content_crypto import decrypt_skill_content, encrypt_skill_content
 from .skill_recipe_metadata import (
@@ -163,7 +168,11 @@ class NativeAgentService:
             .all()
         )
         hidden = self._hidden_skill_keys(user_id=user_id)
-        return [row for row in rows if _skill_key(row) not in hidden]
+        return [
+            row
+            for row in rows
+            if _skill_key(row) not in hidden and self._project_skill_is_active(row, user_id=user_id)
+        ]
 
     def get_skill(self, skill_id: str, *, user_id: str) -> Skill | None:
         row = self.db.get(Skill, skill_id)
@@ -173,9 +182,24 @@ class NativeAgentService:
             return None
         if _skill_key(row) in self._hidden_skill_keys(user_id=user_id):
             return None
+        if not self._project_skill_is_active(row, user_id=user_id):
+            return None
         if row.visibility == "public" or row.owner_user_id == user_id:
             return row
         return None
+
+    def _project_skill_is_active(self, row: Skill, *, user_id: str) -> bool:
+        if row.source != "project":
+            return True
+        if row.owner_user_id != user_id or not row.project_id:
+            return False
+        project = self.db.get(Project, row.project_id)
+        return (
+            project is not None
+            and project.user_id == user_id
+            and project.is_skill_project
+            and project.project_skill_id == row.id
+        )
 
     def create_skill(
         self,
@@ -266,6 +290,116 @@ class NativeAgentService:
         self.db.commit()
         self.db.refresh(row)
         return row
+
+    def update_project_skill_cache(self, project: Project, *, user_id: str) -> Skill:
+        if project.user_id != user_id:
+            raise ValueError("Project not found")
+
+        root_skill = self.db.query(Doc).filter_by(project_id=project.id, folder_id=None, name="SKILL.md").first()
+        if root_skill is None:
+            raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
+
+        skill = self._project_skill_for(project, user_id=user_id)
+        cache_root = _project_skill_cache_root(user_id=user_id, skill_id=skill.id)
+        tmp = cache_root / f"current.tmp-{uuid4().hex}"
+        current = cache_root / "current"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            doc_count, file_count, byte_count = ProjectFsService(self.db, project).materialize_to_directory(tmp)
+            if not (tmp / "SKILL.md").is_file():
+                raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
+            if current.exists():
+                shutil.rmtree(current)
+            tmp.rename(current)
+        except Exception:
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            raise
+
+        now = datetime.utcnow()
+        previous_cache_version = int(skill.cache_version or 0)
+        skill.cache_path = str(current)
+        skill.cache_version = previous_cache_version + 1
+        skill.cache_updated_at = now
+        skill.version = int(skill.version or 1) + 1 if previous_cache_version else max(int(skill.version or 1), 1)
+        skill.description = skill.description or f"Project-backed Skill cache for {project.name}"
+        skill.tags = _project_skill_tags(project, doc_count=doc_count, file_count=file_count, byte_count=byte_count)
+        skill.updated_at = now
+
+        project.is_skill_project = True
+        project.project_skill_id = skill.id
+        project.skill_cache_version = skill.cache_version
+        project.skill_cache_updated_at = now
+        project.updated_at = now
+
+        self.db.add(skill)
+        self.db.add(project)
+        self.db.commit()
+        self.db.refresh(skill)
+        self.db.refresh(project)
+        return skill
+
+    def _project_skill_for(self, project: Project, *, user_id: str) -> Skill:
+        existing: Skill | None = None
+        if project.project_skill_id:
+            existing = self.db.get(Skill, project.project_skill_id)
+            if (
+                existing is not None
+                and existing.owner_user_id == user_id
+                and existing.source == "project"
+                and existing.project_id == project.id
+            ):
+                return existing
+        existing = (
+            self.db.query(Skill)
+            .filter(
+                Skill.owner_user_id == user_id,
+                Skill.source == "project",
+                Skill.project_id == project.id,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+
+        name, public_name = self._unique_project_skill_names(user_id=user_id, base_name=project.name)
+        skill = Skill(
+            owner_user_id=user_id,
+            name=name,
+            public_name=public_name,
+            description=f"Project-backed Skill cache for {project.name}",
+            content="",
+            visibility="private",
+            source="project",
+            project_id=project.id,
+            version=1,
+            cache_version=0,
+            tags=["project-skill"],
+        )
+        self.db.add(skill)
+        self.db.flush()
+        return skill
+
+    def _unique_project_skill_names(self, *, user_id: str, base_name: str) -> tuple[str, str]:
+        author = self._github_login_optional(user_id=user_id) or "local"
+        clean_base = _clean_project_skill_name(base_name or "Skill")
+        for idx in range(100):
+            suffix = "" if idx == 0 else f" ({idx})"
+            name = f"{clean_base}{suffix}"
+            public_name = f"{author}@{name}"
+            exists = (
+                self.db.query(Skill)
+                .filter(Skill.owner_user_id == user_id, Skill.public_name == public_name)
+                .first()
+            )
+            if exists is None:
+                return name, public_name
+        digest = hashlib.sha1(f"{user_id}:{base_name}".encode("utf-8")).hexdigest()[:8]
+        name = f"{clean_base}-{digest}"
+        return name, f"{author}@{name}"
 
     def update_skill(
         self,
@@ -868,6 +1002,53 @@ class NativeAgentService:
                 installed_rows.append(row)
                 continue
 
+            if skill.source == "project":
+                cache_path = Path(skill.cache_path) if skill.cache_path else None
+                row = NativeAgentSkillInstall(
+                    project_id=project_id,
+                    user_id=user_id,
+                    agent_id=agent.id,
+                    skill_id=skill.id,
+                    source=skill.source,
+                    marketplace_id="",
+                    repo_url="",
+                    source_ref="",
+                    skill_name=skill.name,
+                    install_command="project Skill cache reference",
+                    status="running",
+                )
+                self.db.add(row)
+                self.db.flush()
+                if cache_path is None or not cache_path.exists() or not (cache_path / "SKILL.md").is_file():
+                    row.status = "failed"
+                    row.install_log = "Project Skill cache is missing; update Skill cache from the project first"
+                    logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
+                    installed_rows.append(row)
+                    continue
+                try:
+                    manifest = workspace.build_manifest(cache_path)
+                    ref = workspace.install_skill_reference(
+                        agent,
+                        folder_name=skill.public_name or skill.name,
+                        target_path=cache_path,
+                        manifest=manifest,
+                    )
+                except (AgentWorkspaceError, OSError) as exc:
+                    row.status = "failed"
+                    row.install_log = str(exc)[:12000]
+                    logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
+                    installed_rows.append(row)
+                    continue
+                row.status = "installed"
+                row.folder_name = skill.public_name or skill.name
+                row.folder_path = str(ref)
+                row.manifest = manifest
+                row.install_log = f"Using project Skill cache at {cache_path}"
+                row.installed_at = datetime.utcnow()
+                logs.append(f"{skill.public_name or skill.name}: using project Skill cache")
+                installed_rows.append(row)
+                continue
+
             content = decrypt_skill_content(skill.content)
             row = NativeAgentSkillInstall(
                 project_id=project_id,
@@ -1067,6 +1248,27 @@ def _clean_name(value: str) -> str:
     if not cleaned:
         raise ValueError("name required")
     return cleaned
+
+
+def _clean_project_skill_name(value: str) -> str:
+    cleaned = re.sub(r"[\x00-\x1f/\\:]+", "-", str(value or "").strip()).strip(" .")
+    return cleaned[:100] or "Skill"
+
+
+def _project_skill_cache_root(*, user_id: str, skill_id: str) -> Path:
+    return settings.data_dir / "skills-cache" / "users" / _slug(user_id) / _slug(skill_id)
+
+
+def _project_skill_tags(project: Project, *, doc_count: int, file_count: int, byte_count: int) -> list[str]:
+    return _clean_tags(
+        [
+            "project-skill",
+            f"ylw:project-id={project.id}",
+            f"ylw:project-docs={doc_count}",
+            f"ylw:project-files={file_count}",
+            f"ylw:project-bytes={byte_count}",
+        ]
+    )
 
 
 def _unique_ids(values: list[str]) -> list[str]:

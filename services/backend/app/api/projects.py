@@ -10,7 +10,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
@@ -21,14 +21,18 @@ from ..schemas import (
     ProjectMemberAddIn,
     ProjectMemberOut,
     ProjectOut,
+    ProjectSkillCacheOut,
     ProjectUpdateIn,
     RecentCollaboratorOut,
+    SkillOut,
 )
 from ..services.event_bus import bus
 from ..services.annotation_training_export_service import build_annotation_training_export_zip
 from ..services.github_service import GitHubError, GitHubService, parse_repo_url
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
+from ..services.native_agent_service import NativeAgentService
+from ..services.skill_content_crypto import decrypt_skill_content
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -37,6 +41,17 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 def _project_out(p: Project, role: str) -> ProjectOut:
     out = ProjectOut.model_validate(p)
     out.my_role = role
+    return out
+
+
+def _skill_out(row, user_id: str) -> SkillOut:
+    out = SkillOut.model_validate(row, from_attributes=True)
+    session = object_session(row)
+    if session:
+        svc = NativeAgentService(session)
+        out.can_edit = svc.can_edit_skill(row, user_id=user_id)
+        out.used_by_agent_count = len(svc.agents_using_skill(row.id, user_id=user_id))
+    out.content = decrypt_skill_content(row.content)
     return out
 
 
@@ -135,10 +150,31 @@ def update_project(
         name=body.name,
         main_doc_id=body.main_doc_id,
         compiler=body.compiler,
+        is_skill_project=body.is_skill_project,
     )
     if p is None:
         raise HTTPException(404, "Project not found")
     return ProjectOut.model_validate(p)
+
+
+@router.post("/{project_id}/skill-cache", response_model=ProjectSkillCacheOut)
+def update_project_skill_cache(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProjectSkillCacheOut:
+    svc = ProjectService(db)
+    project = svc.get(project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    try:
+        skill = NativeAgentService(db).update_project_skill_cache(project, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ProjectSkillCacheOut(
+        project=ProjectOut.model_validate(project),
+        skill=_skill_out(skill, user.id),
+    )
 
 
 @router.delete("/{project_id}", status_code=204)

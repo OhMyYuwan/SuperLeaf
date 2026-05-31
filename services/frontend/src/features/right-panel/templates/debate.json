@@ -19,7 +19,7 @@
         "config": {
           "agentId": "__PICK_AGENT__",
           "position": { "x": 320, "y": 60 },
-          "promptHint": "以严格审稿人视角，列出本段的 3 个主要问题和 1 个优点。"
+          "additional_prompt": "以严格审稿人视角，列出本段的 3 个主要问题和 1 个优点。"
         }
       },
       {
@@ -29,7 +29,7 @@
         "config": {
           "agentId": "__PICK_AGENT__",
           "position": { "x": 320, "y": 260 },
-          "promptHint": "以读者视角，列出你困惑的 2 处地方，并猜测作者本意。"
+          "additional_prompt": "以读者视角，列出你困惑的 2 处地方，并猜测作者本意。"
         }
       },
       {
@@ -39,7 +39,7 @@
         "config": {
           "agentId": "__PICK_AGENT__",
           "position": { "x": 620, "y": 160 },
-          "promptHint": "结合两位评审的意见，给出最终的修改建议（不超过 150 字）。"
+          "additional_prompt": "结合两位评审的意见，给出最终的修改建议（不超过 150 字）。"
         }
       },
       {

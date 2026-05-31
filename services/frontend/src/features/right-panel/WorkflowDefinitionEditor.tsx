@@ -33,7 +33,7 @@ interface WorkflowDefinitionEditorProps {
   /** When set, seeds the editor from a draft (e.g. a template) rather than an
    *  existing definition. Ignored if `definition` is provided. */
   initialDraft?: WorkflowDefinitionDraft
-  onSave: (draft: WorkflowDefinitionDraft) => Promise<void>
+  onSave: (draft: WorkflowDefinitionDraft) => Promise<WorkflowDefinition | void>
   onCancel: () => void
   onTestDefinition?: (definitionId: string, prompt: string) => void
   testRunning?: boolean
@@ -57,6 +57,24 @@ function buildJsonText(
   config: WorkflowConfig,
 ): string {
   return JSON.stringify({ name, description, graph, config }, null, 2)
+}
+
+interface WorkflowDraftFingerprintInput {
+  name: string
+  description?: string
+  execution_mode: WorkflowDefinition['execution_mode']
+  graph: WorkflowGraph
+  config?: WorkflowConfig
+}
+
+function fingerprintWorkflowDraft(draft: WorkflowDraftFingerprintInput): string {
+  return JSON.stringify({
+    name: draft.name ?? '',
+    description: draft.description ?? '',
+    execution_mode: draft.execution_mode,
+    graph: draft.graph,
+    config: draft.config ?? {},
+  })
 }
 
 export function WorkflowDefinitionEditor({
@@ -140,6 +158,49 @@ export function WorkflowDefinitionEditor({
     setMode(next)
   }
 
+  const buildCurrentDraft = (): WorkflowDefinitionDraft => {
+    let finalGraph: WorkflowGraph = graph
+    let finalConfig: WorkflowConfig = config
+    let finalName = name
+    let finalDescription = description
+
+    if (mode === 'json') {
+      let parsed: WorkflowJsonPayload
+      try {
+        parsed = JSON.parse(jsonText || '{}') as WorkflowJsonPayload
+      } catch (e) {
+        throw new Error(`JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`, {
+          cause: e,
+        })
+      }
+      finalGraph = parsed.graph ?? EMPTY_GRAPH
+      finalConfig = parsed.config ?? {}
+      if (typeof parsed.name === 'string' && parsed.name) finalName = parsed.name
+      if (typeof parsed.description === 'string') finalDescription = parsed.description
+    }
+
+    return {
+      name: finalName,
+      description: finalDescription,
+      execution_mode: executionMode,
+      graph: finalGraph,
+      config: finalConfig,
+    }
+  }
+
+  const currentDraftFingerprint = (() => {
+    try {
+      return fingerprintWorkflowDraft(buildCurrentDraft())
+    } catch {
+      return null
+    }
+  })()
+  const savedDraftFingerprint = definition ? fingerprintWorkflowDraft(definition) : null
+  const hasUnsavedWorkflowChanges =
+    !definition ||
+    currentDraftFingerprint === null ||
+    currentDraftFingerprint !== savedDraftFingerprint
+
   const handleCopyJson = async () => {
     const text =
       mode === 'json' ? jsonText : buildJsonText(name, description, graph, config)
@@ -194,33 +255,16 @@ export function WorkflowDefinitionEditor({
     setError(null)
     setSaving(true)
     try {
-      let finalGraph: WorkflowGraph = graph
-      let finalConfig: WorkflowConfig = config
-      let finalName = name
-      let finalDescription = description
-
-      if (mode === 'json') {
-        let parsed: WorkflowJsonPayload
-        try {
-          parsed = JSON.parse(jsonText || '{}') as WorkflowJsonPayload
-        } catch (e) {
-          throw new Error(`JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`)
-        }
-        finalGraph = parsed.graph ?? EMPTY_GRAPH
-        finalConfig = parsed.config ?? {}
-        if (typeof parsed.name === 'string' && parsed.name) finalName = parsed.name
-        if (typeof parsed.description === 'string') finalDescription = parsed.description
-      }
-
-      const draft: WorkflowDefinitionDraft = {
-        name: finalName,
-        description: finalDescription,
-        execution_mode: executionMode,
-        graph: finalGraph,
-        config: finalConfig,
-      }
-
+      const draft = buildCurrentDraft()
       await onSave(draft)
+      setName(draft.name)
+      setDescription(draft.description ?? '')
+      setGraph(draft.graph)
+      setConfig(draft.config ?? {})
+      if (mode === 'json') {
+        setJsonText(buildJsonText(draft.name, draft.description ?? '', draft.graph, draft.config ?? {}))
+      }
+      flashNotice('Workflow 已保存')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -260,14 +304,24 @@ export function WorkflowDefinitionEditor({
       {notice && <div className="editor-notice">{notice}</div>}
 
       <div className="editor-metadata">
-        <div className="form-group">
-          <label>名称</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="例如：并行审稿 / 流水线分析"
-          />
+        <div className="editor-name-row">
+          <div className="form-group editor-name-field">
+            <label>名称</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例如：并行审稿 / 流水线分析"
+            />
+          </div>
+          <div className="editor-save-actions">
+            <button className="secondary-btn" onClick={onCancel} disabled={saving}>
+              取消
+            </button>
+            <button className="primary-btn" onClick={handleSave} disabled={saving || !name}>
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </div>
         </div>
 
         <div className="form-group">
@@ -361,13 +415,8 @@ export function WorkflowDefinitionEditor({
           running={testRunning}
           events={testEvents}
           nodeStatuses={testNodeStatuses}
+          hasUnsavedWorkflowChanges={hasUnsavedWorkflowChanges}
         />
-        <button className="secondary-btn" onClick={onCancel} disabled={saving}>
-          取消
-        </button>
-        <button className="primary-btn" onClick={handleSave} disabled={saving || !name}>
-          {saving ? '保存中…' : '保存'}
-        </button>
       </div>
     </div>
   )
@@ -381,6 +430,7 @@ function WorkflowTestPanel({
   running,
   events,
   nodeStatuses,
+  hasUnsavedWorkflowChanges,
 }: {
   definitionId?: string
   prompt: string
@@ -389,10 +439,12 @@ function WorkflowTestPanel({
   running: boolean
   events: RunEvent[]
   nodeStatuses: NodeStatus[]
+  hasUnsavedWorkflowChanges: boolean
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [fixtures, setFixtures] = useState<WorkflowTestCase[]>([])
   const [fixturesError, setFixturesError] = useState<string | null>(null)
+  const [runWarning, setRunWarning] = useState<string | null>(null)
   const failed = nodeStatuses.find((n) => n.status === 'failed')
   const latestEvent = events.at(-1)
   // Build a chronological timeline directly from the event stream so each
@@ -402,12 +454,10 @@ function WorkflowTestPanel({
   const timeline = useMemo(() => buildTimeline(events), [events])
   const selectedTimelineItem =
     timeline.find((t) => t.key === selectedNodeId) ?? timeline[timeline.length - 1] ?? null
+  const visibleFixtures = definitionId ? fixtures : []
 
   useEffect(() => {
-    if (!definitionId) {
-      setFixtures([])
-      return
-    }
+    if (!definitionId) return
     let cancelled = false
     void workflowTestCaseApi
       .list(definitionId)
@@ -424,7 +474,7 @@ function WorkflowTestPanel({
 
   const handleSaveFixture = async () => {
     if (!definitionId) return
-    const name = window.prompt('测试用例名称：', `Fixture ${fixtures.length + 1}`)
+    const name = window.prompt('测试用例名称：', `Fixture ${visibleFixtures.length + 1}`)
     if (!name) return
     try {
       const created = await workflowTestCaseApi.create(definitionId, { name, prompt })
@@ -451,24 +501,22 @@ function WorkflowTestPanel({
     }
   }
 
-  useEffect(() => {
-    // Reset selection when the run resets; otherwise keep the user's pick if
-    // it still maps to a timeline item, else fall through to "latest".
-    if (timeline.length === 0) {
-      setSelectedNodeId(null)
+  const handleRunTest = () => {
+    if (!definitionId || !onRun) return
+    if (hasUnsavedWorkflowChanges) {
+      setRunWarning('Workflow 有未保存修改，请先保存 Workflow，再运行测试用例。')
       return
     }
-    setSelectedNodeId((curr) =>
-      curr && timeline.some((t) => t.key === curr) ? curr : timeline[timeline.length - 1].key,
-    )
-  }, [timeline])
+    setRunWarning(null)
+    onRun(definitionId, prompt)
+  }
 
   return (
     <div className="workflow-test-panel">
       <div className="workflow-test-head">
         <span>测试</span>
         <div className="workflow-test-head-actions">
-          {definitionId && fixtures.length > 0 && (
+          {definitionId && visibleFixtures.length > 0 && (
             <select
               className="workflow-test-fixture-select"
               value=""
@@ -479,7 +527,7 @@ function WorkflowTestPanel({
               title="加载已保存的测试用例"
             >
               <option value="">加载用例…</option>
-              {fixtures.map((f) => (
+              {visibleFixtures.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
                 </option>
@@ -501,17 +549,26 @@ function WorkflowTestPanel({
             className="primary-btn"
             type="button"
             disabled={!definitionId || !onRun || running || !prompt.trim()}
-            onClick={() => definitionId && onRun?.(definitionId, prompt)}
-            title={!definitionId ? '先保存 Workflow 后再测试' : undefined}
+            onClick={handleRunTest}
+            title={
+              !definitionId
+                ? '先保存 Workflow 后再测试'
+                : hasUnsavedWorkflowChanges
+                  ? '当前 Workflow 有未保存修改'
+                  : undefined
+            }
           >
             {running ? '运行中…' : '运行测试'}
           </button>
         </div>
       </div>
       {fixturesError && <div className="workflow-test-hint error">{fixturesError}</div>}
-      {fixtures.length > 0 && (
+      {runWarning && hasUnsavedWorkflowChanges && (
+        <div className="workflow-test-hint warning">{runWarning}</div>
+      )}
+      {visibleFixtures.length > 0 && (
         <div className="workflow-test-fixture-chips">
-          {fixtures.map((f) => (
+          {visibleFixtures.map((f) => (
             <span key={f.id} className="workflow-test-fixture-chip" title={f.name}>
               <button
                 type="button"

@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 from ..models import CachedWorkflow, NativeAgent, Project, Provider, Skill
 from .agent_workspace_service import AgentWorkspaceError, read_skill_folder_content
 from .native_agent_runner import NativeSkillBlock
+from .project_member_service import ProjectMemberService
 from .skill_content_crypto import decrypt_skill_content
-
 
 NATIVE_WORKFLOW_PREFIX = "native:"
 
@@ -60,11 +60,14 @@ class AgentRegistryService:
             skill = self.db.get(Skill, str(skill_id))
             if skill is None:
                 continue
-            if skill.visibility not in ("system", "public") and skill.owner_user_id != user_id:
-                continue
             if skill.source == "project":
                 project = self.db.get(Project, skill.project_id) if skill.project_id else None
-                if project is None or project.user_id != user_id or not project.is_skill_project:
+                if (
+                    project is None
+                    or not project.is_skill_project
+                    or project.project_skill_id != skill.id
+                    or not ProjectMemberService(self.db).has_access(project.id, user_id)
+                ):
                     continue
                 if not skill.cache_path:
                     continue
@@ -73,6 +76,8 @@ class AgentRegistryService:
                 except AgentWorkspaceError:
                     content = ""
             else:
+                if skill.visibility not in ("system", "public") and skill.owner_user_id != user_id:
+                    continue
                 content = decrypt_skill_content(skill.content)
             if not content.strip():
                 continue

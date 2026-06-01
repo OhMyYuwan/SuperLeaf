@@ -33,6 +33,7 @@ from ..secrets_vault import encrypt
 from ..settings import settings
 from .agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from .project_fs_service import ProjectFsService
+from .project_member_service import ProjectMemberService
 from .skill_content_crypto import decrypt_skill_content, encrypt_skill_content
 from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstaller, SkillNpxInstallError
 from .skill_recipe_metadata import (
@@ -170,6 +171,7 @@ class NativeAgentService:
                 or_(
                     Skill.visibility == "public",
                     Skill.owner_user_id == user_id,
+                    Skill.source == "project",
                 )
             )
             .filter(Skill.source != "bundled")
@@ -193,21 +195,21 @@ class NativeAgentService:
             return None
         if not self._project_skill_is_active(row, user_id=user_id):
             return None
-        if row.visibility == "public" or row.owner_user_id == user_id:
+        if row.source == "project" or row.visibility == "public" or row.owner_user_id == user_id:
             return row
         return None
 
     def _project_skill_is_active(self, row: Skill, *, user_id: str) -> bool:
         if row.source != "project":
             return True
-        if row.owner_user_id != user_id or not row.project_id:
+        if not row.project_id:
             return False
         project = self.db.get(Project, row.project_id)
         return (
             project is not None
-            and project.user_id == user_id
             and project.is_skill_project
             and project.project_skill_id == row.id
+            and ProjectMemberService(self.db).has_access(project.id, user_id)
         )
 
     def create_skill(
@@ -301,15 +303,15 @@ class NativeAgentService:
         return row
 
     def update_project_skill_cache(self, project: Project, *, user_id: str) -> Skill:
-        if project.user_id != user_id:
+        if not ProjectMemberService(self.db).can_write(project.id, user_id):
             raise ValueError("Project not found")
 
         root_skill = self.db.query(Doc).filter_by(project_id=project.id, folder_id=None, name="SKILL.md").first()
         if root_skill is None:
             raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
 
-        skill = self._project_skill_for(project, user_id=user_id)
-        cache_root = _project_skill_cache_root(user_id=user_id, skill_id=skill.id)
+        skill = self._project_skill_for(project, user_id=project.user_id)
+        cache_root = _project_skill_cache_root(user_id=project.user_id, skill_id=skill.id)
         tmp = cache_root / f"current.tmp-{uuid4().hex}"
         current = cache_root / "current"
         if tmp.exists():

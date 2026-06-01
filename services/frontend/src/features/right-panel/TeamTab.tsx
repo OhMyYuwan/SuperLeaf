@@ -2655,7 +2655,7 @@ function SkillManagementPanel({
                     void run(skill.id, () => onRemoveSkill(skill.id))
                   }}
                 >
-                  {skill.source === 'project' ? '移除缓存' : '删除'}
+                  {skill.source === 'project' ? '移除' : '删除'}
                 </button>
               </div>
             </div>

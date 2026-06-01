@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models import Doc, Folder, NativeAgentSkillInstall, Project, Provider, Skill, User
+from app.models import Doc, Folder, NativeAgentSkillInstall, Project, ProjectMember, Provider, Skill, User
 from app.services.agent_registry_service import AgentRegistryService
 from app.services.native_agent_service import NativeAgentService
 from app.services.project_service import ProjectService
@@ -199,6 +199,53 @@ def test_delete_project_skill_keeps_project_and_allows_cache_recreate(tmp_path):
             Path(recreated.cache_path, "SKILL.md").read_text()
             == "# Security Paper Skill\n\nUse the project rules."
         )
+    finally:
+        settings.data_dir = old_data_dir
+
+
+def test_project_skill_is_available_to_project_collaborators(tmp_path):
+    old_data_dir = settings.data_dir
+    settings.data_dir = tmp_path / "data"
+    try:
+        db = _db()
+        owner, project = _seed_project(db)
+        editor = User(id="editor", email="editor@example.com", password_hash="hash")
+        viewer = User(id="viewer", email="viewer@example.com", password_hash="hash")
+        db.add_all(
+            [
+                editor,
+                viewer,
+                ProjectMember(project_id=project.id, user_id=editor.id, role="editor", status="accepted"),
+                ProjectMember(project_id=project.id, user_id=viewer.id, role="viewer", status="accepted"),
+            ]
+        )
+        db.commit()
+
+        svc = NativeAgentService(db)
+        skill = svc.update_project_skill_cache(project, user_id=owner.id)
+
+        assert skill.id in {row.id for row in svc.list_skills(user_id=editor.id)}
+        assert skill.id in {row.id for row in svc.list_skills(user_id=viewer.id)}
+        assert svc.get_skill(skill.id, user_id=editor.id) is not None
+
+        agent = type("Agent", (), {"skill_ids": [skill.id]})()
+        blocks = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=editor.id)
+        assert len(blocks) == 1
+        assert "# Security Paper Skill" in blocks[0].content
+
+        doc = db.get(Doc, "doc_rules")
+        doc.content = "Shared editor refreshed this Skill."
+        db.add(doc)
+        db.commit()
+
+        refreshed = svc.update_project_skill_cache(project, user_id=editor.id)
+        assert refreshed.id == skill.id
+        assert Path(refreshed.cache_path, "references", "writing-rules.md").read_text() == (
+            "Shared editor refreshed this Skill."
+        )
+
+        with pytest.raises(ValueError, match="Project not found"):
+            svc.update_project_skill_cache(project, user_id=viewer.id)
     finally:
         settings.data_dir = old_data_dir
 

@@ -31,6 +31,7 @@ import {
   MessageSquare,
   Plus,
   Send,
+  Square,
   Trash2,
   Loader2,
   History,
@@ -47,7 +48,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
-import type { ProposalEntry } from '../../stores/conversationStore'
+import type { AgentRunStats, ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
@@ -87,6 +88,8 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const messages = useConversationStore((s) => s.messages)
   const streaming = useConversationStore((s) => s.streaming)
   const streamingDelta = useConversationStore((s) => s.streamingDelta)
+  const streamingStats = useConversationStore((s) => s.streamingStats)
+  const messageRunStats = useConversationStore((s) => s.messageRunStats)
   const error = useConversationStore((s) => s.error)
   const proposalsByConv = useConversationStore((s) => s.proposals)
   const acceptProposal = useConversationStore((s) => s.acceptProposal)
@@ -101,6 +104,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const deleteConversation = useConversationStore((s) => s.deleteConversation)
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
+  const stopMessage = useConversationStore((s) => s.stopMessage)
   const injectMessage = useConversationStore((s) => s.injectMessage)
   const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const activeDocFormat = useDocumentStore((s) =>
@@ -341,6 +345,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
   const delta = effectiveConversationId ? streamingDelta[effectiveConversationId] ?? '' : ''
+  const activeStreamingStats = effectiveConversationId
+    ? streamingStats[effectiveConversationId]
+    : undefined
   const activeProposals = effectiveConversationId
     ? proposalsByConv[effectiveConversationId] ?? []
     : []
@@ -374,6 +381,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     },
     [effectiveConversationId, rejectProposal],
   )
+  const handleStopMessage = useCallback(() => {
+    if (!effectiveConversationId) return
+    stopMessage(effectiveConversationId)
+  }, [effectiveConversationId, stopMessage])
   const handleToggleProposalCollapsed = useCallback((proposalId: string) => {
     setCollapsedProposals((prev) => ({
       ...prev,
@@ -549,6 +560,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                       <MessageBubble
                         message={msg}
                         agentDisplayName={activeAgentName}
+                        runStats={messageRunStats[msg.id]}
                         allCandidates={allCandidates}
                         onJumpToRange={onJumpToRange}
                       />
@@ -570,13 +582,13 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                 })}
                 {isStreaming && delta && (
                   <div className="message-bubble agent streaming">
-                    <div className="message-role">{activeAgentName}</div>
+                    <AgentRoleLine name={activeAgentName} runStats={activeStreamingStats} />
                     <AgentMarkdown source={delta} className="message-content" />
                   </div>
                 )}
                 {isStreaming && !delta && (
                   <div className="message-bubble agent streaming">
-                    <div className="message-role">{activeAgentName}</div>
+                    <AgentRoleLine name={activeAgentName} runStats={activeStreamingStats} />
                     <div className="message-content">
                       <Loader2 size={14} className="spin" /> 思考中…
                     </div>
@@ -604,6 +616,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                 activeSelection={activeSelection}
                 isStreaming={isStreaming}
                 onSend={handleSend}
+                onStop={handleStopMessage}
                 onJumpToRange={onJumpToRange}
                 onUserActivity={handleComposerActivity}
               />
@@ -618,6 +631,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
 interface MessageBubbleProps {
   message: Message
   agentDisplayName: string
+  runStats?: AgentRunStats
   allCandidates: MentionCandidate[]
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
@@ -630,6 +644,7 @@ interface DiscussionComposerProps {
   activeSelection: Selection | null
   isStreaming: boolean
   onSend: (rawText: string) => void
+  onStop: () => void
   onJumpToRange?: (range: { from: number; to: number }) => void
   /**
    * Fired the first keystroke after the input has been empty / a send has
@@ -647,6 +662,7 @@ const DiscussionComposer = memo(function DiscussionComposer({
   activeSelection,
   isStreaming,
   onSend,
+  onStop,
   onJumpToRange,
   onUserActivity,
 }: DiscussionComposerProps) {
@@ -743,11 +759,12 @@ const DiscussionComposer = memo(function DiscussionComposer({
         onSubmit={handleSubmit}
       />
       <button
-        className="primary-btn"
-        onClick={handleSubmit}
-        disabled={!inputText.trim() || isStreaming}
+        className={`primary-btn ${isStreaming ? 'stop-btn' : ''}`}
+        onClick={isStreaming ? onStop : handleSubmit}
+        disabled={!isStreaming && !inputText.trim()}
+        title={isStreaming ? '停止当前 Agent' : '发送'}
       >
-        <Send size={14} />
+        {isStreaming ? <Square size={14} /> : <Send size={14} />}
       </button>
     </div>
   )
@@ -895,13 +912,19 @@ function SortableConversationItem({
   )
 }
 
-function MessageBubble({ message, agentDisplayName, allCandidates, onJumpToRange }: MessageBubbleProps) {
+function MessageBubble({
+  message,
+  agentDisplayName,
+  runStats,
+  allCandidates,
+  onJumpToRange,
+}: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
   return (
     <div className={`message-bubble ${message.role}`}>
       {message.role === 'agent' ? (
         <>
-          <div className="message-role">{agentDisplayName}</div>
+          <AgentRoleLine name={agentDisplayName} runStats={runStats} />
           <AgentMarkdown source={message.content} className="message-content" />
         </>
       ) : message.role === 'user' ? (
@@ -920,6 +943,25 @@ function MessageBubble({ message, agentDisplayName, allCandidates, onJumpToRange
           ↗ 跳转到原文
         </button>
       )}
+    </div>
+  )
+}
+
+function AgentRoleLine({
+  name,
+  runStats,
+}: {
+  name: string
+  runStats?: AgentRunStats
+}) {
+  const parts: string[] = []
+  if (runStats?.filesRead) parts.push(`读文件 ${runStats.filesRead}`)
+  if (runStats?.filesWritten) parts.push(`写文件 ${runStats.filesWritten}`)
+  if (runStats?.stopped) parts.push('已停止')
+  return (
+    <div className="message-role">
+      <span>{name}</span>
+      {parts.length > 0 && <span className="agent-run-stats">{parts.join(' · ')}</span>}
     </div>
   )
 }

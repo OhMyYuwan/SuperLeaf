@@ -7,19 +7,25 @@ items become local Skill recipe rows first, then Agent setup executes npx.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import json
 import shlex
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
+from datetime import datetime
 from urllib.error import HTTPError
 
 from sqlalchemy.orm import Session
 
 from ..models import Skill
 from ..settings import settings
-from .skill_recipe_metadata import build_npx_install_command, build_recipe_tags, recipe_meta_from_tags
+from .project_fs_service import ProjectFsService
+from .project_service import ProjectService
+from .skill_recipe_metadata import (
+    build_npx_install_command,
+    build_recipe_tags,
+    recipe_meta_from_tags,
+)
 
 
 class SkillMarketplaceError(RuntimeError):
@@ -149,10 +155,10 @@ class SkillMarketplaceService:
         return True
 
     def clone_to_local(self, skill_id: str, *, user_id: str, name: str = ""):
-        """Fetch SKILL.md from marketplace catalog and create an editable local copy.
+        """Fetch SKILL.md from marketplace catalog and create an editable Skill Project.
 
-        Returns the new local Skill row. The marketplace installation is removed
-        after the local copy is created successfully.
+        Returns the new project-backed Skill row. The marketplace installation
+        is removed after the project cache is created successfully.
 
         Args:
             name: User-provided name for the local copy. If empty, falls back to
@@ -169,18 +175,39 @@ class SkillMarketplaceService:
         if not content.strip():
             raise SkillMarketplaceError("无法从市场仓库获取 SKILL.md 内容")
 
-        native_svc = NativeAgentService(self.db)
         local_name = name.strip() or entry.display_name or entry.name or entry.id
-        local_skill = native_svc.create_skill(
-            user_id=user_id,
-            name=local_name,
-            description=entry.description,
-            content=content,
-            tags=list(entry.tags),
+        project = ProjectService(self.db).create(user_id=user_id, name=local_name, project_type="skill")
+        project_fs = ProjectFsService(self.db, project)
+        project_fs.create_doc(
+            folder_id=None,
+            name="README.md",
+            format="md",
+            content=self._clone_readme(entry, local_name=local_name),
         )
+        project_fs.create_doc(folder_id=None, name="SKILL.md", format="md", content=content)
+
+        local_skill = NativeAgentService(self.db).update_project_skill_cache(project, user_id=user_id)
+        local_skill.description = entry.description or local_skill.description
+        local_skill.tags = _local_project_clone_tags(entry, local_skill.tags)
+        self.db.add(local_skill)
+        self.db.commit()
+        self.db.refresh(local_skill)
 
         self.uninstall(skill_id, user_id=user_id)
         return local_skill
+
+    def _clone_readme(self, entry: MarketplaceEntry, *, local_name: str) -> str:
+        readme = ""
+        if entry.readme_url:
+            try:
+                readme = self._fetch_text(entry.readme_url).strip()
+            except SkillMarketplaceError:
+                readme = ""
+        if readme:
+            return readme + "\n\n" + _clone_source_section(entry)
+        title = local_name.strip() or entry.display_name or entry.name or entry.id
+        description = entry.description.strip() or "Editable local copy of a marketplace Skill."
+        return f"# {title}\n\n{description}\n\n{_clone_source_section(entry)}"
 
     def _find_entry(self, skill_id: str, *, user_id: str) -> MarketplaceEntry:
         for entry in self.list_entries(user_id=user_id):
@@ -225,7 +252,9 @@ class SkillMarketplaceService:
         repo_url, source_ref = _repo_from_catalog(self.catalog_url, raw)
         source_url = str(raw.get("source_url") or _source_url(repo_url, source_ref, path)).strip()
         skill_name = str(raw.get("skill_name") or raw.get("name") or "").strip()
-        install_command = str(raw.get("install_command") or _install_command(source_url or repo_url, skill_name)).strip()
+        install_command = str(
+            raw.get("install_command") or _install_command(source_url or repo_url, skill_name)
+        ).strip()
         return MarketplaceEntry(
             id=str(raw.get("id") or "").strip(),
             name=str(raw.get("name") or "").strip(),
@@ -293,6 +322,37 @@ def _dedupe_entries(entries: list[MarketplaceEntry]) -> list[MarketplaceEntry]:
         seen.add(entry.id)
         out.append(entry)
     return out
+
+
+def _clone_source_section(entry: MarketplaceEntry) -> str:
+    lines = [
+        "## Marketplace Source",
+        "",
+        f"- Marketplace ID: `{entry.id}`",
+    ]
+    if entry.version:
+        lines.append(f"- Version: `{entry.version}`")
+    if entry.author_github:
+        lines.append(f"- Author: `{entry.author_github}`")
+    if entry.source_url:
+        lines.append(f"- Source: {entry.source_url}")
+    elif entry.repo_url:
+        lines.append(f"- Source: {entry.repo_url}")
+    lines.append("")
+    lines.append(
+        "This project is an editable local copy. Update the Skill cache from the project version panel "
+        "after changing files."
+    )
+    return "\n".join(lines)
+
+
+def _local_project_clone_tags(entry: MarketplaceEntry, current_tags: list | None) -> list[str]:
+    tags = [str(tag).strip() for tag in (current_tags or []) if str(tag).strip()]
+    for tag in ["marketplace-copy", *entry.tags]:
+        clean = str(tag).strip()
+        if clean and clean not in tags:
+            tags.append(clean)
+    return tags
 
 
 def _external_entry_from_raw(raw: dict) -> dict:

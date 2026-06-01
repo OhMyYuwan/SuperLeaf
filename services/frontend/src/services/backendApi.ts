@@ -28,10 +28,11 @@ function getBackendUrl(): string {
       console.log('[backendApi] Auto-detected backend URL:', url, '(from hostname:', hostname, ')')
       return url
     }
-    // For localhost, use 127.0.0.1 to force IPv4 (backend only listens on IPv4)
-    if (hostname === 'localhost') {
-      console.log('[backendApi] Using IPv4 backend URL: http://127.0.0.1:8000 (forced IPv4 for localhost)')
-      return 'http://127.0.0.1:8000'
+    // Preserve the browser hostname so session cookies stay on the same host.
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      const url = `${protocol}//${hostname}:8000`
+      console.log('[backendApi] Using local backend URL:', url)
+      return url
     }
   }
   console.log('[backendApi] Using default backend URL: http://127.0.0.1:8000')

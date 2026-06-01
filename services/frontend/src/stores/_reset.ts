@@ -61,6 +61,8 @@ export function resetProjectScopedStores(): void {
     error: null,
     streaming: {},
     streamingDelta: {},
+    streamingStats: {},
+    messageRunStats: {},
   })
 
   useWorkflowStore.setState({

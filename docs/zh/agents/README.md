@@ -31,6 +31,7 @@ has_children: true
 - Agent 可按需装配 Skill，避免所有能力一股脑进入上下文。
 - Agent 可按需选择 MCP 工具，只有 Agent 定义里选中的 MCP 会进入可调用工具集。
 - Skill 可来自市场、私有上传或服务器共享。
+- 在明确请求创建新文件时，Agent 可以在当前项目数据库树里新增文本文件，适合为 Skill 项目生成 reference、examples 和规则拆分文件。
 - 凭证和 Skill 内容在后端加密保存。
 
 ## 创建 Agent
@@ -47,6 +48,9 @@ has_children: true
 
 {: .important }
 Agent 运行时只能读取你勾选的 Skill，并只能调用该 Agent 定义里选择的 MCP。没有勾选或选择的能力不会进入上下文/工具集。
+
+{: .note }
+Agent 创建项目文件时写入的是 SuperLeaf 项目数据库里的 `Doc` / `Folder`，不是服务器磁盘上的任意路径。已有同名文档、二进制文件或文件夹不会被覆盖。
 
 ## 推荐 Agent 模板
 

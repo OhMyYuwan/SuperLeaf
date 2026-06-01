@@ -412,13 +412,13 @@ async def test_native_workflow_project_context_opt_in_exposes_read_only_tools(mo
     assert captured["session_id"] is None
     assert {"project_list_docs", "project_read_doc", "project_grep", "project_outline"} <= tool_names
     assert "propose_doc_edit" not in tool_names
-    assert "project_create_text_file" not in tool_names
+    assert "project_write_text_file" not in tool_names
     assert "read_agent_file" not in tool_names
     assert "Project context access: enabled" in captured["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
-async def test_native_direct_stream_exposes_project_create_text_file_tool(monkeypatch, tmp_path):
+async def test_native_direct_stream_exposes_project_write_text_file_tool(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 
     class FakeNanobotClient:
@@ -460,10 +460,10 @@ async def test_native_direct_stream_exposes_project_create_text_file_tool(monkey
     }
 
     assert [event["event"] for event in events][-1] == "native.agent.output.delta"
-    assert "project_create_text_file" in tool_names
+    assert "project_write_text_file" in tool_names
 
 
-def test_project_create_text_file_writes_database_doc_and_publishes_tree_event(monkeypatch):
+def test_project_write_text_file_writes_database_doc_and_publishes_tree_event(monkeypatch):
     db, _project, session_factory = _project_db()
     published: list[tuple[str, str, dict, str]] = []
     monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
@@ -487,7 +487,7 @@ def test_project_create_text_file_writes_database_doc_and_publishes_tree_event(m
         )
     )
 
-    result = runner._tool_project_create_text_file(
+    result = runner._tool_project_write_text_file(
         {
             "path": "references/style-rules.md",
             "content": "# Style rules\n\nKeep claims grounded.",
@@ -509,7 +509,7 @@ def test_project_create_text_file_writes_database_doc_and_publishes_tree_event(m
     assert result.side_event["event"] == "native.agent.project_file_created"
 
 
-def test_project_create_text_file_refuses_to_overwrite_existing_entities(monkeypatch):
+def test_project_write_text_file_refuses_to_overwrite_existing_entities(monkeypatch):
     db, _project, session_factory = _project_db()
     db.add(
         FileBlob(
@@ -536,7 +536,7 @@ def test_project_create_text_file_refuses_to_overwrite_existing_entities(monkeyp
         )
     )
 
-    result = runner._tool_project_create_text_file(
+    result = runner._tool_project_write_text_file(
         {"path": "existing.md", "content": "new content"}
     )
 
@@ -546,7 +546,7 @@ def test_project_create_text_file_refuses_to_overwrite_existing_entities(monkeyp
     assert db.query(FileBlob).filter_by(project_id="proj1", name="existing.md").one().blob == b"old"
 
 
-def test_project_create_text_file_requires_database_write_access(monkeypatch):
+def test_project_write_text_file_requires_database_write_access(monkeypatch):
     _db, _project, session_factory = _project_db()
     monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
     runner = NativeAgentRunner(
@@ -562,9 +562,219 @@ def test_project_create_text_file_requires_database_write_access(monkeypatch):
         )
     )
 
-    result = runner._tool_project_create_text_file(
+    result = runner._tool_project_write_text_file(
         {"path": "references/a.md", "content": "text"}
     )
 
     assert result.failed is True
     assert "write access required" in result.content
+
+
+@pytest.mark.asyncio
+async def test_native_stream_finishes_after_project_write_text_file(monkeypatch, tmp_path):
+    db, _project, session_factory = _project_db()
+    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    monkeypatch.setattr(
+        runner_module.bus,
+        "publish",
+        lambda project_id, event_type, payload, *, origin_client_id="": None,
+    )
+    calls = 0
+
+    class FakeNanobotClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run_streaming(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                raise AssertionError("runner should stop after successful project file creation")
+            yield {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call-create",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "project_write_text_file",
+                                        "arguments": runner_module.json.dumps(
+                                            {
+                                                "path": "experiments/design.md",
+                                                "content": "# Experimental Design\n\nRun ablations.",
+                                            }
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(runner_module, "NanobotClient", FakeNanobotClient)
+
+    runner = NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id="agent1",
+            agent_name="Skill Builder",
+            provider_endpoint="http://localhost",
+            api_key="test",
+            model="test-model",
+            instructions="",
+            workspace_root=str(tmp_path),
+            project_id="proj1",
+            user_id="user1",
+        )
+    )
+    payload = NativeRunPayload(
+        document_id="doc1",
+        range_start=0,
+        range_end=0,
+        inputs={"instruction": "创建实验设计文件"},
+        conversation_id="conv1",
+    )
+
+    events = [event async for event in runner.stream(payload)]
+    deltas = [
+        event["data"]["delta"]
+        for event in events
+        if event.get("event") == "native.agent.output.delta" and isinstance(event.get("data"), dict)
+    ]
+    folder = db.query(Folder).filter_by(project_id="proj1", parent_folder_id=None, name="experiments").one()
+    doc = db.query(Doc).filter_by(project_id="proj1", folder_id=folder.id, name="design.md").one()
+
+    assert calls == 1
+    assert doc.content == "# Experimental Design\n\nRun ablations."
+    assert any("已创建项目文件" in delta and "experiments/design.md" in delta for delta in deltas)
+
+
+@pytest.mark.asyncio
+async def test_native_stream_does_not_force_project_write_tool(monkeypatch, tmp_path):
+    db, _project, session_factory = _project_db()
+    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    captured_tool_choices: list[object] = []
+
+    class FakeNanobotClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run_streaming(self, **kwargs):
+            captured_tool_choices.append(kwargs["tool_choice"])
+            yield {"choices": [{"delta": {"content": "Let me create the file now."}}]}
+
+    monkeypatch.setattr(runner_module, "NanobotClient", FakeNanobotClient)
+
+    runner = NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id="agent1",
+            agent_name="导师",
+            provider_endpoint="http://localhost",
+            api_key="test",
+            model="test-model",
+            instructions="",
+            workspace_root=str(tmp_path),
+            project_id="proj1",
+            user_id="user1",
+        )
+    )
+    payload = NativeRunPayload(
+        document_id="doc1",
+        range_start=0,
+        range_end=0,
+        inputs={"instruction": "创建 ExperimentDesign.md"},
+        conversation_id="conv1",
+    )
+
+    events = [event async for event in runner.stream(payload)]
+    deltas = [
+        event["data"]["delta"]
+        for event in events
+        if event.get("event") == "native.agent.output.delta" and isinstance(event.get("data"), dict)
+    ]
+
+    assert captured_tool_choices[0] == "auto"
+    assert len(captured_tool_choices) == 1
+    assert db.query(Doc).filter_by(project_id="proj1", name="ExperimentDesign.md").first() is None
+    assert not any("[诊断]" in delta for delta in deltas)
+
+
+@pytest.mark.asyncio
+async def test_native_stream_surfaces_project_write_tool_failure(monkeypatch, tmp_path):
+    db, _project, session_factory = _project_db()
+    db.add(
+        Doc(
+            id="existing-doc",
+            project_id="proj1",
+            folder_id=None,
+            name="ExperimentDesign.md",
+            content="old",
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+
+    class FakeNanobotClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run_streaming(self, **kwargs):
+            yield {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call-write",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "project_write_text_file",
+                                        "arguments": runner_module.json.dumps(
+                                            {
+                                                "path": "ExperimentDesign.md",
+                                                "content": "# Experiment Design",
+                                            }
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(runner_module, "NanobotClient", FakeNanobotClient)
+
+    runner = NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id="agent1",
+            agent_name="导师",
+            provider_endpoint="http://localhost",
+            api_key="test",
+            model="test-model",
+            instructions="",
+            workspace_root=str(tmp_path),
+            project_id="proj1",
+            user_id="user1",
+        )
+    )
+    payload = NativeRunPayload(
+        document_id="doc1",
+        range_start=0,
+        range_end=0,
+        inputs={"instruction": "创建 ExperimentDesign.md"},
+        conversation_id="conv1",
+    )
+
+    events = [event async for event in runner.stream(payload)]
+    deltas = [
+        event["data"]["delta"]
+        for event in events
+        if event.get("event") == "native.agent.output.delta" and isinstance(event.get("data"), dict)
+    ]
+
+    assert any("工具执行失败" in delta and "already exists" in delta for delta in deltas)

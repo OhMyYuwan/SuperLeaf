@@ -166,6 +166,43 @@ def test_project_skill_cache_update_reuses_skill_and_refreshes_content(tmp_path)
         settings.data_dir = old_data_dir
 
 
+def test_delete_project_skill_keeps_project_and_allows_cache_recreate(tmp_path):
+    old_data_dir = settings.data_dir
+    settings.data_dir = tmp_path / "data"
+    try:
+        db = _db()
+        user, project = _seed_project(db)
+        svc = NativeAgentService(db)
+
+        first = svc.update_project_skill_cache(project, user_id=user.id)
+        first_cache_path = Path(first.cache_path)
+        assert first_cache_path.exists()
+
+        assert svc.delete_skill(first.id, user_id=user.id) is True
+        db.refresh(project)
+
+        assert db.get(Project, project.id) is not None
+        assert db.get(Skill, first.id) is None
+        assert project.is_skill_project is True
+        assert project.project_skill_id == ""
+        assert project.skill_cache_version == 0
+        assert project.skill_cache_updated_at is None
+        assert not first_cache_path.exists()
+
+        recreated = svc.update_project_skill_cache(project, user_id=user.id)
+
+        assert recreated.id != first.id
+        assert recreated.source == "project"
+        assert recreated.project_id == project.id
+        assert project.project_skill_id == recreated.id
+        assert (
+            Path(recreated.cache_path, "SKILL.md").read_text()
+            == "# Security Paper Skill\n\nUse the project rules."
+        )
+    finally:
+        settings.data_dir = old_data_dir
+
+
 def test_project_skill_cache_requires_root_skill_md(tmp_path):
     old_data_dir = settings.data_dir
     settings.data_dir = tmp_path / "data"

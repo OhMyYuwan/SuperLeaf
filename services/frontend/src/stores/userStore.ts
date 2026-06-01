@@ -51,6 +51,13 @@ interface UserState {
   handleUnauthorized: () => void
 }
 
+// Timestamp of the last successful login/register. 401s arriving within
+// 2 seconds of a fresh login are ignored — they're stale in-flight requests
+// that raced against the new Set-Cookie header (reproducible in Chrome with
+// an existing profile accessing via LAN IP).
+let lastLoginAt = 0
+const LOGIN_GRACE_MS = 2000
+
 export const useUserStore = create<UserState>((set, get) => ({
   currentUser: null,
   loading: false,
@@ -81,6 +88,7 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   login: async (body) => {
     const user = await authApi.login(body)
+    lastLoginAt = Date.now()
     await applyUserScope(user.id)
     set({ currentUser: user, loaded: true, error: null })
     return user
@@ -88,6 +96,7 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   register: async (body) => {
     const user = await authApi.register(body)
+    lastLoginAt = Date.now()
     await applyUserScope(user.id)
     set({ currentUser: user, loaded: true, error: null })
     return user
@@ -105,6 +114,10 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   handleUnauthorized: () => {
+    // Ignore 401s that arrive within the grace period after a fresh login.
+    // These are stale in-flight requests that raced against the new Set-Cookie
+    // header — reproducible in Chrome with an existing profile on LAN IP access.
+    if (Date.now() - lastLoginAt < LOGIN_GRACE_MS) return
     // Avoid clobbering a fresh login that just succeeded — only clear if
     // we actually had a user.
     if (get().currentUser !== null) {

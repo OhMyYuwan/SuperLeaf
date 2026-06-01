@@ -47,7 +47,7 @@ permalink: /zh/
   </a>
   <a class="ylw-card" href="agents/README.html">
     <strong>原生 Agent</strong>
-    <span>创建 Agent、装配 Skill、管理本地 Skill 库和市场。</span>
+    <span>创建 Agent、装配 Skill、管理本地 Skill 库、Skill 项目和市场。</span>
   </a>
   <a class="ylw-card" href="agents/mcps.html">
     <strong>MCP 工具</strong>
@@ -74,7 +74,7 @@ permalink: /zh/
 ## 深入阅读
 
 - [Provider 配置](providers/README.html)：Nanobot、Dify 和 OpenAI-compatible provider 的接入方式。
-- [Skill 使用与市场](agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill 的差异。
+- [Skill 使用与市场](agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill、项目化 Skill 开发的差异。
 - [MCP 使用与市场](agents/mcps.html)：市场 preset、自定义 MCP、连通性和功能性检查。
 - [版本历史与项目归档](versioning/README.html)：服务器端项目归档和指定大版本 ZIP 下载。
 - [交互数据收集](annotation-training-data.html)：交互数据保留、训练数据导出、CSV Skill。

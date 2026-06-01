@@ -29,7 +29,7 @@ permalink: /zh/
 
 <ol class="ylw-steps">
   <li><strong>安装并启动三服务。</strong><br>Backend、Collab Server、Frontend 分别负责 API、实时协作和浏览器界面。</li>
-  <li><strong>注册账号并创建项目。</strong><br>项目里可以创建 `.tex` / `.md` 文档，也可以上传图片和附件。</li>
+  <li><strong>注册账号并创建项目。</strong><br>写论文选择 Paper；维护可装配给 Agent 的能力包选择 Skill。</li>
   <li><strong>配置 Provider 或创建原生 Agent。</strong><br>Provider 负责模型调用；原生 Agent 负责把模型、指令、Skill 和已启用 MCP 组合成可运行助手。</li>
   <li><strong>选中文字运行 Agent。</strong><br>结果进入批注卡片，可以接受、删除、追问，也可以导出为训练数据。</li>
 </ol>

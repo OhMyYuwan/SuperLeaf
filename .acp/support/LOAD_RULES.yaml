@@ -2,7 +2,7 @@
 #
 # Staged context loading. Start narrow, expand by route, and avoid scanning
 # generated or private state unless the task explicitly requires it.
-# Refreshed 2026-05-25 for REQ-0187.
+# Refreshed 2026-06-01 for REQ-0281.
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -20,7 +20,7 @@ loading:
   search_first_with:
     - rg
     - rg --files
-  path_rule: all application paths are rooted at services/, not bare backend/ or frontend/.
+  path_rule: LOAD_RULES uses concrete repo paths rooted at services/. Capability primary_paths may use semantic backend/ and frontend/ shorthand.
 
 minimal_context:
   - .acp/version.yaml
@@ -509,7 +509,7 @@ rules:
           - services/backend/app/api/native_agents.py
           - services/backend/app/schemas.py
         expand_when:
-          - native Agent credentials, Skill, Agent, marketplace, MCP, or official badge API changes
+          - native Agent credentials, uploaded/private/shared Skills, Agent, marketplace, MCP, or official badge API changes
       backend-services:
         start_with:
           - services/backend/app/services/native_agent_service.py
@@ -522,7 +522,7 @@ rules:
           - services/backend/app/services/skill_recipe_metadata.py
           - services/backend/app/models.py
         expand_when:
-          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, or registry behavior changes
+          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, registry behavior, marketplace Skill install/update, or non-project Skill visibility changes
       frontend-management:
         start_with:
           - services/frontend/src/features/right-panel/TeamTab.tsx
@@ -530,7 +530,26 @@ rules:
           - services/frontend/src/stores/nativeAgentStore.ts
           - services/frontend/src/services/backendApi.ts
         expand_when:
-          - Agent panel, Skill panel, MCP panel, marketplace search, official badge, or AgentSkill assignment UI changes
+          - Agent panel, Skill panel, MCP panel, marketplace search, official badge, AgentSkill assignment UI, project Skill removal wording, or project Skill navigation changes
+      project-skill-cache:
+        start_with:
+          - services/backend/app/api/projects.py
+          - services/backend/app/services/native_agent_service.py
+          - services/backend/app/services/agent_registry_service.py
+          - services/backend/app/services/project_service.py
+          - services/backend/app/services/project_fs_service.py
+          - services/backend/app/services/project_member_service.py
+          - services/backend/app/services/skill_marketplace_service.py
+          - services/backend/test/test_project_skill_cache.py
+          - services/backend/test/test_skill_marketplace_project_clone.py
+          - services/frontend/src/features/right-panel/ProjectArchiveTab.tsx
+          - services/frontend/src/features/right-panel/TeamTab.tsx
+          - services/frontend/src/stores/nativeAgentStore.ts
+          - docs/zh/agents/skills.md
+          - docs/zh/architecture/overview.md
+          - README.md
+        expand_when:
+          - changing Skill Project templates, cache materialization, cache directory semantics, marketplace copy-to-Skill-Project behavior, collaboration access to project-backed Skills, "remove local Skill" behavior, or Agent runtime reading of cached project Skill files
       skill-market:
         start_with:
           - supports/SuperLeaf.Skills/README.md
@@ -540,7 +559,7 @@ rules:
           - supports/SuperLeaf.Skills/scripts/validate_marketplace.py
           - services/backend/app/services/skill_marketplace_service.py
         expand_when:
-          - adding official/external Skill entries or changing Skill marketplace schema
+          - adding official/external Skill entries, changing Skill marketplace schema, or changing marketplace install/copy-to-local Skill Project behavior
       mcp-catalog:
         start_with:
           - supports/SuperLeaf.MCPs/README.md

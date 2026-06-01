@@ -106,6 +106,19 @@ MCP catalog 默认来自 `OhMyYuwan/SuperLeaf.MCPs`。本地 `supports/SuperLeaf
 
 这个路径创建的是数据库项目树中的文本文件，不是让 Agent 获得服务器文件系统写权限。Skill 项目中的 reference 文件也遵循同一模型：先成为项目里的 `Doc`，更新 Skill 缓存时再进入运行时 cache。
 
+### 项目型 Skill 缓存
+
+```
+Skill Project (SQLite Docs + FileBlob)
+    → 版本面板点击“更新 Skill 缓存”
+    → ProjectFsService materialize 到 backend data_dir/skills-cache
+    → NativeAgentService 生成 source="project" 的 Skill row
+    → Team 管理 Skill 列表按项目访问权限展示
+    → Agent 工作区引用同一份 cache
+```
+
+项目型 Skill 的源数据始终是项目数据库树，不是服务器磁盘上的工作区。运行时不会解析 live 项目，只读最近一次手动生成的 cache；`.git`、二进制和不安全路径不会进入运行时上下文。Skill Project 共享给协作者后，project-backed Skill 也按 `ProjectMember` 权限共享：`viewer` 能装配并使用最近一次 cache，`editor` 和 owner 能更新同一份 cache。团队管理中移除项目型 Skill 只卸载生成的本地/cache 入口并解绑 Agent，不删除源项目；重新更新 cache 会创建新的可用 Skill row。
+
 ### 认证
 
 ```
@@ -132,13 +145,13 @@ Project
 - **DocumentVersion**：版本快照（定期 + 手动保存）
 - **Operation**：操作记录（谁在什么时候做了什么）
 
-### Agent 相关（按 user_id 隔离）
+### Agent 相关
 
 - **Provider**：外部或原生 AI 服务配置；稳定字段保存身份、归属和 endpoint，可变探测结果保存在 `meta`
 - **CachedWorkflow**：外部 provider 同步出的可运行 Agent / workflow 投影
 - **NativeAgentCredential**：原生 Agent 运行凭证，加密存储
 - **NativeAgent**：后端原生 Agent 配置，按 `project_id + owner_user_id` 隔离，并通过 `provider_id` 绑定运行 provider；运行时只能读取用户装配的 Skill
-- **Skill**：原生 Agent 可引用的私有、共享或市场 Skill；内容加密存储，市场索引来自官方 `SuperLeaf.Skills` catalog
+- **Skill**：原生 Agent 可引用的私有、共享、市场或项目型 Skill；上传型内容加密存储，市场索引来自官方 `SuperLeaf.Skills` catalog，项目型 Skill 通过 `project_id` 和 `Project.project_skill_id` 绑定到 Skill Project cache
 - **SkillHidden**：用户本地 Skill 库隐藏/移除状态
 - **NativeMcpServer**：用户拥有的 MCP 配置，来自市场 preset 或自定义输入；存储 command、args、env 和启用状态
 - **WorkflowDefinition**：用户自定义的多节点工作流
@@ -182,4 +195,4 @@ Provider 和原生 Agent 的日常变化不应推动 schema 变化。新增 prov
 - Session 基于 cookie，httpOnly
 - CORS 白名单限制（默认只允许 localhost + 私有网段）
 - WebSocket 连接需要有效的 collab-token（由 Backend 签发）
-- Agent 资产按 user_id 隔离，防止跨用户信息泄露
+- 私有 Agent 资产按 user_id 隔离，防止跨用户信息泄露；项目型 Skill 按源项目成员权限共享

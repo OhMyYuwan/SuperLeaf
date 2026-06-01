@@ -2,8 +2,8 @@
 #
 # Structural index for agents. Keep this file route-focused: it should answer
 # "where do I start reading?" rather than describe every implementation detail.
-# Refreshed 2026-05-25 for REQ-0194 after editor spell checking added a
-# backend spelling API, user dictionary service, and CodeMirror lint extension.
+# Refreshed 2026-06-01 for REQ-0281 after Skill Project / project-backed
+# Skill cache routing was consolidated.
 
 project:
   name: SuperLeaf
@@ -119,7 +119,10 @@ modules:
       - services/backend/app/services/skill_marketplace_service.py
       - services/backend/app/services/skill_npx_installer.py
       - services/backend/app/services/native_agent_service.py
+      - services/backend/app/services/project_service.py
+      - services/backend/app/services/project_fs_service.py
       - services/backend/app/api/native_agents.py
+      - services/backend/app/api/projects.py
       - services/frontend/src/features/right-panel/TeamTab.tsx
       - services/frontend/src/stores/nativeAgentStore.ts
 
@@ -564,10 +567,16 @@ capability_routes:
 
   native-agent-skills:
     primary_module: backend-api
+    runtime_contract: |
+      Use the project-skill-cache route for Skill Project behavior. Key
+      invariant: project-backed Skills are generated from database-backed Skill
+      Projects through explicit "更新 Skill 缓存"; live edits do not affect
+      Agents until refresh. Project membership controls collaborator access.
     supporting_modules:
       - backend-services
       - support-skills
       - support-mcps
+      - public-docs
       - frontend-feature-right-panel
       - frontend-stores
       - frontend-services

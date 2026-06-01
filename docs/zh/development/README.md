@@ -56,7 +56,8 @@ src/.../backend...
 
 | 任务 | 先读 |
 |---|---|
-| Agent / Skill / MCP 面板 | `LOAD_RULES.native-agent-skills`，再看 `TeamTab.tsx`、`nativeAgentStore.ts`、`native_agents.py` |
+| Agent / Skill / MCP 面板 | 普通 Agent/Skill/MCP 先读 `LOAD_RULES.native-agent-skills`，再看 `TeamTab.tsx`、`nativeAgentStore.ts`、`native_agents.py` |
+| Skill 项目 / cache / 共享可见性 | `LOAD_RULES.native-agent-skills.project-skill-cache`，再看 `projects.py`、`project_service.py`、`project_fs_service.py`、`skill_marketplace_service.py`、`ProjectArchiveTab.tsx` |
 | MCP catalog 或 preset | `supports/SuperLeaf.MCPs`，再看 `mcp_catalog_service.py` / `mcp_tool_service.py` |
 | Skill catalog | `supports/SuperLeaf.Skills`，再看 `skill_marketplace_service.py` / `skill_npx_installer.py` |
 | 大版本/项目归档 | `major_versions.py`、`archives.py`、`project_archive_service.py`、`MajorVersionList.tsx` |

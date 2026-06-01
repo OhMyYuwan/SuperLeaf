@@ -467,7 +467,6 @@ async def send_message(
                         user_id=user.id,
                         temperature=float(runtime_config.get("temperature", 0.2)),
                         max_tokens=int(runtime_config.get("max_tokens", 4000)),
-                        max_tool_rounds=int(runtime_config.get("max_tool_rounds", 8)),
                         runtime_config=runtime_config,
                     )
                 )

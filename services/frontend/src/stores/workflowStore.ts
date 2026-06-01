@@ -670,12 +670,6 @@ function formatNodeJson(value: unknown): string {
   }
 }
 
-function upsertNodeStatus(nodes: NodeStatus[], patch: NodeStatus): NodeStatus[] {
-  const idx = nodes.findIndex((n) => n.nodeId === patch.nodeId)
-  if (idx === -1) return [...nodes, patch]
-  return nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n))
-}
-
 interface RoundUpsert {
   nodeId: string
   input: string

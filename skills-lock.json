@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/acp-v1-0-0/SKILL.md",
       "computedHash": "447496a3268e1ee031c7aa721d1cb347a999cc3d7fd15f22635aa7afa351e24f"
+    },
+    "paper-self-review": {
+      "source": "OhMyYuwan/YuwanLabWriter.Skills",
+      "sourceType": "github",
+      "skillPath": "skills/xyh39765-dot@paper-self-review/SKILL.md",
+      "computedHash": "6abd28434191255e23ef05c092d42d56169b2d2ff66e627dae430d4521480d2e"
     }
   }
 }

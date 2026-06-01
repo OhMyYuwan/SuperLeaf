@@ -8,10 +8,12 @@ enabled-state checks so API validation and runtime dispatch agree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from ..models import CachedWorkflow, NativeAgent, Provider, Skill
+from ..models import CachedWorkflow, NativeAgent, Project, Provider, Skill
+from .agent_workspace_service import AgentWorkspaceError, read_skill_folder_content
 from .native_agent_runner import NativeSkillBlock
 from .skill_content_crypto import decrypt_skill_content
 
@@ -60,7 +62,18 @@ class AgentRegistryService:
                 continue
             if skill.visibility not in ("system", "public") and skill.owner_user_id != user_id:
                 continue
-            content = decrypt_skill_content(skill.content)
+            if skill.source == "project":
+                project = self.db.get(Project, skill.project_id) if skill.project_id else None
+                if project is None or project.user_id != user_id or not project.is_skill_project:
+                    continue
+                if not skill.cache_path:
+                    continue
+                try:
+                    content = read_skill_folder_content(Path(skill.cache_path))
+                except AgentWorkspaceError:
+                    content = ""
+            else:
+                content = decrypt_skill_content(skill.content)
             if not content.strip():
                 continue
             out.append(

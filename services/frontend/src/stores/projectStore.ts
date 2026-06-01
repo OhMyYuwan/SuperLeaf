@@ -35,7 +35,7 @@ interface ProjectState {
 
   load: () => Promise<void>
   setCurrent: (id: string | null) => void
-  create: (name: string) => Promise<ProjectSummary>
+  create: (name: string, projectType?: 'paper' | 'skill') => Promise<ProjectSummary>
   importGithub: (body: GitHubProjectImport) => Promise<ProjectSummary>
   rename: (id: string, name: string) => Promise<void>
   remove: (id: string) => Promise<void>
@@ -82,8 +82,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     useSettingsStore.getState().reset()
   },
 
-  create: async (name) => {
-    const created = await projectsApi.create({ name })
+  create: async (name, projectType = 'paper') => {
+    const created = await projectsApi.create({ name, project_type: projectType })
     set((s) => ({ projects: [created, ...s.projects] }))
     return created
   },

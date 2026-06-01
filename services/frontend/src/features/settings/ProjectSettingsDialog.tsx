@@ -4,7 +4,7 @@
  * 包含项目成员管理、编译设置等
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Settings, X } from 'lucide-react'
 import { ProjectMembersPanel } from './ProjectMembersPanel'
@@ -23,13 +23,7 @@ export function ProjectSettingsDialog({ open, projectId, onOpenChange }: Project
   const [project, setProject] = useState<ProjectSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (open && projectId) {
-      loadProject()
-    }
-  }, [open, projectId])
-
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
     try {
       setLoading(true)
       const data = await projectsApi.get(projectId)
@@ -39,7 +33,17 @@ export function ProjectSettingsDialog({ open, projectId, onOpenChange }: Project
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId])
+
+  useEffect(() => {
+    if (open && projectId) {
+      const timer = window.setTimeout(() => {
+        void loadProject()
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
+    return undefined
+  }, [loadProject, open, projectId])
 
   if (!currentUser) return null
 

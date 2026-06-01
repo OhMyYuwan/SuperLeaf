@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import os
 import shutil
 
@@ -119,8 +120,48 @@ class AgentWorkspaceService:
     def remove_skill_folder(self, agent: NativeAgent, folder_name: str) -> None:
         root = self.ensure_workspace(agent)
         dest = self.resolve_inside_agents(root, f".agents/skills/{_safe_folder_name(folder_name)}")
-        if dest.exists() and dest.is_dir():
-            shutil.rmtree(dest)
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        ref = self.resolve_inside_agents(root, f".agents/skills/{_safe_folder_name(folder_name)}.skillref.json")
+        if ref.exists() and ref.is_file():
+            ref.unlink()
+
+    def install_skill_reference(
+        self,
+        agent: NativeAgent,
+        *,
+        folder_name: str,
+        target_path: Path,
+        manifest: dict,
+    ) -> Path:
+        root = self.ensure_workspace(agent)
+        safe_folder = _safe_folder_name(folder_name)
+        dest = root / ".agents" / "skills" / safe_folder
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        ref = root / ".agents" / "skills" / f"{safe_folder}.skillref.json"
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        ref.write_text(
+            json.dumps(
+                {
+                    "type": "superleaf-skill-cache-ref",
+                    "folder_name": safe_folder,
+                    "target_path": str(target_path),
+                    "manifest": manifest,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return ref
 
     def workspace_tree(self, agent: NativeAgent) -> list[WorkspaceFile]:
         root = self.ensure_workspace(agent)
@@ -177,6 +218,41 @@ def read_agent_workspace_file(root: Path, rel_path: str) -> str:
     if size > MAX_FILE_BYTES:
         raise AgentWorkspaceError(f"File too large: {size} bytes")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_skill_folder_content(folder: Path) -> str:
+    root = folder.resolve()
+    if not root.exists() or not root.is_dir():
+        raise AgentWorkspaceError("Skill cache folder not found")
+    skill_md = root / "SKILL.md"
+    if not skill_md.exists() or not skill_md.is_file():
+        raise AgentWorkspaceError("Skill cache folder must contain SKILL.md")
+
+    files: list[Path] = [skill_md]
+    for path in sorted(root.rglob("*")):
+        if path == skill_md or not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if _is_unsafe_path(rel):
+            continue
+        if not _is_safe_text_file(path):
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > MAX_FILE_BYTES:
+            continue
+        files.append(path)
+        if len(files) >= MAX_TREE_FILES:
+            break
+
+    parts: list[str] = []
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        parts.append(f"[{rel}]\n{text}" if rel != "SKILL.md" else text)
+    return "\n\n".join(part for part in parts if part)
 
 
 def resolve_inside_agents(root: Path, rel_path: str) -> Path:

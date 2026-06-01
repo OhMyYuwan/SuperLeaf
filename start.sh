@@ -255,10 +255,117 @@ start_frontend() {
   warn "Frontend did not respond within ~4s (pid $pid, check $logfile)"
 }
 
+build_frontend() {
+  ensure_frontend
+  log "Building frontend production bundle"
+  (cd "$FRONTEND_DIR" && npm run build)
+  ok "Build complete: $FRONTEND_DIR/dist"
+}
+
+write_frontend_preview_server() {
+  local target="$1"
+  cat > "$target" <<'NODE'
+const fs = require('node:fs')
+const http = require('node:http')
+const path = require('node:path')
+
+const port = Number(process.argv[2] || 5173)
+const root = path.resolve(process.argv[3] || 'dist')
+const types = {
+  '.css': 'text/css; charset=utf-8',
+  '.gif': 'image/gif',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ttf': 'font/ttf',
+  '.wasm': 'application/wasm',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+}
+
+function send(res, status, body, type = 'text/plain; charset=utf-8') {
+  res.writeHead(status, { 'Content-Type': type })
+  res.end(body)
+}
+
+function safePath(urlPath) {
+  const decoded = decodeURIComponent(urlPath.split('?')[0] || '/')
+  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '')
+  const file = path.resolve(root, relative)
+  return file.startsWith(root + path.sep) || file === root ? file : ''
+}
+
+http.createServer((req, res) => {
+  if (req.url === '/health') return send(res, 200, 'ok\n')
+  const requested = safePath(req.url || '/')
+  if (!requested) return send(res, 404, '404: File not found')
+  const candidate = fs.existsSync(requested) && fs.statSync(requested).isFile()
+    ? requested
+    : path.join(root, 'index.html')
+  fs.readFile(candidate, (err, data) => {
+    if (err) return send(res, 404, '404: File not found')
+    res.writeHead(200, { 'Content-Type': types[path.extname(candidate)] || 'application/octet-stream' })
+    res.end(data)
+  })
+}).listen(port, '0.0.0.0', () => {
+  console.log(`Frontend preview static server running on http://0.0.0.0:${port}`)
+})
+NODE
+}
+
+start_frontend_preview() {
+  build_frontend
+  stop_service "frontend"
+  ensure_log_dir
+  local session_dir="$LOG_DIR/latest"
+  [ ! -d "$session_dir" ] && session_dir="$(create_session_dir)"
+  local logfile="$session_dir/frontend.log"
+  local server_script="$LOG_DIR/frontend-preview-server.cjs"
+  write_frontend_preview_server "$server_script"
+
+  log "Starting frontend preview on :$FRONTEND_PORT → $logfile"
+  if command -v screen >/dev/null 2>&1; then
+    screen -S "superleaf-frontend-preview-$FRONTEND_PORT" -X quit >/dev/null 2>&1 || true
+    screen -dmS "superleaf-frontend-preview-$FRONTEND_PORT" bash -lc \
+      "cd '$FRONTEND_DIR' && exec node '$server_script' '$FRONTEND_PORT' '$FRONTEND_DIR/dist' >> '$logfile' 2>&1"
+  else
+    (
+      cd "$FRONTEND_DIR"
+      exec nohup node "$server_script" "$FRONTEND_PORT" "$FRONTEND_DIR/dist" </dev/null
+    ) >> "$logfile" 2>&1 &
+  fi
+
+  local i=0
+  while [ $i -lt 8 ]; do
+    if curl -s "http://localhost:$FRONTEND_PORT" >/dev/null 2>&1; then
+      local pid
+      pid="$(lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+      save_pid "frontend" "$pid"
+      ok "Frontend preview ready (pid $pid)"
+      return 0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  warn "Frontend preview did not respond within ~4s (pid $pid, check $logfile)"
+}
+
 start_all() {
   start_backend
   start_collab
   start_frontend
+}
+
+start_preview_all() {
+  start_backend
+  start_collab
+  start_frontend_preview
 }
 
 # --- Status -------------------------------------------------------------------
@@ -318,6 +425,15 @@ case "${1:-help}" in
     status_all
     ;;
 
+  preview)
+    print_banner
+    require_cmd node
+    require_cmd npm
+    start_preview_all
+    echo ""
+    status_all
+    ;;
+
   restart)
     print_banner
     require_cmd node
@@ -354,6 +470,12 @@ case "${1:-help}" in
     start_frontend
     ;;
 
+  frontend-preview)
+    require_cmd node
+    require_cmd npm
+    start_frontend_preview
+    ;;
+
   logs)
     # Tail log files from the latest session
     if [ ! -d "$LOG_DIR/latest" ]; then
@@ -367,10 +489,7 @@ case "${1:-help}" in
   build)
     require_cmd node
     require_cmd npm
-    ensure_frontend
-    log "Building production bundle"
-    (cd "$FRONTEND_DIR" && npm run build)
-    ok "Build complete: $FRONTEND_DIR/dist"
+    build_frontend
     ;;
 
   install)
@@ -388,6 +507,7 @@ SuperLeaf — Dev Process Manager
 
 Usage:
   ./start.sh              Start all services (daemonized)
+  ./start.sh preview      Start backend/collab + built frontend preview (no HMR)
   ./start.sh restart      Stop + start all services
   ./start.sh stop         Stop all services
   ./start.sh status       Show running status of each service
@@ -395,6 +515,8 @@ Usage:
   ./start.sh backend      Start backend only
   ./start.sh collab       Start collab-server only
   ./start.sh frontend     Start frontend only
+  ./start.sh frontend-preview
+                          Build + start frontend preview only (no HMR)
   ./start.sh build        Build frontend production bundle
   ./start.sh install      Install all dependencies
   ./start.sh help         Show this message

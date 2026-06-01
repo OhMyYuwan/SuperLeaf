@@ -1,7 +1,9 @@
 """Backend runner for project-scoped native Agents.
 
 The runner intentionally receives only explicit payload data assembled by
-SuperLeaf. It has no database/session handle and no filesystem access.
+SuperLeaf. Project tools are scoped by project_id/user_id and write through the
+same SQLite-backed project tree services as the REST API; Agents never receive
+raw filesystem access.
 """
 
 from __future__ import annotations
@@ -15,15 +17,34 @@ from pathlib import Path
 from typing import Any
 
 from ..database import SessionLocal
-from ..models import Doc
+from ..models import Doc, FileBlob, Folder, Project
 from .agent_workspace_service import (
     AgentWorkspaceError,
     list_agent_workspace_files,
     read_agent_workspace_file,
 )
 from .attached_files import render_attached_files_block
+from .event_bus import bus
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
+from .project_fs_service import ProjectFsService
+from .project_member_service import ProjectMemberService
+
+_PROJECT_CREATE_CONTENT_LIMIT = 512 * 1024
+_PROJECT_CREATE_MAX_PATH_CHARS = 512
+_PROJECT_CREATE_MAX_SEGMENT_CHARS = 256
+_PROJECT_CREATE_DOC_EXTS: dict[str, str] = {
+    "tex": "tex",
+    "latex": "tex",
+    "ltx": "tex",
+    "bib": "tex",
+    "sty": "tex",
+    "cls": "tex",
+    "bst": "tex",
+    "md": "md",
+    "markdown": "md",
+    "txt": "txt",
+}
 
 
 @dataclass(slots=True)
@@ -206,13 +227,14 @@ class NativeAgentRunner:
                     "Use list_agent_files and read_agent_file when you need Skill files.",
                     "Never claim to read files outside `.agents/`.",
                     (
-                        "Project context tools (read-only): "
+                        "Project context tools: "
                         "use project_list_docs to discover documents in the current project, "
                         "project_outline(doc_id) for a quick heading map, "
                         "project_read_doc(doc_id, range_start?, range_end?) to read content, "
                         "and project_grep(pattern, format?) to search across the project. "
-                        "These tools cannot modify documents — they exist so you can gather context "
-                        "before producing your reply."
+                        "Use project_create_text_file(path, content, format?) only when the user "
+                        "explicitly asks you to create a new project file. It creates a new text "
+                        "document in the current project and refuses to overwrite existing files."
                     ),
                     (
                         "Document edit tool: when the user asks you to change the text of the "
@@ -244,7 +266,10 @@ class NativeAgentRunner:
                 ]
             )
         if not is_write_mode:
-            parts.append("Do not propose direct file mutations. Return review output only.")
+            parts.append(
+                "Do not mutate existing documents. Creating a new project file is allowed only "
+                "when the user explicitly asks for a new file or reference file."
+            )
         if self.config.instructions.strip():
             parts.extend(["", "Agent instructions:", self.config.instructions.strip()])
         if self.config.skills:
@@ -515,6 +540,8 @@ class NativeAgentRunner:
                 return self._tool_project_grep(args)
             if name == "project_outline":
                 return self._tool_project_outline(args)
+            if name == "project_create_text_file":
+                return self._tool_project_create_text_file(args)
             if name == "propose_doc_edit":
                 return self._tool_propose_doc_edit(args, payload)
             if name in mcp_tool_map:
@@ -543,10 +570,9 @@ class NativeAgentRunner:
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
 
     # ------------------------------------------------------------------
-    # project_* tools — read-only views over the user's docs in the
-    # current project. Every handler opens a short-lived session and
-    # filters by (project_id, user_id) from runtime config; Agent inputs
-    # never reach the WHERE clause.
+    # project_* tools. Every handler opens a short-lived session and filters
+    # by project_id/user_id from runtime config; Agent inputs never reach the
+    # project scope clause.
     # ------------------------------------------------------------------
 
     def _project_scope_ok(self) -> bool:
@@ -689,6 +715,102 @@ class NativeAgentRunner:
                 {"doc_id": doc_id, "name": name, "format": fmt, "sections": sections},
                 ensure_ascii=False,
             )
+        )
+
+    def _tool_project_create_text_file(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        path_raw = str(args.get("path") or "")
+        try:
+            path_parts = _normalize_project_create_path(path_raw)
+        except ValueError as exc:
+            return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
+
+        content = args.get("content")
+        if not isinstance(content, str):
+            return _ToolExecutionResult("ERROR: content must be a string", failed=True)
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > _PROJECT_CREATE_CONTENT_LIMIT:
+            return _ToolExecutionResult(
+                f"ERROR: content exceeds {_PROJECT_CREATE_CONTENT_LIMIT} bytes",
+                failed=True,
+            )
+
+        name = path_parts[-1]
+        try:
+            doc_format = _project_doc_format_for_name(name, args.get("format"))
+        except ValueError as exc:
+            return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
+
+        with SessionLocal() as db:
+            project = db.get(Project, self.config.project_id)
+            if project is None:
+                return _ToolExecutionResult("ERROR: project not found", failed=True)
+            if not ProjectMemberService(db).can_write(project.id, self.config.user_id):
+                return _ToolExecutionResult("ERROR: project write access required", failed=True)
+
+            svc = ProjectFsService(db, project)
+            parent_folder_id: str | None = None
+            for folder_name in path_parts[:-1]:
+                conflict = _project_sibling_kind(db, project.id, parent_folder_id, folder_name)
+                if conflict in {"doc", "file"}:
+                    return _ToolExecutionResult(
+                        f"ERROR: cannot create folder '{folder_name}' because a {conflict} "
+                        "with that name already exists",
+                        failed=True,
+                    )
+                folder = _project_find_folder(db, project.id, parent_folder_id, folder_name)
+                if folder is None:
+                    try:
+                        folder = svc.create_folder(
+                            parent_folder_id=parent_folder_id,
+                            name=folder_name,
+                        )
+                    except ValueError as exc:
+                        return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
+                parent_folder_id = folder.id
+
+            existing = _project_sibling_kind(db, project.id, parent_folder_id, name)
+            if existing is not None:
+                return _ToolExecutionResult(
+                    f"ERROR: cannot create '{name}' because a {existing} with that name already exists",
+                    failed=True,
+                )
+            try:
+                doc = svc.create_doc(
+                    folder_id=parent_folder_id,
+                    name=name,
+                    format=doc_format,
+                    content=content,
+                )
+            except ValueError as exc:
+                return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
+
+            payload = {
+                "action": "doc.created",
+                "doc_id": doc.id,
+                "folder_id": doc.folder_id,
+                "name": doc.name,
+                "format": doc.format,
+                "path": "/".join(path_parts),
+                "doc": _tree_doc_payload(doc),
+            }
+            bus.publish(project.id, "project.tree.changed", payload, origin_client_id="")
+
+        return _ToolExecutionResult(
+            json.dumps(
+                {
+                    "status": "created",
+                    "doc_id": payload["doc_id"],
+                    "path": payload["path"],
+                    "name": payload["name"],
+                    "format": payload["format"],
+                    "size_bytes": payload["doc"]["size_bytes"],
+                },
+                ensure_ascii=False,
+            ),
+            tool_kind="project_write",
+            side_event={"event": "native.agent.project_file_created", "data": payload},
         )
 
     def _tool_propose_doc_edit(
@@ -925,6 +1047,102 @@ def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:
     return False
 
 
+def _normalize_project_create_path(raw_path: str) -> list[str]:
+    path = raw_path.strip().replace("\\", "/")
+    if not path:
+        raise ValueError("path is required")
+    if len(path) > _PROJECT_CREATE_MAX_PATH_CHARS:
+        raise ValueError(f"path exceeds {_PROJECT_CREATE_MAX_PATH_CHARS} characters")
+    if path.startswith("/") or re.match(r"^[A-Za-z]:", path):
+        raise ValueError("path must be relative to the current project")
+    if path.endswith("/"):
+        raise ValueError("path must include a filename")
+    raw_parts = path.split("/")
+    if any(part == "" for part in raw_parts):
+        raise ValueError("path must not contain empty segments")
+    parts: list[str] = []
+    for part in raw_parts:
+        clean = part.strip()
+        if clean != part:
+            raise ValueError("path segments must not have leading or trailing spaces")
+        if clean in {".", ".."} or clean.casefold() == ".git":
+            raise ValueError("path contains a forbidden segment")
+        if "\x00" in clean:
+            raise ValueError("path contains an invalid character")
+        if len(clean) > _PROJECT_CREATE_MAX_SEGMENT_CHARS:
+            raise ValueError(
+                f"path segment exceeds {_PROJECT_CREATE_MAX_SEGMENT_CHARS} characters"
+            )
+        parts.append(clean)
+    if not parts:
+        raise ValueError("path must include a filename")
+    return parts
+
+
+def _project_doc_format_for_name(name: str, requested: Any) -> str:
+    raw = str(requested or "").strip().lower()
+    if raw:
+        if raw not in {"tex", "md", "txt"}:
+            raise ValueError("format must be one of tex, md, or txt")
+        return raw
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return _PROJECT_CREATE_DOC_EXTS.get(ext, "txt")
+
+
+def _project_find_folder(
+    db: Any,
+    project_id: str,
+    parent_folder_id: str | None,
+    name: str,
+) -> Folder | None:
+    return (
+        db.query(Folder)
+        .filter(
+            Folder.project_id == project_id,
+            Folder.parent_folder_id == parent_folder_id,
+            Folder.name == name,
+        )
+        .first()
+    )
+
+
+def _project_sibling_kind(
+    db: Any,
+    project_id: str,
+    folder_id: str | None,
+    name: str,
+) -> str | None:
+    if _project_find_folder(db, project_id, folder_id, name) is not None:
+        return "folder"
+    doc = (
+        db.query(Doc.id)
+        .filter(Doc.project_id == project_id, Doc.folder_id == folder_id, Doc.name == name)
+        .first()
+    )
+    if doc is not None:
+        return "doc"
+    file_blob = (
+        db.query(FileBlob.id)
+        .filter(
+            FileBlob.project_id == project_id,
+            FileBlob.folder_id == folder_id,
+            FileBlob.name == name,
+        )
+        .first()
+    )
+    return "file" if file_blob is not None else None
+
+
+def _tree_doc_payload(doc: Doc) -> dict[str, object]:
+    return {
+        "id": doc.id,
+        "name": doc.name,
+        "format": doc.format,
+        "size_bytes": len((doc.content or "").encode("utf-8")),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
 def _workspace_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -1039,6 +1257,45 @@ def _workspace_tools() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {"doc_id": {"type": "string"}},
                     "required": ["doc_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "project_create_text_file",
+                "description": (
+                    "Create a new text document in the current project by relative path. "
+                    "Use only when the user explicitly asks you to create a new project file "
+                    "or reference file. Intermediate folders are created automatically. "
+                    "The tool refuses to overwrite existing docs, files, or folders. "
+                    "Supported document formats are tex, md, and txt; format is inferred "
+                    "from the filename when possible and otherwise defaults to txt."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Relative project path, for example "
+                                "references/paper-style.md or examples/rule.txt."
+                            ),
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full UTF-8 text content for the new file.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["tex", "md", "txt"],
+                            "description": (
+                                "Optional stored document format. If omitted, inferred from "
+                                "the filename extension when supported, otherwise txt."
+                            ),
+                        },
+                    },
+                    "required": ["path", "content"],
                 },
             },
         },

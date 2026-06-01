@@ -12,7 +12,6 @@ import {
   buildHeaders,
   type Conversation,
   type ConversationCreate,
-  type ConversationUpdate,
   type EditProposal,
   type Message,
   type MessageInject,
@@ -220,7 +219,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       content: body.content,
       range_start: body.range_start ?? null,
       range_end: body.range_end ?? null,
-      inputs: body.inputs ?? null,
+      external_message_id: '',
+      error: '',
       created_at: new Date().toISOString(),
     }
     set((s) => ({

@@ -180,7 +180,12 @@ export function WorkspacePage() {
   const sidePanelAnimatingRef = useRef({ left: false, right: false })
   const loadingBibDocIds = useRef(new Set<string>())
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const routeProjectName = useProjectStore((s) =>
+    projectId ? s.projects.find((project) => project.id === projectId)?.name ?? '' : '',
+  )
   const projectReady = !!projectId && currentProjectId === projectId
+  const switchingProject = !!projectId && currentProjectId !== projectId
+  const showProjectTransition = switchingProject || (projectReady && treeLoading && !tree)
   const autoOpenAttemptedFor = useRef<string | null>(null)
 
   const cancelSidePanelAnimation = (side: 'left' | 'right') => {
@@ -731,7 +736,7 @@ export function WorkspacePage() {
       />
       <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
 
-      <main className="workspace">
+      <main className="workspace" aria-busy={showProjectTransition}>
         <PanelGroup
           orientation="horizontal"
           className="workspace-panel-group"
@@ -993,6 +998,21 @@ export function WorkspacePage() {
             </>
           )}
         </PanelGroup>
+        {showProjectTransition && (
+          <div className="project-switch-overlay" role="status" aria-live="polite">
+            <div className="project-switch-indicator">
+              <div className="project-switch-label">
+                {switchingProject ? '切换项目中' : '载入项目中'}
+              </div>
+              <div className="project-switch-name">
+                {routeProjectName || '正在准备工作区'}
+              </div>
+              <div className="project-switch-progress" aria-hidden="true">
+                <span />
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

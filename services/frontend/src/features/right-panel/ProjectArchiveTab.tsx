@@ -1,24 +1,29 @@
 import { useEffect, useState } from 'react'
-import { Archive, GitBranch, Loader2, RefreshCw, Save, Terminal, Upload } from 'lucide-react'
+import { Archive, CheckCircle2, GitBranch, Loader2, RefreshCw, Save, Terminal, Upload } from 'lucide-react'
 import {
   projectArchiveApi,
   type ProjectArchiveStatus,
 } from '../../services/backendApi'
+import { projectsApi } from '../../services/projectsApi'
 import { useProjectStore } from '../../stores/projectStore'
 import { useMajorVersionStore } from '../../stores/majorVersionStore'
+import { useNativeAgentStore } from '../../stores/nativeAgentStore'
 import { MajorVersionList } from '../history/MajorVersionList'
 import { MajorVersionDiffModal } from '../history/MajorVersionDiffModal'
 import './project-archive.css'
 
 export function ProjectArchiveTab() {
   const projectId = useProjectStore((s) => s.currentProjectId)
+  const projects = useProjectStore((s) => s.projects)
   const role = useProjectStore((s) => s.currentProjectRole)
   const loadProjects = useProjectStore((s) => s.load)
+  const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
   const loadCommits = useMajorVersionStore((s) => s.loadCommits)
   const restoreCommit = useMajorVersionStore((s) => s.restore)
   const [status, setStatus] = useState<ProjectArchiveStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [skillSaving, setSkillSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [message, setMessage] = useState('')
@@ -32,6 +37,8 @@ export function ProjectArchiveTab() {
 
   const isOwner = role === 'owner'
   const roleKnown = role !== null
+  const currentProject = projects.find((project) => project.id === projectId)
+  const isSkillProject = currentProject?.is_skill_project === true
 
   const load = async () => {
     if (!projectId) return
@@ -52,7 +59,10 @@ export function ProjectArchiveTab() {
   }
 
   useEffect(() => {
-    void load()
+    const timer = window.setTimeout(() => {
+      void load()
+    }, 0)
+    return () => window.clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
@@ -61,6 +71,12 @@ export function ProjectArchiveTab() {
       void loadProjects()
     }
   }, [loadProjects, projectId, role])
+
+  useEffect(() => {
+    if (projectId && !currentProject) {
+      void loadProjects()
+    }
+  }, [currentProject, loadProjects, projectId])
 
   const createSnapshot = async () => {
     if (!projectId) return
@@ -77,6 +93,21 @@ export function ProjectArchiveTab() {
       setError(err instanceof Error ? err.message : '创建项目大版本失败')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const updateSkillCache = async () => {
+    if (!projectId) return
+    setSkillSaving(true)
+    setError(null)
+    try {
+      const result = await projectsApi.updateSkillCache(projectId)
+      setFeedback(`Skill 缓存已更新到 v${result.skill.cache_version || result.project.skill_cache_version}。`)
+      await Promise.all([loadProjects(), loadNativeAgents(), load()])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新 Skill 缓存失败')
+    } finally {
+      setSkillSaving(false)
     }
   }
 
@@ -151,6 +182,36 @@ export function ProjectArchiveTab() {
 
   return (
     <div className="project-archive-panel">
+      {currentProject && isSkillProject && (
+        <div className="archive-section skill-cache-section">
+          <div className="archive-section-head">
+            <div>
+              <h3><CheckCircle2 size={14} /> Skill 缓存</h3>
+              <p>把当前 Skill 项目的文件写入本地缓存，已装载这个 Skill 的 Agent 会使用最新版缓存。</p>
+            </div>
+            {currentProject.skill_cache_version > 0 && (
+              <span className="archive-version-chip">v{currentProject.skill_cache_version}</span>
+            )}
+          </div>
+          <div className="skill-cache-row">
+            <span>
+              {currentProject.skill_cache_updated_at
+                ? `上次缓存 ${new Date(currentProject.skill_cache_updated_at).toLocaleString()}`
+                : '尚未缓存'}
+            </span>
+            <button
+              className="primary-btn"
+              onClick={() => void updateSkillCache()}
+              disabled={!isOwner || skillSaving}
+              title={isOwner ? '更新这个 Skill 项目的本地缓存' : '只有项目 Owner 可以更新 Skill 缓存'}
+            >
+              {skillSaving ? <Loader2 size={13} className="spin" /> : <CheckCircle2 size={13} />}
+              更新 Skill 缓存
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="archive-section">
         <div className="archive-section-head">
           <div>

@@ -155,6 +155,9 @@ class SkillOut(BaseModel):
     content: str
     visibility: str
     source: str
+    project_id: str = ""
+    cache_version: int = 0
+    cache_updated_at: datetime | None = None
     version: int
     tags: list[str]
     created_at: datetime
@@ -454,6 +457,10 @@ class ProjectOut(BaseModel):
     name: str
     main_doc_id: str
     compiler: str
+    is_skill_project: bool = False
+    project_skill_id: str = ""
+    skill_cache_version: int = 0
+    skill_cache_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     my_role: str = "owner"
@@ -464,6 +471,7 @@ class ProjectOut(BaseModel):
 
 class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
+    project_type: str = Field(default="paper", pattern="^(paper|skill)$")
 
 
 class GitHubProjectImportIn(BaseModel):
@@ -476,6 +484,12 @@ class ProjectUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     main_doc_id: str | None = None
     compiler: str | None = None
+    is_skill_project: bool | None = None
+
+
+class ProjectSkillCacheOut(BaseModel):
+    project: ProjectOut
+    skill: SkillOut
 
 
 class ProjectMemberAddIn(BaseModel):

@@ -102,6 +102,45 @@ export async function http<T>(path: string, init?: HttpInit): Promise<T> {
   return text ? (JSON.parse(text) as T) : (undefined as T)
 }
 
+async function downloadBackendFile(path: string, fallbackFilename: string): Promise<void> {
+  const resp = await fetch(`${BASE}${path}`, {
+    method: 'GET',
+    credentials: 'include',
+  })
+  if (resp.status === 401) {
+    notifyUnauthorized()
+  }
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new BackendError(resp.status, parseErrorDetail(text) || resp.statusText)
+  }
+  const blob = await resp.blob()
+  const filename = filenameFromContentDisposition(resp.headers.get('Content-Disposition') ?? '') ?? fallbackFilename
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+function filenameFromContentDisposition(disposition: string): string | null {
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      return encoded
+    }
+  }
+  return disposition.match(/filename="([^"]+)"/i)?.[1] ?? disposition.match(/filename=([^;]+)/i)?.[1] ?? null
+}
+
 function parseErrorDetail(text: string): string {
   if (!text) return ''
   try {
@@ -272,6 +311,9 @@ export interface Skill {
   content: string
   visibility: 'system' | 'private' | 'public' | string
   source: 'bundled' | 'upload' | string
+  project_id: string
+  cache_version: number
+  cache_updated_at: string | null
   version: number
   tags: string[]
   can_edit: boolean
@@ -645,6 +687,10 @@ export const nativeAgentApi = {
       http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     usage: (id: string) =>
       http<SkillUsage[]>(`/api/native-agent/skills/${encodeURIComponent(id)}/usage`),
+    downloadUrl: (id: string) =>
+      `${BASE}/api/native-agent/skills/${encodeURIComponent(id)}/download`,
+    download: (id: string, fallbackFilename = 'skill.zip') =>
+      downloadBackendFile(`/api/native-agent/skills/${encodeURIComponent(id)}/download`, fallbackFilename),
   },
   marketplace: {
     list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),

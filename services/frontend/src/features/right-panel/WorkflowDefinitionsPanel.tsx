@@ -70,6 +70,7 @@ export function WorkflowDefinitionsPanel({
       setEditingDefinition(created)
       setDraftFromTemplate(undefined)
     }
+    setShowEditor(true)
     return created
   }
   const handleUpdateDefinition = async (draft: WorkflowDefinitionDraft) => {
@@ -78,8 +79,10 @@ export function WorkflowDefinitionsPanel({
       if (updated) {
         setEditingDefinition(updated)
       }
+      setShowEditor(true)
       return updated
     }
+    setShowEditor(true)
     return undefined
   }
   const handleEditDefinition = (def: WorkflowDefinition) => {

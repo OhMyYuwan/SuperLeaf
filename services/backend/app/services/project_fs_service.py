@@ -638,6 +638,59 @@ class ProjectFsService:
 
         return buf.getvalue()
 
+    def materialize_to_directory(self, root: Path) -> tuple[int, int, int]:
+        """Write the current SQLite-backed project tree into a real folder."""
+        root.mkdir(parents=True, exist_ok=True)
+        for child in root.iterdir():
+            if child.name == ".git":
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+        folders = self.db.query(Folder).filter(Folder.project_id == self.project.id).all()
+        docs = self.db.query(Doc).filter(Doc.project_id == self.project.id).all()
+        files = self.db.query(FileBlob).filter(FileBlob.project_id == self.project.id).all()
+        folder_by_id = {folder.id: folder for folder in folders}
+
+        def folder_parts(folder_id: str | None) -> list[str]:
+            parts: list[str] = []
+            seen: set[str] = set()
+            current = folder_id
+            while current and current not in seen:
+                seen.add(current)
+                folder = folder_by_id.get(current)
+                if folder is None:
+                    break
+                parts.append(_safe_name(folder.name))
+                current = folder.parent_folder_id
+            parts.reverse()
+            return parts
+
+        doc_count = 0
+        file_count = 0
+        byte_count = 0
+        for doc in docs:
+            rel = Path(*folder_parts(doc.folder_id), _safe_name(doc.name))
+            if _is_ignored_materialized_path(rel):
+                continue
+            payload = (doc.content or "").encode("utf-8")
+            _write_file(root / rel, payload)
+            doc_count += 1
+            byte_count += len(payload)
+
+        for file in files:
+            rel = Path(*folder_parts(file.folder_id), _safe_name(file.name))
+            if _is_ignored_materialized_path(rel):
+                continue
+            payload = file.blob or b""
+            _write_file(root / rel, payload)
+            file_count += 1
+            byte_count += len(payload)
+
+        return doc_count, file_count, byte_count
+
 
 def _doc_format(suffix: str) -> str | None:
     return _DOC_SUFFIX_FORMATS.get(suffix)
@@ -671,3 +724,19 @@ def _is_ignored_zip_member(path: Path) -> bool:
 def _is_zip_symlink(info: zipfile.ZipInfo) -> bool:
     mode = info.external_attr >> 16
     return stat.S_ISLNK(mode)
+
+
+def _safe_name(name: str) -> str:
+    cleaned = "".join("_" if ch in '/\\:\0' else ch for ch in name).strip()
+    if cleaned in {"", ".", ".."}:
+        return "untitled"
+    return cleaned or "untitled"
+
+
+def _is_ignored_materialized_path(path: Path) -> bool:
+    return ".git" in path.parts
+
+
+def _write_file(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)

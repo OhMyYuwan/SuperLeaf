@@ -28,10 +28,11 @@ function getBackendUrl(): string {
       console.log('[backendApi] Auto-detected backend URL:', url, '(from hostname:', hostname, ')')
       return url
     }
-    // For localhost, use 127.0.0.1 to force IPv4 (backend only listens on IPv4)
-    if (hostname === 'localhost') {
-      console.log('[backendApi] Using IPv4 backend URL: http://127.0.0.1:8000 (forced IPv4 for localhost)')
-      return 'http://127.0.0.1:8000'
+    // Preserve the browser hostname so session cookies stay on the same host.
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      const url = `${protocol}//${hostname}:8000`
+      console.log('[backendApi] Using local backend URL:', url)
+      return url
     }
   }
   console.log('[backendApi] Using default backend URL: http://127.0.0.1:8000')
@@ -100,6 +101,45 @@ export async function http<T>(path: string, init?: HttpInit): Promise<T> {
     throw new BackendError(resp.status, parseErrorDetail(text) || resp.statusText)
   }
   return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+async function downloadBackendFile(path: string, fallbackFilename: string): Promise<void> {
+  const resp = await fetch(`${BASE}${path}`, {
+    method: 'GET',
+    credentials: 'include',
+  })
+  if (resp.status === 401) {
+    notifyUnauthorized()
+  }
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new BackendError(resp.status, parseErrorDetail(text) || resp.statusText)
+  }
+  const blob = await resp.blob()
+  const filename = filenameFromContentDisposition(resp.headers.get('Content-Disposition') ?? '') ?? fallbackFilename
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+function filenameFromContentDisposition(disposition: string): string | null {
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      return encoded
+    }
+  }
+  return disposition.match(/filename="([^"]+)"/i)?.[1] ?? disposition.match(/filename=([^;]+)/i)?.[1] ?? null
 }
 
 function parseErrorDetail(text: string): string {
@@ -272,6 +312,9 @@ export interface Skill {
   content: string
   visibility: 'system' | 'private' | 'public' | string
   source: 'bundled' | 'upload' | string
+  project_id: string
+  cache_version: number
+  cache_updated_at: string | null
   version: number
   tags: string[]
   can_edit: boolean
@@ -645,6 +688,10 @@ export const nativeAgentApi = {
       http<void>(`/api/native-agent/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     usage: (id: string) =>
       http<SkillUsage[]>(`/api/native-agent/skills/${encodeURIComponent(id)}/usage`),
+    downloadUrl: (id: string) =>
+      `${BASE}/api/native-agent/skills/${encodeURIComponent(id)}/download`,
+    download: (id: string, fallbackFilename = 'skill.zip') =>
+      downloadBackendFile(`/api/native-agent/skills/${encodeURIComponent(id)}/download`, fallbackFilename),
   },
   marketplace: {
     list: () => http<SkillMarketplace>('/api/native-agent/skill-marketplace'),

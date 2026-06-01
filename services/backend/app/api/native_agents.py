@@ -6,9 +6,15 @@ left for a follow-up request.
 
 from __future__ import annotations
 
+import io
+import json
 import os
+from pathlib import Path
+import re
+import zipfile
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, object_session
 
@@ -99,6 +105,81 @@ def _skill_out(row: Skill, user_id: str) -> SkillOut:
         out.used_by_agent_count = len(svc.agents_using_skill(row.id, user_id=user_id))
     out.content = decrypt_skill_content(row.content)
     return out
+
+
+def _skill_export_folder_name(row: Skill) -> str:
+    raw_name = (row.name or "skill").strip()
+    safe_name = re.sub(r"[\x00-\x1f/\\:]+", "-", raw_name).strip(" .")
+    return safe_name[:100] or "skill"
+
+
+def _skill_export_archive(row: Skill) -> tuple[str, bytes]:
+    if row.source == "project":
+        return _project_skill_export_archive(row)
+    folder_name = _skill_export_folder_name(row)
+    content = decrypt_skill_content(row.content)
+    manifest = {
+        "schema_version": 1,
+        "kind": "superleaf.skill.export",
+        "name": row.name,
+        "public_name": row.public_name,
+        "description": row.description,
+        "entry": "SKILL.md",
+        "source": row.source,
+        "visibility": row.visibility,
+        "version": row.version,
+        "tags": list(row.tags or []),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{folder_name}/SKILL.md", content)
+        zf.writestr(
+            f"{folder_name}/manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        )
+    return folder_name, archive.getvalue()
+
+
+def _project_skill_export_archive(row: Skill) -> tuple[str, bytes]:
+    folder_name = _skill_export_folder_name(row)
+    if not row.cache_path:
+        raise ValueError("Project Skill cache is missing; update Skill cache first")
+    root = Path(row.cache_path)
+    if not root.exists() or not root.is_dir() or not (root / "SKILL.md").is_file():
+        raise ValueError("Project Skill cache is missing; update Skill cache first")
+    manifest = {
+        "schema_version": 1,
+        "kind": "superleaf.skill.export",
+        "name": row.name,
+        "public_name": row.public_name,
+        "description": row.description,
+        "entry": "SKILL.md",
+        "source": row.source,
+        "project_id": row.project_id,
+        "cache_version": row.cache_version,
+        "cache_updated_at": row.cache_updated_at.isoformat() if row.cache_updated_at else None,
+        "visibility": row.visibility,
+        "version": row.version,
+        "tags": list(row.tags or []),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root)
+            if ".git" in rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
+                continue
+            zf.write(path, f"{folder_name}/{rel.as_posix()}")
+        zf.writestr(
+            f"{folder_name}/manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        )
+    return folder_name, archive.getvalue()
 
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
@@ -607,6 +688,28 @@ def delete_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+
+
+@router.get("/skills/{skill_id}/download")
+def download_skill(
+    skill_id: str,
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> Response:
+    row = NativeAgentService(db).get_skill(skill_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(404, "skill not found")
+    try:
+        folder_name, payload = _skill_export_archive(row)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    filename = f"{folder_name}.zip"
+    disposition = f"attachment; filename=\"skill.zip\"; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.get("/skills/{skill_id}/usage", response_model=list[SkillUsageOut])

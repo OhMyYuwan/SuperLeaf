@@ -67,6 +67,7 @@ button {
 .workspace {
   flex: 1;
   display: flex;
+  position: relative;
   min-height: 0;
   padding: 14px;
   overflow: hidden;
@@ -77,6 +78,67 @@ button {
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.project-switch-overlay {
+  position: absolute;
+  inset: 14px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.5);
+  backdrop-filter: blur(10px);
+  animation: project-switch-fade 160ms ease-out;
+}
+
+.project-switch-indicator {
+  width: min(320px, calc(100% - 48px));
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.9);
+  box-shadow: 0 22px 60px -30px rgba(0, 0, 0, 0.9);
+  padding: 14px 16px;
+}
+
+.project-switch-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #bfdbfe;
+}
+
+.project-switch-name {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #f8fafc;
+}
+
+.project-switch-progress {
+  position: relative;
+  height: 3px;
+  margin-top: 12px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.project-switch-progress span {
+  position: absolute;
+  inset: 0;
+  width: 44%;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.2), rgba(125, 211, 252, 0.9), rgba(59, 130, 246, 0.2));
+  animation: project-switch-progress 900ms ease-in-out infinite;
+}
+
+@keyframes project-switch-fade {
+  from { opacity: 0 }
+  to { opacity: 1 }
+}
+
+@keyframes project-switch-progress {
+  from { transform: translateX(-110%) }
+  to { transform: translateX(250%) }
 }
 
 .panel {
@@ -201,6 +263,16 @@ button {
   .resize-handle,
   .panel-collapse-btn {
     transition: none;
+  }
+
+  .project-switch-overlay,
+  .project-switch-progress span {
+    animation: none;
+  }
+
+  .project-switch-progress span {
+    transform: none;
+    width: 100%;
   }
 }
 

@@ -56,9 +56,11 @@ def run_migrations(engine: Engine) -> None:
         _add_user_id_to_private_assets(conn)
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
+        _add_project_skill_columns(conn)
         _rebuild_native_agents_table(conn)
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
+        _add_skill_project_columns(conn)
         _rebuild_native_mcp_servers_table(conn)
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
@@ -223,6 +225,35 @@ def _add_project_archive_github_columns(conn) -> None:
         conn.execute(
             text("ALTER TABLE project_archive_bindings ADD COLUMN github_repo_url VARCHAR(512) DEFAULT ''")
         )
+
+
+def _add_project_skill_columns(conn) -> None:
+    if not _table_exists(conn, "projects"):
+        return
+    additions = {
+        "is_skill_project": "BOOLEAN DEFAULT 0",
+        "project_skill_id": "VARCHAR(32) DEFAULT ''",
+        "skill_cache_version": "INTEGER DEFAULT 0",
+        "skill_cache_updated_at": "DATETIME",
+    }
+    for column, ddl in additions.items():
+        if not _column_exists(conn, "projects", column):
+            conn.execute(text(f"ALTER TABLE projects ADD COLUMN {column} {ddl}"))
+
+
+def _add_skill_project_columns(conn) -> None:
+    if not _table_exists(conn, "skills"):
+        return
+    additions = {
+        "project_id": "VARCHAR(32) DEFAULT ''",
+        "cache_path": "VARCHAR(1024) DEFAULT ''",
+        "cache_version": "INTEGER DEFAULT 0",
+        "cache_updated_at": "DATETIME",
+    }
+    for column, ddl in additions.items():
+        if not _column_exists(conn, "skills", column):
+            conn.execute(text(f"ALTER TABLE skills ADD COLUMN {column} {ddl}"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_skills_project_id ON skills(project_id)"))
 
 
 def _rebuild_native_agents_table(conn) -> None:

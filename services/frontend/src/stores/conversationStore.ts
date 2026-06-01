@@ -12,7 +12,6 @@ import {
   buildHeaders,
   type Conversation,
   type ConversationCreate,
-  type ConversationUpdate,
   type EditProposal,
   type Message,
   type MessageInject,
@@ -43,6 +42,15 @@ export interface ProposalEntry extends EditProposal {
   rel_pos_end?: Y.RelativePosition
 }
 
+export interface AgentRunStats {
+  filesRead: number
+  filesWritten: number
+  stopped?: boolean
+}
+
+const activeMessageControllers = new Map<string, AbortController>()
+const stoppedMessageConversations = new Set<string>()
+
 interface ConversationState {
   conversations: Record<string, Conversation>
   messages: Record<string, Message[]>
@@ -52,6 +60,8 @@ interface ConversationState {
   // Streaming state: which conversation is currently receiving a message.
   streaming: Record<string, boolean>
   streamingDelta: Record<string, string>
+  streamingStats: Record<string, AgentRunStats>
+  messageRunStats: Record<string, AgentRunStats>
 
   // Edit proposals from native Agents, keyed by conversation_id. Lives in
   // memory only — refreshing the page drops them. Persisting them would
@@ -68,6 +78,7 @@ interface ConversationState {
   deleteConversation: (id: string) => Promise<void>
   loadMessages: (conversationId: string) => Promise<void>
   sendMessage: (conversationId: string, body: MessageSend) => Promise<void>
+  stopMessage: (conversationId: string) => void
   injectMessage: (conversationId: string, body: MessageInject) => Promise<Message | null>
   clearStreamingDelta: (conversationId: string) => void
   acceptProposal: (conversationId: string, proposalId: string) => Promise<{ ok: boolean; stale?: boolean }>
@@ -81,6 +92,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   error: null,
   streaming: {},
   streamingDelta: {},
+  streamingStats: {},
+  messageRunStats: {},
   proposals: {},
 
   loadConversations: async (filter) => {
@@ -206,7 +219,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       content: body.content,
       range_start: body.range_start ?? null,
       range_end: body.range_end ?? null,
-      inputs: body.inputs ?? null,
+      external_message_id: '',
+      error: '',
       created_at: new Date().toISOString(),
     }
     set((s) => ({
@@ -216,6 +230,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
       streaming: { ...s.streaming, [conversationId]: true },
       streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
+      streamingStats: {
+        ...s.streamingStats,
+        [conversationId]: { filesRead: 0, filesWritten: 0 },
+      },
       error: null,
     }))
 
@@ -224,6 +242,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // agent reply isn't cut off. User-configurable via env.
     const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
     const abortCtl = new AbortController()
+    activeMessageControllers.set(conversationId, abortCtl)
     const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
 
     try {
@@ -268,18 +287,66 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } catch (e) {
       const aborted =
         e instanceof DOMException && e.name === 'AbortError'
+      const stoppedByUser = stoppedMessageConversations.has(conversationId)
       set((s) => ({
         streaming: { ...s.streaming, [conversationId]: false },
-        error: aborted
+        error: stoppedByUser
+          ? null
+          : aborted
           ? `Agent 响应超时（${timeoutMs / 1000}s 内无数据），请重试或检查 Provider`
           : e instanceof Error ? e.message : String(e),
       }))
+      if (stoppedByUser) {
+        set((s) => {
+          const currentDelta = s.streamingDelta[conversationId] ?? ''
+          const stoppedId = `stopped-${Date.now()}`
+          const stats = {
+            ...(s.streamingStats[conversationId] ?? { filesRead: 0, filesWritten: 0 }),
+            stopped: true,
+          }
+          const stoppedMsg: Message = {
+            id: stoppedId,
+            conversation_id: conversationId,
+            role: 'agent',
+            content: currentDelta.trim()
+              ? `${currentDelta.trim()}\n\n已停止。`
+              : '已停止。',
+            range_start: null,
+            range_end: null,
+            external_message_id: '',
+            error: '',
+            created_at: new Date().toISOString(),
+          }
+          const { [conversationId]: _, ...restStreamingStats } = s.streamingStats
+          return {
+            messages: {
+              ...s.messages,
+              [conversationId]: [...(s.messages[conversationId] ?? []), stoppedMsg],
+            },
+            streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
+            streamingStats: restStreamingStats,
+            messageRunStats: { ...s.messageRunStats, [stoppedId]: stats },
+          }
+        })
+      }
     } finally {
       clearTimeout(firstByteTimer)
+      activeMessageControllers.delete(conversationId)
+      stoppedMessageConversations.delete(conversationId)
       set((s) => ({
         streaming: { ...s.streaming, [conversationId]: false },
+        streamingStats: Object.fromEntries(
+          Object.entries(s.streamingStats).filter(([id]) => id !== conversationId),
+        ),
       }))
     }
+  },
+
+  stopMessage: (conversationId) => {
+    const ctl = activeMessageControllers.get(conversationId)
+    if (!ctl) return
+    stoppedMessageConversations.add(conversationId)
+    ctl.abort('user')
   },
 
   clearStreamingDelta: (conversationId) => {
@@ -467,6 +534,42 @@ function handleMessageEvent(
         [conversationId]: (s.streamingDelta[conversationId] ?? '') + delta,
       },
     }))
+  } else if (evt.event === 'native.agent.tool') {
+    const data = evt.data as {
+      name?: string
+      failed?: boolean
+      tool_kind?: string
+    }
+    const name = String(data?.name ?? '')
+    const failed = Boolean(data?.failed)
+    const isRead =
+      name === 'read_agent_file' ||
+      name === 'project_read_doc' ||
+      name === 'project_outline' ||
+      name === 'project_grep'
+    const isWrite =
+      !failed &&
+      (data?.tool_kind === 'project_write' ||
+        name === 'project_write_text_file' ||
+        name === 'project_create_text_file')
+    if (isRead || isWrite) {
+      set((s) => {
+        const current = s.streamingStats[conversationId] ?? {
+          filesRead: 0,
+          filesWritten: 0,
+        }
+        return {
+          streamingStats: {
+            ...s.streamingStats,
+            [conversationId]: {
+              filesRead: current.filesRead + (isRead ? 1 : 0),
+              filesWritten: current.filesWritten + (isWrite ? 1 : 0),
+              stopped: current.stopped,
+            },
+          },
+        }
+      })
+    }
   } else if (evt.event === 'ylw.msg.finished') {
     const msg = evt.data as Message
     set((s) => {
@@ -489,6 +592,13 @@ function handleMessageEvent(
             ? s.proposals
             : { ...s.proposals, [conversationId]: boundProposals },
         streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
+        streamingStats: Object.fromEntries(
+          Object.entries(s.streamingStats).filter(([id]) => id !== conversationId),
+        ),
+        messageRunStats: {
+          ...s.messageRunStats,
+          [msg.id]: s.streamingStats[conversationId] ?? { filesRead: 0, filesWritten: 0 },
+        },
       }
     })
     // Reload conversation to get updated title (auto-generated from first message).
@@ -504,6 +614,9 @@ function handleMessageEvent(
     set((s) => ({
       error,
       streamingDelta: { ...s.streamingDelta, [conversationId]: '' },
+      streamingStats: Object.fromEntries(
+        Object.entries(s.streamingStats).filter(([id]) => id !== conversationId),
+      ),
     }))
   } else if (evt.event === 'ylw.msg.edit_proposal') {
     const data = evt.data as Partial<EditProposal> | null

@@ -20,7 +20,7 @@ nav_order: 4
 http://localhost:5173
 ```
 
-注册账号后，创建第一个项目，例如 `My Paper`。
+注册账号后，创建第一个项目，例如 `My Paper`。首次写论文请选择 `Paper`；如果你要维护一个可装配给 Agent 的能力包，则选择 `Skill`。
 
 ## 2. 创建第一篇文档
 
@@ -70,9 +70,12 @@ research drafting.
 
 - **Skill Market**：从官方 catalog 安装公开 Skill。
 - **私有 Skill**：上传一个 `SKILL.md` 文件，或上传根目录包含 `SKILL.md` 的文件夹。
+- **Skill 项目**：新建项目时选择 `Skill`，在项目里编辑 `README.md` 与 `SKILL.md`，再从 **版本 → 项目大版本** 更新 Skill 缓存。
 - **共享 Skill**：把你拥有的本地 Skill 共享给服务器上的其他可见用户。
 
 安装完成后，回到 Agent 编辑表单，在 **AgentSkill** 区域勾选需要的 Skill。
+
+项目型 Skill 出现在本地 Skill 库后，点击标题可以回到对应 Skill 项目继续编辑。
 
 ## 5.1 可选：添加 MCP 工具
 

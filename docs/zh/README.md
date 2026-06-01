@@ -13,7 +13,7 @@ nav_order: 2
 - [安装](./getting-started/install.html)：本机依赖、端口、服务启动。
 - [首次启动](./getting-started/first-run.html)：注册账号、创建项目、配置 Provider、跑通第一轮 Agent。
 - [原生 Agent](./agents/README.html)：后端原生 Agent、凭证、模型、AgentSkill。
-- [Skill 使用与市场](./agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill。
+- [Skill 使用与市场](./agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill、项目化 Skill 开发。
 - [MCP 使用与市场](./agents/mcps.html)：拥有的 MCP、自定义 MCP、连通性和功能性检查。
 - [Provider 配置](./providers/README.html)：外部模型服务的接入方式。
   - [Nanobot](./providers/nanobot.html) — 已完成，推荐本地单用户首选
@@ -32,3 +32,4 @@ nav_order: 2
 - 默认端口：Frontend `5173`，Backend `8000`，Collab Server `4444`。
 - 用户密钥保存在本机 `~/.yuwanlab/` 下，仓库不会保存明文 key。
 - `supports/` 下的 Skill/MCP catalog 是独立仓库 checkout，不属于主仓库提交内容。
+- 新建项目可以选择 `Paper` 或 `Skill`。Skill 项目用于在普通项目编辑器里维护 `README.md` 与 `SKILL.md`，再从项目大版本面板手动更新本地 Skill 缓存。

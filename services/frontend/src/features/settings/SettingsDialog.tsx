@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft } from '../../services/backendApi'
 import { BACKEND_BASE, getLocalServiceUrl, githubApi } from '../../services/backendApi'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -78,7 +78,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </div>
 
           <div className="settings-body">
-            {activeTab === 'account' && <GitHubAccountSettings />}
+            {activeTab === 'account' && (
+              <>
+                <GitHubAccountSettings />
+                <ProjectListSettings />
+              </>
+            )}
 
             {activeTab === 'providers' && (
               <>
@@ -110,6 +115,42 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function ProjectListSettings() {
+  const projectListGrouping = useSettingsStore((s) => s.projectListGrouping)
+  const setProjectListGrouping = useSettingsStore((s) => s.setProjectListGrouping)
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <div>
+          <h3><Layers3 size={14} /> Project 列表</h3>
+          <p>控制 /projects 页面如何组织 Paper 和 Skill 项目。</p>
+        </div>
+      </div>
+      <div className="settings-segmented" role="radiogroup" aria-label="Project 列表分组方式">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={projectListGrouping === 'grouped'}
+          className={projectListGrouping === 'grouped' ? 'active' : ''}
+          onClick={() => setProjectListGrouping('grouped')}
+        >
+          Paper / Skill 分区
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={projectListGrouping === 'mixed'}
+          className={projectListGrouping === 'mixed' ? 'active' : ''}
+          onClick={() => setProjectListGrouping('mixed')}
+        >
+          混合列表
+        </button>
+      </div>
+    </section>
   )
 }
 

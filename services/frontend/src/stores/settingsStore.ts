@@ -8,8 +8,18 @@
 import { create } from 'zustand'
 import { providerApi, type Provider, type ProviderDraft, type ProviderUpdate } from '../services/backendApi'
 
+const PROJECT_LIST_GROUPING_KEY = 'yuwanlab.projectListGrouping'
+
+export type ProjectListGrouping = 'grouped' | 'mixed'
+
+function readInitialProjectListGrouping(): ProjectListGrouping {
+  if (typeof window === 'undefined') return 'grouped'
+  return window.localStorage.getItem(PROJECT_LIST_GROUPING_KEY) === 'mixed' ? 'mixed' : 'grouped'
+}
+
 interface SettingsState {
   providers: Provider[]
+  projectListGrouping: ProjectListGrouping
   loading: boolean
   loaded: boolean
   error: string | null
@@ -22,11 +32,13 @@ interface SettingsState {
   activate: (id: string) => Promise<Provider | null>
   probe: (id: string) => Promise<Provider | null>
   getActive: () => Provider | null
+  setProjectListGrouping: (grouping: ProjectListGrouping) => void
   reset: () => void
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
+  projectListGrouping: readInitialProjectListGrouping(),
   loading: false,
   loaded: false,
   error: null,
@@ -102,6 +114,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   getActive: () => get().providers.find((p) => p.is_active) ?? null,
+
+  setProjectListGrouping: (grouping) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(PROJECT_LIST_GROUPING_KEY, grouping)
+    }
+    set({ projectListGrouping: grouping })
+  },
 
   reset: () => set({ providers: [], loaded: false, error: null }),
 }))

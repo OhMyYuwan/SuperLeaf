@@ -94,6 +94,18 @@ MCP catalog 默认来自 `OhMyYuwan/SuperLeaf.MCPs`。本地 `supports/SuperLeaf
 
 这里的 archive repo 位于运行 Backend 的机器上，不是用户电脑里的本地 Git 工作区。
 
+### Agent 创建项目文件
+
+```
+用户明确要求创建新项目文件
+    → NativeAgentRunner 暴露 project_write_text_file
+    → Backend 校验当前 project_id / user_id 写权限
+    → ProjectFsService 新增 Folder / Doc 数据库行
+    → 发布 project.tree.changed 让前端文件树刷新
+```
+
+这个路径创建的是数据库项目树中的文本文件，不是让 Agent 获得服务器文件系统写权限。Skill 项目中的 reference 文件也遵循同一模型：先成为项目里的 `Doc`，更新 Skill 缓存时再进入运行时 cache。
+
 ### 认证
 
 ```
@@ -110,7 +122,7 @@ MCP catalog 默认来自 `OhMyYuwan/SuperLeaf.MCPs`。本地 `supports/SuperLeaf
 Project
 ├── Folder
 │   ├── Doc (.tex / .md)     — 可编辑文档，内容存 SQLite
-│   └── FileBlob             — 二进制文件（图片等），存文件系统
+│   └── FileBlob             — 二进制文件（图片等），blob 存 SQLite
 └── ProjectMember            — 成员关系 (owner/editor/viewer)
 ```
 

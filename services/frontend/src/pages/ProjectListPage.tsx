@@ -9,11 +9,12 @@
  * matches the Overleaf flow where "New Project" jumps you into the workspace.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Download, LayoutGrid, List, Plus, UserRound, X } from 'lucide-react'
 import { useProjectStore } from '../stores/projectStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { ProjectSummary } from '../services/projectsApi'
 import { BackendError, githubApi, type GitHubAccountStatus } from '../services/backendApi'
 import { ProjectCard } from './components/ProjectCard'
@@ -47,12 +48,22 @@ export function ProjectListPage() {
   const remove = useProjectStore((s) => s.remove)
   const viewMode = useProjectStore((s) => s.viewMode)
   const setViewMode = useProjectStore((s) => s.setViewMode)
+  const projectListGrouping = useSettingsStore((s) => s.projectListGrouping)
 
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [github, setGithub] = useState<GitHubAccountStatus | null>(null)
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
+  const sortedProjects = useMemo(() => sortProjectsByUpdated(projects), [projects])
+  const paperProjects = useMemo(
+    () => sortedProjects.filter((project) => !project.is_skill_project),
+    [sortedProjects],
+  )
+  const skillProjects = useMemo(
+    () => sortedProjects.filter((project) => project.is_skill_project),
+    [sortedProjects],
+  )
 
   useEffect(() => {
     load()
@@ -72,11 +83,11 @@ export function ProjectListPage() {
     setDialogBusy(false)
   }
 
-  const handleCreate = async (name: string) => {
+  const handleCreate = async (name: string, projectType: 'paper' | 'skill' = 'paper') => {
     setDialogBusy(true)
     setDialogError(null)
     try {
-      const created = await create(name)
+      const created = await create(name, projectType)
       closeDialog()
       navigate(`/projects/${created.id}`)
     } catch (e) {
@@ -192,42 +203,39 @@ export function ProjectListPage() {
           </div>
         )}
 
-        {projects.length > 0 && viewMode === 'grid' && (
-          <div className="project-grid">
-            {projects.map((p) => (
-              <ProjectCard
-                key={p.id}
-                project={p}
-                onRename={(target) => setDialog({ kind: 'rename', target })}
-                onDelete={(target) => setDialog({ kind: 'delete', target })}
-                onSettings={(target) => setDialog({ kind: 'settings', target })}
-              />
-            ))}
+        {projects.length > 0 && projectListGrouping === 'grouped' && (
+          <div className="project-sections">
+            <ProjectSection
+              title="Papers"
+              description="论文、笔记和普通写作项目"
+              projects={paperProjects}
+              viewMode={viewMode}
+              emptyText="还没有 Paper 项目。"
+              onRename={(target) => setDialog({ kind: 'rename', target })}
+              onDelete={(target) => setDialog({ kind: 'delete', target })}
+              onSettings={(target) => setDialog({ kind: 'settings', target })}
+            />
+            <ProjectSection
+              title="Skills"
+              description="可编辑、可缓存给 Agent 使用的 Skill 项目"
+              projects={skillProjects}
+              viewMode={viewMode}
+              emptyText="还没有 Skill 项目。"
+              onRename={(target) => setDialog({ kind: 'rename', target })}
+              onDelete={(target) => setDialog({ kind: 'delete', target })}
+              onSettings={(target) => setDialog({ kind: 'settings', target })}
+            />
           </div>
         )}
 
-        {projects.length > 0 && viewMode === 'table' && (
-          <table className="project-table">
-            <thead>
-              <tr>
-                <th>项目名称</th>
-                <th>最后更新</th>
-                <th>创建时间</th>
-                <th aria-label="操作"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((p) => (
-                <ProjectTableRow
-                  key={p.id}
-                  project={p}
-                  onRename={(target) => setDialog({ kind: 'rename', target })}
-                  onDelete={(target) => setDialog({ kind: 'delete', target })}
-                  onSettings={(target) => setDialog({ kind: 'settings', target })}
-                />
-              ))}
-            </tbody>
-          </table>
+        {projects.length > 0 && projectListGrouping === 'mixed' && (
+          <ProjectCollection
+            projects={sortedProjects}
+            viewMode={viewMode}
+            onRename={(target) => setDialog({ kind: 'rename', target })}
+            onDelete={(target) => setDialog({ kind: 'delete', target })}
+            onSettings={(target) => setDialog({ kind: 'settings', target })}
+          />
         )}
       </main>
 
@@ -277,6 +285,111 @@ export function ProjectListPage() {
       />
     </div>
   )
+}
+
+function ProjectSection({
+  title,
+  description,
+  projects,
+  viewMode,
+  emptyText,
+  onRename,
+  onDelete,
+  onSettings,
+}: {
+  title: string
+  description: string
+  projects: ProjectSummary[]
+  viewMode: 'table' | 'grid'
+  emptyText: string
+  onRename: (p: ProjectSummary) => void
+  onDelete: (p: ProjectSummary) => void
+  onSettings: (p: ProjectSummary) => void
+}) {
+  return (
+    <section className="project-section">
+      <div className="project-section-header">
+        <div>
+          <h2>{title}</h2>
+          <span>{description}</span>
+        </div>
+        <strong>{projects.length}</strong>
+      </div>
+      {projects.length === 0 ? (
+        <div className="project-section-empty">{emptyText}</div>
+      ) : (
+        <ProjectCollection
+          projects={projects}
+          viewMode={viewMode}
+          onRename={onRename}
+          onDelete={onDelete}
+          onSettings={onSettings}
+        />
+      )}
+    </section>
+  )
+}
+
+function ProjectCollection({
+  projects,
+  viewMode,
+  onRename,
+  onDelete,
+  onSettings,
+}: {
+  projects: ProjectSummary[]
+  viewMode: 'table' | 'grid'
+  onRename: (p: ProjectSummary) => void
+  onDelete: (p: ProjectSummary) => void
+  onSettings: (p: ProjectSummary) => void
+}) {
+  if (viewMode === 'grid') {
+    return (
+      <div className="project-grid">
+        {projects.map((p) => (
+          <ProjectCard
+            key={p.id}
+            project={p}
+            onRename={onRename}
+            onDelete={onDelete}
+            onSettings={onSettings}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <table className="project-table">
+      <thead>
+        <tr>
+          <th>项目名称</th>
+          <th>最后更新</th>
+          <th>创建时间</th>
+          <th aria-label="操作"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {projects.map((p) => (
+          <ProjectTableRow
+            key={p.id}
+            project={p}
+            onRename={onRename}
+            onDelete={onDelete}
+            onSettings={onSettings}
+          />
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function sortProjectsByUpdated(projects: ProjectSummary[]): ProjectSummary[] {
+  return [...projects].sort((a, b) => {
+    const updated = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    if (updated !== 0) return updated
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  })
 }
 
 function GitHubImportDialog({

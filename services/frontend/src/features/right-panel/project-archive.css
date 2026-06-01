@@ -93,6 +93,32 @@
   font-size: 12px;
 }
 
+.skill-cache-section {
+  background: rgba(21, 94, 117, 0.16);
+  border-color: rgba(34, 211, 238, 0.2);
+}
+
+.archive-version-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.14);
+  color: #bbf7d0;
+  font-size: 11px;
+  border: 1px solid rgba(34, 197, 94, 0.22);
+}
+
+.skill-cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.78);
+}
+
 .archive-auth-card {
   display: flex;
   align-items: center;

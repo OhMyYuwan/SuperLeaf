@@ -72,7 +72,9 @@ class NativeAgentRuntimeConfig:
     user_id: str = ""
     temperature: float = 0.2
     max_tokens: int = 4000
-    max_tool_rounds: int = 8
+    # Deprecated compatibility field. Native Agents now continue tool use until
+    # the model stops calling tools or the user/client aborts the stream.
+    max_tool_rounds: int = 0
     runtime_config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -232,9 +234,17 @@ class NativeAgentRunner:
                         "project_outline(doc_id) for a quick heading map, "
                         "project_read_doc(doc_id, range_start?, range_end?) to read content, "
                         "and project_grep(pattern, format?) to search across the project. "
-                        "Use project_create_text_file(path, content, format?) only when the user "
-                        "explicitly asks you to create a new project file. It creates a new text "
-                        "document in the current project and refuses to overwrite existing files."
+                        "Use project_write_text_file(path, content, format?) only when the user "
+                        "explicitly asks you to create a new project file. It creates the text "
+                        "document in the current project and writes the complete content in the "
+                        "same database operation. It refuses to overwrite existing files."
+                    ),
+                    (
+                        "Project file creation rule: if the user asks you to create, write, add, "
+                        "or generate a new project file, you must call project_write_text_file "
+                        "with the complete file content in this turn. Do not merely say you will "
+                        "create the file. Read only the minimum context needed, and then create "
+                        "a useful draft with clear assumptions if full context is not available."
                     ),
                     (
                         "Document edit tool: when the user asks you to change the text of the "
@@ -268,7 +278,8 @@ class NativeAgentRunner:
         if not is_write_mode:
             parts.append(
                 "Do not mutate existing documents. Creating a new project file is allowed only "
-                "when the user explicitly asks for a new file or reference file."
+                "when the user explicitly asks for a new file or reference file; that creation "
+                "must include the file content."
             )
         if self.config.instructions.strip():
             parts.extend(["", "Agent instructions:", self.config.instructions.strip()])
@@ -448,7 +459,7 @@ class NativeAgentRunner:
         base_tools = _project_context_tools() if project_context_only else _workspace_tools()
         tools = base_tools + [ref.definition for ref in mcp_refs]
 
-        for _round in range(max(1, self.config.max_tool_rounds)):
+        while True:
             tool_acc = _ToolAccumulator()
             content_parts: list[str] = []
             async for evt in client.run_streaming(
@@ -478,6 +489,7 @@ class NativeAgentRunner:
                 "tool_calls": tool_calls,
             }
             messages.append(assistant_message)
+            created_files: list[dict[str, str]] = []
             for call in tool_calls:
                 result = await self._execute_tool(call, mcp_tool_map, payload)
                 yield {
@@ -491,6 +503,21 @@ class NativeAgentRunner:
                 }
                 if result.side_event:
                     yield result.side_event
+                if result.tool_kind == "project_write" and not result.failed:
+                    created = _project_write_summary(result.content)
+                    if created is not None:
+                        created_files.append(created)
+                if result.tool_kind == "project_write" and result.failed:
+                    yield {
+                        "event": "native.agent.output.delta",
+                        "data": {
+                            "delta": (
+                                "\n\n[诊断] project_write_text_file 已被调用，"
+                                f"但工具执行失败：{result.content}"
+                            )
+                        },
+                    }
+                    return
                 messages.append(
                     {
                         "role": "tool",
@@ -498,11 +525,10 @@ class NativeAgentRunner:
                         "content": result.content,
                     }
                 )
-
-        yield {
-            "event": "native.agent.output.delta",
-            "data": {"delta": "\n\n[Tool limit reached while reading Agent workspace.]"},
-        }
+            if created_files:
+                delta = _format_created_files_delta(created_files)
+                yield {"event": "native.agent.output.delta", "data": {"delta": delta}}
+                return
 
     async def _execute_tool(
         self,
@@ -540,8 +566,10 @@ class NativeAgentRunner:
                 return self._tool_project_grep(args)
             if name == "project_outline":
                 return self._tool_project_outline(args)
-            if name == "project_create_text_file":
-                return self._tool_project_create_text_file(args)
+            if name in {"project_write_text_file", "project_create_text_file"}:
+                result = self._tool_project_write_text_file(args)
+                result.tool_kind = "project_write"
+                return result
             if name == "propose_doc_edit":
                 return self._tool_propose_doc_edit(args, payload)
             if name in mcp_tool_map:
@@ -717,7 +745,7 @@ class NativeAgentRunner:
             )
         )
 
-    def _tool_project_create_text_file(self, args: dict[str, Any]) -> _ToolExecutionResult:
+    def _tool_project_write_text_file(self, args: dict[str, Any]) -> _ToolExecutionResult:
         if not self._project_scope_ok():
             return _ToolExecutionResult("ERROR: project scope not available", failed=True)
         path_raw = str(args.get("path") or "")
@@ -1047,6 +1075,25 @@ def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:
     return False
 
 
+def _project_write_summary(content: str) -> dict[str, str] | None:
+    parsed = _parse_json_object(content)
+    if parsed is None or parsed.get("status") != "created":
+        return None
+    path = str(parsed.get("path") or parsed.get("name") or "").strip()
+    doc_id = str(parsed.get("doc_id") or "").strip()
+    if not path:
+        return None
+    return {"path": path, "doc_id": doc_id}
+
+
+def _format_created_files_delta(files: list[dict[str, str]]) -> str:
+    if len(files) == 1:
+        path = files[0]["path"]
+        return f"\n\n已创建项目文件：`{path}`。"
+    paths = "\n".join(f"- `{item['path']}`" for item in files)
+    return f"\n\n已创建项目文件：\n{paths}"
+
+
 def _normalize_project_create_path(raw_path: str) -> list[str]:
     path = raw_path.strip().replace("\\", "/")
     if not path:
@@ -1263,9 +1310,10 @@ def _workspace_tools() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "project_create_text_file",
+                "name": "project_write_text_file",
                 "description": (
-                    "Create a new text document in the current project by relative path. "
+                    "Create a new text document in the current project by relative path and "
+                    "write its full content in the same database operation. "
                     "Use only when the user explicitly asks you to create a new project file "
                     "or reference file. Intermediate folders are created automatically. "
                     "The tool refuses to overwrite existing docs, files, or folders. "

@@ -383,8 +383,12 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
     try {
       const result = await nativeAgentApi.marketplace.cloneToLocal(id, name)
       const currentEntry = get().marketplace?.skills.find((item) => item.id === id)
+      const installedId = currentEntry?.installed_skill_id
       set({
-        skills: mergeById(get().skills, result.skill),
+        skills: mergeById(
+          installedId ? get().skills.filter((item) => item.id !== installedId) : get().skills,
+          result.skill,
+        ),
         marketplace: currentEntry
           ? patchMarketplaceEntry(get().marketplace, {
             ...currentEntry,

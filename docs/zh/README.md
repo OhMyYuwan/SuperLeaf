@@ -33,3 +33,4 @@ nav_order: 2
 - 用户密钥保存在本机 `~/.yuwanlab/` 下，仓库不会保存明文 key。
 - `supports/` 下的 Skill/MCP catalog 是独立仓库 checkout，不属于主仓库提交内容。
 - 新建项目可以选择 `Paper` 或 `Skill`。Skill 项目用于在普通项目编辑器里维护 `README.md` 与 `SKILL.md`，再从项目大版本面板手动更新本地 Skill 缓存。
+- `/projects` 页面可以在账号设置里切换为 `Paper / Skill 分区` 或 `混合列表`。

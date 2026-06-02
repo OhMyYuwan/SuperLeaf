@@ -18,7 +18,7 @@ has_children: true
 | Provider | 模型服务的连接方式，例如 Nanobot、Dify 或 OpenAI-compatible endpoint |
 | Native Agent Credential | 原生 Agent 运行需要的凭证，加密存储 |
 | Native Agent | 名称、模型、系统指令、Skill/MCP 列表和运行参数 |
-| Skill | `SKILL.md` 描述的一组能力说明，运行时注入给指定 Agent |
+| Skill | `SKILL.md` 描述的一组能力说明，运行时注入给指定 Agent；可以来自上传、市场、共享或 Skill 项目 cache |
 | AgentSkill | Agent 与 Skill 的绑定关系，一个 Agent 可以装配多个 Skill |
 | MCP | Agent 可按需调用的外部工具服务。公开版默认通过 Remote MCP endpoint 接入；本地可信部署可显式开启 stdio |
 
@@ -30,8 +30,9 @@ has_children: true
 - 新 Provider、新模型、新 Agent 都是普通数据写入。
 - Agent 可按需装配 Skill，避免所有能力一股脑进入上下文。
 - Agent 可按需选择 MCP 工具，只有 Agent 定义里选中的 MCP 会进入可调用工具集。
-- Skill 可来自市场、私有上传或服务器共享。
+- Skill 可来自市场、私有上传、服务器共享或 Skill 项目。项目型 Skill 先在项目里编辑，再手动更新 cache 给 Agent 使用。
 - 在明确请求创建新文件时，Agent 可以在当前项目数据库树里新增文本文件，适合为 Skill 项目生成 reference、examples 和规则拆分文件。
+- Agent 运行时会在名称旁显示本轮 `读文件 X · 写文件 Y` 等状态；执行中输入区会变成停止按钮，用户可以主动中断。
 - 凭证和 Skill 内容在后端加密保存。
 
 ## 创建 Agent
@@ -91,8 +92,8 @@ Agent 创建项目文件时写入的是 SuperLeaf 项目数据库里的 `Doc` / 
 ## 权限与可见性
 
 - 私有 Agent 只属于当前用户。
-- 共享项目中的协作者不会自动看到你的 Agent、对话、批注和工作流运行。
-- Skill 的可见性与 Agent 独立，详见 [Skill 使用与市场](skills.html)。
+- 共享项目中的协作者不会自动看到你的私有 Agent、对话、批注和工作流运行。
+- Skill 的可见性与 Agent 独立，详见 [Skill 使用与市场](skills.html)。例外是项目型 Skill：如果源 Skill 项目被共享，协作者会按项目权限看到并使用最近一次 cache。
 - MCP 的市场添加与 Agent 取用是两步：MCP 管理面板负责添加、配置和检查，Agent 定义负责选择要使用的 MCP。详见 [MCP 使用与市场](mcps.html)。
 
 ## 下一步

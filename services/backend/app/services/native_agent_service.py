@@ -6,32 +6,42 @@ credentials, and Skills. Runtime execution is intentionally out of scope.
 
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
-from pathlib import Path
 import re
-import shutil
 import shlex
+import shutil
+from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import Doc, GitHubAccount, NativeAgent, NativeAgentCredential, NativeAgentSkillInstall, Project, Provider, Skill, SkillHidden
-from ..secrets_vault import encrypt
+from ..models import (
+    Doc,
+    GitHubAccount,
+    NativeAgent,
+    NativeAgentCredential,
+    NativeAgentSkillInstall,
+    Project,
+    Provider,
+    Skill,
+    SkillHidden,
+)
 from ..schemas import NativeAgentSkillRecipeIn
+from ..secrets_vault import encrypt
 from ..settings import settings
 from .agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from .project_fs_service import ProjectFsService
-from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstallError, SkillNpxInstaller
+from .project_member_service import ProjectMemberService
 from .skill_content_crypto import decrypt_skill_content, encrypt_skill_content
+from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstaller, SkillNpxInstallError
 from .skill_recipe_metadata import (
     build_npx_install_command,
     build_recipe_tags,
     is_direct_skill_source,
     recipe_meta_from_tags,
 )
-
 
 SYSTEM_SKILLS = [
     {
@@ -161,6 +171,7 @@ class NativeAgentService:
                 or_(
                     Skill.visibility == "public",
                     Skill.owner_user_id == user_id,
+                    Skill.source == "project",
                 )
             )
             .filter(Skill.source != "bundled")
@@ -184,21 +195,21 @@ class NativeAgentService:
             return None
         if not self._project_skill_is_active(row, user_id=user_id):
             return None
-        if row.visibility == "public" or row.owner_user_id == user_id:
+        if row.source == "project" or row.visibility == "public" or row.owner_user_id == user_id:
             return row
         return None
 
     def _project_skill_is_active(self, row: Skill, *, user_id: str) -> bool:
         if row.source != "project":
             return True
-        if row.owner_user_id != user_id or not row.project_id:
+        if not row.project_id:
             return False
         project = self.db.get(Project, row.project_id)
         return (
             project is not None
-            and project.user_id == user_id
             and project.is_skill_project
             and project.project_skill_id == row.id
+            and ProjectMemberService(self.db).has_access(project.id, user_id)
         )
 
     def create_skill(
@@ -292,15 +303,15 @@ class NativeAgentService:
         return row
 
     def update_project_skill_cache(self, project: Project, *, user_id: str) -> Skill:
-        if project.user_id != user_id:
+        if not ProjectMemberService(self.db).can_write(project.id, user_id):
             raise ValueError("Project not found")
 
         root_skill = self.db.query(Doc).filter_by(project_id=project.id, folder_id=None, name="SKILL.md").first()
         if root_skill is None:
             raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
 
-        skill = self._project_skill_for(project, user_id=user_id)
-        cache_root = _project_skill_cache_root(user_id=user_id, skill_id=skill.id)
+        skill = self._project_skill_for(project, user_id=project.user_id)
+        cache_root = _project_skill_cache_root(user_id=project.user_id, skill_id=skill.id)
         tmp = cache_root / f"current.tmp-{uuid4().hex}"
         current = cache_root / "current"
         if tmp.exists():
@@ -465,6 +476,8 @@ class NativeAgentService:
         if row is None:
             return False
         if row.owner_user_id == user_id and row.source != "bundled":
+            if row.source == "project":
+                self._clear_project_skill_link(row, user_id=user_id)
             self.db.delete(row)
         else:
             self._hide_skill(row, user_id=user_id)
@@ -474,6 +487,21 @@ class NativeAgentService:
         self._cascade_strip_skill_ref(skill_id, user_id=user_id)
         self.db.commit()
         return True
+
+    def _clear_project_skill_link(self, row: Skill, *, user_id: str) -> None:
+        if not row.project_id:
+            return
+        project = self.db.get(Project, row.project_id)
+        if project is not None and project.user_id == user_id and project.project_skill_id == row.id:
+            project.project_skill_id = ""
+            project.skill_cache_version = 0
+            project.skill_cache_updated_at = None
+            project.updated_at = datetime.utcnow()
+            self.db.add(project)
+        if row.cache_path:
+            cache_root = Path(row.cache_path).parent
+            if cache_root.exists():
+                shutil.rmtree(cache_root, ignore_errors=True)
 
     def _cascade_strip_skill_ref(self, skill_id: str, *, user_id: str) -> None:
         """Remove a deleted skill's id from any Agent owned by this user that

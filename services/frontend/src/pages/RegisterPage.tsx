@@ -10,6 +10,8 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useUserStore } from '../stores/userStore'
 import { BackendError } from '../services/backendApi'
+import { AuthSplitShell } from './components/AuthSplitShell'
+import { AUTH_SLIDES } from './authSlides'
 import './auth.css'
 
 export function RegisterPage() {
@@ -22,6 +24,7 @@ export function RegisterPage() {
   const [bootstrapToken, setBootstrapToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activeSlideId, setActiveSlideId] = useState(AUTH_SLIDES[0].id)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -44,10 +47,15 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
+    <AuthSplitShell
+      slides={AUTH_SLIDES}
+      activeSlideId={activeSlideId}
+      onSlideChange={setActiveSlideId}
+      asideLabel="SuperLeaf 注册引导"
+    >
+      <div className="auth-card auth-card-split">
         <div className="auth-brand">SuperLeaf</div>
-        <h1 className="auth-title">注册</h1>
+        <h2 className="auth-title">注册</h2>
         <p className="auth-subtle">
           首位管理员需要部署配置中的 Bootstrap Token；开放注册关闭时，后续账号也需由管理员规划创建。
         </p>
@@ -55,7 +63,6 @@ export function RegisterPage() {
           <label className="auth-label">
             邮箱
             <input
-              autoFocus
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -107,7 +114,7 @@ export function RegisterPage() {
           已有账号？<Link to="/login">去登录</Link>
         </div>
       </div>
-    </div>
+    </AuthSplitShell>
   )
 }
 

@@ -107,6 +107,7 @@ class WorkflowOrchestrator:
             document_id=document_id,
             range_start=range_start,
             range_end=range_end,
+            source_text=target_text,
             status="running",
             max_rounds=workflow_def.config.get("max_rounds", 3),
         )

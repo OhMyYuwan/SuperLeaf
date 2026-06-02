@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from ..database import get_session
 from ..models import DatasetProject, DatasetRecord, DatasetResponse, Project, User
 from ..schemas import (
     DatasetBatchOut,
+    DatasetFilterOptionsOut,
     DatasetProjectOut,
     DatasetProjectPatch,
     DatasetRecordListOut,
@@ -43,11 +46,25 @@ def _dataset_for_project(
         raise HTTPException(400, str(exc)) from exc
 
 
-def _record_out(row: DatasetRecord, response: DatasetResponse | None = None) -> DatasetRecordOut:
+def _record_out(
+    row: DatasetRecord,
+    response: DatasetResponse | None = None,
+) -> DatasetRecordOut:
     out = DatasetRecordOut.model_validate(row)
     if response is not None:
         out.my_response = DatasetResponseOut.model_validate(response)
     return out
+
+
+def _content_disposition_for_download(filename: str) -> str:
+    ascii_filename = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in ("-", "_", ".")) else "-"
+        for ch in filename
+    ).strip("-")
+    return (
+        f'attachment; filename="{ascii_filename or "dataset-export.zip"}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
 
 @router.get("/current", response_model=DatasetProjectOut)
@@ -75,6 +92,21 @@ def update_current_dataset_project(
         label_schema=body.label_schema,
     )
     return DatasetProjectOut.model_validate(row)
+
+
+@router.get("/current/filter-options", response_model=DatasetFilterOptionsOut)
+def list_current_filter_options(
+    source_project_id: str = Query(min_length=1, max_length=64),
+    project: Project = CurrentProject,
+    user: User = CurrentUser,
+    db: Session = DbSession,
+) -> DatasetFilterOptionsOut:
+    _dataset_for_project(db, project, user_id=user.id)
+    try:
+        options = DatasetService(db).source_filter_options(source_project_id, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return DatasetFilterOptionsOut(**options)
 
 
 @router.get("/current/source-rules", response_model=list[DatasetSourceRuleOut])
@@ -287,5 +319,5 @@ def export_current_dataset(
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition_for_download(filename)},
     )

@@ -3,6 +3,8 @@
 # Staged context loading. Start narrow, expand by route, and avoid scanning
 # generated or private state unless the task explicitly requires it.
 # Refreshed 2026-06-01 for REQ-0281.
+# Refreshed 2026-06-02 for REQ-0309 to add Data Project routing and
+# source_text snapshot load rules.
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -77,12 +79,14 @@ rules:
     - services/collab-server/tsconfig.json
 
   high_attention_paths:
+    - services/backend/app/services/dataset_service.py
     - services/backend/app/services/agent_orchestrator.py
     - services/backend/app/services/attached_files.py
     - services/backend/app/services/nanobot_client.py
     - services/backend/app/services/mcp_tool_service.py
     - services/backend/app/services/project_archive_service.py
     - services/frontend/src/features/right-panel/TeamTab.tsx
+    - services/frontend/src/pages/DataProjectPage.tsx
     - services/frontend/src/features/latex-editor/LatexEditor.tsx
     - services/frontend/src/stores/documentStore.ts
     - services/frontend/src/stores/projectStore.ts
@@ -167,6 +171,41 @@ rules:
           - services/backend/app/settings.py
         expand_when:
           - Fernet key storage, rotation, encryption/decryption, or secret path changes
+
+    data-project:
+      backend-contract:
+        start_with:
+          - services/backend/app/api/datasets.py
+          - services/backend/app/services/dataset_service.py
+          - services/backend/app/models.py
+          - services/backend/app/schemas.py
+          - services/backend/app/migrations.py
+        expand_when:
+          - Data Project CRUD, source rules, record queue, label responses, sync batches, or export contract changes
+      source-text-snapshot:
+        start_with:
+          - services/backend/app/api/workflows.py
+          - services/backend/app/services/agent_orchestrator.py
+          - services/backend/app/services/dataset_service.py
+          - services/backend/app/models.py
+          - services/backend/app/schemas.py
+          - services/backend/app/migrations.py
+          - services/backend/test/test_dataset_project.py
+        expand_when:
+          - WorkflowRun.source_text capture, selected/target text extraction, DatasetRecord.fields.source_text, or legacy source pointer repair changes
+          - record listing or export is tempted to reconstruct source text from Doc range_start/range_end
+      frontend-panel:
+        start_with:
+          - services/frontend/src/pages/DataProjectPage.tsx
+          - services/frontend/src/pages/data-project.css
+          - services/frontend/src/services/backendApi.ts
+        expand_when:
+          - source rules panel, record queue filters, record inspector, label schema panel, save toast, sync action, or export controls change
+      tests:
+        start_with:
+          - services/backend/test/test_dataset_project.py
+        expand_when:
+          - backend Data Project behavior changes need regression coverage
 
     frontend-workspace:
       shell:

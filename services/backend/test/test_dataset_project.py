@@ -15,7 +15,7 @@ from app.api.datasets import router as datasets_router
 from app.api.deps import SESSION_COOKIE_NAME
 from app.database import Base
 from app.database import get_session as get_db_session
-from app.models import Annotation, Doc, NativeAgent, Project, Session, User
+from app.models import Annotation, DatasetRecord, Doc, NativeAgent, Project, Session, User, WorkflowRun
 
 
 def _db():
@@ -52,7 +52,7 @@ def test_data_project_sync_label_and_export_zip():
     now = datetime.utcnow()
     owner = User(id="owner", email="owner@example.com", password_hash="hash")
     source_project = Project(id="source", user_id=owner.id, name="Source Paper", project_type="paper")
-    data_project = Project(id="dataset", user_id=owner.id, name="Quality Dataset", project_type="data")
+    data_project = Project(id="dataset", user_id=owner.id, name="质量数据集", project_type="data")
     doc = Doc(id="doc1", project_id=source_project.id, folder_id=None, name="main.md", content="Draft text")
     agent = NativeAgent(
         id="agent1",
@@ -169,9 +169,108 @@ def test_data_project_sync_label_and_export_zip():
         cookies=cookies,
     )
     assert exported.status_code == 200
+    assert "filename*=UTF-8''" in exported.headers["content-disposition"]
     entries = _zip_entries(exported.content)
     manifest = json.loads(entries["manifest.json"].decode())
     assert manifest["record_count"] == 1
     sample = json.loads(entries["labeled_samples.jsonl"].decode().strip())
     assert sample["response"]["values"]["task_success"] == "partial"
     assert sample["metadata"]["doc_name"] == "main.md"
+
+
+def test_data_project_workflow_run_source_text_is_snapshot():
+    db = _db()
+    client = _client(db)
+    now = datetime.utcnow()
+    owner = User(id="owner", email="owner@example.com", password_hash="hash")
+    source_project = Project(id="source", user_id=owner.id, name="Source Paper", project_type="paper")
+    data_project = Project(id="dataset", user_id=owner.id, name="Workflow Dataset", project_type="data")
+    doc = Doc(
+        id="doc1",
+        project_id=source_project.id,
+        folder_id=None,
+        name="main.md",
+        content="The live document may change after this run.",
+    )
+    run = WorkflowRun(
+        id="run1",
+        project_id=source_project.id,
+        user_id=owner.id,
+        provider_id="",
+        workflow_id="",
+        document_id=doc.id,
+        range_start=4,
+        range_end=17,
+        source_text="selected snapshot",
+        status="completed",
+        outputs={"text": "Agent evaluated the selected snapshot."},
+        trace=[{"request": {"inputs": {"target_text": "selected snapshot"}}}],
+        started_at=now,
+        finished_at=now,
+    )
+    db.add_all(
+        [
+            owner,
+            source_project,
+            data_project,
+            doc,
+            run,
+            Session(id="owner-session", user_id=owner.id, expires_at=now + timedelta(hours=1)),
+        ]
+    )
+    db.commit()
+
+    headers = {"X-Project-Id": data_project.id}
+    cookies = {SESSION_COOKIE_NAME: "owner-session"}
+    current = client.get("/api/datasets/current", headers=headers, cookies=cookies)
+    assert current.status_code == 200
+
+    created_rule = client.post(
+        "/api/datasets/current/source-rules",
+        headers=headers,
+        cookies=cookies,
+        json={
+            "source_project_id": source_project.id,
+            "source_types": ["workflow_runs"],
+            "filters": {},
+        },
+    )
+    assert created_rule.status_code == 201
+    rule_id = created_rule.json()["id"]
+
+    first_sync = client.post(
+        f"/api/datasets/source-rules/{rule_id}/sync",
+        headers=headers,
+        cookies=cookies,
+    )
+    assert first_sync.status_code == 200
+    assert first_sync.json()["created"] == 1
+
+    listed = client.get("/api/datasets/current/records", headers=headers, cookies=cookies)
+    assert listed.status_code == 200
+    record = listed.json()["records"][0]
+    assert record["fields"]["source_text"] == "selected snapshot"
+    assert record["record_metadata"]["range"] == {"from": 4, "to": 17}
+
+    stored = db.get(DatasetRecord, record["id"])
+    assert stored is not None
+    stored.fields = {
+        **stored.fields,
+        "source_text": json.dumps(
+            {"document_id": doc.id, "range_start": run.range_start, "range_end": run.range_end}
+        ),
+    }
+    db.commit()
+
+    second_sync = client.post(
+        f"/api/datasets/source-rules/{rule_id}/sync",
+        headers=headers,
+        cookies=cookies,
+    )
+    assert second_sync.status_code == 200
+    assert second_sync.json()["created"] == 0
+    assert second_sync.json()["skipped"] == 1
+
+    repaired = client.get("/api/datasets/current/records", headers=headers, cookies=cookies)
+    assert repaired.status_code == 200
+    assert repaired.json()["records"][0]["fields"]["source_text"] == "selected snapshot"

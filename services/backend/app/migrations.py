@@ -8,7 +8,9 @@ backfills only touch NULL/empty values.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -53,11 +55,13 @@ def run_migrations(engine: Engine) -> None:
         _add_project_id_columns(conn, bootstrap_pid)
         _add_user_id_columns(conn)
         _add_user_id_to_private_assets(conn)
+        _add_workflow_run_source_text(conn)
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
         _add_project_skill_columns(conn)
         _add_project_type_column(conn)
         _create_dataset_tables(conn)
+        _backfill_dataset_record_source_text(conn)
         _rebuild_native_agents_table(conn)
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
@@ -205,6 +209,111 @@ def _add_user_id_to_private_assets(conn) -> None:
                 f") WHERE user_id = ''"
             )
         )
+
+
+def _add_workflow_run_source_text(conn) -> None:
+    if not _table_exists(conn, "workflow_runs"):
+        return
+    if not _column_exists(conn, "workflow_runs", "source_text"):
+        conn.execute(text("ALTER TABLE workflow_runs ADD COLUMN source_text TEXT DEFAULT ''"))
+
+    rows = conn.execute(
+        text("SELECT id, trace FROM workflow_runs WHERE source_text IS NULL OR source_text = ''")
+    ).all()
+    for row in rows:
+        source_text = _source_text_from_workflow_trace_blob(row[1])
+        if source_text:
+            conn.execute(
+                text("UPDATE workflow_runs SET source_text = :source_text WHERE id = :id"),
+                {"source_text": source_text, "id": row[0]},
+            )
+
+
+def _source_text_from_workflow_trace_blob(blob: Any) -> str:
+    if isinstance(blob, str):
+        try:
+            blob = json.loads(blob)
+        except json.JSONDecodeError:
+            return ""
+    return _source_text_from_workflow_trace_value(blob)
+
+
+def _source_text_from_workflow_trace_value(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            source_text = _source_text_from_workflow_trace_value(item)
+            if source_text:
+                return source_text
+        return ""
+    if not isinstance(value, dict):
+        return ""
+
+    for key in ("source_text", "target_text", "text", "selected_text", "selection_text"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            return item
+
+    for key in ("request", "inputs", "input"):
+        source_text = _source_text_from_workflow_trace_value(value.get(key))
+        if source_text:
+            return source_text
+
+    if value.get("node_type") == "input":
+        source_text = _source_text_from_workflow_trace_value(value.get("output"))
+        if source_text:
+            return source_text
+    return ""
+
+
+def _backfill_dataset_record_source_text(conn) -> None:
+    if not _table_exists(conn, "dataset_records") or not _table_exists(conn, "workflow_runs"):
+        return
+    if not _column_exists(conn, "workflow_runs", "source_text"):
+        return
+
+    rows = conn.execute(
+        text(
+            """
+            SELECT dr.id, dr.fields, wr.source_text
+            FROM dataset_records dr
+            JOIN workflow_runs wr ON wr.id = dr.source_id
+            WHERE dr.source_type = 'workflow_run'
+              AND wr.source_text IS NOT NULL
+              AND wr.source_text != ''
+            """
+        )
+    ).all()
+    now = datetime.utcnow()
+    for row in rows:
+        fields = _json_blob_to_value(row[1])
+        if not isinstance(fields, dict):
+            continue
+        current = fields.get("source_text")
+        if current and not _looks_like_dataset_source_pointer(current):
+            continue
+        fields["source_text"] = row[2]
+        conn.execute(
+            text("UPDATE dataset_records SET fields = :fields, updated_at = :updated_at WHERE id = :id"),
+            {
+                "fields": json.dumps(fields, ensure_ascii=False),
+                "updated_at": now,
+                "id": row[0],
+            },
+        )
+
+
+def _json_blob_to_value(blob: Any) -> Any:
+    if isinstance(blob, str):
+        try:
+            return json.loads(blob)
+        except json.JSONDecodeError:
+            return None
+    return blob
+
+
+def _looks_like_dataset_source_pointer(value: Any) -> bool:
+    value = _json_blob_to_value(value)
+    return isinstance(value, dict) and {"document_id", "range_start", "range_end"}.issubset(value.keys())
 
 
 def _add_is_global_to_annotations(conn) -> None:

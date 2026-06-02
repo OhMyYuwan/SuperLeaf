@@ -30,6 +30,7 @@ primary_capabilities:
   - frontend-settings
   - frontend-stores
   - native-agent-skills
+  - data-project
   - latex-editor
   - latex-compile
   - domain-model
@@ -38,7 +39,7 @@ primary_capabilities:
   - workflow-orchestration
   - real-time-editing
   - build-tooling
-agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
+agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. Data Project routes through backend/app/api/datasets.py, DatasetService, DataProjectPage, and backendApi; source_text is captured as a workflow/native-agent run snapshot and must not be reconstructed from Doc ranges during record listing/export. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
 ```
 
 # SuperLeaf Agent Guide
@@ -262,6 +263,9 @@ Services are organized under `services/`:
   encrypted Skill content, local Skill library, Skill Marketplace sync/install,
   AgentSkill assignment, and MCP catalog-driven tools from
   the remote `OhMyYuwan/SuperLeaf.MCPs` catalog.
+- **data-project** — dataset-centered source rules, continuous sync, record
+  labeling, export packaging, and `source_text` snapshot semantics for Agent /
+  Skill / Workflow evaluation data.
 - **workflow-integration** — provider clients (Dify + Nanobot) + provider registry + single-agent run lifecycle.
 - **workflow-orchestration** — V2.2 self-hosted multi-agent orchestrator + definition API + visual canvas + templates. Canonical baseline.
 - **real-time-editing** — Yjs CRDT collaborative editing: collab-server (Node.js WebSocket + LevelDB), y-codemirror.next binding, awareness (remote cursors), periodic snapshot to DB.
@@ -293,6 +297,7 @@ Use them to pick the smallest sufficient authority boundary.
 - **REQ-0025 (closed)**: V3 executive plan — finishing posture, 4 phases over 6-8 weeks, snapshot history with 20-cap + 10-min cooldown, debate/consensus as templates.
 - **REQ-0026 (closed)**: V2.2 governance refresh — this document plus PROJECT_MAP, capabilities, LOAD_RULES, CHANGE_POLICY.
 - **REQ-0027..0038 (closed)**: Collaboration/auth hardening, panel ergonomics, Agent Markdown rendering, LaTeX compile reliability (current file selection, missing-graphic placeholders, relative paths, BibTeX), file-tree root moves, stale project-context request fixes, and this Chinese README / project-map refresh.
+- **REQ-0305..0309 (local)**: Data Project labeling surface, source-rule settings, workflow/native-agent `source_text` snapshot capture, record load/export repair, metadata cleanup, and ACP Data Project routing refresh.
 
 Track full lineage in `.acp/kernel/changes/`. Every CHG-NNNN names its commit SHA (or `local-only` for kernel-only / docs-only Changes).
 

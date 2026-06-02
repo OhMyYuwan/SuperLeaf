@@ -432,6 +432,7 @@ class WorkflowRunOut(BaseModel):
     document_id: str
     range_start: int
     range_end: int
+    source_text: str = ""
     status: str
     external_run_id: str
     outputs: dict
@@ -508,6 +509,22 @@ class DatasetProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     guidelines: str | None = None
     label_schema: dict | None = None
+
+
+class DatasetFilterOptionOut(BaseModel):
+    id: str
+    name: str
+    kind: str = ""
+    filter_key: str = ""
+    project_id: str = ""
+    description: str = ""
+    disabled: bool = False
+
+
+class DatasetFilterOptionsOut(BaseModel):
+    agents: list[DatasetFilterOptionOut]
+    skills: list[DatasetFilterOptionOut]
+    workflows: list[DatasetFilterOptionOut]
 
 
 class DatasetSourceRuleIn(BaseModel):
@@ -617,6 +634,35 @@ class DatasetRecordListOut(BaseModel):
 class ProjectSkillCacheOut(BaseModel):
     project: ProjectOut
     skill: SkillOut
+
+
+class ProjectSkillDataPackageIn(BaseModel):
+    data_project_id: str = Field(min_length=1, max_length=64)
+    status: str = Field(
+        default="submitted",
+        pattern="^(submitted|all|pending|in_review|labeled|discarded)$",
+    )
+
+
+class ProjectSkillDataPackageFileOut(BaseModel):
+    path: str
+    kind: str
+    size_bytes: int
+
+
+class ProjectSkillDataPackageOut(BaseModel):
+    dataset_project_id: str
+    dataset_name: str
+    status_filter: str
+    record_count: int
+    folder: str
+    files: list[ProjectSkillDataPackageFileOut]
+    generated_at: str
+
+
+class ProjectSkillDataClearOut(BaseModel):
+    folder: str
+    deleted_count: int
 
 
 class ProjectMemberAddIn(BaseModel):

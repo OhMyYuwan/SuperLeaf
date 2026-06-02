@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     Annotation,
     AnnotationEvaluation,
+    CachedWorkflow,
     Conversation,
     DatasetBatch,
     DatasetProject,
@@ -26,8 +27,10 @@ from ..models import (
     NativeAgent,
     Project,
     User,
+    WorkflowDefinition,
     WorkflowRun,
 )
+from .native_agent_service import NativeAgentService
 from .project_member_service import ProjectMemberService
 
 DEFAULT_DATASET_SCHEMA = {
@@ -127,6 +130,82 @@ class DatasetService:
         self.db.commit()
         self.db.refresh(dataset)
         return dataset
+
+    def source_filter_options(self, source_project_id: str, *, user_id: str) -> dict[str, list[dict[str, Any]]]:
+        self._require_source_access(source_project_id, user_id=user_id)
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(NativeAgent.project_id == source_project_id, NativeAgent.owner_user_id == user_id)
+            .order_by(NativeAgent.name.asc())
+            .all()
+        )
+        skills = NativeAgentService(self.db).list_skills(user_id=user_id)
+        workflows = (
+            self.db.query(CachedWorkflow)
+            .filter(CachedWorkflow.user_id == user_id)
+            .order_by(CachedWorkflow.name.asc())
+            .all()
+        )
+        definitions = (
+            self.db.query(WorkflowDefinition)
+            .filter(
+                WorkflowDefinition.project_id == source_project_id,
+                WorkflowDefinition.user_id == user_id,
+                WorkflowDefinition.is_active.is_(True),
+            )
+            .order_by(WorkflowDefinition.name.asc())
+            .all()
+        )
+        return {
+            "agents": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": "native-agent",
+                    "filter_key": "agent_id",
+                    "project_id": row.project_id,
+                    "description": row.description,
+                    "disabled": not row.is_enabled,
+                }
+                for row in agents
+            ],
+            "skills": [
+                {
+                    "id": row.id,
+                    "name": row.public_name or row.name,
+                    "kind": row.source or "skill",
+                    "filter_key": "skill_id",
+                    "project_id": row.project_id or "",
+                    "description": row.description,
+                    "disabled": False,
+                }
+                for row in skills
+            ],
+            "workflows": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": row.kind or "workflow",
+                    "filter_key": "workflow_id",
+                    "project_id": "",
+                    "description": row.description,
+                    "disabled": bool(row.is_disabled),
+                }
+                for row in workflows
+            ]
+            + [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": f"definition:{row.execution_mode}",
+                    "filter_key": "workflow_definition_id",
+                    "project_id": row.project_id,
+                    "description": row.description,
+                    "disabled": False,
+                }
+                for row in definitions
+            ],
+        }
 
     def list_source_rules(self, dataset: DatasetProject) -> list[DatasetSourceRule]:
         return (
@@ -239,11 +318,11 @@ class DatasetService:
         self.db.flush()
 
         fingerprints = [item["fingerprint"] for item in candidates]
-        existing = set()
+        existing: dict[str, DatasetRecord] = {}
         if fingerprints:
             existing = {
-                row[0]
-                for row in self.db.query(DatasetRecord.fingerprint)
+                row.fingerprint: row
+                for row in self.db.query(DatasetRecord)
                 .filter(
                     DatasetRecord.dataset_project_id == dataset.id,
                     DatasetRecord.fingerprint.in_(fingerprints),
@@ -254,7 +333,9 @@ class DatasetService:
         created = 0
         max_created_at: datetime | None = None
         for item in candidates:
-            if item["fingerprint"] in existing:
+            existing_record = existing.get(item["fingerprint"])
+            if existing_record is not None:
+                _refresh_existing_record_source_text(existing_record, item)
                 continue
             record = DatasetRecord(
                 dataset_project_id=dataset.id,
@@ -272,7 +353,7 @@ class DatasetService:
                 split="unassigned",
             )
             self.db.add(record)
-            existing.add(item["fingerprint"])
+            existing[item["fingerprint"]] = record
             created += 1
             source_created_at = item.get("source_created_at")
             if source_created_at and (max_created_at is None or source_created_at > max_created_at):
@@ -309,7 +390,7 @@ class DatasetService:
         if status and status != "all":
             query = query.filter(DatasetRecord.status == status)
         if source_type and source_type != "all":
-            query = query.filter(DatasetRecord.source_type == source_type)
+            query = query.filter(DatasetRecord.source_type == _stored_source_type(source_type))
         total = query.count()
         rows = (
             query.order_by(DatasetRecord.created_at.desc(), DatasetRecord.id.asc())
@@ -402,7 +483,13 @@ class DatasetService:
             status="discarded",
         )
 
-    def export_zip(self, dataset: DatasetProject, *, user: User, status: str = "submitted") -> bytes:
+    def export_package_files(
+        self,
+        dataset: DatasetProject,
+        *,
+        user: User,
+        status: str = "submitted",
+    ) -> tuple[dict[str, str], dict[str, Any]]:
         records = self._export_records(dataset, user_id=user.id, status=status)
         responses = self.responses_for_records(records, user_id=user.id)
         exported_at = datetime.utcnow().isoformat()
@@ -415,42 +502,40 @@ class DatasetService:
             "schema": dataset.label_schema,
             "exported_at": exported_at,
         }
+        records_jsonl = "\n".join(
+            json.dumps(_record_payload(row), ensure_ascii=False, default=str)
+            for row in records
+        )
+        responses_jsonl = "\n".join(
+            json.dumps(_response_payload(resp), ensure_ascii=False, default=str)
+            for resp in responses.values()
+        )
+        labeled_samples_jsonl = "\n".join(
+            json.dumps(
+                {
+                    **_record_payload(row),
+                    "response": _response_payload(responses[row.id]),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            for row in records
+            if row.id in responses
+        )
+        files = {
+            "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
+            "records.jsonl": records_jsonl + ("\n" if records_jsonl else ""),
+            "responses.jsonl": responses_jsonl + ("\n" if responses_jsonl else ""),
+            "labeled_samples.jsonl": labeled_samples_jsonl + ("\n" if labeled_samples_jsonl else ""),
+        }
+        return files, manifest
 
+    def export_zip(self, dataset: DatasetProject, *, user: User, status: str = "submitted") -> bytes:
+        files, _manifest = self.export_package_files(dataset, user=user, status=status)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
-            zf.writestr(
-                "records.jsonl",
-                "\n".join(
-                    json.dumps(_record_payload(row), ensure_ascii=False, default=str)
-                    for row in records
-                )
-                + ("\n" if records else ""),
-            )
-            zf.writestr(
-                "responses.jsonl",
-                "\n".join(
-                    json.dumps(_response_payload(resp), ensure_ascii=False, default=str)
-                    for resp in responses.values()
-                )
-                + ("\n" if responses else ""),
-            )
-            zf.writestr(
-                "labeled_samples.jsonl",
-                "\n".join(
-                    json.dumps(
-                        {
-                            **_record_payload(row),
-                            "response": _response_payload(responses[row.id]),
-                        },
-                        ensure_ascii=False,
-                        default=str,
-                    )
-                    for row in records
-                    if row.id in responses
-                )
-                + ("\n" if responses else ""),
-            )
+            for path, content in files.items():
+                zf.writestr(path, content)
         return buf.getvalue()
 
     def _export_records(
@@ -620,21 +705,16 @@ class DatasetService:
                 filters,
                 source_status=row.status,
                 workflow_id=row.workflow_id,
+                workflow_definition_id=row.workflow_definition_id or "",
                 agent_ids=sorted(agent_ids),
                 skill_ids=sorted(skill_ids),
             ):
                 continue
             doc = self.db.get(Doc, row.document_id)
+            source_text = row.source_text or _source_text_from_workflow_run_trace(row.trace)
             fields = {
                 "chat": _trace_as_chat(row.trace),
-                "source_text": json.dumps(
-                    {
-                        "document_id": row.document_id,
-                        "range_start": row.range_start,
-                        "range_end": row.range_end,
-                    },
-                    ensure_ascii=False,
-                ),
+                "source_text": source_text,
                 "agent_output": json.dumps(row.outputs or {}, ensure_ascii=False, default=str),
                 "trace": _jsonable(row.trace or []),
             }
@@ -644,6 +724,7 @@ class DatasetService:
                 "workflow_definition_id": row.workflow_definition_id,
                 "document_id": row.document_id,
                 "document_name": doc.name if doc is not None else "",
+                "range": {"from": row.range_start, "to": row.range_end},
                 "external_run_id": row.external_run_id,
                 "error": row.error,
             }
@@ -674,6 +755,7 @@ class DatasetService:
         *,
         source_status: str = "",
         workflow_id: str = "",
+        workflow_definition_id: str = "",
         agent_ids: list[str] | set[str] | None = None,
         skill_ids: list[str] | set[str] | None = None,
         evaluations: list[AnnotationEvaluation] | None = None,
@@ -681,6 +763,8 @@ class DatasetService:
         if filters.get("status") and source_status and source_status != filters["status"]:
             return False
         if filters.get("workflow_id") and workflow_id != filters["workflow_id"]:
+            return False
+        if filters.get("workflow_definition_id") and workflow_definition_id != filters["workflow_definition_id"]:
             return False
         expected_agent = str(filters.get("agent_id") or "").strip()
         if expected_agent:
@@ -783,6 +867,14 @@ def _candidate(
     }
 
 
+def _stored_source_type(source_type: str) -> str:
+    return {
+        "annotations": "annotation",
+        "conversations": "conversation",
+        "workflow_runs": "workflow_run",
+    }.get(source_type, source_type)
+
+
 def _thread_as_chat(thread: list | None) -> list[dict]:
     chat = []
     for item in thread or []:
@@ -812,6 +904,82 @@ def _trace_as_chat(trace: list | None) -> list[dict]:
         if node.get("output") not in (None, ""):
             chat.append({"id": f"{node_id}:output", "role": "agent", "content": _textify(node.get("output"))})
     return chat
+
+
+def _refresh_existing_record_source_text(record: DatasetRecord, candidate: dict[str, Any]) -> bool:
+    fields = dict(record.fields or {})
+    next_source = (candidate.get("fields") or {}).get("source_text")
+    if not isinstance(next_source, str) or not next_source.strip():
+        return False
+
+    current_source = fields.get("source_text")
+    if (
+        isinstance(current_source, str)
+        and current_source.strip()
+        and not _looks_like_source_pointer(current_source)
+    ):
+        return False
+    if isinstance(current_source, dict) and not _looks_like_source_pointer(current_source):
+        return False
+    if current_source == next_source:
+        return False
+
+    fields["source_text"] = next_source
+    record.fields = _jsonable(fields)
+    record.updated_at = datetime.utcnow()
+    return True
+
+
+def _looks_like_source_pointer(value: Any) -> bool:
+    return _source_text_pointer(value) is not None
+
+
+def _source_text_pointer(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    if not {"document_id", "range_start", "range_end"}.issubset(value.keys()):
+        return None
+    return value
+
+
+def _source_text_from_workflow_run_trace(trace: list | None) -> str:
+    for node in trace or []:
+        source_text = _source_text_from_trace_value(node)
+        if source_text:
+            return source_text
+    return ""
+
+
+def _source_text_from_trace_value(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            source_text = _source_text_from_trace_value(item)
+            if source_text:
+                return source_text
+        return ""
+    if not isinstance(value, dict):
+        return ""
+
+    for key in ("source_text", "target_text", "text", "selected_text", "selection_text"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip() and not _looks_like_source_pointer(item):
+            return item
+
+    for key in ("request", "inputs", "input"):
+        source_text = _source_text_from_trace_value(value.get(key))
+        if source_text:
+            return source_text
+
+    if value.get("node_type") == "input":
+        source_text = _source_text_from_trace_value(value.get("output"))
+        if source_text:
+            return source_text
+    return ""
 
 
 def _evaluation_payload(row: AnnotationEvaluation) -> dict:

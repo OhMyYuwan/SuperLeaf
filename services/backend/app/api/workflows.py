@@ -266,6 +266,7 @@ async def run_workflow(
         document_id=body.document_id,
         range_start=body.range_start,
         range_end=body.range_end,
+        source_text=_source_text_from_run_body(body),
         status="running",
     )
     db.add(run)
@@ -413,6 +414,15 @@ def _nanobot_prompt(body: RunBody, attached_files: list[dict[str, Any]] | None =
     return "\n".join(parts).strip() or body.query or selection_text or instruction
 
 
+def _source_text_from_run_body(body: RunBody) -> str:
+    inputs = body.inputs or {}
+    for key in ("source_text", "target_text", "text", "selected_text", "selection_text"):
+        value = inputs.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def _nanobot_delta_text(evt: dict) -> str:
     choices = evt.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -519,6 +529,7 @@ def _run_native_agent(
         document_id=body.document_id,
         range_start=body.range_start,
         range_end=body.range_end,
+        source_text=_source_text_from_run_body(body),
         status="running",
         trace=[trace_entry],
     )
@@ -804,8 +815,7 @@ async def execute_workflow_definition(
             },
         )
 
-    # TODO: Extract target_text from document
-    target_text = body.inputs.get("text", "")
+    target_text = _source_text_from_run_body(body)
     context_files = [cf.model_dump() for cf in body.context_files]
 
     orchestrator = WorkflowOrchestrator(db)

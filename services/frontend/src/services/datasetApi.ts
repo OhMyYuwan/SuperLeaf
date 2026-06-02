@@ -95,6 +95,22 @@ export interface DatasetRecordList {
   total: number
 }
 
+export interface DatasetFilterOption {
+  id: string
+  name: string
+  kind: string
+  filter_key: string
+  project_id: string
+  description: string
+  disabled: boolean
+}
+
+export interface DatasetFilterOptions {
+  agents: DatasetFilterOption[]
+  skills: DatasetFilterOption[]
+  workflows: DatasetFilterOption[]
+}
+
 export interface DatasetResponseDraft {
   status?: DatasetResponseStatus
   values: Record<string, unknown>
@@ -108,6 +124,8 @@ export const datasetApi = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+  filterOptions: (sourceProjectId: string) =>
+    http<DatasetFilterOptions>(`/api/datasets/current/filter-options?source_project_id=${encodeURIComponent(sourceProjectId)}`),
   listSourceRules: () => http<DatasetSourceRule[]>('/api/datasets/current/source-rules'),
   createSourceRule: (draft: DatasetSourceRuleDraft) =>
     http<DatasetSourceRule>('/api/datasets/current/source-rules', {

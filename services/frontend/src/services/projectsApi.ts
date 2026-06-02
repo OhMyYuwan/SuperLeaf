@@ -49,6 +49,27 @@ export interface ProjectSkillCacheResult {
   skill: Skill
 }
 
+export type ProjectSkillDataStatus = 'submitted' | 'all' | 'pending' | 'in_review' | 'labeled' | 'discarded'
+
+export interface ProjectSkillDataPackageResult {
+  dataset_project_id: string
+  dataset_name: string
+  status_filter: ProjectSkillDataStatus
+  record_count: number
+  folder: string
+  files: Array<{
+    path: string
+    kind: string
+    size_bytes: number
+  }>
+  generated_at: string
+}
+
+export interface ProjectSkillDataClearResult {
+  folder: string
+  deleted_count: number
+}
+
 export const projectsApi = {
   list: () => http<ProjectSummary[]>('/api/projects', { scope: 'global' }),
   get: (id: string) =>
@@ -80,6 +101,28 @@ export const projectsApi = {
       method: 'POST',
       scope: 'global',
     }),
+  attachSkillDataPackage: (
+    id: string,
+    body: { data_project_id: string; status?: ProjectSkillDataStatus },
+  ) =>
+    http<ProjectSkillDataPackageResult>(
+      `/api/projects/${encodeURIComponent(id)}/skill-data/from-dataset`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+        scope: 'global',
+      },
+    ),
+  clearSkillDataPackage: (id: string, dataProjectId?: string) => {
+    const query = dataProjectId ? `?data_project_id=${encodeURIComponent(dataProjectId)}` : ''
+    return http<ProjectSkillDataClearResult>(
+      `/api/projects/${encodeURIComponent(id)}/skill-data${query}`,
+      {
+        method: 'DELETE',
+        scope: 'global',
+      },
+    )
+  },
   remove: (id: string) =>
     http<void>(`/api/projects/${encodeURIComponent(id)}`, {
       method: 'DELETE',

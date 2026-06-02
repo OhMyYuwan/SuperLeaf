@@ -38,6 +38,7 @@ _DOC_SUFFIX_FORMATS = {
     ".markdown": "md",
     ".txt": "txt",
 }
+SKILL_DATA_FOLDER_NAME = "_skill_data"
 
 
 class ProjectFsService:
@@ -630,10 +631,14 @@ class ProjectFsService:
             for d in docs:
                 prefix = resolve_path(d.folder_id)
                 path = f"{prefix}/{d.name}" if prefix else d.name
+                if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
+                    continue
                 zf.writestr(path, d.content or "")
             for f in files:
                 prefix = resolve_path(f.folder_id)
                 path = f"{prefix}/{f.name}" if prefix else f.name
+                if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
+                    continue
                 zf.writestr(path, f.blob or b"")
 
         return buf.getvalue()
@@ -673,7 +678,7 @@ class ProjectFsService:
         byte_count = 0
         for doc in docs:
             rel = Path(*folder_parts(doc.folder_id), _safe_name(doc.name))
-            if _is_ignored_materialized_path(rel):
+            if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = (doc.content or "").encode("utf-8")
             _write_file(root / rel, payload)
@@ -682,7 +687,7 @@ class ProjectFsService:
 
         for file in files:
             rel = Path(*folder_parts(file.folder_id), _safe_name(file.name))
-            if _is_ignored_materialized_path(rel):
+            if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = file.blob or b""
             _write_file(root / rel, payload)
@@ -733,8 +738,17 @@ def _safe_name(name: str) -> str:
     return cleaned or "untitled"
 
 
-def _is_ignored_materialized_path(path: Path) -> bool:
-    return ".git" in path.parts
+def _is_ignored_materialized_path(path: Path, *, project: Project) -> bool:
+    return _is_ignored_project_artifact_path(path, project=project)
+
+
+def _is_ignored_project_artifact_path(path: Path | PurePosixPath, *, project: Project) -> bool:
+    parts = path.parts
+    return ".git" in parts or (
+        (project.project_type == "skill" or project.is_skill_project)
+        and bool(parts)
+        and parts[0] == SKILL_DATA_FOLDER_NAME
+    )
 
 
 def _write_file(path: Path, content: bytes) -> None:

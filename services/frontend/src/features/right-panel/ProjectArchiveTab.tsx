@@ -1,13 +1,25 @@
-import { useEffect, useState } from 'react'
-import { Archive, CheckCircle2, GitBranch, Loader2, RefreshCw, Save, Terminal, Upload } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Archive,
+  CheckCircle2,
+  Database,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+  Save,
+  Terminal,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import {
   projectArchiveApi,
   type ProjectArchiveStatus,
 } from '../../services/backendApi'
-import { projectsApi } from '../../services/projectsApi'
+import { projectsApi, type ProjectSkillDataStatus } from '../../services/projectsApi'
 import { useProjectStore } from '../../stores/projectStore'
 import { useMajorVersionStore } from '../../stores/majorVersionStore'
 import { useNativeAgentStore } from '../../stores/nativeAgentStore'
+import { useFilesystemStore } from '../../stores/filesystemStore'
 import { MajorVersionList } from '../history/MajorVersionList'
 import { MajorVersionDiffModal } from '../history/MajorVersionDiffModal'
 import './project-archive.css'
@@ -18,12 +30,18 @@ export function ProjectArchiveTab() {
   const role = useProjectStore((s) => s.currentProjectRole)
   const loadProjects = useProjectStore((s) => s.load)
   const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
+  const tree = useFilesystemStore((s) => s.tree)
+  const loadTree = useFilesystemStore((s) => s.loadTree)
   const loadCommits = useMajorVersionStore((s) => s.loadCommits)
   const restoreCommit = useMajorVersionStore((s) => s.restore)
   const [status, setStatus] = useState<ProjectArchiveStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [skillSaving, setSkillSaving] = useState(false)
+  const [skillDataSaving, setSkillDataSaving] = useState(false)
+  const [skillDataDeleting, setSkillDataDeleting] = useState(false)
+  const [skillDataProjectId, setSkillDataProjectId] = useState('')
+  const [skillDataStatus, setSkillDataStatus] = useState<ProjectSkillDataStatus>('submitted')
   const [error, setError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [message, setMessage] = useState('')
@@ -39,6 +57,25 @@ export function ProjectArchiveTab() {
   const roleKnown = role !== null
   const currentProject = projects.find((project) => project.id === projectId)
   const isSkillProject = currentProject?.is_skill_project === true
+  const dataProjects = useMemo(
+    () => projects.filter((project) => project.project_type === 'data'),
+    [projects],
+  )
+  const selectedSkillDataProjectId = dataProjects.some((project) => project.id === skillDataProjectId)
+    ? skillDataProjectId
+    : dataProjects[0]?.id ?? ''
+  const selectedSkillDataProject = dataProjects.find((project) => project.id === selectedSkillDataProjectId)
+  const currentTree = tree?.project_id === projectId ? tree : null
+  const skillDataRoot = currentTree?.root.folders.find((folder) => folder.name === '_skill_data') ?? null
+  const importedSkillDataFolders = skillDataRoot?.folders ?? []
+  const selectedSkillDataFolderName = selectedSkillDataProject
+    ? safeSkillDataFolderName(selectedSkillDataProject.name)
+    : ''
+  const selectedSkillDataFolder = importedSkillDataFolders.find((folder) => (
+    folder.name === selectedSkillDataFolderName
+    || (selectedSkillDataFolderName && folder.name.startsWith(`${selectedSkillDataFolderName}-`))
+  ))
+  const hasSkillDataFolder = importedSkillDataFolders.length > 0
 
   const load = async () => {
     if (!projectId) return
@@ -78,6 +115,12 @@ export function ProjectArchiveTab() {
     }
   }, [currentProject, loadProjects, projectId])
 
+  useEffect(() => {
+    if (projectId && isSkillProject && tree?.project_id !== projectId) {
+      void loadTree()
+    }
+  }, [isSkillProject, loadTree, projectId, tree?.project_id])
+
   const createSnapshot = async () => {
     if (!projectId) return
     setSaving(true)
@@ -108,6 +151,45 @@ export function ProjectArchiveTab() {
       setError(err instanceof Error ? err.message : '更新 Skill 缓存失败')
     } finally {
       setSkillSaving(false)
+    }
+  }
+
+  const attachSkillDataPackage = async () => {
+    if (!projectId || !selectedSkillDataProjectId) return
+    setSkillDataSaving(true)
+    setError(null)
+    try {
+      const result = await projectsApi.attachSkillDataPackage(projectId, {
+        data_project_id: selectedSkillDataProjectId,
+        status: skillDataStatus,
+      })
+      setFeedback(
+        `已接入 ${result.dataset_name}：${result.record_count} 条记录写入 ${result.folder}。`,
+      )
+      await loadTree()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '接入 Data Project 失败')
+    } finally {
+      setSkillDataSaving(false)
+    }
+  }
+
+  const clearSkillDataPackage = async () => {
+    if (!projectId || !selectedSkillDataProjectId) return
+    setSkillDataDeleting(true)
+    setError(null)
+    try {
+      const result = await projectsApi.clearSkillDataPackage(projectId, selectedSkillDataProjectId)
+      setFeedback(
+        result.deleted_count > 0
+          ? `已删除 ${result.folder} 中的导入数据。`
+          : '当前选中的 Data Project 没有已导入数据。',
+      )
+      await loadTree()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除导入数据失败')
+    } finally {
+      setSkillDataDeleting(false)
     }
   }
 
@@ -209,6 +291,108 @@ export function ProjectArchiveTab() {
               更新 Skill 缓存
             </button>
           </div>
+        </div>
+      )}
+
+      {currentProject && isSkillProject && (
+        <div className="archive-section skill-data-section">
+          <div className="archive-section-head">
+            <div>
+              <h3><Database size={14} /> Skill 数据输入</h3>
+              <p>选择 Data Project 作为优化输入，写入隔离目录，不参与 Skill 缓存和发布。</p>
+            </div>
+            <span className={hasSkillDataFolder ? 'archive-state-chip active' : 'archive-state-chip'}>
+              {hasSkillDataFolder ? `已接入 ${importedSkillDataFolders.length} 个` : '未接入'}
+            </span>
+          </div>
+          <div className="skill-data-handoff">
+            <div className="skill-data-selectors">
+              <label>
+                <span>Data Project</span>
+                <select
+                  value={selectedSkillDataProjectId}
+                  onChange={(event) => setSkillDataProjectId(event.target.value)}
+                  disabled={dataProjects.length === 0 || skillDataSaving || skillDataDeleting}
+                >
+                  {dataProjects.length === 0 ? (
+                    <option value="">暂无 Data Project</option>
+                  ) : (
+                    dataProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} · {project.id.slice(0, 8)}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label>
+                <span>数据范围</span>
+                <select
+                  value={skillDataStatus}
+                  onChange={(event) => {
+                    setSkillDataStatus(event.target.value as ProjectSkillDataStatus)
+                  }}
+                  disabled={skillDataSaving || skillDataDeleting}
+                >
+                  <option value="submitted">提交包</option>
+                  <option value="labeled">已标注记录</option>
+                  <option value="all">全链包</option>
+                  <option value="pending">待处理</option>
+                  <option value="in_review">标注中</option>
+                  <option value="discarded">已丢弃</option>
+                </select>
+              </label>
+            </div>
+            <button
+              className="secondary-btn"
+              onClick={() => void attachSkillDataPackage()}
+              disabled={!isOwner || skillDataSaving || skillDataDeleting || !selectedSkillDataProjectId}
+              title={
+                isOwner
+                  ? '把选择的数据包接入这个 Skill Project 的隔离数据区'
+                  : '只有项目 Owner 可以接入数据包'
+              }
+            >
+              {skillDataSaving ? <Loader2 size={13} className="spin" /> : <Database size={13} />}
+              接入数据包
+            </button>
+          </div>
+          <div className="skill-data-actions">
+            <span>
+              当前目录：
+              <code>
+                {selectedSkillDataProject
+                  ? `_skill_data/${selectedSkillDataFolder?.name ?? selectedSkillDataFolderName}/latest/`
+                  : '_skill_data/<Data Project>/latest/'}
+              </code>
+            </span>
+            <button
+              className="secondary-btn danger-lite"
+              onClick={() => void clearSkillDataPackage()}
+              disabled={
+                !isOwner
+                || skillDataSaving
+                || skillDataDeleting
+                || !selectedSkillDataProjectId
+                || !selectedSkillDataFolder
+              }
+              title={selectedSkillDataFolder ? '删除选中 Data Project 的导入包' : '选中的 Data Project 尚未导入'}
+            >
+              {skillDataDeleting ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+              删除选中数据
+            </button>
+          </div>
+          {importedSkillDataFolders.length > 0 && (
+            <div className="skill-data-imported-list" aria-label="已接入的数据项目">
+              {importedSkillDataFolders.map((folder) => (
+                <span key={folder.id}>{folder.name}</span>
+              ))}
+            </div>
+          )}
+          <p className="skill-data-note">
+            数据会显示在 <code>{'_skill_data/<Data Project>/latest/'}</code>，
+            不会进入 Skill 缓存、公开包或项目导出包。
+          </p>
         </div>
       )}
 
@@ -341,4 +525,9 @@ export function ProjectArchiveTab() {
 
 function formatGithubUrl(owner: string, repo: string): string {
   return owner && repo ? `https://github.com/${owner}/${repo}` : ''
+}
+
+function safeSkillDataFolderName(name: string): string {
+  const cleaned = name.replace(/[/\\:\0]/g, '_').trim()
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'dataset'
 }

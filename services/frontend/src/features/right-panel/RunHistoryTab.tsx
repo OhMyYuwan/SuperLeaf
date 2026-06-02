@@ -102,6 +102,7 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
         {runHistory.map((run) => {
           const wf = workflowsById[run.workflow_id]
           const isOpen = expandedId === run.id
+          const activatedSkills = activatedSkillsForRun(run)
           return (
             <div key={run.id} className={`run-history-item status-${run.status}`}>
               <div
@@ -112,7 +113,14 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </span>
                 <span className="run-history-name">
-                  {wf ? `${wf.name}·${wf.id.slice(0, 8)}` : run.workflow_id.slice(0, 8)}
+                  <span className="run-history-title">
+                    {wf ? `${wf.name}·${wf.id.slice(0, 8)}` : run.workflow_id.slice(0, 8)}
+                  </span>
+                  {activatedSkills.length > 0 && (
+                    <span className="run-history-skill-count">
+                      {activatedSkills.length} Skill
+                    </span>
+                  )}
                 </span>
                 <span className={`run-history-status ${run.status}`}>{statusLabel(run.status)}</span>
                 <span className="run-history-time">{formatTime(run.started_at)}</span>
@@ -135,7 +143,7 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
                   </button>
                 </span>
               </div>
-              {isOpen && <RunDetail run={run} />}
+              {isOpen && <RunDetail run={run} activatedSkills={activatedSkills} />}
             </div>
           )
         })}
@@ -144,10 +152,17 @@ export function RunHistoryTab({ workflows, documentId, onJumpToRange }: RunHisto
   )
 }
 
-function RunDetail({ run }: { run: WorkflowRun }) {
+function RunDetail({
+  run,
+  activatedSkills,
+}: {
+  run: WorkflowRun
+  activatedSkills: SkillActivation[]
+}) {
   const duration = run.finished_at
     ? new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()
     : null
+  const availableSkillCount = availableSkillCountForRun(run)
 
   return (
     <div className="run-history-detail">
@@ -168,12 +183,116 @@ function RunDetail({ run }: { run: WorkflowRun }) {
           </>
         )}
       </div>
+      {(activatedSkills.length > 0 || availableSkillCount > 0) && (
+        <div className="run-detail-skills">
+          <div className="run-detail-section-label">Skill 调用</div>
+          {activatedSkills.length > 0 ? (
+            <div className="run-detail-skill-list">
+              {activatedSkills.map((skill) => (
+                <span
+                  key={`${skill.skill_id}:${skill.skill_name}:${skill.reason}`}
+                  className="run-detail-skill-chip"
+                  title={skillTitle(skill)}
+                >
+                  <span className="run-detail-skill-name">{skill.skill_name}</span>
+                  {skill.skill_version !== undefined && (
+                    <span className="run-detail-skill-version">v{skill.skill_version}</span>
+                  )}
+                  {skill.reason && <span className="run-detail-skill-reason">{skill.reason}</span>}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="run-detail-skill-empty">
+              可用 {availableSkillCount} 个 Skill，本次未调用
+            </div>
+          )}
+        </div>
+      )}
       {run.error && <div className="run-detail-error">{run.error}</div>}
       {Object.keys(run.outputs).length > 0 && (
         <pre className="run-detail-outputs">{JSON.stringify(run.outputs, null, 2)}</pre>
       )}
     </div>
   )
+}
+
+interface SkillActivation {
+  skill_id: string
+  skill_name: string
+  reason: string
+  skill_version?: number
+  skill_source?: string
+}
+
+function activatedSkillsForRun(run: WorkflowRun): SkillActivation[] {
+  const out: SkillActivation[] = []
+  const seen = new Set<string>()
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return
+    for (const item of value) {
+      const skill = skillActivationFromUnknown(item)
+      if (!skill) continue
+      const key = `${skill.skill_id}:${skill.skill_name}:${skill.reason}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(skill)
+    }
+  }
+
+  collect(run.outputs?.activated_skills)
+  for (const item of run.trace as unknown[]) {
+    if (!isRecord(item)) continue
+    collect(item.activated_skills)
+    if (isRecord(item.output)) collect(item.output.activated_skills)
+  }
+  return out
+}
+
+function availableSkillCountForRun(run: WorkflowRun): number {
+  let count = 0
+  for (const item of run.trace as unknown[]) {
+    if (!isRecord(item)) continue
+    if (Array.isArray(item.available_skills)) count += item.available_skills.length
+  }
+  return count
+}
+
+function skillActivationFromUnknown(value: unknown): SkillActivation | null {
+  if (!isRecord(value)) return null
+  const skillId = stringFrom(value.skill_id)
+  const skillName = stringFrom(value.skill_name) || skillId
+  if (!skillId && !skillName) return null
+  return {
+    skill_id: skillId || skillName,
+    skill_name: skillName,
+    reason: stringFrom(value.reason),
+    skill_version: numberFrom(value.skill_version),
+    skill_source: stringFrom(value.skill_source),
+  }
+}
+
+function skillTitle(skill: SkillActivation): string {
+  return [
+    skill.skill_name,
+    skill.skill_id,
+    skill.skill_source,
+    skill.reason ? `reason: ${skill.reason}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function stringFrom(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function numberFrom(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function statusLabel(status: string): string {

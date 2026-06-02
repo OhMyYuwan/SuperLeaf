@@ -529,10 +529,29 @@
 }
 
 .run-history-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: #e5e7eb;
+}
+
+.run-history-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-history-skill-count {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .run-history-status {
@@ -590,6 +609,65 @@
   background: rgba(239, 68, 68, 0.12);
   color: #fca5a5;
   white-space: pre-wrap;
+}
+
+.run-detail-skills {
+  display: grid;
+  gap: 6px;
+}
+
+.run-detail-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(148, 163, 184, 0.82);
+  text-transform: uppercase;
+}
+
+.run-detail-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-detail-skill-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #dbeafe;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.run-detail-skill-name,
+.run-detail-skill-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-detail-skill-name {
+  font-weight: 650;
+}
+
+.run-detail-skill-version {
+  flex: 0 0 auto;
+  color: rgba(191, 219, 254, 0.72);
+}
+
+.run-detail-skill-reason {
+  max-width: 220px;
+  color: rgba(191, 219, 254, 0.78);
+}
+
+.run-detail-skill-empty {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.82);
 }
 
 .run-detail-outputs {

@@ -1,7 +1,7 @@
 /**
  * majorVersionStore — Zustand state for project-level major version (git commit) history.
  *
- * Keyed by projectId. Diff payloads are cached by `${projectId}|${sha}|${against ?? 'parent'}`
+ * Keyed by projectId. Diff payloads are cached by `${projectId}|${sha}|${against ?? 'current'}`
  * so re-opening the same diff doesn't re-fetch.
  */
 
@@ -18,7 +18,7 @@ interface MajorVersionState {
   loading: Record<string, boolean>
   error: Record<string, string | null>
 
-  // Cached diffs keyed `${projectId}|${sha}|${against ?? 'parent'}`.
+  // Cached diffs keyed `${projectId}|${sha}|${against ?? 'current'}`.
   diffs: Record<string, CommitDiff>
   diffLoading: Record<string, boolean>
   diffError: Record<string, string | null>
@@ -30,7 +30,7 @@ interface MajorVersionState {
 }
 
 function diffKey(projectId: string, sha: string, against?: string) {
-  return `${projectId}|${sha}|${against ?? 'parent'}`
+  return `${projectId}|${sha}|${against ?? 'current'}`
 }
 
 export const useMajorVersionStore = create<MajorVersionState>((set, get) => ({

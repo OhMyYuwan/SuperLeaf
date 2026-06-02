@@ -133,7 +133,7 @@ def get_major_version_diff(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> CommitDiffOut:
-    """Get diff between two commits."""
+    """Get diff from an archive commit to the current project tree, or an explicit commit pair."""
     svc = ProjectArchiveService(db, project, user)
     try:
         diff = svc.get_commit_diff(sha, against=against)

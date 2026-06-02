@@ -10,12 +10,17 @@ interface Props {
 }
 
 export function ProjectCard({ project, onRename, onDelete, onSettings }: Props) {
+  const typeBadge = projectTypeBadge(project)
   return (
     <div className="project-card">
       <Link to={`/projects/${project.id}`} className="project-card-body">
         <div className="project-card-name-row">
           <span className="project-card-name">{project.name}</span>
-          {project.is_skill_project && <span className="project-type-badge">Skill</span>}
+          {typeBadge && (
+            <span className={`project-type-badge project-type-badge-${typeBadge.toLowerCase()}`}>
+              {typeBadge}
+            </span>
+          )}
         </div>
         <div className="project-card-meta">
           更新于 {formatDate(project.updated_at)}
@@ -51,6 +56,12 @@ export function ProjectCard({ project, onRename, onDelete, onSettings }: Props) 
       </div>
     </div>
   )
+}
+
+function projectTypeBadge(project: ProjectSummary): 'Skill' | 'Data' | null {
+  if (project.project_type === 'data') return 'Data'
+  if (project.project_type === 'skill' || project.is_skill_project) return 'Skill'
+  return null
 }
 
 function formatDate(iso: string): string {

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 
-type ProjectType = 'paper' | 'skill'
+type ProjectType = 'paper' | 'skill' | 'data'
 
 interface Props {
   open: boolean
@@ -89,6 +89,15 @@ export function ProjectFormDialog({
                 >
                   <strong>Skill</strong>
                   <span>开发本地 Skill，创建 README.md 和 SKILL.md。</span>
+                </button>
+                <button
+                  type="button"
+                  className={`project-type-option ${projectType === 'data' ? 'active' : ''}`}
+                  aria-pressed={projectType === 'data'}
+                  onClick={() => setProjectType('data')}
+                >
+                  <strong>Data</strong>
+                  <span>持续同步、标注并导出 Agent / Skill / Workflow 数据。</span>
                 </button>
               </div>
             )}

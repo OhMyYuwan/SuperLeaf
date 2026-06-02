@@ -4,6 +4,8 @@
 # narrowest authority boundaries; routing fields below are the contract that
 # keeps future Requests on rails.
 # Refreshed 2026-06-01 for REQ-0281.
+# Refreshed 2026-06-02 for REQ-0309: Data Project is a first-class capability
+# for dataset source rules, record labeling, source_text snapshots, and exports.
 # Path convention: primary_paths are semantic shorthand. Expand backend/ to
 # services/backend/ and frontend/ to services/frontend/ when opening files.
 #
@@ -576,6 +578,67 @@ capabilities:
         primary_paths:
           - backend/app/secrets_vault.py
 
+  - id: data-project
+    name: Data Project
+    summary: |
+      Dataset-centered labeling, evaluation, and packaging workspace. Owns Data
+      Project source rules, continuous sync from projects / Agents / Skills /
+      Workflows, record queue browsing, label responses, export packages, and
+      source_text snapshot semantics for workflow-derived records.
+    invariants:
+      - WorkflowRun.source_text is the canonical source text snapshot for workflow/native-agent runs.
+      - DatasetRecord.fields.source_text stores actual text, not a Doc range pointer.
+      - Record listing and export must not reconstruct source text from Doc range_start/range_end.
+      - Legacy pointer-shaped source_text values may be repaired only during sync when a workflow run snapshot exists.
+    slices:
+      - id: source-rules-sync
+        summary: Source-rule creation, filtering, continuous sync, dedupe, and repair of existing dataset records.
+        route_here_when: Work changes source project selection, Agent/Skill/Workflow filters, source type filters, sync batches, candidate fingerprints, or automatic updates from growing data.
+        bridge_when: Filter candidates depend on native Agent, Skill, or Workflow naming — coordinate with native-agent-skills and workflow-orchestration.
+        primary_paths:
+          - backend/app/api/datasets.py
+          - backend/app/services/dataset_service.py
+          - backend/app/models.py
+          - backend/app/schemas.py
+          - backend/app/migrations.py
+          - backend/test/test_dataset_project.py
+          - frontend/src/pages/DataProjectPage.tsx
+          - frontend/src/services/backendApi.ts
+      - id: records-labeling
+        summary: Record queue, record inspector, label schema/settings panel, draft/submitted/discarded responses, and UI layout.
+        route_here_when: Work changes how records are listed, filtered, selected, displayed, labeled, saved, or shown in the Data Project page.
+        bridge_when: Shared markdown, toast, or form controls change globally — coordinate with frontend-workspace or frontend-annotations.
+        primary_paths:
+          - backend/app/api/datasets.py
+          - backend/app/services/dataset_service.py
+          - backend/test/test_dataset_project.py
+          - frontend/src/pages/DataProjectPage.tsx
+          - frontend/src/pages/data-project.css
+          - frontend/src/services/backendApi.ts
+      - id: source-text-snapshot
+        summary: Capture and persistence of source text snapshots for workflow/native-agent records.
+        route_here_when: Work changes WorkflowRun.source_text, selected/target text extraction, Data Project source_text fields, or legacy pointer repair behavior.
+        bridge_when: Workflow execution event shape changes require workflow-integration or workflow-orchestration review.
+        primary_paths:
+          - backend/app/api/workflows.py
+          - backend/app/services/agent_orchestrator.py
+          - backend/app/services/dataset_service.py
+          - backend/app/models.py
+          - backend/app/schemas.py
+          - backend/app/migrations.py
+          - backend/test/test_dataset_project.py
+          - frontend/src/services/backendApi.ts
+      - id: export-packaging
+        summary: Data Project export.zip, records.jsonl, responses.jsonl, labeled_samples.jsonl, and evaluation/optimization packaging.
+        route_here_when: Work changes full-chain packages, submission packages, JSONL payload shape, status filters, or packaging metadata for Skill/Workflow evaluation.
+        bridge_when: Export consumers need public docs or external tool compatibility — coordinate with project-foundation/planning-docs.
+        primary_paths:
+          - backend/app/api/datasets.py
+          - backend/app/services/dataset_service.py
+          - backend/test/test_dataset_project.py
+          - frontend/src/pages/DataProjectPage.tsx
+          - frontend/src/services/backendApi.ts
+
   - id: native-agent-skills
     name: Native Agent & Skills
     summary: |
@@ -587,6 +650,9 @@ capabilities:
       probe, golden tests, and runtime tool calls. Project-backed Skills are
       generated from Skill Projects via an explicit cache refresh and are
       shared by project membership rather than copied per collaborator.
+      At runtime, Skills are loaded by scanning the Agent workspace disk
+      (.agents/skills/), not from the database; metadata comes from
+      skill.yaml or SKILL.md front matter.
     slices:
       - id: backend-routes
         summary: /api/native-agent routes for credentials, uploaded/private/shared skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
@@ -597,7 +663,7 @@ capabilities:
           - backend/app/schemas.py
       - id: backend-services
         summary: NativeAgentService + runner/registry + Skill crypto/marketplace services + MCP tool/catalog services.
-        route_here_when: Work changes encrypted credential handling, local Skill storage, non-project visibility/share/delete semantics, marketplace sync/install, native Agent runtime loading, MCP discovery, or MCP tool-call behavior. Use project-skill-cache for Skill Project lifecycle work.
+        route_here_when: Work changes encrypted credential handling, local Skill storage, non-project visibility/share/delete semantics, marketplace sync/install, native Agent runtime loading, disk-based Skill scanning from .agents/skills/, skill.yaml / SKILL.md front matter parsing, MCP discovery, or MCP tool-call behavior. Use project-skill-cache for Skill Project lifecycle work.
         bridge_when: Project membership changes route through collaboration/project-members; provider model changes route through workflow-integration/provider-registry.
         primary_paths:
           - backend/app/services/native_agent_service.py
@@ -614,8 +680,9 @@ capabilities:
           Skill Project cache lifecycle: README.md/SKILL.md project templates,
           manual cache refresh, marketplace copy-to-project, collaborator
           visibility, cache removal/recreate, and runtime loading from cached
-          project files.
-        route_here_when: Work changes Skill Project creation/templates, "更新 Skill 缓存", skills-cache path/reference behavior, .git/binary filtering, project-backed Skill visibility, removal/recovery, or Agent runtime consumption of cached references.
+          project files. Project skills are referenced from the Agent workspace
+          via .skillref.json files pointing to the cache directory.
+        route_here_when: Work changes Skill Project creation/templates, "更新 Skill 缓存", skills-cache path/reference behavior, .git/binary filtering, project-backed Skill visibility, removal/recovery, .skillref.json references, or Agent runtime consumption of cached references.
         bridge_when: UI copy/navigation changes route through frontend-management; member role logic routes through collaboration/project-members.
         primary_paths:
           - backend/app/api/projects.py

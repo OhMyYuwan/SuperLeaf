@@ -432,6 +432,7 @@ class WorkflowRunOut(BaseModel):
     document_id: str
     range_start: int
     range_end: int
+    source_text: str = ""
     status: str
     external_run_id: str
     outputs: dict
@@ -457,6 +458,7 @@ class ProjectOut(BaseModel):
     name: str
     main_doc_id: str
     compiler: str
+    project_type: str = "paper"
     is_skill_project: bool = False
     project_skill_id: str = ""
     skill_cache_version: int = 0
@@ -471,7 +473,7 @@ class ProjectOut(BaseModel):
 
 class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    project_type: str = Field(default="paper", pattern="^(paper|skill)$")
+    project_type: str = Field(default="paper", pattern="^(paper|skill|data)$")
 
 
 class GitHubProjectImportIn(BaseModel):
@@ -485,11 +487,182 @@ class ProjectUpdateIn(BaseModel):
     main_doc_id: str | None = None
     compiler: str | None = None
     is_skill_project: bool | None = None
+    project_type: str | None = Field(default=None, pattern="^(paper|skill|data)$")
+
+
+class DatasetProjectOut(BaseModel):
+    id: str
+    project_id: str
+    user_id: str
+    name: str
+    guidelines: str
+    label_schema: dict
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetProjectPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    guidelines: str | None = None
+    label_schema: dict | None = None
+
+
+class DatasetFilterOptionOut(BaseModel):
+    id: str
+    name: str
+    kind: str = ""
+    filter_key: str = ""
+    project_id: str = ""
+    description: str = ""
+    disabled: bool = False
+
+
+class DatasetFilterOptionsOut(BaseModel):
+    agents: list[DatasetFilterOptionOut]
+    skills: list[DatasetFilterOptionOut]
+    workflows: list[DatasetFilterOptionOut]
+
+
+class DatasetSourceRuleIn(BaseModel):
+    source_project_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=128)
+    source_types: list[str] = Field(default_factory=lambda: ["annotations", "conversations", "workflow_runs"])
+    filters: dict = Field(default_factory=dict)
+    is_enabled: bool = True
+
+
+class DatasetSourceRulePatch(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    source_types: list[str] | None = None
+    filters: dict | None = None
+    is_enabled: bool | None = None
+
+
+class DatasetSourceRuleOut(BaseModel):
+    id: str
+    dataset_project_id: str
+    source_project_id: str
+    user_id: str
+    name: str
+    source_types: list
+    filters: dict
+    last_cursor: dict
+    rule_version: int
+    is_enabled: bool
+    last_synced_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetBatchOut(BaseModel):
+    id: str
+    dataset_project_id: str
+    source_rule_id: str
+    user_id: str
+    cursor_from: dict
+    cursor_to: dict
+    counts: dict
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetResponseIn(BaseModel):
+    status: str = Field(default="draft", pattern="^(draft|submitted|discarded)$")
+    values: dict = Field(default_factory=dict)
+    lead_time_ms: int = Field(default=0, ge=0)
+
+
+class DatasetResponseOut(BaseModel):
+    id: str
+    dataset_project_id: str
+    record_id: str
+    user_id: str
+    status: str
+    values: dict
+    lead_time_ms: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetRecordOut(BaseModel):
+    id: str
+    dataset_project_id: str
+    batch_id: str
+    source_rule_id: str
+    user_id: str
+    source_type: str
+    source_id: str
+    source_created_at: datetime | None
+    fingerprint: str
+    fields: dict
+    record_metadata: dict
+    provenance: dict
+    status: str
+    split: str
+    created_at: datetime
+    updated_at: datetime
+    my_response: DatasetResponseOut | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetSyncOut(BaseModel):
+    batch: DatasetBatchOut
+    created: int
+    skipped: int
+    scanned: int
+
+
+class DatasetRecordListOut(BaseModel):
+    records: list[DatasetRecordOut]
+    total: int
 
 
 class ProjectSkillCacheOut(BaseModel):
     project: ProjectOut
     skill: SkillOut
+
+
+class ProjectSkillDataPackageIn(BaseModel):
+    data_project_id: str = Field(min_length=1, max_length=64)
+    status: str = Field(
+        default="submitted",
+        pattern="^(submitted|all|pending|in_review|labeled|discarded)$",
+    )
+
+
+class ProjectSkillDataPackageFileOut(BaseModel):
+    path: str
+    kind: str
+    size_bytes: int
+
+
+class ProjectSkillDataPackageOut(BaseModel):
+    dataset_project_id: str
+    dataset_name: str
+    status_filter: str
+    record_count: int
+    folder: str
+    files: list[ProjectSkillDataPackageFileOut]
+    generated_at: str
+
+
+class ProjectSkillDataClearOut(BaseModel):
+    folder: str
+    deleted_count: int
 
 
 class ProjectMemberAddIn(BaseModel):
@@ -750,7 +923,7 @@ class TreeFileOut(BaseModel):
 class TreeFolderOut(BaseModel):
     id: str
     name: str
-    folders: list["TreeFolderOut"] = Field(default_factory=list)
+    folders: list[TreeFolderOut] = Field(default_factory=list)
     docs: list[TreeDocOut] = Field(default_factory=list)
     files: list[TreeFileOut] = Field(default_factory=list)
 

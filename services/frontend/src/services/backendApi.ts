@@ -823,6 +823,7 @@ export interface WorkflowRun {
   document_id: string
   range_start: number
   range_end: number
+  source_text: string
   status: 'running' | 'completed' | 'failed' | string
   external_run_id: string
   outputs: Record<string, unknown>

@@ -5,7 +5,7 @@
  *   - short SHA + commit message (truncated)
  *   - author name + relative timestamp
  *   - +N / -N stats
- *   - actions: 对比 (diff with parent) / 下载 ZIP / 恢复 (restore via append-only commit)
+ *   - actions: 对比当前版本 / 下载 ZIP / 恢复 (restore via append-only commit)
  */
 
 import { useEffect, useState } from 'react'
@@ -113,9 +113,9 @@ export function MajorVersionList({ projectId, onDiffClick, onRestore }: MajorVer
               <button
                 className="small-btn"
                 onClick={() => onDiffClick(commit.sha)}
-                title="与父提交对比"
+                title="与当前版本对比"
               >
-                <GitCompare size={12} /> 对比
+                <GitCompare size={12} /> 对比当前
               </button>
               <button
                 className="small-btn"

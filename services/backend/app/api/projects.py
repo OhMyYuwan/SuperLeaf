@@ -22,6 +22,9 @@ from ..schemas import (
     ProjectMemberOut,
     ProjectOut,
     ProjectSkillCacheOut,
+    ProjectSkillDataClearOut,
+    ProjectSkillDataPackageIn,
+    ProjectSkillDataPackageOut,
     ProjectUpdateIn,
     RecentCollaboratorOut,
     SkillOut,
@@ -32,6 +35,7 @@ from ..services.github_service import GitHubError, GitHubService, parse_repo_url
 from ..services.native_agent_service import NativeAgentService
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
+from ..services.skill_data_handoff_service import SkillDataHandoffService
 from ..services.skill_content_crypto import decrypt_skill_content
 from .deps import get_current_user, get_project_from_path
 
@@ -151,6 +155,7 @@ def update_project(
         main_doc_id=body.main_doc_id,
         compiler=body.compiler,
         is_skill_project=body.is_skill_project,
+        project_type=body.project_type,
     )
     if p is None:
         raise HTTPException(404, "Project not found")
@@ -173,6 +178,69 @@ def update_project_skill_cache(
     return ProjectSkillCacheOut(
         project=ProjectOut.model_validate(project),
         skill=_skill_out(skill, user.id),
+    )
+
+
+@router.post("/{project_id}/skill-data/from-dataset", response_model=ProjectSkillDataPackageOut)
+def attach_project_skill_data_package(
+    project_id: str,
+    body: ProjectSkillDataPackageIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProjectSkillDataPackageOut:
+    member_svc = ProjectMemberService(db)
+    project = db.get(Project, project_id)
+    if project is None or not member_svc.can_write(project.id, user.id):
+        raise HTTPException(404, "Project not found")
+    data_project = db.get(Project, body.data_project_id)
+    if data_project is None or not member_svc.has_access(data_project.id, user.id):
+        raise HTTPException(404, "Data Project not found")
+    try:
+        result = SkillDataHandoffService(db).attach_dataset_package(
+            skill_project=project,
+            data_project=data_project,
+            user=user,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ProjectSkillDataPackageOut(
+        dataset_project_id=result.dataset_project_id,
+        dataset_name=result.dataset_name,
+        status_filter=result.status_filter,
+        record_count=result.record_count,
+        folder=result.folder,
+        files=result.files,
+        generated_at=result.generated_at,
+    )
+
+
+@router.delete("/{project_id}/skill-data", response_model=ProjectSkillDataClearOut)
+def clear_project_skill_data_package(
+    project_id: str,
+    data_project_id: str | None = Query(default=None, max_length=64),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProjectSkillDataClearOut:
+    member_svc = ProjectMemberService(db)
+    project = db.get(Project, project_id)
+    if project is None or not member_svc.can_write(project.id, user.id):
+        raise HTTPException(404, "Project not found")
+    data_project: Project | None = None
+    if data_project_id:
+        data_project = db.get(Project, data_project_id)
+        if data_project is None or not member_svc.has_access(data_project.id, user.id):
+            raise HTTPException(404, "Data Project not found")
+    try:
+        result = SkillDataHandoffService(db).clear_dataset_package(
+            skill_project=project,
+            data_project=data_project,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ProjectSkillDataClearOut(
+        folder=result.folder,
+        deleted_count=result.deleted_count,
     )
 
 

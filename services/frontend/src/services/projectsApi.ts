@@ -15,6 +15,7 @@ export interface ProjectSummary {
   name: string
   main_doc_id: string
   compiler: string
+  project_type: 'paper' | 'skill' | 'data' | string
   is_skill_project: boolean
   project_skill_id: string
   skill_cache_version: number
@@ -26,7 +27,7 @@ export interface ProjectSummary {
 
 export interface ProjectCreate {
   name: string
-  project_type?: 'paper' | 'skill'
+  project_type?: 'paper' | 'skill' | 'data'
 }
 
 export interface GitHubProjectImport {
@@ -40,11 +41,33 @@ export interface ProjectUpdate {
   main_doc_id?: string
   compiler?: string
   is_skill_project?: boolean
+  project_type?: 'paper' | 'skill' | 'data'
 }
 
 export interface ProjectSkillCacheResult {
   project: ProjectSummary
   skill: Skill
+}
+
+export type ProjectSkillDataStatus = 'submitted' | 'all' | 'pending' | 'in_review' | 'labeled' | 'discarded'
+
+export interface ProjectSkillDataPackageResult {
+  dataset_project_id: string
+  dataset_name: string
+  status_filter: ProjectSkillDataStatus
+  record_count: number
+  folder: string
+  files: Array<{
+    path: string
+    kind: string
+    size_bytes: number
+  }>
+  generated_at: string
+}
+
+export interface ProjectSkillDataClearResult {
+  folder: string
+  deleted_count: number
 }
 
 export const projectsApi = {
@@ -78,6 +101,28 @@ export const projectsApi = {
       method: 'POST',
       scope: 'global',
     }),
+  attachSkillDataPackage: (
+    id: string,
+    body: { data_project_id: string; status?: ProjectSkillDataStatus },
+  ) =>
+    http<ProjectSkillDataPackageResult>(
+      `/api/projects/${encodeURIComponent(id)}/skill-data/from-dataset`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+        scope: 'global',
+      },
+    ),
+  clearSkillDataPackage: (id: string, dataProjectId?: string) => {
+    const query = dataProjectId ? `?data_project_id=${encodeURIComponent(dataProjectId)}` : ''
+    return http<ProjectSkillDataClearResult>(
+      `/api/projects/${encodeURIComponent(id)}/skill-data${query}`,
+      {
+        method: 'DELETE',
+        scope: 'global',
+      },
+    )
+  },
   remove: (id: string) =>
     http<void>(`/api/projects/${encodeURIComponent(id)}`, {
       method: 'DELETE',

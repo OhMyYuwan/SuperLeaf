@@ -7,8 +7,8 @@
  *           inline actions: 标签 / 对比 / 恢复
  *   - Footer: 选中 base/compare 提示
  *
- * Two versions can be checkbox-selected as A and B; clicking "对比" opens the
- * DiffModal. A single selection compares against the immediate predecessor.
+ * One selected version compares against the current document. Two selected
+ * versions can still be compared explicitly.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -63,7 +63,7 @@ export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
 
   const [selected, setSelected] = useState<number[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
-  const [diffPair, setDiffPair] = useState<{ from: number; to: number } | null>(null)
+  const [diffPair, setDiffPair] = useState<{ from: number; to: number | 'current' } | null>(null)
   const [subView, setSubView] = useState<'versions' | 'operations'>('versions')
 
   useEffect(() => {
@@ -86,20 +86,16 @@ export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
   }
 
   const openDiffForRow = (version: number) => {
-    // Compare this version against its immediate predecessor.
-    const list = versions
-    const idx = list.findIndex((v) => v.version === version)
-    if (idx === -1) return
-    const prior = list[idx + 1]  // list is desc; older = higher index
-    if (!prior) {
-      alert('这是最早一版，没有可对比的更早版本。')
-      return
-    }
-    setDiffPair({ from: prior.version, to: version })
+    setDiffPair({ from: version, to: 'current' })
     setDiffOpen(true)
   }
 
   const openDiffForSelected = () => {
+    if (selected.length === 1) {
+      setDiffPair({ from: selected[0], to: 'current' })
+      setDiffOpen(true)
+      return
+    }
     if (selected.length !== 2) return
     const [a, b] = [...selected].sort((x, y) => x - y)
     setDiffPair({ from: a, to: b })
@@ -143,8 +139,8 @@ export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
   }
 
   const selectedLabel = useMemo(() => {
-    if (selected.length === 0) return '勾选两个版本以对比'
-    if (selected.length === 1) return `已选 v${selected[0]}（再选一个以对比）`
+    if (selected.length === 0) return '勾选一个版本以对比当前，或勾选两个版本互相对比'
+    if (selected.length === 1) return `已选 v${selected[0]}（将与当前版本对比）`
     const [a, b] = [...selected].sort((x, y) => x - y)
     return `已选 v${a} 与 v${b}`
   }, [selected])
@@ -190,9 +186,9 @@ export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
         <button
           className="small-btn"
           onClick={openDiffForSelected}
-          disabled={selected.length !== 2}
+          disabled={selected.length === 0}
         >
-          <GitCompare size={12} /> 对比所选
+          <GitCompare size={12} /> {selected.length === 1 ? '对比当前' : '对比所选'}
         </button>
         {selected.length > 0 && (
           <button className="small-btn" onClick={() => setSelected([])}>
@@ -263,7 +259,7 @@ export function HistoryTab({ documentId, embedded = false }: HistoryTabProps) {
                     className="small-btn"
                     onClick={() => openDiffForRow(v.version)}
                   >
-                    <GitCompare size={12} /> 与上一版对比
+                    <GitCompare size={12} /> 对比当前
                   </button>
                   <button
                     className="small-btn"

@@ -8,6 +8,7 @@ from . import (
     auth,
     compile,
     conversations,
+    datasets,
     filesystem,
     github,
     health,
@@ -37,6 +38,7 @@ api_router.include_router(filesystem.router)
 api_router.include_router(filesystem.projects_router)
 api_router.include_router(github.router)
 api_router.include_router(conversations.router)
+api_router.include_router(datasets.router)
 api_router.include_router(versions.router)
 api_router.include_router(annotation_evaluations.router)
 api_router.include_router(archives.router)

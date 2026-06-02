@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -419,33 +420,75 @@ class ProjectArchiveService:
         return commits
 
     def get_commit_diff(self, sha: str, *, against: str | None = None) -> CommitDiff:
-        """Get diff between two commits. If against is None, compare with parent."""
+        """
+        Get a project diff.
+
+        By default, compare the selected archive commit with the current live
+        project tree from the database. If ``against`` is provided, compare the
+        two archive commits for callers that still need an explicit pair.
+        """
         binding = self.ensure_binding()
         repo_path = Path(binding.local_repo_path)
         if not (repo_path / ".git").exists():
             raise ArchiveError("No git repository found")
 
-        # Determine comparison target
+        sha = self._resolve_commit(repo_path, sha)
         if against is None:
-            # Get parent commit
-            result = self._git(repo_path, "rev-parse", f"{sha}^", check=False)
-            if result.returncode != 0:
-                # No parent (first commit), compare against empty tree
-                against = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-            else:
-                against = result.stdout.strip()
+            self._export_project_tree(repo_path)
+            self._git(repo_path, "add", "-A")
+            from_sha = sha
+            to_sha = "current"
+            diff_refs = [sha]
+            diff_scope = ["--cached"]
+            reset_index_after_diff = True
+        else:
+            against = self._resolve_commit(repo_path, against)
+            from_sha = against
+            to_sha = sha
+            diff_refs = [against, sha]
+            diff_scope = []
+            reset_index_after_diff = False
 
-        # Get file-level stats
-        result = self._git(
-            repo_path,
-            "diff",
-            "--numstat",
-            against,
-            sha,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise ArchiveError(f"Failed to get diff: {result.stderr}")
+        try:
+            # Get file-level stats
+            result = self._git(
+                repo_path,
+                "diff",
+                *diff_scope,
+                "--numstat",
+                *diff_refs,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise ArchiveError(f"Failed to get diff: {result.stderr}")
+
+            status_result = self._git(
+                repo_path,
+                "diff",
+                *diff_scope,
+                "--name-status",
+                *diff_refs,
+                check=False,
+            )
+            if status_result.returncode != 0:
+                raise ArchiveError(f"Failed to get diff status: {status_result.stderr}")
+            status_by_path = _parse_name_status(status_result.stdout)
+
+            patch_result = self._git(
+                repo_path,
+                "diff",
+                *diff_scope,
+                "--patch",
+                "--unified=3",
+                *diff_refs,
+                check=False,
+            )
+            if patch_result.returncode != 0:
+                raise ArchiveError(f"Failed to get diff patch: {patch_result.stderr}")
+            patches_by_path = _split_git_patches(patch_result.stdout)
+        finally:
+            if reset_index_after_diff:
+                self._git(repo_path, "reset", "--mixed", "HEAD", check=False)
 
         files: list[FileDiff] = []
         total_insertions = 0
@@ -464,32 +507,8 @@ class ProjectArchiveService:
             total_insertions += insertions
             total_deletions += deletions
 
-            # Determine status (A/M/D/R)
-            status_result = self._git(
-                repo_path,
-                "diff",
-                "--name-status",
-                against,
-                sha,
-                "--",
-                path,
-                check=False,
-            )
-            status = "M"  # default
-            if status_result.returncode == 0 and status_result.stdout.strip():
-                status = status_result.stdout.strip().split("\t")[0][0]
-
-            # Get patch (skip for binary files)
-            patch_result = self._git(
-                repo_path,
-                "diff",
-                against,
-                sha,
-                "--",
-                path,
-                check=False,
-            )
-            patch = patch_result.stdout if patch_result.returncode == 0 else None
+            status = status_by_path.get(path, "M")
+            patch = patches_by_path.get(path)
             if patch and "Binary files" in patch:
                 patch = None
 
@@ -504,8 +523,8 @@ class ProjectArchiveService:
             )
 
         return CommitDiff(
-            from_sha=against,
-            to_sha=sha,
+            from_sha=from_sha,
+            to_sha=to_sha,
             files=files,
             total_insertions=total_insertions,
             total_deletions=total_deletions,
@@ -703,6 +722,44 @@ class ProjectArchiveService:
 def _safe_name(name: str) -> str:
     cleaned = "".join("_" if ch in '/\\:\0' else ch for ch in name).strip()
     return cleaned or "untitled"
+
+
+def _parse_name_status(output: str) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0][0] if parts[0] else "M"
+        if status == "R" and len(parts) >= 3:
+            statuses[parts[2]] = status
+        elif len(parts) >= 2:
+            statuses[parts[1]] = status
+    return statuses
+
+
+def _split_git_patches(output: str) -> dict[str, str]:
+    patches: dict[str, str] = {}
+    current_path: str | None = None
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        if current_path is not None and current_lines:
+            patches[current_path] = "".join(current_lines)
+
+    for line in output.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            flush()
+            current_lines = [line]
+            current_path = None
+            match = re.match(r"^diff --git a/(.*) b/(.*)\r?\n?$", line)
+            if match:
+                current_path = match.group(2)
+        else:
+            current_lines.append(line)
+    flush()
+
+    return patches
 
 
 def _write_file(path: Path, content: bytes) -> None:

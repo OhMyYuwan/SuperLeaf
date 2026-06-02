@@ -5,15 +5,16 @@
  *   /register                  → <RegisterPage />  公开
  *   /                          → redirect /projects
  *   /projects                  → <ProjectListPage />     (protected)
- *   /projects/:projectId/*     → <WorkspacePage />        (protected, `*`
- *                                reserves room for future deep-link segments
- *                                like /docs/<id>)
+ *   /projects/:projectId/*     → <ProjectRoutePage />     (protected,
+ *                                dispatches data projects to the dataset
+ *                                workbench and paper/skill projects to the
+ *                                writing workspace)
  *   anything else              → redirect /projects
  */
 
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProjectListPage } from './pages/ProjectListPage'
-import { WorkspacePage } from './pages/WorkspacePage'
+import { ProjectRoutePage } from './pages/ProjectRoutePage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ProtectedRoute } from './router/ProtectedRoute'
@@ -36,7 +37,7 @@ export function AppRouter() {
         path="/projects/:projectId/*"
         element={
           <ProtectedRoute>
-            <WorkspacePage />
+            <ProjectRoutePage />
           </ProtectedRoute>
         }
       />

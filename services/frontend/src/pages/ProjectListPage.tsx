@@ -14,6 +14,7 @@ import { useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Download, LayoutGrid, List, Plus, UserRound, X } from 'lucide-react'
 import { useProjectStore } from '../stores/projectStore'
+import type { ProjectType } from '../stores/projectStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import type { ProjectSummary } from '../services/projectsApi'
 import { BackendError, githubApi, type GitHubAccountStatus } from '../services/backendApi'
@@ -57,11 +58,15 @@ export function ProjectListPage() {
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const sortedProjects = useMemo(() => sortProjectsByUpdated(projects), [projects])
   const paperProjects = useMemo(
-    () => sortedProjects.filter((project) => !project.is_skill_project),
+    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'paper'),
     [sortedProjects],
   )
   const skillProjects = useMemo(
-    () => sortedProjects.filter((project) => project.is_skill_project),
+    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'skill'),
+    [sortedProjects],
+  )
+  const dataProjects = useMemo(
+    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'data'),
     [sortedProjects],
   )
 
@@ -83,7 +88,7 @@ export function ProjectListPage() {
     setDialogBusy(false)
   }
 
-  const handleCreate = async (name: string, projectType: 'paper' | 'skill' = 'paper') => {
+  const handleCreate = async (name: string, projectType: ProjectType = 'paper') => {
     setDialogBusy(true)
     setDialogError(null)
     try {
@@ -221,6 +226,16 @@ export function ProjectListPage() {
               projects={skillProjects}
               viewMode={viewMode}
               emptyText="还没有 Skill 项目。"
+              onRename={(target) => setDialog({ kind: 'rename', target })}
+              onDelete={(target) => setDialog({ kind: 'delete', target })}
+              onSettings={(target) => setDialog({ kind: 'settings', target })}
+            />
+            <ProjectSection
+              title="Data"
+              description="持续同步、标注和导出 Agent / Skill / Workflow 数据"
+              projects={dataProjects}
+              viewMode={viewMode}
+              emptyText="还没有 Data Project。"
               onRename={(target) => setDialog({ kind: 'rename', target })}
               onDelete={(target) => setDialog({ kind: 'delete', target })}
               onSettings={(target) => setDialog({ kind: 'settings', target })}
@@ -390,6 +405,12 @@ function sortProjectsByUpdated(projects: ProjectSummary[]): ProjectSummary[] {
     if (updated !== 0) return updated
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
+}
+
+function normalizedProjectType(project: ProjectSummary): 'paper' | 'skill' | 'data' {
+  if (project.project_type === 'data') return 'data'
+  if (project.project_type === 'skill' || project.is_skill_project) return 'skill'
+  return 'paper'
 }
 
 function GitHubImportDialog({

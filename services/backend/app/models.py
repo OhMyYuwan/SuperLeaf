@@ -9,7 +9,18 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -413,6 +424,9 @@ class WorkflowRun(Base):
     document_id: Mapped[str] = mapped_column(String(64))
     range_start: Mapped[int] = mapped_column(Integer)
     range_end: Mapped[int] = mapped_column(Integer)
+    # Snapshot of the selected/request source content at run time. Range fields
+    # remain navigational metadata, not the primary dataset content.
+    source_text: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="running")
     # Dify run id (returned by workflow API) — useful for cross-referencing in Dify logs.
     external_run_id: Mapped[str] = mapped_column(String(128), default="")
@@ -443,10 +457,136 @@ class Project(Base):
     # LaTeX compile settings
     main_doc_id: Mapped[str] = mapped_column(String(32), default="")
     compiler: Mapped[str] = mapped_column(String(32), default="")
+    project_type: Mapped[str] = mapped_column(String(16), default="paper", index=True)
     is_skill_project: Mapped[bool] = mapped_column(Boolean, default=False)
     project_skill_id: Mapped[str] = mapped_column(String(32), default="")
     skill_cache_version: Mapped[int] = mapped_column(Integer, default=0)
     skill_cache_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class DatasetProject(Base):
+    """Project-scoped dataset workspace for Agent/Skill/Workflow data.
+
+    A Data Project is a normal Project row with `project_type = "data"`, plus
+    this companion row for label schema, source rules, and queue state.
+    """
+
+    __tablename__ = "dataset_projects"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_dataset_projects_project"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    name: Mapped[str] = mapped_column(String(128), default="")
+    guidelines: Mapped[str] = mapped_column(Text, default="")
+    label_schema: Mapped[dict] = mapped_column("schema", JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class DatasetSourceRule(Base):
+    """Subscription rule that pulls growing data from project/activity tables."""
+
+    __tablename__ = "dataset_source_rules"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    dataset_project_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_projects.id"), index=True
+    )
+    source_project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    name: Mapped[str] = mapped_column(String(128), default="")
+    source_types: Mapped[list] = mapped_column(JSON, default=list)
+    filters: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_cursor: Mapped[dict] = mapped_column(JSON, default=dict)
+    rule_version: Mapped[int] = mapped_column(Integer, default=1)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class DatasetBatch(Base):
+    """One sync pass for a source rule."""
+
+    __tablename__ = "dataset_batches"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    dataset_project_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_projects.id"), index=True
+    )
+    source_rule_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_source_rules.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    cursor_from: Mapped[dict] = mapped_column(JSON, default=dict)
+    cursor_to: Mapped[dict] = mapped_column(JSON, default=dict)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class DatasetRecord(Base):
+    """Canonical candidate item queued for review/labeling/export."""
+
+    __tablename__ = "dataset_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_project_id",
+            "fingerprint",
+            name="uq_dataset_records_project_fingerprint",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    dataset_project_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_projects.id"), index=True
+    )
+    batch_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    source_rule_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    source_type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    source_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    fields: Mapped[dict] = mapped_column(JSON, default=dict)
+    record_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    split: Mapped[str] = mapped_column(String(24), default="unassigned", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class DatasetResponse(Base):
+    """A user's label response for a dataset record."""
+
+    __tablename__ = "dataset_responses"
+    __table_args__ = (
+        UniqueConstraint("record_id", "user_id", name="uq_dataset_responses_record_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    dataset_project_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_projects.id"), index=True
+    )
+    record_id: Mapped[str] = mapped_column(ForeignKey("dataset_records.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    values: Mapped[dict] = mapped_column(JSON, default=dict)
+    lead_time_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -17,6 +17,7 @@ import { useNativeAgentStore } from './nativeAgentStore'
 import { useSettingsStore } from './settingsStore'
 
 const VIEW_MODE_KEY = 'yuwanlab.projectListViewMode'
+export type ProjectType = 'paper' | 'skill' | 'data'
 
 function readInitialViewMode(): 'table' | 'grid' {
   if (typeof window === 'undefined') return 'grid'
@@ -35,7 +36,7 @@ interface ProjectState {
 
   load: () => Promise<void>
   setCurrent: (id: string | null) => void
-  create: (name: string, projectType?: 'paper' | 'skill') => Promise<ProjectSummary>
+  create: (name: string, projectType?: ProjectType) => Promise<ProjectSummary>
   importGithub: (body: GitHubProjectImport) => Promise<ProjectSummary>
   rename: (id: string, name: string) => Promise<void>
   remove: (id: string) => Promise<void>

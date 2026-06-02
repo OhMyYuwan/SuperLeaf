@@ -3,7 +3,7 @@
  *
  * Layout: left side is a file list (added/modified/deleted), right side
  * shows the unified diff for the selected file. Mirrors GitHub's PR diff UI
- * but scoped to a single commit pair.
+ * but scoped to a selected archive commit versus the current project tree.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -32,7 +32,7 @@ export function MajorVersionDiffModal({
   const diffLoading = useMajorVersionStore((s) => s.diffLoading)
   const diffError = useMajorVersionStore((s) => s.diffError)
 
-  const key = `${projectId}|${sha}|${against ?? 'parent'}`
+  const key = `${projectId}|${sha}|${against ?? 'current'}`
   const diff = diffs[key]
   const loading = diffLoading[key] ?? false
   const error = diffError[key] ?? null
@@ -66,7 +66,7 @@ export function MajorVersionDiffModal({
             <div>
               <Dialog.Title className="diff-title">大版本对比</Dialog.Title>
               <div className="diff-subtitle">
-                {sha.slice(0, 7)} {against ? `← ${against.slice(0, 7)}` : '← 父提交'}
+                {sha.slice(0, 7)} → {against ? against.slice(0, 7) : '当前版本'}
               </div>
             </div>
             <Dialog.Close asChild>
@@ -85,7 +85,7 @@ export function MajorVersionDiffModal({
           {error && <div className="tab-error">{error}</div>}
 
           {diff && diff.files.length === 0 && (
-            <div className="tab-empty">两个 commit 之间没有文件变化。</div>
+            <div className="tab-empty">这个大版本与当前版本没有文件变化。</div>
           )}
 
           {diff && diff.files.length > 0 && (

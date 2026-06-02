@@ -16,6 +16,11 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     Conversation,
+    DatasetBatch,
+    DatasetProject,
+    DatasetRecord,
+    DatasetResponse,
+    DatasetSourceRule,
     Doc,
     FileBlob,
     Folder,
@@ -25,7 +30,6 @@ from ..models import (
     WorkflowRun,
 )
 from .project_fs_service import ProjectFsService
-
 
 _DEFAULT_ASSET_FOLDER = "assets"
 _DEFAULT_BANNER_NAME = "github-header-banner.png"
@@ -136,6 +140,70 @@ Skill.
 - Ask for missing information when a safe assumption would change the result.
 """
 
+_DEFAULT_DATASET_README = """# Data Project
+
+This project collects Agent, Skill, and Workflow data for evaluation,
+labeling, and export.
+
+## Workflow
+
+1. Add source rules that select data from projects, Agents, Skills, or Workflows.
+2. Sync rules to append new dataset records while preserving old labels.
+3. Review records, save labels, and export the package for evaluation or tuning.
+"""
+
+_DEFAULT_DATASET_SCHEMA = {
+    "version": 1,
+    "fields": [
+        {"name": "chat", "type": "chat", "title": "Conversation"},
+        {"name": "source_text", "type": "text", "title": "Source text"},
+        {"name": "agent_output", "type": "text", "title": "Agent output"},
+        {"name": "trace", "type": "json", "title": "Workflow trace"},
+    ],
+    "questions": [
+        {
+            "name": "task_success",
+            "type": "label",
+            "title": "Task success",
+            "options": ["success", "partial", "failure", "unclear"],
+            "required": True,
+        },
+        {
+            "name": "helpfulness",
+            "type": "rating",
+            "title": "Helpfulness",
+            "min": 1,
+            "max": 5,
+            "required": False,
+        },
+        {
+            "name": "issues",
+            "type": "multi_label",
+            "title": "Issues",
+            "options": [
+                "incorrect",
+                "missing_context",
+                "formatting",
+                "unsafe",
+                "tool_error",
+                "other",
+            ],
+        },
+        {"name": "comments", "type": "text", "title": "Comments"},
+        {
+            "name": "training_candidate",
+            "type": "label",
+            "title": "Training candidate",
+            "options": ["yes", "no"],
+            "required": False,
+        },
+    ],
+}
+_DEFAULT_DATASET_GUIDELINES = (
+    "Evaluate Agent behavior, mark issues, and flag samples that should improve "
+    "Skills or Workflows."
+)
+
 
 def _default_banner_path() -> Path:
     return (
@@ -183,12 +251,23 @@ class ProjectService:
         return p
 
     def create(self, *, user_id: str, name: str, project_type: str = "paper") -> Project:
-        is_skill = project_type == "skill"
-        p = Project(name=name, user_id=user_id, is_skill_project=is_skill)
+        normalized_type = project_type if project_type in {"paper", "skill", "data"} else "paper"
+        is_skill = normalized_type == "skill"
+        p = Project(
+            name=name,
+            user_id=user_id,
+            project_type=normalized_type,
+            is_skill_project=is_skill,
+        )
         self.db.add(p)
         self.db.flush()
         if is_skill:
             self._seed_skill_content(p)
+            self.db.commit()
+            self.db.refresh(p)
+            return p
+        if normalized_type == "data":
+            self._seed_dataset_content(p)
             self.db.commit()
             self.db.refresh(p)
             return p
@@ -218,6 +297,26 @@ class ProjectService:
             version=1,
         )
         self.db.add_all([readme, skill])
+        self.db.flush()
+        project.main_doc_id = readme.id
+
+    def _seed_dataset_content(self, project: Project) -> None:
+        readme = Doc(
+            project_id=project.id,
+            folder_id=None,
+            name="README.md",
+            format="md",
+            content=_DEFAULT_DATASET_README,
+            version=1,
+        )
+        dataset = DatasetProject(
+            project_id=project.id,
+            user_id=project.user_id,
+            name=project.name,
+            guidelines=_DEFAULT_DATASET_GUIDELINES,
+            label_schema=_DEFAULT_DATASET_SCHEMA,
+        )
+        self.db.add_all([readme, dataset])
         self.db.flush()
         project.main_doc_id = readme.id
 
@@ -279,6 +378,7 @@ class ProjectService:
         main_doc_id: str | None = None,
         compiler: str | None = None,
         is_skill_project: bool | None = None,
+        project_type: str | None = None,
     ) -> Project | None:
         p = self.db.get(Project, project_id)
         if p is None or p.user_id != user_id:
@@ -291,6 +391,11 @@ class ProjectService:
             p.compiler = compiler
         if is_skill_project is not None:
             p.is_skill_project = bool(is_skill_project)
+            p.project_type = "skill" if p.is_skill_project else "paper"
+        if project_type is not None:
+            normalized_type = project_type if project_type in {"paper", "skill", "data"} else p.project_type
+            p.project_type = normalized_type
+            p.is_skill_project = normalized_type == "skill"
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)
@@ -324,6 +429,43 @@ class ProjectService:
             self.db.query(Message).filter(Message.conversation_id.in_(conv_ids)).delete(
                 synchronize_session=False
             )
+
+        dataset_ids = [
+            r[0]
+            for r in self.db.query(DatasetProject.id)
+            .filter(DatasetProject.project_id == project_id)
+            .all()
+        ]
+        if dataset_ids:
+            self.db.query(DatasetResponse).filter(
+                DatasetResponse.dataset_project_id.in_(dataset_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(DatasetRecord).filter(
+                DatasetRecord.dataset_project_id.in_(dataset_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(DatasetBatch).filter(
+                DatasetBatch.dataset_project_id.in_(dataset_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(DatasetSourceRule).filter(
+                DatasetSourceRule.dataset_project_id.in_(dataset_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(DatasetProject).filter(
+                DatasetProject.id.in_(dataset_ids)
+            ).delete(synchronize_session=False)
+
+        source_rule_ids = [
+            r[0]
+            for r in self.db.query(DatasetSourceRule.id)
+            .filter(DatasetSourceRule.source_project_id == project_id)
+            .all()
+        ]
+        if source_rule_ids:
+            self.db.query(DatasetBatch).filter(
+                DatasetBatch.source_rule_id.in_(source_rule_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(DatasetSourceRule).filter(
+                DatasetSourceRule.id.in_(source_rule_ids)
+            ).delete(synchronize_session=False)
 
         self.db.query(Conversation).filter(Conversation.project_id == project_id).delete(
             synchronize_session=False

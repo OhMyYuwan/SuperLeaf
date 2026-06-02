@@ -16,7 +16,6 @@ from sqlalchemy.engine import Engine
 
 from .services.skill_content_crypto import encrypt_skill_content
 
-
 _PROJECT_SCOPED_TABLES = ("conversations", "workflow_definitions", "workflow_runs")
 _USER_SCOPED_TABLES = ("projects", "providers", "cached_workflows")
 _PRIVATE_ASSET_TABLES = (
@@ -57,6 +56,8 @@ def run_migrations(engine: Engine) -> None:
         _add_is_global_to_annotations(conn)
         _add_project_archive_github_columns(conn)
         _add_project_skill_columns(conn)
+        _add_project_type_column(conn)
+        _create_dataset_tables(conn)
         _rebuild_native_agents_table(conn)
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
@@ -79,22 +80,26 @@ def _ensure_bootstrap_project(conn) -> str:
         # `user_id` column may or may not exist yet (added by a later migration
         # step in this same transaction). The bootstrap project is left with
         # an empty `user_id`; the first registered user picks it up.
-        if _column_exists(conn, "projects", "user_id"):
-            conn.execute(
-                text(
-                    "INSERT INTO projects (id, user_id, name, main_doc_id, compiler, created_at, updated_at) "
-                    "VALUES (:id, '', :name, '', '', :now, :now)"
-                ),
-                {"id": pid, "name": "我的项目", "now": now},
-            )
-        else:
-            conn.execute(
-                text(
-                    "INSERT INTO projects (id, name, main_doc_id, compiler, created_at, updated_at) "
-                    "VALUES (:id, :name, '', '', :now, :now)"
-                ),
-                {"id": pid, "name": "我的项目", "now": now},
-            )
+        columns = ["id", "name", "main_doc_id", "compiler", "created_at", "updated_at"]
+        values = [":id", ":name", "''", "''", ":now", ":now"]
+        optional_defaults = (
+            ("user_id", "''"),
+            ("project_type", "'paper'"),
+            ("is_skill_project", "0"),
+            ("project_skill_id", "''"),
+            ("skill_cache_version", "0"),
+        )
+        for column, default_sql in optional_defaults:
+            if _column_exists(conn, "projects", column):
+                columns.append(column)
+                values.append(default_sql)
+        conn.execute(
+            text(
+                f"INSERT INTO projects ({', '.join(columns)}) "
+                f"VALUES ({', '.join(values)})"
+            ),
+            {"id": pid, "name": "我的项目", "now": now},
+        )
         return pid
 
     pid = row[0]
@@ -239,6 +244,177 @@ def _add_project_skill_columns(conn) -> None:
     for column, ddl in additions.items():
         if not _column_exists(conn, "projects", column):
             conn.execute(text(f"ALTER TABLE projects ADD COLUMN {column} {ddl}"))
+
+
+def _add_project_type_column(conn) -> None:
+    if not _table_exists(conn, "projects"):
+        return
+    if not _column_exists(conn, "projects", "project_type"):
+        conn.execute(
+            text("ALTER TABLE projects ADD COLUMN project_type VARCHAR(16) DEFAULT 'paper'")
+        )
+    conn.execute(
+        text(
+            "UPDATE projects SET project_type = 'paper' "
+            "WHERE project_type IS NULL OR project_type = ''"
+        )
+    )
+    if _column_exists(conn, "projects", "is_skill_project"):
+        conn.execute(
+            text(
+                "UPDATE projects SET project_type = 'skill' "
+                "WHERE is_skill_project = 1 AND (project_type = 'paper' OR project_type = '')"
+            )
+        )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_project_type ON projects(project_type)"))
+
+
+def _create_dataset_tables(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_projects (
+                id VARCHAR(32) NOT NULL,
+                project_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                name VARCHAR(128) NOT NULL DEFAULT '',
+                guidelines TEXT NOT NULL DEFAULT '',
+                schema JSON NOT NULL,
+                status VARCHAR(24) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                CONSTRAINT uq_dataset_projects_project UNIQUE (project_id),
+                FOREIGN KEY(project_id) REFERENCES projects (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_source_rules (
+                id VARCHAR(32) NOT NULL,
+                dataset_project_id VARCHAR(32) NOT NULL,
+                source_project_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                name VARCHAR(128) NOT NULL DEFAULT '',
+                source_types JSON NOT NULL,
+                filters JSON NOT NULL,
+                last_cursor JSON NOT NULL,
+                rule_version INTEGER NOT NULL DEFAULT 1,
+                is_enabled BOOLEAN NOT NULL DEFAULT 1,
+                last_synced_at DATETIME DEFAULT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                FOREIGN KEY(dataset_project_id) REFERENCES dataset_projects (id),
+                FOREIGN KEY(source_project_id) REFERENCES projects (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_batches (
+                id VARCHAR(32) NOT NULL,
+                dataset_project_id VARCHAR(32) NOT NULL,
+                source_rule_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                cursor_from JSON NOT NULL,
+                cursor_to JSON NOT NULL,
+                counts JSON NOT NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                FOREIGN KEY(dataset_project_id) REFERENCES dataset_projects (id),
+                FOREIGN KEY(source_rule_id) REFERENCES dataset_source_rules (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_records (
+                id VARCHAR(32) NOT NULL,
+                dataset_project_id VARCHAR(32) NOT NULL,
+                batch_id VARCHAR(32) NOT NULL DEFAULT '',
+                source_rule_id VARCHAR(32) NOT NULL DEFAULT '',
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                source_type VARCHAR(32) NOT NULL DEFAULT '',
+                source_id VARCHAR(64) NOT NULL DEFAULT '',
+                source_created_at DATETIME DEFAULT NULL,
+                fingerprint VARCHAR(64) NOT NULL,
+                fields JSON NOT NULL,
+                metadata JSON NOT NULL,
+                provenance JSON NOT NULL,
+                status VARCHAR(24) NOT NULL DEFAULT 'pending',
+                split VARCHAR(24) NOT NULL DEFAULT 'unassigned',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                CONSTRAINT uq_dataset_records_project_fingerprint UNIQUE (dataset_project_id, fingerprint),
+                FOREIGN KEY(dataset_project_id) REFERENCES dataset_projects (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS dataset_responses (
+                id VARCHAR(32) NOT NULL,
+                dataset_project_id VARCHAR(32) NOT NULL,
+                record_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                status VARCHAR(24) NOT NULL DEFAULT 'draft',
+                "values" JSON NOT NULL,
+                lead_time_ms INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                CONSTRAINT uq_dataset_responses_record_user UNIQUE (record_id, user_id),
+                FOREIGN KEY(dataset_project_id) REFERENCES dataset_projects (id),
+                FOREIGN KEY(record_id) REFERENCES dataset_records (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS ix_dataset_projects_project_id ON dataset_projects(project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_projects_user_id ON dataset_projects(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_source_rules_dataset_project_id "
+        "ON dataset_source_rules(dataset_project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_source_rules_source_project_id "
+        "ON dataset_source_rules(source_project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_source_rules_user_id ON dataset_source_rules(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_batches_dataset_project_id "
+        "ON dataset_batches(dataset_project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_batches_source_rule_id ON dataset_batches(source_rule_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_batches_created_at ON dataset_batches(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_dataset_project_id "
+        "ON dataset_records(dataset_project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_source_rule_id ON dataset_records(source_rule_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_source_type ON dataset_records(source_type)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_source_id ON dataset_records(source_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_status ON dataset_records(status)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_split ON dataset_records(split)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_fingerprint ON dataset_records(fingerprint)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_records_created_at ON dataset_records(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_responses_dataset_project_id "
+        "ON dataset_responses(dataset_project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_responses_record_id ON dataset_responses(record_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_responses_user_id ON dataset_responses(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_dataset_responses_status ON dataset_responses(status)",
+    )
+    for stmt in indexes:
+        conn.execute(text(stmt))
 
 
 def _add_skill_project_columns(conn) -> None:
@@ -437,7 +613,10 @@ def _rebuild_native_mcp_servers_table(conn) -> None:
             text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_user_id ON native_mcp_servers(user_id)")
         )
         conn.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_preset_id ON native_mcp_servers(preset_id)")
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_native_mcp_servers_preset_id "
+                "ON native_mcp_servers(preset_id)"
+            )
         )
         return
 

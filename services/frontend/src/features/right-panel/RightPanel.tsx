@@ -15,6 +15,7 @@ import { TeamTab } from './TeamTab'
 import { RunHistoryTab } from './RunHistoryTab'
 import { ProjectArchiveTab } from './ProjectArchiveTab'
 import { AutomationTab } from './AutomationTab'
+import { DataProjectTab } from './DataProjectTab'
 import { HistoryTab } from '../history/HistoryTab'
 import { useProjectStore } from '../../stores/projectStore'
 import '../history/history.css'
@@ -51,6 +52,10 @@ export function RightPanel(props: RightPanelProps) {
   const [internalTab, setInternalTab] = useState('discussion')
   const [versionSubtab, setVersionSubtab] = useState<'archive' | 'document'>('archive')
   const currentProjectRole = useProjectStore((s) => s.currentProjectRole)
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
+  const projects = useProjectStore((s) => s.projects)
+  const currentProject = projects.find((project) => project.id === currentProjectId)
+  const isDataProject = currentProject?.project_type === 'data'
   const canManageArchive = currentProjectRole === 'owner'
   const selectedTab = props.selectedTab ?? internalTab
   const onTabChange = props.onTabChange ?? setInternalTab
@@ -61,10 +66,25 @@ export function RightPanel(props: RightPanelProps) {
     }
   }, [canManageArchive, versionSubtab])
 
+  useEffect(() => {
+    if (props.selectedTab) return
+    if (isDataProject && internalTab !== 'data') {
+      setInternalTab('data')
+    }
+    if (!isDataProject && internalTab === 'data') {
+      setInternalTab('discussion')
+    }
+  }, [internalTab, isDataProject, props.selectedTab])
+
   return (
     <div className="panel right-panel">
       <Tabs.Root value={selectedTab} onValueChange={onTabChange} className="tabs-root">
         <Tabs.List className="tabs-list">
+          {isDataProject && (
+            <Tabs.Trigger className="tab-trigger" value="data">
+              数据
+            </Tabs.Trigger>
+          )}
           <Tabs.Trigger className="tab-trigger" value="discussion">
             讨论区
           </Tabs.Trigger>
@@ -85,6 +105,12 @@ export function RightPanel(props: RightPanelProps) {
             版本
           </Tabs.Trigger>
         </Tabs.List>
+
+        {isDataProject && (
+          <Tabs.Content value="data" className="tab-content">
+            <DataProjectTab />
+          </Tabs.Content>
+        )}
 
         <Tabs.Content value="discussion" className="tab-content">
           <DiscussionTab

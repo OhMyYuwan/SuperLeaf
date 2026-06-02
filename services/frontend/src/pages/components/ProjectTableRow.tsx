@@ -10,13 +10,18 @@ interface Props {
 }
 
 export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Props) {
+  const typeBadge = projectTypeBadge(project)
   return (
     <tr className="project-row">
       <td>
         <Link to={`/projects/${project.id}`} className="project-row-name">
           {project.name}
         </Link>
-        {project.is_skill_project && <span className="project-type-badge project-row-badge">Skill</span>}
+        {typeBadge && (
+          <span className={`project-type-badge project-row-badge project-type-badge-${typeBadge.toLowerCase()}`}>
+            {typeBadge}
+          </span>
+        )}
       </td>
       <td className="project-row-meta">{formatDate(project.updated_at)}</td>
       <td className="project-row-meta">{formatDate(project.created_at)}</td>
@@ -35,6 +40,12 @@ export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Pro
       </td>
     </tr>
   )
+}
+
+function projectTypeBadge(project: ProjectSummary): 'Skill' | 'Data' | null {
+  if (project.project_type === 'data') return 'Data'
+  if (project.project_type === 'skill' || project.is_skill_project) return 'Skill'
+  return null
 }
 
 function formatDate(iso: string): string {

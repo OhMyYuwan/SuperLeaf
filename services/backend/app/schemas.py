@@ -636,6 +636,35 @@ class ProjectSkillCacheOut(BaseModel):
     skill: SkillOut
 
 
+class ProjectSkillDataPackageIn(BaseModel):
+    data_project_id: str = Field(min_length=1, max_length=64)
+    status: str = Field(
+        default="submitted",
+        pattern="^(submitted|all|pending|in_review|labeled|discarded)$",
+    )
+
+
+class ProjectSkillDataPackageFileOut(BaseModel):
+    path: str
+    kind: str
+    size_bytes: int
+
+
+class ProjectSkillDataPackageOut(BaseModel):
+    dataset_project_id: str
+    dataset_name: str
+    status_filter: str
+    record_count: int
+    folder: str
+    files: list[ProjectSkillDataPackageFileOut]
+    generated_at: str
+
+
+class ProjectSkillDataClearOut(BaseModel):
+    folder: str
+    deleted_count: int
+
+
 class ProjectMemberAddIn(BaseModel):
     email: str = Field(min_length=1, max_length=255)
     role: str = Field(default="editor", pattern="^(editor|viewer)$")

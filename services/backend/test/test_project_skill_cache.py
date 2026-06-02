@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -7,10 +9,24 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models import Doc, Folder, NativeAgentSkillInstall, Project, ProjectMember, Provider, Skill, User
+from app.models import (
+    DatasetProject,
+    DatasetRecord,
+    DatasetResponse,
+    Doc,
+    Folder,
+    NativeAgentSkillInstall,
+    Project,
+    ProjectMember,
+    Provider,
+    Skill,
+    User,
+)
 from app.services.agent_registry_service import AgentRegistryService
 from app.services.native_agent_service import NativeAgentService
+from app.services.project_fs_service import ProjectFsService
 from app.services.project_service import ProjectService
+from app.services.skill_data_handoff_service import SkillDataHandoffService
 from app.settings import settings
 
 
@@ -285,6 +301,186 @@ def test_project_skill_cache_requires_root_skill_md(tmp_path):
 
         with pytest.raises(ValueError, match="SKILL.md"):
             NativeAgentService(db).update_project_skill_cache(project, user_id=user.id)
+    finally:
+        settings.data_dir = old_data_dir
+
+
+def test_skill_data_handoff_is_visible_but_excluded_from_cache_and_export(tmp_path):
+    old_data_dir = settings.data_dir
+    settings.data_dir = tmp_path / "data"
+    try:
+        db = _db()
+        user, skill_project = _seed_project(db)
+        skill_project.project_type = "skill"
+        skill_project.is_skill_project = True
+
+        data_project = Project(
+            id="data_project",
+            user_id=user.id,
+            name="Quality Dataset",
+            project_type="data",
+        )
+        second_data_project = Project(
+            id="second_data_project",
+            user_id=user.id,
+            name="Regression Dataset",
+            project_type="data",
+        )
+        dataset = DatasetProject(
+            id="dataset1",
+            project_id=data_project.id,
+            user_id=user.id,
+            name="Quality Dataset",
+            label_schema={"questions": [{"name": "task_success", "type": "label"}]},
+        )
+        second_dataset = DatasetProject(
+            id="dataset2",
+            project_id=second_data_project.id,
+            user_id=user.id,
+            name="Regression Dataset",
+            label_schema={"questions": [{"name": "task_success", "type": "label"}]},
+        )
+        record = DatasetRecord(
+            id="record1",
+            dataset_project_id=dataset.id,
+            user_id=user.id,
+            source_type="conversations",
+            source_id="conv1",
+            fingerprint="fp1",
+            fields={
+                "source_text": "User asked for Skill improvement.",
+                "agent_output": "A weak answer.",
+            },
+            record_metadata={"agent_name": "Writer"},
+            provenance={"source": "conversation"},
+            status="labeled",
+        )
+        response = DatasetResponse(
+            id="response1",
+            dataset_project_id=dataset.id,
+            record_id=record.id,
+            user_id=user.id,
+            status="submitted",
+            values={"task_success": "failure", "training_candidate": "yes"},
+        )
+        second_record = DatasetRecord(
+            id="record2",
+            dataset_project_id=second_dataset.id,
+            user_id=user.id,
+            source_type="workflow_runs",
+            source_id="run1",
+            fingerprint="fp2",
+            fields={
+                "source_text": "Workflow failed to follow the Skill.",
+                "agent_output": "Another weak answer.",
+            },
+            record_metadata={"agent_name": "Reviewer"},
+            provenance={"source": "workflow"},
+            status="labeled",
+        )
+        second_response = DatasetResponse(
+            id="response2",
+            dataset_project_id=second_dataset.id,
+            record_id=second_record.id,
+            user_id=user.id,
+            status="submitted",
+            values={"task_success": "failure", "training_candidate": "yes"},
+        )
+        db.add_all(
+            [
+                data_project,
+                second_data_project,
+                dataset,
+                second_dataset,
+                record,
+                second_record,
+                response,
+                second_response,
+                skill_project,
+            ]
+        )
+        db.commit()
+
+        result = SkillDataHandoffService(db).attach_dataset_package(
+            skill_project=skill_project,
+            data_project=data_project,
+            user=user,
+            status="submitted",
+        )
+
+        assert result.folder == "_skill_data/Quality Dataset/latest"
+        assert result.record_count == 1
+        assert "_skill_data/Quality Dataset/latest/labeled_samples.jsonl" in {
+            file["path"] for file in result.files
+        }
+        second_result = SkillDataHandoffService(db).attach_dataset_package(
+            skill_project=skill_project,
+            data_project=second_data_project,
+            user=user,
+            status="submitted",
+        )
+        assert second_result.folder == "_skill_data/Regression Dataset/latest"
+        data_root = (
+            db.query(Folder)
+            .filter_by(project_id=skill_project.id, name="_skill_data")
+            .one()
+        )
+        data_folders = {
+            folder.name
+            for folder in db.query(Folder).filter_by(
+                project_id=skill_project.id,
+                parent_folder_id=data_root.id,
+            )
+        }
+        assert {"Quality Dataset", "Regression Dataset"} <= data_folders
+        data_folder = (
+            db.query(Folder)
+            .filter_by(
+                project_id=skill_project.id,
+                parent_folder_id=data_root.id,
+                name="Quality Dataset",
+            )
+            .one()
+        )
+        latest = (
+            db.query(Folder)
+            .filter_by(project_id=skill_project.id, parent_folder_id=data_folder.id, name="latest")
+            .one()
+        )
+        latest_docs = {
+            doc.name
+            for doc in db.query(Doc).filter_by(project_id=skill_project.id, folder_id=latest.id)
+        }
+        assert {"manifest.json", "records.jsonl", "responses.jsonl", "labeled_samples.jsonl"} <= latest_docs
+
+        cleared = SkillDataHandoffService(db).clear_dataset_package(
+            skill_project=skill_project,
+            data_project=data_project,
+        )
+        assert cleared.folder == "_skill_data/Quality Dataset"
+        assert cleared.deleted_count > 0
+        assert db.query(Folder).filter_by(project_id=skill_project.id, name="_skill_data").first() is not None
+        assert db.query(Folder).filter_by(project_id=skill_project.id, name="Quality Dataset").first() is None
+        assert db.query(Folder).filter_by(project_id=skill_project.id, name="Regression Dataset").first() is not None
+        assert SkillDataHandoffService(db).clear_dataset_package(
+            skill_project=skill_project,
+            data_project=data_project,
+        ).deleted_count == 0
+
+        result = SkillDataHandoffService(db).attach_dataset_package(
+            skill_project=skill_project,
+            data_project=data_project,
+            user=user,
+            status="submitted",
+        )
+        assert result.record_count == 1
+
+        skill = NativeAgentService(db).update_project_skill_cache(skill_project, user_id=user.id)
+        assert not Path(skill.cache_path, "_skill_data").exists()
+
+        export_bytes = ProjectFsService(db, skill_project).export_zip()
+        with zipfile.ZipFile(io.BytesIO(export_bytes)) as archive:
+            assert not any(name.startswith("_skill_data/") for name in archive.namelist())
     finally:
         settings.data_dir = old_data_dir
 

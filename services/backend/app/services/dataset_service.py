@@ -483,7 +483,13 @@ class DatasetService:
             status="discarded",
         )
 
-    def export_zip(self, dataset: DatasetProject, *, user: User, status: str = "submitted") -> bytes:
+    def export_package_files(
+        self,
+        dataset: DatasetProject,
+        *,
+        user: User,
+        status: str = "submitted",
+    ) -> tuple[dict[str, str], dict[str, Any]]:
         records = self._export_records(dataset, user_id=user.id, status=status)
         responses = self.responses_for_records(records, user_id=user.id)
         exported_at = datetime.utcnow().isoformat()
@@ -496,42 +502,40 @@ class DatasetService:
             "schema": dataset.label_schema,
             "exported_at": exported_at,
         }
+        records_jsonl = "\n".join(
+            json.dumps(_record_payload(row), ensure_ascii=False, default=str)
+            for row in records
+        )
+        responses_jsonl = "\n".join(
+            json.dumps(_response_payload(resp), ensure_ascii=False, default=str)
+            for resp in responses.values()
+        )
+        labeled_samples_jsonl = "\n".join(
+            json.dumps(
+                {
+                    **_record_payload(row),
+                    "response": _response_payload(responses[row.id]),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            for row in records
+            if row.id in responses
+        )
+        files = {
+            "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
+            "records.jsonl": records_jsonl + ("\n" if records_jsonl else ""),
+            "responses.jsonl": responses_jsonl + ("\n" if responses_jsonl else ""),
+            "labeled_samples.jsonl": labeled_samples_jsonl + ("\n" if labeled_samples_jsonl else ""),
+        }
+        return files, manifest
 
+    def export_zip(self, dataset: DatasetProject, *, user: User, status: str = "submitted") -> bytes:
+        files, _manifest = self.export_package_files(dataset, user=user, status=status)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
-            zf.writestr(
-                "records.jsonl",
-                "\n".join(
-                    json.dumps(_record_payload(row), ensure_ascii=False, default=str)
-                    for row in records
-                )
-                + ("\n" if records else ""),
-            )
-            zf.writestr(
-                "responses.jsonl",
-                "\n".join(
-                    json.dumps(_response_payload(resp), ensure_ascii=False, default=str)
-                    for resp in responses.values()
-                )
-                + ("\n" if responses else ""),
-            )
-            zf.writestr(
-                "labeled_samples.jsonl",
-                "\n".join(
-                    json.dumps(
-                        {
-                            **_record_payload(row),
-                            "response": _response_payload(responses[row.id]),
-                        },
-                        ensure_ascii=False,
-                        default=str,
-                    )
-                    for row in records
-                    if row.id in responses
-                )
-                + ("\n" if responses else ""),
-            )
+            for path, content in files.items():
+                zf.writestr(path, content)
         return buf.getvalue()
 
     def _export_records(

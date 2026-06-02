@@ -4,8 +4,8 @@
  * Keyed by docId so multiple open documents can have independent loading
  * state; `currentDocId` tracks the one HistoryTab is currently showing.
  *
- * Diff payloads are cached by `${from}->${to}` so flipping between two
- * versions doesn't re-fetch every time.
+ * Diff payloads are cached by `${from}->${to}` so reopening a comparison
+ * doesn't re-fetch every time. `to` can be a version number or `current`.
  */
 
 import { create } from 'zustand'
@@ -31,14 +31,14 @@ interface HistoryState {
 
   setCurrentDoc: (docId: string | null) => void
   loadVersions: (docId: string) => Promise<void>
-  loadDiff: (docId: string, from: number, to: number) => Promise<DiffPayload>
+  loadDiff: (docId: string, from: number, to: number | 'current') => Promise<DiffPayload>
   restore: (docId: string, version: number) => Promise<BackendDoc>
   addLabel: (docId: string, version: number, text: string) => Promise<void>
   removeLabel: (docId: string, version: number, labelId: string) => Promise<void>
   loadOperations: (docId: string) => Promise<void>
 }
 
-function diffKey(docId: string, from: number, to: number) {
+function diffKey(docId: string, from: number, to: number | 'current') {
   return `${docId}|${from}->${to}`
 }
 

@@ -52,7 +52,7 @@ export const versionApi = {
       `/api/docs/${encodeURIComponent(docId)}/versions/${version}`,
     ),
 
-  diff: (docId: string, from: number, to: number) =>
+  diff: (docId: string, from: number, to: number | 'current') =>
     http<DiffResponse>(
       `/api/docs/${encodeURIComponent(docId)}/diff?from=${from}&to=${to}`,
     ),

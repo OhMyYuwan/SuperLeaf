@@ -2,6 +2,40 @@
   background: #101114;
 }
 
+.data-project-shell,
+.data-project-shell * {
+  scrollbar-color: rgba(148, 163, 184, 0.46) transparent;
+  scrollbar-width: thin;
+}
+
+.data-project-shell::-webkit-scrollbar,
+.data-project-shell *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.data-project-shell::-webkit-scrollbar-track,
+.data-project-shell::-webkit-scrollbar-corner,
+.data-project-shell *::-webkit-scrollbar-track,
+.data-project-shell *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.data-project-shell::-webkit-scrollbar-thumb,
+.data-project-shell *::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.32);
+  background-clip: content-box;
+}
+
+.data-project-shell::-webkit-scrollbar-thumb:hover,
+.data-project-shell *::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  background-clip: content-box;
+}
+
 .data-project-main {
   flex: 1;
   min-height: 0;

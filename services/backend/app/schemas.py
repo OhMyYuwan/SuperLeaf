@@ -510,6 +510,22 @@ class DatasetProjectPatch(BaseModel):
     label_schema: dict | None = None
 
 
+class DatasetFilterOptionOut(BaseModel):
+    id: str
+    name: str
+    kind: str = ""
+    filter_key: str = ""
+    project_id: str = ""
+    description: str = ""
+    disabled: bool = False
+
+
+class DatasetFilterOptionsOut(BaseModel):
+    agents: list[DatasetFilterOptionOut]
+    skills: list[DatasetFilterOptionOut]
+    workflows: list[DatasetFilterOptionOut]
+
+
 class DatasetSourceRuleIn(BaseModel):
     source_project_id: str = Field(min_length=1, max_length=64)
     name: str = Field(default="", max_length=128)

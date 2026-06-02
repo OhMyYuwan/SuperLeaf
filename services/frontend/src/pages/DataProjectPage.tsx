@@ -11,14 +11,17 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Settings2,
   SlidersHorizontal,
   Trash2,
-  Users,
+  X,
 } from 'lucide-react'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { Topbar } from '../features/topbar'
 import {
   datasetApi,
+  type DatasetFilterOption,
+  type DatasetFilterOptions,
   type DatasetProject,
   type DatasetRecord,
   type DatasetRecordStatus,
@@ -52,6 +55,12 @@ interface SchemaQuestion {
   options: string[]
 }
 
+interface FilterLookups {
+  agents: Map<string, DatasetFilterOption>
+  skills: Map<string, DatasetFilterOption>
+  workflows: Map<string, DatasetFilterOption>
+}
+
 const SOURCE_TYPES: DatasetSourceType[] = ['annotations', 'conversations', 'workflow_runs']
 const SOURCE_LABELS: Record<DatasetSourceType, string> = {
   annotations: 'Annotations',
@@ -80,6 +89,11 @@ const CONCRETE_STATUSES: Exclude<DatasetRecordStatus, 'all'>[] = [
 const ISSUE_OPTIONS = ['incorrect', 'missing_context', 'formatting', 'unsafe', 'tool_error', 'other']
 const RECORD_PAGE_LIMIT = 120
 const RECORD_SNAPSHOT_LIMIT = 200
+const EMPTY_FILTER_OPTIONS: DatasetFilterOptions = {
+  agents: [],
+  skills: [],
+  workflows: [],
+}
 const EMPTY_VALUES: LabelValues = {
   task_success: 'unclear',
   helpfulness: '',
@@ -96,6 +110,7 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
   const canWrite = role !== 'viewer'
 
   const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
+  const [sourceRulesOpen, setSourceRulesOpen] = useState(false)
   const [dataset, setDataset] = useState<DatasetProject | null>(null)
   const [rules, setRules] = useState<DatasetSourceRule[]>([])
   const [records, setRecords] = useState<DatasetRecord[]>([])
@@ -113,6 +128,8 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
   const [skillFilter, setSkillFilter] = useState('')
   const [workflowFilter, setWorkflowFilter] = useState('')
   const [onlyTrainingCandidates, setOnlyTrainingCandidates] = useState(false)
+  const [filterOptionsByProject, setFilterOptionsByProject] = useState<Record<string, DatasetFilterOptions>>({})
+  const [loadingFilterProjectId, setLoadingFilterProjectId] = useState<string | null>(null)
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null)
   const [values, setValues] = useState<LabelValues>(EMPTY_VALUES)
   const [selectedAt, setSelectedAt] = useState(Date.now())
@@ -134,6 +151,12 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
     () => questionsFromSchema(dataset?.label_schema),
     [dataset?.label_schema],
   )
+  const filterOptions = filterOptionsByProject[sourceProjectId] ?? EMPTY_FILTER_OPTIONS
+  const filterOptionsLoading = loadingFilterProjectId === sourceProjectId
+  const filterLookups = useMemo(
+    () => buildFilterLookups(Object.values(filterOptionsByProject)),
+    [filterOptionsByProject],
+  )
   const enabledRules = rules.filter((rule) => rule.is_enabled)
 
   useEffect(() => {
@@ -145,6 +168,47 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
       setSourceProjectId(sourceProjects[0].id)
     }
   }, [sourceProjectId, sourceProjects])
+
+  useEffect(() => {
+    if (!sourceRulesOpen) return
+    const projectIds = Array.from(
+      new Set([sourceProjectId, ...rules.map((rule) => rule.source_project_id)].filter(Boolean)),
+    )
+    const missingProjectIds = projectIds.filter((id) => !filterOptionsByProject[id])
+    if (missingProjectIds.length === 0) return
+    let isCurrent = true
+    setLoadingFilterProjectId(missingProjectIds[0])
+    Promise.all(
+      missingProjectIds.map(async (id) => [id, await datasetApi.filterOptions(id)] as const),
+    )
+      .then((entries) => {
+        if (!isCurrent) return
+        setFilterOptionsByProject((previous) => {
+          const next = { ...previous }
+          for (const [id, options] of entries) {
+            next[id] = options
+          }
+          return next
+        })
+      })
+      .catch((err) => {
+        if (isCurrent) setError(err instanceof Error ? err.message : '加载来源筛选选项失败')
+      })
+      .finally(() => {
+        if (isCurrent) setLoadingFilterProjectId(null)
+      })
+    return () => {
+      isCurrent = false
+    }
+  }, [filterOptionsByProject, rules, sourceProjectId, sourceRulesOpen])
+
+  useEffect(() => {
+    const options = filterOptionsByProject[sourceProjectId]
+    if (!options) return
+    setAgentFilter((previous) => (previous && !hasOption(options.agents, previous) ? '' : previous))
+    setSkillFilter((previous) => (previous && !hasOption(options.skills, previous) ? '' : previous))
+    setWorkflowFilter((previous) => (previous && !hasOption(options.workflows, previous) ? '' : previous))
+  }, [filterOptionsByProject, sourceProjectId])
 
   useEffect(() => {
     void reload()
@@ -166,6 +230,12 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
     setValues(valuesFromRecord(selectedRecord))
     setSelectedAt(Date.now())
   }, [selectedRecord?.id])
+
+  useEffect(() => {
+    if (!feedback) return
+    const timeout = window.setTimeout(() => setFeedback(null), 2600)
+    return () => window.clearTimeout(timeout)
+  }, [feedback])
 
   const reload = async () => {
     setLoading(true)
@@ -202,6 +272,11 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
     try {
       const selectedTypes = SOURCE_TYPES.filter((type) => sourceTypes[type])
       const sourceProject = projects.find((item) => item.id === sourceProjectId)
+      const selectedWorkflow = filterOptions.workflows.find((option) => option.id === workflowFilter.trim())
+      const workflowFilterKey = selectedWorkflow?.filter_key === 'workflow_definition_id'
+        ? 'workflow_definition_id'
+        : 'workflow_id'
+      const workflowFilterValue = workflowFilter.trim()
       await datasetApi.createSourceRule({
         source_project_id: sourceProjectId,
         name: sourceProject ? `${sourceProject.name} data` : 'Project data',
@@ -209,7 +284,8 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
         filters: compactFilters({
           agent_id: agentFilter.trim(),
           skill_id: skillFilter.trim(),
-          workflow_id: workflowFilter.trim(),
+          workflow_id: workflowFilterKey === 'workflow_id' ? workflowFilterValue : undefined,
+          workflow_definition_id: workflowFilterKey === 'workflow_definition_id' ? workflowFilterValue : undefined,
           only_training_candidates: onlyTrainingCandidates || undefined,
         }),
         is_enabled: true,
@@ -344,6 +420,11 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
   return (
     <div className="app-shell data-project-shell">
       <Topbar onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
+      {feedback && (
+        <div className="data-toast" role="status" aria-live="polite">
+          {feedback}
+        </div>
+      )}
       <main className="data-project-main">
         <section className="data-workbench-header">
           <div className="data-workbench-title">
@@ -371,6 +452,14 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
             <button className="data-icon-button" onClick={() => void reload()} disabled={loading} title="刷新数据">
               {loading ? <Loader2 className="is-spinning" size={16} /> : <RefreshCw size={16} />}
             </button>
+            <button
+              className={`data-icon-button ${sourceRulesOpen ? 'is-active' : ''}`}
+              onClick={() => setSourceRulesOpen((open) => !open)}
+              title={sourceRulesOpen ? '隐藏来源规则' : '来源规则'}
+              aria-pressed={sourceRulesOpen}
+            >
+              <Settings2 size={16} />
+            </button>
             <button className="data-secondary-button" onClick={() => void syncAllRules()} disabled={!canWrite || enabledRules.length === 0 || working === 'sync-all'}>
               <RefreshCw size={15} /> 同步全部
             </button>
@@ -383,10 +472,9 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
           </div>
         </section>
 
-        {(error || feedback || !canWrite) && (
+        {(error || !canWrite) && (
           <div className="data-workbench-messages" aria-live="polite">
             {error && <div className="data-message is-error">{error}</div>}
-            {feedback && <div className="data-message is-success">{feedback}</div>}
             {!canWrite && <div className="data-message">当前项目权限为只读，可以查看与导出，不能修改来源规则或提交标注。</div>}
           </div>
         )}
@@ -431,85 +519,6 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
                 ))}
               </div>
             </section>
-
-            <section className="data-panel-section">
-              <div className="data-section-heading">
-                <div>
-                  <span><GitBranch size={14} /> Source rules</span>
-                  <strong>{rules.length}</strong>
-                </div>
-              </div>
-              <div className="data-rule-builder">
-                <label>
-                  来源项目
-                  <select value={sourceProjectId} onChange={(event) => setSourceProjectId(event.target.value)} disabled={!canWrite || sourceProjects.length === 0}>
-                    {sourceProjects.length === 0 && <option value="">暂无可选来源项目</option>}
-                    {sourceProjects.map((item) => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <div className="data-source-checks" aria-label="来源类型">
-                  {SOURCE_TYPES.map((type) => (
-                    <label key={type}>
-                      <input
-                        type="checkbox"
-                        checked={sourceTypes[type]}
-                        disabled={!canWrite}
-                        onChange={(event) => setSourceTypes((previous) => ({ ...previous, [type]: event.target.checked }))}
-                      />
-                      {SOURCE_LABELS[type]}
-                    </label>
-                  ))}
-                </div>
-                <div className="data-rule-inputs">
-                  <input value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} placeholder="Agent ID" disabled={!canWrite} />
-                  <input value={skillFilter} onChange={(event) => setSkillFilter(event.target.value)} placeholder="Skill ID" disabled={!canWrite} />
-                  <input value={workflowFilter} onChange={(event) => setWorkflowFilter(event.target.value)} placeholder="Workflow ID" disabled={!canWrite} />
-                </div>
-                <label className="data-inline-check">
-                  <input
-                    type="checkbox"
-                    checked={onlyTrainingCandidates}
-                    disabled={!canWrite}
-                    onChange={(event) => setOnlyTrainingCandidates(event.target.checked)}
-                  />
-                  只收集 training candidates
-                </label>
-                <button className="data-primary-button" onClick={() => void createRule()} disabled={!canWrite || !sourceProjectId || working === 'create-rule'}>
-                  <Plus size={15} /> 创建来源规则
-                </button>
-              </div>
-              <div className="data-rule-list">
-                {rules.length === 0 ? (
-                  <EmptyState title="暂无来源规则" detail="Data Project 会根据来源规则持续收集 Agent、Skill、Workflow 数据。" />
-                ) : rules.map((rule) => (
-                  <article key={rule.id} className="data-rule-row">
-                    <div>
-                      <strong>{rule.name}</strong>
-                      <span>{sourceName(rule.source_project_id, projects)}</span>
-                    </div>
-                    <p>{rule.source_types.map((type) => SOURCE_LABELS[type]).join(' / ')}</p>
-                    <small>{filterSummary(rule.filters)}</small>
-                    <div className="data-rule-actions">
-                      <label className="data-switch">
-                        <input
-                          type="checkbox"
-                          checked={rule.is_enabled}
-                          disabled={!canWrite || working === `toggle:${rule.id}`}
-                          onChange={(event) => void toggleRuleEnabled(rule, event.target.checked)}
-                        />
-                        <span>{rule.is_enabled ? 'enabled' : 'paused'}</span>
-                      </label>
-                      <button className="data-secondary-button" onClick={() => void syncRule(rule)} disabled={!canWrite || working === `sync:${rule.id}`}>
-                        <RefreshCw size={14} /> 同步
-                      </button>
-                    </div>
-                    {rule.last_synced_at && <time>{formatDate(rule.last_synced_at)}</time>}
-                  </article>
-                ))}
-              </div>
-            </section>
           </aside>
 
           <section className="data-record-panel" aria-label="当前数据样本">
@@ -535,175 +544,271 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
                     provenance: selectedRecord.provenance,
                   })}</pre>
                 </details>
+                <section className="data-record-metadata">
+                  <div className="data-section-heading">
+                    <div>
+                      <span><FileJson size={14} /> Metadata</span>
+                      <strong>{selectedRecord.fingerprint.slice(0, 8)}</strong>
+                    </div>
+                  </div>
+                  <MetaRows rows={provenanceRows(selectedRecord, projects, rules)} />
+                </section>
               </>
             ) : (
               <EmptyState title="选择一条 record" detail="左侧队列会列出已同步的数据。选择后即可查看字段并提交 response。" />
             )}
           </section>
 
-          <aside className="data-label-workbench-panel" aria-label="标注和导出">
-            <section className="data-panel-section">
-              <div className="data-section-heading">
-                <div>
-                  <span><SlidersHorizontal size={14} /> Label schema</span>
-                  <strong>{schemaQuestions.length}</strong>
-                </div>
-              </div>
-              <div className="data-schema-list">
-                {schemaQuestions.length === 0 ? (
-                  <EmptyState title="暂无 schema" detail="当前 dataset 还没有问题配置。" />
-                ) : schemaQuestions.map((question) => (
-                  <div key={question.name} className="data-schema-row">
-                    <strong>{question.title}</strong>
-                    <span>{question.type}</span>
-                    {question.options.length > 0 && <p>{question.options.join(' / ')}</p>}
+          <aside
+            key={sourceRulesOpen ? 'source-rules-panel' : 'labeling-panel'}
+            className={`data-label-workbench-panel ${sourceRulesOpen ? 'is-source-rules' : 'is-labeling'}`}
+            aria-label={sourceRulesOpen ? '来源规则' : '标注和导出'}
+          >
+            {sourceRulesOpen ? (
+              <section className="data-panel-section data-source-rules-section">
+                <div className="data-section-heading">
+                  <div>
+                    <span><Settings2 size={14} /> Source rules</span>
+                    <strong>{rules.length}</strong>
                   </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="data-panel-section">
-              <div className="data-section-heading">
-                <div>
-                  <span><CheckCircle2 size={14} /> Response</span>
-                  <strong>{selectedRecord?.my_response?.status ?? 'new'}</strong>
+                  <button className="data-icon-button" onClick={() => setSourceRulesOpen(false)} aria-label="关闭来源规则">
+                    <X size={16} />
+                  </button>
                 </div>
-              </div>
-              <div className="data-label-form">
-                <div className="data-form-group">
-                  <label>Task success</label>
-                  <div className="data-segmented" role="radiogroup" aria-label="Task success">
-                    {['success', 'partial', 'failure', 'unclear'].map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        role="radio"
-                        aria-checked={values.task_success === item}
-                        className={values.task_success === item ? 'is-active' : ''}
-                        onClick={() => setValues((previous) => ({ ...previous, task_success: item }))}
-                        disabled={!canWrite || !selectedRecord}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="data-form-group">
-                  <label>Helpfulness</label>
-                  <div className="data-rating" role="radiogroup" aria-label="Helpfulness">
-                    {[1, 2, 3, 4, 5].map((rating) => (
-                      <button
-                        key={rating}
-                        type="button"
-                        role="radio"
-                        aria-checked={values.helpfulness === String(rating)}
-                        className={values.helpfulness === String(rating) ? 'is-active' : ''}
-                        onClick={() => setValues((previous) => ({ ...previous, helpfulness: String(rating) }))}
-                        disabled={!canWrite || !selectedRecord}
-                      >
-                        {rating}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="data-form-group">
-                  <label>Issues</label>
-                  <div className="data-issue-grid">
-                    {ISSUE_OPTIONS.map((issue) => (
-                      <label key={issue}>
+                <div className="data-source-inline-body">
+                  <div className="data-source-inline-block">
+                    <div className="data-section-heading">
+                      <div>
+                        <span><GitBranch size={14} /> Create rule</span>
+                        <strong>{sourceProjects.length}</strong>
+                      </div>
+                    </div>
+                    <div className="data-rule-builder">
+                      <label>
+                        来源项目
+                        <select value={sourceProjectId} onChange={(event) => setSourceProjectId(event.target.value)} disabled={!canWrite || sourceProjects.length === 0}>
+                          {sourceProjects.length === 0 && <option value="">暂无可选来源项目</option>}
+                          {sourceProjects.map((item) => (
+                            <option key={item.id} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="data-source-checks" aria-label="来源类型">
+                        {SOURCE_TYPES.map((type) => (
+                          <label key={type}>
+                            <input
+                              type="checkbox"
+                              checked={sourceTypes[type]}
+                              disabled={!canWrite}
+                              onChange={(event) => setSourceTypes((previous) => ({ ...previous, [type]: event.target.checked }))}
+                            />
+                            {SOURCE_LABELS[type]}
+                          </label>
+                        ))}
+                      </div>
+                      <div className="data-rule-inputs">
+                        <FilterSelect
+                          label="Agent"
+                          value={agentFilter}
+                          options={filterOptions.agents}
+                          emptyLabel="全部 Agent"
+                          loading={filterOptionsLoading}
+                          disabled={!canWrite}
+                          onChange={setAgentFilter}
+                        />
+                        <FilterSelect
+                          label="Skill"
+                          value={skillFilter}
+                          options={filterOptions.skills}
+                          emptyLabel="全部 Skill"
+                          loading={filterOptionsLoading}
+                          disabled={!canWrite}
+                          onChange={setSkillFilter}
+                        />
+                        <FilterSelect
+                          label="Workflow"
+                          value={workflowFilter}
+                          options={filterOptions.workflows}
+                          emptyLabel="全部 Workflow"
+                          loading={filterOptionsLoading}
+                          disabled={!canWrite}
+                          onChange={setWorkflowFilter}
+                        />
+                      </div>
+                      <label className="data-inline-check">
                         <input
                           type="checkbox"
-                          checked={values.issues.includes(issue)}
-                          disabled={!canWrite || !selectedRecord}
-                          onChange={(event) => setValues((previous) => ({
-                            ...previous,
-                            issues: event.target.checked
-                              ? [...previous.issues, issue]
-                              : previous.issues.filter((item) => item !== issue),
-                          }))}
+                          checked={onlyTrainingCandidates}
+                          disabled={!canWrite}
+                          onChange={(event) => setOnlyTrainingCandidates(event.target.checked)}
                         />
-                        {issue}
+                        只收集 training candidates
                       </label>
-                    ))}
+                      <button className="data-primary-button" onClick={() => void createRule()} disabled={!canWrite || !sourceProjectId || working === 'create-rule'}>
+                        <Plus size={15} /> 创建来源规则
+                      </button>
+                    </div>
+                  </div>
+                  <div className="data-source-inline-block">
+                    <div className="data-section-heading">
+                      <div>
+                        <span><Settings2 size={14} /> Existing rules</span>
+                        <strong>{rules.length}</strong>
+                      </div>
+                    </div>
+                    <div className="data-rule-list">
+                      {rules.length === 0 ? (
+                        <EmptyState title="暂无来源规则" detail="Data Project 会根据来源规则持续收集 Agent、Skill、Workflow 数据。" />
+                      ) : rules.map((rule) => (
+                        <article key={rule.id} className="data-rule-row">
+                          <div>
+                            <strong>{rule.name}</strong>
+                            <span>{sourceName(rule.source_project_id, projects)}</span>
+                          </div>
+                          <p>{rule.source_types.map((type) => SOURCE_LABELS[type]).join(' / ')}</p>
+                          <small>{filterSummary(rule.filters, filterLookups)}</small>
+                          <div className="data-rule-actions">
+                            <label className="data-switch">
+                              <input
+                                type="checkbox"
+                                checked={rule.is_enabled}
+                                disabled={!canWrite || working === `toggle:${rule.id}`}
+                                onChange={(event) => void toggleRuleEnabled(rule, event.target.checked)}
+                              />
+                              <span>{rule.is_enabled ? 'enabled' : 'paused'}</span>
+                            </label>
+                            <button className="data-secondary-button" onClick={() => void syncRule(rule)} disabled={!canWrite || working === `sync:${rule.id}`}>
+                              <RefreshCw size={14} /> 同步
+                            </button>
+                          </div>
+                          {rule.last_synced_at && <time>{formatDate(rule.last_synced_at)}</time>}
+                        </article>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <label className="data-inline-check">
-                  <input
-                    type="checkbox"
-                    checked={values.training_candidate === 'yes'}
-                    disabled={!canWrite || !selectedRecord}
-                    onChange={(event) => setValues((previous) => ({
-                      ...previous,
-                      training_candidate: event.target.checked ? 'yes' : 'no',
-                    }))}
-                  />
-                  加入优化样本池
-                </label>
-                <label className="data-comments-field">
-                  Comments
-                  <textarea
-                    value={values.comments}
-                    onChange={(event) => setValues((previous) => ({ ...previous, comments: event.target.value }))}
-                    rows={4}
-                    disabled={!canWrite || !selectedRecord}
-                  />
-                </label>
-                <div className="data-response-actions">
-                  <button className="data-secondary-button" onClick={() => void saveResponse('draft')} disabled={!canWrite || !selectedRecord || working === 'response:draft'}>
-                    <Save size={14} /> 保存草稿
-                  </button>
-                  <button className="data-primary-button" onClick={() => void saveResponse('submitted')} disabled={!canWrite || !selectedRecord || working === 'response:submitted'}>
-                    <CheckCircle2 size={14} /> 提交
-                  </button>
-                  <button className="data-danger-button" onClick={() => void discardRecord()} disabled={!canWrite || !selectedRecord || working === 'discard'}>
-                    <Trash2 size={14} /> 丢弃
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section className="data-panel-section">
-              <div className="data-section-heading">
-                <div>
-                  <span><Users size={14} /> Collaboration</span>
-                  <strong>{role ?? 'unknown'}</strong>
-                </div>
-              </div>
-              <MetaRows rows={[
-                ['project role', role ?? 'unknown'],
-                ['record response', selectedRecord?.my_response?.status ?? 'unstarted'],
-                ['dataset status', dataset?.status ?? 'active'],
-                ['guidelines', dataset?.guidelines ?? 'not set'],
-              ]} />
-            </section>
-
-            <section className="data-panel-section">
-              <div className="data-section-heading">
-                <div>
-                  <span><PackageCheck size={14} /> Export package</span>
-                  <strong>{statusCounts.labeled}</strong>
-                </div>
-              </div>
-              <div className="data-export-actions">
-                <button className="data-secondary-button" onClick={() => void downloadExport('all')} disabled={working === 'export:all'}>
-                  <Download size={14} /> 导出全部
-                </button>
-                <button className="data-primary-button" onClick={() => void downloadExport('submitted')} disabled={working === 'export:submitted'}>
-                  <PackageCheck size={14} /> 导出已提交
-                </button>
-              </div>
-            </section>
-
-            {selectedRecord && (
+              </section>
+            ) : (
+              <>
               <section className="data-panel-section">
                 <div className="data-section-heading">
                   <div>
-                    <span><FileJson size={14} /> Provenance</span>
-                    <strong>{selectedRecord.fingerprint.slice(0, 8)}</strong>
+                    <span><SlidersHorizontal size={14} /> Label schema</span>
+                    <strong>{schemaQuestions.length}</strong>
                   </div>
                 </div>
-                <MetaRows rows={provenanceRows(selectedRecord, projects, rules)} />
+                <div className="data-schema-list">
+                  {schemaQuestions.length === 0 ? (
+                    <EmptyState title="暂无 schema" detail="当前 dataset 还没有问题配置。" />
+                  ) : schemaQuestions.map((question) => (
+                    <div key={question.name} className="data-schema-row">
+                      <strong>{question.title}</strong>
+                      <span>{question.type}</span>
+                      {question.options.length > 0 && <p>{question.options.join(' / ')}</p>}
+                    </div>
+                  ))}
+                </div>
               </section>
+              <section className="data-panel-section">
+                <div className="data-section-heading">
+                  <div>
+                    <span><CheckCircle2 size={14} /> Response</span>
+                    <strong>{selectedRecord?.my_response?.status ?? 'new'}</strong>
+                  </div>
+                </div>
+                <div className="data-label-form">
+                  <div className="data-form-group">
+                    <label>Task success</label>
+                    <div className="data-segmented" role="radiogroup" aria-label="Task success">
+                      {['success', 'partial', 'failure', 'unclear'].map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          role="radio"
+                          aria-checked={values.task_success === item}
+                          className={values.task_success === item ? 'is-active' : ''}
+                          onClick={() => setValues((previous) => ({ ...previous, task_success: item }))}
+                          disabled={!canWrite || !selectedRecord}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="data-form-group">
+                    <label>Helpfulness</label>
+                    <div className="data-rating" role="radiogroup" aria-label="Helpfulness">
+                      {[1, 2, 3, 4, 5].map((rating) => (
+                        <button
+                          key={rating}
+                          type="button"
+                          role="radio"
+                          aria-checked={values.helpfulness === String(rating)}
+                          className={values.helpfulness === String(rating) ? 'is-active' : ''}
+                          onClick={() => setValues((previous) => ({ ...previous, helpfulness: String(rating) }))}
+                          disabled={!canWrite || !selectedRecord}
+                        >
+                          {rating}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="data-form-group">
+                    <label>Issues</label>
+                    <div className="data-issue-grid">
+                      {ISSUE_OPTIONS.map((issue) => (
+                        <label key={issue}>
+                          <input
+                            type="checkbox"
+                            checked={values.issues.includes(issue)}
+                            disabled={!canWrite || !selectedRecord}
+                            onChange={(event) => setValues((previous) => ({
+                              ...previous,
+                              issues: event.target.checked
+                                ? [...previous.issues, issue]
+                                : previous.issues.filter((item) => item !== issue),
+                            }))}
+                          />
+                          {issue}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="data-inline-check">
+                    <input
+                      type="checkbox"
+                      checked={values.training_candidate === 'yes'}
+                      disabled={!canWrite || !selectedRecord}
+                      onChange={(event) => setValues((previous) => ({
+                        ...previous,
+                        training_candidate: event.target.checked ? 'yes' : 'no',
+                      }))}
+                    />
+                    加入优化样本池
+                  </label>
+                  <label className="data-comments-field">
+                    Comments
+                    <textarea
+                      value={values.comments}
+                      onChange={(event) => setValues((previous) => ({ ...previous, comments: event.target.value }))}
+                      rows={4}
+                      disabled={!canWrite || !selectedRecord}
+                    />
+                  </label>
+                  <div className="data-response-actions">
+                    <button className="data-secondary-button" onClick={() => void saveResponse('draft')} disabled={!canWrite || !selectedRecord || working === 'response:draft'}>
+                      <Save size={14} /> 保存草稿
+                    </button>
+                    <button className="data-primary-button" onClick={() => void saveResponse('submitted')} disabled={!canWrite || !selectedRecord || working === 'response:submitted'}>
+                      <CheckCircle2 size={14} /> 提交
+                    </button>
+                    <button className="data-danger-button" onClick={() => void discardRecord()} disabled={!canWrite || !selectedRecord || working === 'discard'}>
+                      <Trash2 size={14} /> 丢弃
+                    </button>
+                  </div>
+                </div>
+              </section>
+              </>
             )}
           </aside>
         </section>
@@ -768,6 +873,43 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
   )
 }
 
+function FilterSelect({
+  label,
+  value,
+  options,
+  emptyLabel,
+  loading,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: DatasetFilterOption[]
+  emptyLabel: string
+  loading: boolean
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  return (
+    <label>
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled || loading}
+        aria-label={label}
+      >
+        <option value="">{loading ? '加载中...' : emptyLabel}</option>
+        {options.map((option) => (
+          <option key={`${option.filter_key}:${option.id}`} value={option.id}>
+            {optionLabel(option)}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function MetaRows({ rows }: { rows: Array<[string, string]> }) {
   return (
     <dl className="data-meta-rows">
@@ -804,6 +946,24 @@ function responsePayload(values: LabelValues): Record<string, unknown> {
 
 function compactFilters(filters: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ''))
+}
+
+function hasOption(options: DatasetFilterOption[], id: string): boolean {
+  return options.some((option) => option.id === id)
+}
+
+function buildFilterLookups(optionSets: DatasetFilterOptions[]): FilterLookups {
+  const lookups: FilterLookups = {
+    agents: new Map(),
+    skills: new Map(),
+    workflows: new Map(),
+  }
+  for (const options of optionSets) {
+    for (const option of options.agents) lookups.agents.set(option.id, option)
+    for (const option of options.skills) lookups.skills.set(option.id, option)
+    for (const option of options.workflows) lookups.workflows.set(option.id, option)
+  }
+  return lookups
 }
 
 function normalizedProjectType(project: ProjectSummary): 'paper' | 'skill' | 'data' {
@@ -922,10 +1082,42 @@ function statusClass(status: string): string {
   return 'is-pending'
 }
 
-function filterSummary(filters: Record<string, unknown>): string {
+function filterSummary(filters: Record<string, unknown>, lookups: FilterLookups): string {
   const entries = Object.entries(filters ?? {}).filter(([, value]) => hasValue(value))
   if (entries.length === 0) return 'no filters'
-  return entries.map(([key, value]) => `${key}: ${formatInlineValue(value)}`).join(' · ')
+  return entries.map(([key, value]) => `${filterKeyLabel(key)}: ${formatFilterValue(key, value, lookups)}`).join(' · ')
+}
+
+function filterKeyLabel(key: string): string {
+  if (key === 'agent_id') return 'Agent'
+  if (key === 'skill_id') return 'Skill'
+  if (key === 'workflow_id' || key === 'workflow_definition_id') return 'Workflow'
+  if (key === 'only_training_candidates') return 'Training candidates'
+  return key
+}
+
+function formatFilterValue(key: string, value: unknown, lookups: FilterLookups): string {
+  if (typeof value === 'string') {
+    if (key === 'workflow_id' && value.startsWith('native:')) {
+      const agent = lookups.agents.get(value.slice('native:'.length))
+      if (agent) return `${agent.name || agent.id} · ${value}`
+    }
+    const option = key === 'agent_id'
+      ? lookups.agents.get(value)
+      : key === 'skill_id'
+        ? lookups.skills.get(value)
+        : key === 'workflow_id' || key === 'workflow_definition_id'
+          ? lookups.workflows.get(value)
+          : undefined
+    if (option) return optionLabel(option)
+  }
+  if (key === 'only_training_candidates' && typeof value === 'boolean') return value ? 'yes' : 'no'
+  return formatInlineValue(value)
+}
+
+function optionLabel(option: DatasetFilterOption): string {
+  const name = option.name || option.id
+  return `${name} · ${option.id}`
 }
 
 function formatInlineValue(value: unknown): string {

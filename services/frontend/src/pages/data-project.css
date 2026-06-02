@@ -133,6 +133,61 @@
   flex-wrap: wrap;
 }
 
+.data-toast {
+  position: fixed;
+  top: 62px;
+  right: 16px;
+  z-index: 3000;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 9px 12px;
+  border: 1px solid rgba(52, 211, 153, 0.32);
+  border-radius: 8px;
+  background: #123329;
+  color: #bbf7d0;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.data-source-rules-section {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  background: #121419;
+  overflow-y: auto;
+}
+
+.data-source-rules-section > .data-section-heading {
+  align-items: center;
+}
+
+.data-source-rules-section > .data-section-heading .data-icon-button {
+  width: 28px;
+  min-height: 28px;
+}
+
+.data-source-inline-body {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.data-source-inline-block {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 8px;
+  background: #181b21;
+}
+
+.data-source-inline-block:last-child {
+  padding-bottom: 10px;
+}
+
 .data-primary-button,
 .data-secondary-button,
 .data-danger-button,
@@ -175,6 +230,12 @@
 .data-icon-button:hover {
   border-color: rgba(125, 211, 252, 0.38);
   background: rgba(42, 47, 55, 0.86);
+}
+
+.data-icon-button.is-active {
+  border-color: rgba(45, 212, 191, 0.46);
+  background: rgba(20, 184, 166, 0.18);
+  color: #ccfbf1;
 }
 
 .data-danger-button {
@@ -228,12 +289,6 @@
   color: #fecaca;
 }
 
-.data-message.is-success {
-  border-color: rgba(52, 211, 153, 0.3);
-  background: rgba(6, 78, 59, 0.22);
-  color: #bbf7d0;
-}
-
 .data-workbench-layout {
   flex: 1;
   min-height: 0;
@@ -247,7 +302,7 @@
 .data-label-workbench-panel {
   min-height: 0;
   border: 1px solid rgba(148, 163, 184, 0.17);
-  background: rgba(18, 20, 25, 0.8);
+  background: #121419;
   overflow: hidden;
 }
 
@@ -256,6 +311,11 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+}
+
+.data-label-workbench-panel.is-source-rules > .data-panel-section:not(.data-source-rules-section) {
+  display: none;
+  pointer-events: none;
 }
 
 .data-record-panel {
@@ -340,10 +400,16 @@
 
 .data-record-queue {
   display: grid;
+  flex: 1;
   gap: 8px;
-  max-height: 36vh;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+}
+
+.data-queue-panel > .data-panel-section {
+  flex: 1;
+  min-height: 0;
 }
 
 .data-queue-item {
@@ -549,7 +615,7 @@
   padding: 10px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
-  background: rgba(35, 39, 46, 0.38);
+  background: #20242b;
 }
 
 .data-rule-row div:first-child {
@@ -727,6 +793,12 @@
   font-weight: 800;
 }
 
+.data-record-metadata {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+
 .data-schema-list {
   display: grid;
   gap: 7px;
@@ -738,7 +810,7 @@
   padding: 9px;
   border: 1px solid rgba(148, 163, 184, 0.13);
   border-radius: 8px;
-  background: rgba(35, 39, 46, 0.36);
+  background: #20242b;
 }
 
 .data-schema-row strong,
@@ -876,13 +948,7 @@
   .data-label-workbench-panel {
     grid-column: 1 / -1;
     min-height: 280px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-content: start;
-  }
-
-  .data-label-workbench-panel .data-panel-section {
-    border-right: 1px solid rgba(148, 163, 184, 0.13);
+    display: flex;
   }
 }
 

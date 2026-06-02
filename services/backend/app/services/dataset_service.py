@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     Annotation,
     AnnotationEvaluation,
+    CachedWorkflow,
     Conversation,
     DatasetBatch,
     DatasetProject,
@@ -26,8 +27,10 @@ from ..models import (
     NativeAgent,
     Project,
     User,
+    WorkflowDefinition,
     WorkflowRun,
 )
+from .native_agent_service import NativeAgentService
 from .project_member_service import ProjectMemberService
 
 DEFAULT_DATASET_SCHEMA = {
@@ -127,6 +130,82 @@ class DatasetService:
         self.db.commit()
         self.db.refresh(dataset)
         return dataset
+
+    def source_filter_options(self, source_project_id: str, *, user_id: str) -> dict[str, list[dict[str, Any]]]:
+        self._require_source_access(source_project_id, user_id=user_id)
+        agents = (
+            self.db.query(NativeAgent)
+            .filter(NativeAgent.project_id == source_project_id, NativeAgent.owner_user_id == user_id)
+            .order_by(NativeAgent.name.asc())
+            .all()
+        )
+        skills = NativeAgentService(self.db).list_skills(user_id=user_id)
+        workflows = (
+            self.db.query(CachedWorkflow)
+            .filter(CachedWorkflow.user_id == user_id)
+            .order_by(CachedWorkflow.name.asc())
+            .all()
+        )
+        definitions = (
+            self.db.query(WorkflowDefinition)
+            .filter(
+                WorkflowDefinition.project_id == source_project_id,
+                WorkflowDefinition.user_id == user_id,
+                WorkflowDefinition.is_active.is_(True),
+            )
+            .order_by(WorkflowDefinition.name.asc())
+            .all()
+        )
+        return {
+            "agents": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": "native-agent",
+                    "filter_key": "agent_id",
+                    "project_id": row.project_id,
+                    "description": row.description,
+                    "disabled": not row.is_enabled,
+                }
+                for row in agents
+            ],
+            "skills": [
+                {
+                    "id": row.id,
+                    "name": row.public_name or row.name,
+                    "kind": row.source or "skill",
+                    "filter_key": "skill_id",
+                    "project_id": row.project_id or "",
+                    "description": row.description,
+                    "disabled": False,
+                }
+                for row in skills
+            ],
+            "workflows": [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": row.kind or "workflow",
+                    "filter_key": "workflow_id",
+                    "project_id": "",
+                    "description": row.description,
+                    "disabled": bool(row.is_disabled),
+                }
+                for row in workflows
+            ]
+            + [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "kind": f"definition:{row.execution_mode}",
+                    "filter_key": "workflow_definition_id",
+                    "project_id": row.project_id,
+                    "description": row.description,
+                    "disabled": False,
+                }
+                for row in definitions
+            ],
+        }
 
     def list_source_rules(self, dataset: DatasetProject) -> list[DatasetSourceRule]:
         return (
@@ -620,6 +699,7 @@ class DatasetService:
                 filters,
                 source_status=row.status,
                 workflow_id=row.workflow_id,
+                workflow_definition_id=row.workflow_definition_id or "",
                 agent_ids=sorted(agent_ids),
                 skill_ids=sorted(skill_ids),
             ):
@@ -674,6 +754,7 @@ class DatasetService:
         *,
         source_status: str = "",
         workflow_id: str = "",
+        workflow_definition_id: str = "",
         agent_ids: list[str] | set[str] | None = None,
         skill_ids: list[str] | set[str] | None = None,
         evaluations: list[AnnotationEvaluation] | None = None,
@@ -681,6 +762,8 @@ class DatasetService:
         if filters.get("status") and source_status and source_status != filters["status"]:
             return False
         if filters.get("workflow_id") and workflow_id != filters["workflow_id"]:
+            return False
+        if filters.get("workflow_definition_id") and workflow_definition_id != filters["workflow_definition_id"]:
             return False
         expected_agent = str(filters.get("agent_id") or "").strip()
         if expected_agent:

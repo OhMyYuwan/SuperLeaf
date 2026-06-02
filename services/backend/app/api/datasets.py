@@ -9,6 +9,7 @@ from ..database import get_session
 from ..models import DatasetProject, DatasetRecord, DatasetResponse, Project, User
 from ..schemas import (
     DatasetBatchOut,
+    DatasetFilterOptionsOut,
     DatasetProjectOut,
     DatasetProjectPatch,
     DatasetRecordListOut,
@@ -75,6 +76,21 @@ def update_current_dataset_project(
         label_schema=body.label_schema,
     )
     return DatasetProjectOut.model_validate(row)
+
+
+@router.get("/current/filter-options", response_model=DatasetFilterOptionsOut)
+def list_current_filter_options(
+    source_project_id: str = Query(min_length=1, max_length=64),
+    project: Project = CurrentProject,
+    user: User = CurrentUser,
+    db: Session = DbSession,
+) -> DatasetFilterOptionsOut:
+    _dataset_for_project(db, project, user_id=user.id)
+    try:
+        options = DatasetService(db).source_filter_options(source_project_id, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return DatasetFilterOptionsOut(**options)
 
 
 @router.get("/current/source-rules", response_model=list[DatasetSourceRuleOut])

@@ -1,6 +1,6 @@
 /**
- * DiffModal — full-screen Radix Dialog showing the unified diff between two
- * versions, plus a side-by-side header summarising what's being compared.
+ * DiffModal — full-screen Radix Dialog showing the unified diff between a
+ * document version and either another version or the current document content.
  *
  * Renders the diff via a readonly CodeMirror 6 instance so syntax highlighting
  * (LaTeX / Markdown) carries over to the diff view, mirroring Overleaf's
@@ -32,7 +32,7 @@ interface DiffModalProps {
   docId: string
   format: EditorFormat
   fromVersion: number
-  toVersion: number
+  toVersion: number | 'current'
 }
 
 export function DiffModal({
@@ -48,10 +48,12 @@ export function DiffModal({
   const diffLoading = useHistoryStore((s) => s.diffLoading)
   const diffError = useHistoryStore((s) => s.diffError)
 
-  const a = Math.min(fromVersion, toVersion)
-  const b = Math.max(fromVersion, toVersion)
+  const comparingCurrent = toVersion === 'current'
+  const a = comparingCurrent ? fromVersion : Math.min(fromVersion, toVersion)
+  const b = comparingCurrent ? 'current' : Math.max(fromVersion, toVersion)
   const key = `${docId}|${a}->${b}`
-  const sameVersion = fromVersion === toVersion
+  const sameVersion = !comparingCurrent && fromVersion === toVersion
+  const targetLabel = comparingCurrent ? '当前版本' : `v${b}`
 
   useEffect(() => {
     if (!open) return
@@ -79,10 +81,10 @@ export function DiffModal({
           <div className="diff-header">
             <div>
               <Dialog.Title className="diff-title">
-                版本对比 · v{a} → v{b}
+                版本对比 · v{a} → {targetLabel}
               </Dialog.Title>
               <Dialog.Description className="diff-subtitle">
-                绿色为新增，红色为删除（以 v{a} 为基准）。
+                绿色为新增，红色为删除（以 v{a} 为基准，对比 {targetLabel}）。
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>

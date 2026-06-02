@@ -494,6 +494,23 @@ def _run_native_agent(
     project: Project,
     user: User,
 ):
+    available_skills = [
+        {
+            "skill_id": str(skill_id),
+        }
+        for skill_id in list(agent.skill_ids or [])
+    ]
+    trace_entry = {
+        "kind": "native-agent",
+        "agent_id": agent.id,
+        "provider_id": provider.id,
+        "model": agent.model,
+        "skill_ids": list(agent.skill_ids or []),
+        "available_skills": available_skills,
+        "activated_skills": [],
+        "request": _native_request_trace(body),
+        "prompt_audit": {},
+    }
     run = WorkflowRun(
         project_id=project.id,
         user_id=user.id,
@@ -503,15 +520,7 @@ def _run_native_agent(
         range_start=body.range_start,
         range_end=body.range_end,
         status="running",
-        trace=[
-            {
-                "kind": "native-agent",
-                "agent_id": agent.id,
-                "provider_id": provider.id,
-                "model": agent.model,
-                "skill_ids": list(agent.skill_ids or []),
-            }
-        ],
+        trace=[trace_entry],
     )
     db.add(run)
     db.commit()
@@ -531,11 +540,16 @@ def _run_native_agent(
         }
 
         accumulated_text: list[str] = []
+        activated_skills: list[dict[str, Any]] = []
         try:
             attached_files = normalize_attached_files(body.inputs.get("attached_files"))
             if attached_files:
                 body.inputs["attached_files"] = attached_files
             skills = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+            available_skills[:] = [_skill_trace_summary(skill) for skill in skills]
+            trace_entry["available_skills"] = list(available_skills)
+            run.trace = [dict(trace_entry)]
+            db.commit()
             workspace_root = AgentWorkspaceService(db).ensure_workspace(agent)
             runtime_config = McpConfigService(db).resolve_runtime_config(
                 user_id=user.id,
@@ -567,12 +581,25 @@ def _run_native_agent(
                 conversation_id=body.conversation_id or f"ylw-native-{run.id}",
                 context_files=[ref.model_dump() for ref in body.context_files],
             )
+            trace_entry["request"] = _native_request_trace(
+                body,
+                inputs=payload.inputs,
+                context_files=payload.context_files,
+            )
+            trace_entry["prompt_audit"] = runner.prompt_audit_payload(payload)
+            run.trace = [dict(trace_entry)]
+            db.commit()
             async for evt in runner.stream(payload):
                 data = evt.get("data") or {}
                 if evt.get("event") == "native.agent.output.delta":
                     delta = data.get("delta") if isinstance(data, dict) else ""
                     if isinstance(delta, str):
                         accumulated_text.append(delta)
+                elif evt.get("event") == "native.agent.skill.activated" and isinstance(data, dict):
+                    activated_skills.append(data)
+                    trace_entry["activated_skills"] = list(activated_skills)
+                    run.trace = [dict(trace_entry)]
+                    db.commit()
                 yield {"event": str(evt.get("event")), "data": json.dumps(data)}
         except Exception as exc:  # noqa: BLE001
             run.status = "failed"
@@ -588,9 +615,12 @@ def _run_native_agent(
             "outputs": {"text": text},
             "model": agent.model,
             "native_agent_id": agent.id,
+            "activated_skills": activated_skills,
         }
         run.status = "completed"
         run.outputs = outputs
+        trace_entry["activated_skills"] = list(activated_skills)
+        run.trace = [dict(trace_entry)]
         run.finished_at = datetime.utcnow()
         db.commit()
 
@@ -607,6 +637,33 @@ def _run_native_agent(
         }
 
     return EventSourceResponse(event_gen())
+
+
+def _skill_trace_summary(skill) -> dict[str, Any]:
+    return skill.summary_payload()
+
+
+def _native_request_trace(
+    body: RunBody,
+    *,
+    inputs: dict | None = None,
+    context_files: list[dict] | None = None,
+) -> dict[str, Any]:
+    return {
+        "document_id": body.document_id,
+        "range_start": body.range_start,
+        "range_end": body.range_end,
+        "query": body.query,
+        "user": body.user,
+        "conversation_id": body.conversation_id,
+        "parent_run_id": body.parent_run_id,
+        "inputs": dict(inputs if inputs is not None else body.inputs or {}),
+        "context_files": list(
+            context_files
+            if context_files is not None
+            else [ref.model_dump() for ref in body.context_files]
+        ),
+    }
 # ---------------------------------------------------------------------------
 # Workflow Definition Management
 # ---------------------------------------------------------------------------

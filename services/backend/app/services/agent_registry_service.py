@@ -7,16 +7,15 @@ enabled-state checks so API validation and runtime dispatch agree.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
 from sqlalchemy.orm import Session
 
-from ..models import CachedWorkflow, NativeAgent, Project, Provider, Skill
-from .agent_workspace_service import AgentWorkspaceError, read_skill_folder_content
+from ..models import CachedWorkflow, NativeAgent, Provider
 from .native_agent_runner import NativeSkillBlock
-from .project_member_service import ProjectMemberService
-from .skill_content_crypto import decrypt_skill_content
 
 NATIVE_WORKFLOW_PREFIX = "native:"
 
@@ -55,40 +54,62 @@ class AgentRegistryService:
         return self._resolve_external(agent_id, user_id=user_id, require_enabled=require_enabled)
 
     def skill_blocks_for_native_agent(self, agent: NativeAgent, *, user_id: str) -> list[NativeSkillBlock]:
+        """Scan the Agent's .agents/skills/ folder on disk for available Skills."""
+        workspace = Path(agent.workspace_path) if agent.workspace_path else None
+        skills_dir = workspace / ".agents" / "skills" if workspace else None
+        if not skills_dir or not skills_dir.is_dir():
+            return []
+
         out: list[NativeSkillBlock] = []
-        for skill_id in agent.skill_ids or []:
-            skill = self.db.get(Skill, str(skill_id))
-            if skill is None:
-                continue
-            if skill.source == "project":
-                project = self.db.get(Project, skill.project_id) if skill.project_id else None
-                if (
-                    project is None
-                    or not project.is_skill_project
-                    or project.project_skill_id != skill.id
-                    or not ProjectMemberService(self.db).has_access(project.id, user_id)
-                ):
+        seen: set[str] = set()
+        for item in sorted(skills_dir.iterdir()):
+            # Direct skill folder with SKILL.md
+            if item.is_dir() and (item / "SKILL.md").is_file():
+                folder_name = item.name
+                if folder_name in seen:
                     continue
-                if not skill.cache_path:
-                    continue
-                try:
-                    content = read_skill_folder_content(Path(skill.cache_path))
-                except AgentWorkspaceError:
-                    content = ""
-            else:
-                if skill.visibility not in ("system", "public") and skill.owner_user_id != user_id:
-                    continue
-                content = decrypt_skill_content(skill.content)
-            if not content.strip():
-                continue
-            out.append(
-                NativeSkillBlock(
-                    name=skill.public_name or skill.name,
-                    version=skill.version,
-                    source=skill.source,
-                    content=content,
+                seen.add(folder_name)
+                meta = _read_skill_meta(item)
+                out.append(
+                    NativeSkillBlock(
+                        id=folder_name,
+                        name=meta.get("name") or folder_name,
+                        version=meta.get("version", 1),
+                        source="workspace",
+                        content="",
+                        aliases=[folder_name],
+                        description=meta.get("description", ""),
+                        tags=meta.get("tags", []),
+                        folder_path=f"skills/{folder_name}",
+                    )
                 )
-            )
+            # .skillref.json pointing to a project skill cache
+            elif item.is_file() and item.suffix == ".json" and item.stem.endswith(".skillref"):
+                try:
+                    ref = json.loads(item.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                target = ref.get("target_path", "")
+                folder_name = ref.get("folder_name", item.stem.replace(".skillref", ""))
+                if not target or not Path(target).is_dir():
+                    continue
+                if folder_name in seen:
+                    continue
+                seen.add(folder_name)
+                meta = _read_skill_meta(Path(target))
+                out.append(
+                    NativeSkillBlock(
+                        id=folder_name,
+                        name=meta.get("name") or folder_name,
+                        version=meta.get("version", 1),
+                        source="project",
+                        content="",
+                        aliases=[folder_name],
+                        description=meta.get("description", ""),
+                        tags=meta.get("tags", []),
+                        folder_path=f"skills/{item.name}",
+                    )
+                )
         return out
 
     def _resolve_external(
@@ -138,3 +159,61 @@ class AgentRegistryService:
             provider=provider,
             native_agent=agent,
         )
+
+
+def _read_skill_meta(folder: Path) -> dict:
+    """Read skill metadata: try skill.yaml, fall back to SKILL.md front matter."""
+    # 1) Try skill.yaml
+    yaml_path = folder / "skill.yaml"
+    if yaml_path.is_file():
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return _normalize_meta(data)
+        except (OSError, yaml.YAMLError):
+            pass
+
+    # 2) Fall back to SKILL.md front matter
+    skill_md = folder / "SKILL.md"
+    if skill_md.is_file():
+        try:
+            text = skill_md.read_text(encoding="utf-8", errors="replace")
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end > 0:
+                    front = yaml.safe_load(text[3:end])
+                    if isinstance(front, dict):
+                        return _normalize_meta(front)
+        except (OSError, yaml.YAMLError):
+            pass
+
+    import logging
+
+    logging.getLogger(__name__).warning("No metadata found for skill folder: %s", folder.name)
+    return {}
+
+
+def _normalize_meta(data: dict) -> dict:
+    """Normalize skill metadata fields."""
+    raw_ver = data.get("version", 1)
+    try:
+        data["version"] = int(str(raw_ver).split(".")[0])
+    except (ValueError, TypeError):
+        data["version"] = 1
+    tags = data.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    data["tags"] = [str(t) for t in tags if t]
+    return data
+
+
+def _unique_non_empty(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out

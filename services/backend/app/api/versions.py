@@ -7,6 +7,8 @@ Three-table storage (blobs / document_versions / document_labels) lives in
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -70,6 +72,17 @@ def _version_to_out(
     )
 
 
+def _current_doc_blob(doc: Doc) -> Blob:
+    content = (doc.content or "").encode("utf-8")
+    return Blob(
+        hash="current",
+        content=content,
+        byte_length=len(content),
+        string_length=len(doc.content or ""),
+        created_at=doc.updated_at or datetime.utcnow(),
+    )
+
+
 @router.get("/{doc_id}/versions", response_model=list[VersionOut])
 def list_versions(
     doc_id: str,
@@ -120,16 +133,34 @@ def get_version(
 def get_diff(
     doc_id: str,
     from_: int = Query(..., alias="from", ge=1),
-    to: int = Query(..., ge=1),
+    to: str = Query(...),
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
 ) -> DiffOut:
-    _ensure_doc(db, project, doc_id)
-    if from_ == to:
+    doc = _ensure_doc(db, project, doc_id)
+
+    va = version_service.get_version(db, doc_id, from_)
+    if va is None:
+        raise HTTPException(404, "version not found")
+
+    blob_a = db.get(Blob, va.blob_hash)
+    if blob_a is None:
+        raise HTTPException(500, "blob missing for version")
+
+    if to == "current":
+        blob_b = _current_doc_blob(doc)
+        return DiffOut(diff=compute_diff(blob_a, blob_b))
+
+    try:
+        to_version = int(to)
+    except ValueError as e:
+        raise HTTPException(400, "to must be a version number or 'current'") from e
+    if to_version < 1:
+        raise HTTPException(400, "to must be greater than or equal to 1")
+    if from_ == to_version:
         raise HTTPException(400, "from and to must differ")
 
-    a, b = (from_, to) if from_ < to else (to, from_)
-
+    a, b = (from_, to_version) if from_ < to_version else (to_version, from_)
     va = version_service.get_version(db, doc_id, a)
     vb = version_service.get_version(db, doc_id, b)
     if va is None or vb is None:
@@ -139,7 +170,6 @@ def get_diff(
     blob_b = db.get(Blob, vb.blob_hash)
     if blob_a is None or blob_b is None:
         raise HTTPException(500, "blob missing for version")
-
     return DiffOut(diff=compute_diff(blob_a, blob_b))
 
 

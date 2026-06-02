@@ -151,6 +151,7 @@ def update_project(
         main_doc_id=body.main_doc_id,
         compiler=body.compiler,
         is_skill_project=body.is_skill_project,
+        project_type=body.project_type,
     )
     if p is None:
         raise HTTPException(404, "Project not found")

@@ -1137,6 +1137,7 @@ class WorkflowOrchestrator:
             )
         )
         accumulated_text: list[str] = []
+        activated_skills: list[dict] = []
         prior_messages = node.inputs.get("prior_messages")
         if not isinstance(prior_messages, list):
             prior_messages = _chat_log_to_messages(ctx.chat_log)
@@ -1156,12 +1157,25 @@ class WorkflowOrchestrator:
             prior_messages=prior_messages,
             allow_project_context=allow_project_context,
         )
+        request_audit = {
+            "document_id": payload.document_id,
+            "range_start": payload.range_start,
+            "range_end": payload.range_end,
+            "query": payload.query,
+            "inputs": dict(payload.inputs or {}),
+            "context_files": list(payload.context_files or []),
+            "prior_messages": list(payload.prior_messages or []),
+            "allow_project_context": allow_project_context,
+        }
+        prompt_audit = runner.prompt_audit_payload(payload)
         async for evt in runner.stream(payload):
             data = evt.get("data") or {}
             if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
                 delta = data.get("delta")
                 if isinstance(delta, str):
                     accumulated_text.append(delta)
+            elif evt.get("event") == "native.agent.skill.activated" and isinstance(data, dict):
+                activated_skills.append(data)
         text = _strip_thinking("".join(accumulated_text)).strip()
         _append_agent_turn(
             ctx,
@@ -1176,6 +1190,9 @@ class WorkflowOrchestrator:
             "agent_source": "native",
             "model": native_agent.model,
             "native_agent_id": native_agent.id,
+            "activated_skills": activated_skills,
+            "request": request_audit,
+            "prompt_audit": prompt_audit,
         }
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:

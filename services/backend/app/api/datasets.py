@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
@@ -52,6 +54,17 @@ def _record_out(
     if response is not None:
         out.my_response = DatasetResponseOut.model_validate(response)
     return out
+
+
+def _content_disposition_for_download(filename: str) -> str:
+    ascii_filename = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in ("-", "_", ".")) else "-"
+        for ch in filename
+    ).strip("-")
+    return (
+        f'attachment; filename="{ascii_filename or "dataset-export.zip"}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
 
 @router.get("/current", response_model=DatasetProjectOut)
@@ -306,5 +319,5 @@ def export_current_dataset(
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition_for_download(filename)},
     )

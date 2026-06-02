@@ -52,7 +52,7 @@ def test_data_project_sync_label_and_export_zip():
     now = datetime.utcnow()
     owner = User(id="owner", email="owner@example.com", password_hash="hash")
     source_project = Project(id="source", user_id=owner.id, name="Source Paper", project_type="paper")
-    data_project = Project(id="dataset", user_id=owner.id, name="Quality Dataset", project_type="data")
+    data_project = Project(id="dataset", user_id=owner.id, name="质量数据集", project_type="data")
     doc = Doc(id="doc1", project_id=source_project.id, folder_id=None, name="main.md", content="Draft text")
     agent = NativeAgent(
         id="agent1",
@@ -169,6 +169,7 @@ def test_data_project_sync_label_and_export_zip():
         cookies=cookies,
     )
     assert exported.status_code == 200
+    assert "filename*=UTF-8''" in exported.headers["content-disposition"]
     entries = _zip_entries(exported.content)
     manifest = json.loads(entries["manifest.json"].decode())
     assert manifest["record_count"] == 1

@@ -839,7 +839,7 @@ function RecordFields({ record, dataset }: { record: DatasetRecord; dataset: Dat
               return (
                 <div key={`${record.id}-chat-${index}`} className={`data-chat-message role-${chatRoleClass(role)}`}>
                   <span>{roleLabel(role)}</span>
-                  <AgentMarkdown source={messageContent(message)} className="data-chat-markdown" />
+                  <AgentMarkdown source={messageContentText(message)} className="data-chat-markdown" />
                 </div>
               )
             })}
@@ -849,7 +849,7 @@ function RecordFields({ record, dataset }: { record: DatasetRecord; dataset: Dat
       {[...schemaBlocks, ...extraBlocks].map((block) => (
         <section key={block.key} className="data-field-block">
           <div className="data-field-title">{block.title}</div>
-          <FieldValue fieldKey={block.key} value={block.value} />
+          <FieldValue fieldKey={block.key} value={block.value} recordFields={record.fields} />
         </section>
       ))}
       {chat.length === 0 && schemaBlocks.length === 0 && extraBlocks.length === 0 && (
@@ -859,8 +859,17 @@ function RecordFields({ record, dataset }: { record: DatasetRecord; dataset: Dat
   )
 }
 
-function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+function FieldValue({
+  fieldKey,
+  value,
+  recordFields = {},
+}: {
+  fieldKey: string
+  value: unknown
+  recordFields?: Record<string, unknown>
+}) {
   if (fieldKey === 'agent_output') return <AgentOutputValue value={value} />
+  if (isWorkflowTraceKey(fieldKey)) return <WorkflowTraceValue value={value} agentOutput={recordFields.agent_output} />
   if (typeof value === 'string') {
     const parsed = parseStructuredString(value)
     if (parsed !== null) return <StructuredValue value={parsed} />
@@ -889,10 +898,291 @@ function AgentOutputValue({ value }: { value: unknown }) {
       {output.metadata && hasValue(output.metadata) && (
         <div className="data-output-metadata">
           <strong>Output metadata</strong>
-          <StructuredValue value={output.metadata} compact />
+          <OutputMetadataValue value={output.metadata} />
         </div>
       )}
     </div>
+  )
+}
+
+function OutputMetadataValue({ value }: { value: Record<string, unknown> }) {
+  const entries = Object.entries(value).filter(([, item]) => hasValue(item))
+  if (entries.length === 0) return <span className="data-muted-value">empty</span>
+  return (
+    <dl className="data-output-metadata-rows">
+      {entries.map(([key, item]) => {
+        const isSkill = isSkillMetadataKey(key)
+        const isTrace = isWorkflowTraceKey(key)
+        return (
+          <div key={key} className={isSkill || isTrace ? 'is-wide' : undefined}>
+            <dt>{humanizeKey(key)}</dt>
+            <dd>
+              {isSkill ? (
+                <SkillMetadataValue value={item} />
+              ) : isTrace ? (
+                <WorkflowTraceValue value={item} compact />
+              ) : (
+                <StructuredValue value={item} compact />
+              )}
+            </dd>
+          </div>
+        )
+      })}
+    </dl>
+  )
+}
+
+function WorkflowTraceValue({
+  value,
+  compact = false,
+  agentOutput,
+}: {
+  value: unknown
+  compact?: boolean
+  agentOutput?: unknown
+}) {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (!Array.isArray(source)) return <StructuredValue value={source} compact={compact} />
+  if (source.length === 0) return <span className="data-muted-value">empty</span>
+  const transcript = workflowTraceTranscript(source, agentOutput)
+  return (
+    <div className={`data-workflow-trace ${compact ? 'is-compact' : ''}`}>
+      {transcript.turns.length > 0 && <TraceConversation turns={transcript.turns} className="is-run-transcript" />}
+      {source.map((node, index) => (
+        <WorkflowTraceNode
+          key={index}
+          node={node}
+          index={index}
+          agentOutput={index === source.length - 1 ? agentOutput : undefined}
+          conversationOverride={transcript.byIndex.get(index)}
+          hideConversation={transcript.turns.length > 0}
+        />
+      ))}
+    </div>
+  )
+}
+
+function WorkflowTraceNode({
+  node,
+  index,
+  agentOutput,
+  conversationOverride,
+  hideConversation = false,
+}: {
+  node: unknown
+  index: number
+  agentOutput?: unknown
+  conversationOverride?: TraceConversationModel
+  hideConversation?: boolean
+}) {
+  const parsed = typeof node === 'string' ? parseStructuredString(node) : null
+  const source = parsed ?? node
+  if (!isPlainObject(source)) {
+    return (
+      <article className="data-workflow-trace-node">
+        <StructuredValue value={source} compact />
+      </article>
+    )
+  }
+
+  const title = stringFromKeys(source, WORKFLOW_TRACE_TITLE_KEYS) || `Step ${index + 1}`
+  const chips = [
+    ['type', stringFromKeys(source, WORKFLOW_TRACE_TYPE_KEYS)],
+    ['status', stringFromKeys(source, WORKFLOW_TRACE_STATUS_KEYS)],
+    ['agent', stringFromKeys(source, WORKFLOW_TRACE_AGENT_KEYS)],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]))
+  const skillEntries = WORKFLOW_TRACE_SKILL_KEYS
+    .filter((key) => hasValue(source[key]))
+    .map((key) => [key, source[key]] as const)
+  const summaryKey = firstStringKey(source, WORKFLOW_TRACE_SUMMARY_KEYS)
+  const summary = summaryKey ? normalizeComparableText(String(source[summaryKey] ?? '')) : ''
+  const conversation = conversationOverride ?? workflowTraceConversation(source, agentOutput)
+  const detailEntries = workflowTraceDetailEntries(source, summaryKey, conversation.consumedKeys)
+  const conversationRenderedElsewhere = hideConversation && conversation.turns.length > 0
+
+  return (
+    <article className="data-workflow-trace-node">
+      <div className="data-workflow-trace-node-header">
+        <strong title={title}>{title}</strong>
+        {chips.length > 0 && (
+          <span className="data-trace-chip-list">
+            {chips.map(([key, item]) => (
+              <span key={key} title={item}>{humanizeKey(key)}: {item}</span>
+            ))}
+          </span>
+        )}
+      </div>
+      {skillEntries.map(([key, item]) => (
+        <div key={key} className="data-trace-skill-group">
+          <span>{humanizeKey(key)}</span>
+          <SkillMetadataValue value={item} />
+        </div>
+      ))}
+      {summary && <p className="data-trace-summary" title={summary}>{summary}</p>}
+      {!hideConversation && conversation.turns.length > 0 && <TraceConversation turns={conversation.turns} />}
+      {detailEntries.length > 0 && <TraceDetailList entries={detailEntries} />}
+      {skillEntries.length === 0 && !summary && chips.length === 0 && detailEntries.length === 0 && !conversationRenderedElsewhere && <StructuredValue value={source} compact />}
+    </article>
+  )
+}
+
+type TraceTurnRole = 'user' | 'agent' | 'system'
+
+type TraceTurn = {
+  role: TraceTurnRole
+  label: string
+  value: unknown
+}
+
+type TraceConversationModel = {
+  turns: TraceTurn[]
+  consumedKeys: Set<string>
+}
+
+function TraceConversation({ turns, className }: { turns: TraceTurn[]; className?: string }) {
+  return (
+    <div className={`data-trace-discussion ${className ?? ''}`.trim()}>
+      {turns.map((turn, index) => (
+        <TraceTurnBubble key={`${index}:${turn.role}:${turn.label}`} turn={turn} />
+      ))}
+    </div>
+  )
+}
+
+function TraceDetailList({ entries }: { entries: [string, unknown][] }) {
+  return (
+    <dl className="data-trace-detail-list">
+      {entries.map(([key, item]) => (
+        <div key={key} className={isConversationalTraceValue(key, item) ? 'is-conversation' : undefined}>
+          <dt>{humanizeKey(key)}</dt>
+          <dd><TraceDetailValue fieldKey={key} value={item} /></dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function TraceTurnBubble({ turn }: { turn: TraceTurn }) {
+  return (
+    <div className={`data-trace-turn role-${turn.role}`}>
+      <div className="data-trace-bubble">
+        <div className="data-trace-bubble-label">{turn.label}</div>
+        <TraceBubbleValue role={turn.role} value={turn.value} />
+      </div>
+    </div>
+  )
+}
+
+function TraceBubbleValue({ role, value }: { role: TraceTurnRole; value: unknown }) {
+  const markdown = traceBubbleMarkdown(role, value)
+  if (markdown) return <AgentMarkdown source={markdown} className="data-trace-bubble-content" />
+  return <StructuredValue value={value} compact />
+}
+
+function TraceDetailValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (isMessageList(source)) return <TraceMessageList messages={source} />
+  if (Array.isArray(source)) {
+    return (
+      <div className="data-trace-array">
+        {source.map((item, index) => (
+          <div key={index} className="data-trace-array-item">
+            <TraceDetailValue fieldKey={`${fieldKey}_${index}`} value={item} />
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (isPlainObject(source)) {
+    const messageEntries = Object.entries(source).filter(([key, item]) => isTraceMessageKey(key) && isMessageList(item))
+    const otherEntries = Object.entries(source).filter(([key, item]) => hasValue(item) && !messageEntries.some(([messageKey]) => messageKey === key))
+    return (
+      <div className="data-trace-object">
+        {messageEntries.map(([key, item]) => (
+          <div key={key} className="data-trace-message-group">
+            <span>{humanizeKey(key)}</span>
+            <TraceMessageList messages={item as Record<string, unknown>[]} />
+          </div>
+        ))}
+        {otherEntries.length > 0 && <StructuredValue value={Object.fromEntries(otherEntries)} compact />}
+      </div>
+    )
+  }
+  if (typeof source === 'string') {
+    return <AgentMarkdown source={source} className="data-trace-markdown" />
+  }
+  return <span>{formatInlineValue(source)}</span>
+}
+
+function TraceMessageList({ messages }: { messages: Record<string, unknown>[] }) {
+  return (
+    <TraceConversation
+      turns={messages.map((message) => {
+        const role = messageRole(message)
+        return { role: traceTurnRoleFromMessageRole(role), label: roleLabel(role), value: messageContent(message) }
+      })}
+    />
+  )
+}
+
+function SkillMetadataValue({ value }: { value: unknown }) {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (Array.isArray(source)) {
+    if (source.length === 0) return <span className="data-muted-value">empty</span>
+    const objectItems = source.filter(isPlainObject)
+    if (objectItems.length === 0) return <StructuredValue value={source} compact />
+    const primitiveItems = source.filter((item) => !isPlainObject(item) && !Array.isArray(item))
+    return (
+      <div className="data-skill-card-list">
+        {objectItems.map((item, index) => (
+          <SkillMetadataCard key={index} value={item} index={index} />
+        ))}
+        {primitiveItems.length > 0 && <StructuredValue value={primitiveItems} compact />}
+      </div>
+    )
+  }
+  if (isPlainObject(source)) {
+    return (
+      <div className="data-skill-card-list">
+        <SkillMetadataCard value={source} index={0} />
+      </div>
+    )
+  }
+  return <StructuredValue value={source} compact />
+}
+
+function SkillMetadataCard({ value, index }: { value: Record<string, unknown>; index: number }) {
+  const name = stringFromKeys(value, SKILL_NAME_KEYS) || `Skill ${index + 1}`
+  const id = stringFromKeys(value, SKILL_ID_KEYS)
+  const description = stringFromKeys(value, SKILL_DESCRIPTION_KEYS)
+  const reserved = new Set([...SKILL_NAME_KEYS, ...SKILL_ID_KEYS, ...SKILL_DESCRIPTION_KEYS])
+  const chipEntries = SKILL_META_CHIP_KEYS
+    .map((key) => [key, value[key]] as const)
+    .filter(([key, item]) => !reserved.has(key) && isCompactPrimitive(item))
+  const extraEntries = Object.entries(value)
+    .filter(([key, item]) => !reserved.has(key) && !SKILL_META_CHIP_KEYS.includes(key) && isCompactPrimitive(item))
+    .slice(0, 3)
+  const chips = [...chipEntries, ...extraEntries].slice(0, 5)
+
+  return (
+    <article className="data-skill-card">
+      <div className="data-skill-card-header">
+        <strong title={name}>{name}</strong>
+        {(id || chips.length > 0) && (
+          <span className="data-skill-card-chips">
+            {id && <span title={id}>ID: {id}</span>}
+            {chips.map(([key, item]) => {
+              const label = `${humanizeKey(key)}: ${formatInlineValue(item)}`
+              return <span key={key} title={label}>{label}</span>
+            })}
+          </span>
+        )}
+      </div>
+      {description && <p className="data-skill-card-description" title={description}>{description}</p>}
+    </article>
   )
 }
 
@@ -1147,7 +1437,7 @@ function recordExcerpt(record: DatasetRecord): string {
   const chat = Array.isArray(record.fields.chat) ? record.fields.chat : []
   if (chat.length > 0) {
     const lastMessage = chat[chat.length - 1]
-    return compactText(messageContent(lastMessage), 128)
+    return compactText(messageContentText(lastMessage), 128)
   }
   const sourceText = stringValue(record.fields.source_text, '')
   if (sourceText) return compactText(sourceText, 128)
@@ -1216,6 +1506,83 @@ function formatValue(value: unknown): string {
   if (typeof value === 'string') return value
   return JSON.stringify(value, null, 2) ?? ''
 }
+
+const WORKFLOW_TRACE_SKILL_KEYS = [
+  'activated_skills',
+  'activatedSkills',
+  'available_skills',
+  'availableSkills',
+  'skills',
+  'skill_ids',
+  'skillIds',
+  'skill',
+  'skill_id',
+  'skillId',
+]
+
+const WORKFLOW_TRACE_TITLE_KEYS = [
+  'name',
+  'title',
+  'node_name',
+  'nodeName',
+  'step_name',
+  'stepName',
+  'node_id',
+  'nodeId',
+  'id',
+  'type',
+  'kind',
+]
+
+const WORKFLOW_TRACE_TYPE_KEYS = ['type', 'kind', 'node_type', 'nodeType']
+
+const WORKFLOW_TRACE_STATUS_KEYS = ['status', 'state']
+
+const WORKFLOW_TRACE_AGENT_KEYS = ['agent_name', 'agentName', 'agent_id', 'agentId', 'agent']
+
+const WORKFLOW_TRACE_SUMMARY_KEYS = ['summary', 'description', 'message', 'reason', 'error']
+
+const SKILL_NAME_KEYS = [
+  'name',
+  'skill_name',
+  'skillName',
+  'display_name',
+  'displayName',
+  'public_name',
+  'publicName',
+  'folder_name',
+  'folderName',
+  'title',
+]
+
+const SKILL_ID_KEYS = ['id', 'skill_id', 'skillId', 'key', 'slug']
+
+const SKILL_DESCRIPTION_KEYS = [
+  'description',
+  'summary',
+  'reason',
+  'instructions',
+  'instruction',
+  'prompt',
+  'content',
+  'text',
+  'details',
+  'detail',
+]
+
+const SKILL_META_CHIP_KEYS = [
+  'version',
+  'source',
+  'kind',
+  'status',
+  'path',
+  'folder_path',
+  'folderPath',
+  'entry_url',
+  'entryUrl',
+  'repo_url',
+  'repoUrl',
+]
 
 function StructuredValue({ value, compact = false }: { value: unknown; compact?: boolean }) {
   if (typeof value === 'string') {
@@ -1291,12 +1658,10 @@ function normalizeAgentOutput(value: unknown): {
   if (isPlainObject(source)) {
     const primary = primaryOutputEntry(source)
     if (primary) {
-      const metadata = Object.fromEntries(
-        Object.entries(source).filter(([key, item]) => key !== primary.key && hasValue(item)),
-      )
+      const metadata = pruneOutputMetadata(source, primary.value, primary.key)
       return {
         body: primary.value,
-        metadata: Object.keys(metadata).length > 0 ? metadata : null,
+        metadata,
         fallback: source,
       }
     }
@@ -1305,8 +1670,83 @@ function normalizeAgentOutput(value: unknown): {
   return { body: formatInlineValue(source), metadata: null, fallback: source }
 }
 
+const AGENT_OUTPUT_BODY_KEYS = new Set([
+  'text',
+  'answer',
+  'response',
+  'output',
+  'result',
+  'content',
+  'message',
+  'markdown',
+  'summary',
+  'raw',
+  'raw_text',
+  'completion',
+  'generated_text',
+  'final',
+  'final_answer',
+])
+
+const TRACE_CONVERSATION_METADATA_KEYS = new Set([
+  'agentoutput',
+  'chat',
+  'completion',
+  'content',
+  'conversation',
+  'conversationid',
+  'history',
+  'instruction',
+  'message',
+  'messages',
+  'request',
+  'output',
+  'outputs',
+  'input',
+  'inputs',
+  'parentrunid',
+  'prompt',
+  'promptaudit',
+  'query',
+  'response',
+  'result',
+  'systemprompt',
+  'text',
+  'user',
+  'userprompt',
+  'priormessages',
+  'messagecount',
+])
+
+const TRACE_REQUEST_HUMAN_INPUT_KEYS = [
+  'user_message',
+  'userMessage',
+  'message',
+  'text',
+  'content',
+  'instruction',
+]
+
+const TRACE_REQUEST_PROMPT_KEYS = [
+  'user_message',
+  'userMessage',
+  'message',
+  'instruction',
+  'query',
+  'prompt',
+  'user_prompt',
+  'userPrompt',
+]
+
+const TRACE_REQUEST_CONTEXT_KEYS = [
+  'target_text',
+  'targetText',
+  'selection_text',
+  'selectionText',
+]
+
 function primaryOutputEntry(value: Record<string, unknown>): { key: string; value: string } | null {
-  const keys = ['text', 'answer', 'response', 'output', 'result', 'content', 'message', 'markdown', 'summary']
+  const keys = Array.from(AGENT_OUTPUT_BODY_KEYS)
   for (const key of keys) {
     const item = value[key]
     if (typeof item === 'string' && item.trim()) return { key, value: item }
@@ -1316,6 +1756,412 @@ function primaryOutputEntry(value: Record<string, unknown>): { key: string; valu
   )
   if (stringEntries.length === 1) return { key: stringEntries[0][0], value: stringEntries[0][1] }
   return null
+}
+
+function pruneOutputMetadata(
+  value: Record<string, unknown>,
+  body: string,
+  primaryKey: string,
+): Record<string, unknown> | null {
+  const entries = Object.entries(value)
+    .map(([key, item]) => [key, pruneOutputMetadataValue(item, body, key, key === primaryKey)] as const)
+    .filter(([, item]) => hasValue(item))
+  return entries.length > 0 ? Object.fromEntries(entries) : null
+}
+
+function pruneOutputMetadataValue(
+  value: unknown,
+  body: string,
+  key: string,
+  isPrimary: boolean,
+): unknown {
+  if (!hasValue(value)) return undefined
+  if (isPrimary) return undefined
+
+  const rawKey = key.toLowerCase()
+  const metadataKey = normalizeMetadataKey(key)
+  if (TRACE_CONVERSATION_METADATA_KEYS.has(metadataKey)) return undefined
+  if (typeof value === 'string') {
+    const parsed = parseStructuredString(value)
+    if (parsed !== null) return pruneOutputMetadataValue(parsed, body, rawKey, false)
+    if (AGENT_OUTPUT_BODY_KEYS.has(rawKey) || isDuplicateOutputText(value, body)) return undefined
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    const pruned = value
+      .map((item, index) => pruneOutputMetadataValue(item, body, `${rawKey}_${index}`, false))
+      .filter(hasValue)
+    return pruned.length > 0 ? pruned : undefined
+  }
+
+  if (isPlainObject(value)) {
+    if (AGENT_OUTPUT_BODY_KEYS.has(rawKey)) {
+      const nestedPrimary = primaryOutputEntry(value)
+      if (nestedPrimary && isDuplicateOutputText(nestedPrimary.value, body)) return undefined
+    }
+    const prunedEntries = Object.entries(value)
+      .map(([childKey, item]) => [
+        childKey,
+        pruneOutputMetadataValue(item, body, childKey.toLowerCase(), false),
+      ] as const)
+      .filter(([, item]) => hasValue(item))
+    return prunedEntries.length > 0 ? Object.fromEntries(prunedEntries) : undefined
+  }
+
+  return value
+}
+
+function isDuplicateOutputText(value: string, body: string): boolean {
+  const cleanValue = normalizeComparableText(value)
+  const cleanBody = normalizeComparableText(body)
+  if (!cleanValue || !cleanBody) return false
+  if (cleanValue === cleanBody) return true
+  if (cleanBody.length >= 80 && cleanValue.includes(cleanBody)) return true
+  if (cleanValue.length >= 80 && cleanBody.includes(cleanValue)) return true
+  return false
+}
+
+function normalizeComparableText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function normalizeMetadataKey(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
+function isSkillMetadataKey(value: string): boolean {
+  return normalizeMetadataKey(value).includes('skill')
+}
+
+function isWorkflowTraceKey(value: string): boolean {
+  const normalized = normalizeMetadataKey(value)
+  return normalized === 'trace' || normalized === 'workflowtrace' || normalized === 'workflowtraces' || normalized.includes('workflowtrace')
+}
+
+function workflowTraceDetailEntries(
+  value: Record<string, unknown>,
+  summaryKey: string,
+  consumedKeys = new Set<string>(),
+): [string, unknown][] {
+  const represented = new Set([
+    ...WORKFLOW_TRACE_TITLE_KEYS,
+    ...WORKFLOW_TRACE_TYPE_KEYS,
+    ...WORKFLOW_TRACE_STATUS_KEYS,
+    ...WORKFLOW_TRACE_AGENT_KEYS,
+    ...WORKFLOW_TRACE_SKILL_KEYS,
+  ])
+  return Object.entries(value).filter(([key, item]) => {
+    if (!hasValue(item)) return false
+    if (TRACE_CONVERSATION_METADATA_KEYS.has(normalizeMetadataKey(key))) return false
+    if (consumedKeys.has(key)) return false
+    if (represented.has(key)) return false
+    if (key === summaryKey && typeof item === 'string' && normalizeComparableText(item).length <= 220) return false
+    return true
+  })
+}
+
+function workflowTraceTranscript(source: unknown[], fallbackAgentOutput?: unknown): {
+  turns: TraceTurn[]
+  byIndex: Map<number, TraceConversationModel>
+} {
+  const turns: TraceTurn[] = []
+  const byIndex = new Map<number, TraceConversationModel>()
+
+  source.forEach((node, index) => {
+    const parsed = typeof node === 'string' ? parseStructuredString(node) : null
+    const item = parsed ?? node
+    if (!isPlainObject(item)) return
+
+    const conversation = workflowTraceConversation(item, index === source.length - 1 ? fallbackAgentOutput : undefined)
+    byIndex.set(index, conversation)
+    turns.push(...conversation.turns)
+  })
+
+  return { turns: compactTraceTurns(turns), byIndex }
+}
+
+function workflowTraceConversation(value: Record<string, unknown>, fallbackAgentOutput?: unknown): {
+  turns: TraceTurn[]
+  consumedKeys: Set<string>
+} {
+  const turns: TraceTurn[] = []
+  const consumedKeys = new Set<string>()
+  const requestEntry = valueEntryFromKeys(value, ['request'])
+  const promptAuditEntry = valueEntryFromKeys(value, ['prompt_audit', 'promptAudit'])
+  const inputEntry = valueEntryFromKeys(value, ['input', 'inputs'])
+  const directRequestEntry = valueEntryFromKeys(value, TRACE_REQUEST_PROMPT_KEYS)
+  const messagesEntry = valueEntryFromKeys(value, ['messages', 'chat', 'conversation', 'history', 'prior_messages', 'priorMessages'])
+  const outputEntry = valueEntryFromKeys(value, ['output', 'outputs', 'agent_output', 'agentOutput'])
+
+  if (messagesEntry && isMessageList(messagesEntry[1])) {
+    consumedKeys.add(messagesEntry[0])
+    appendMessageTurns(turns, messagesEntry[1], '')
+  }
+
+  if (requestEntry) {
+    consumedKeys.add(requestEntry[0])
+    appendRequestTurns(turns, requestEntry[1], 'Request')
+  } else if (inputEntry) {
+    consumedKeys.add(inputEntry[0])
+    appendRequestTurns(turns, inputEntry[1], 'Request')
+  } else if (!messagesEntry && directRequestEntry) {
+    consumedKeys.add(directRequestEntry[0])
+    turns.push({ role: 'user', label: 'Request', value: directRequestEntry[1] })
+  }
+
+  if (promptAuditEntry) {
+    consumedKeys.add(promptAuditEntry[0])
+    appendPromptAuditTurns(turns, promptAuditEntry[1])
+  } else if (isPlainObject(outputEntry?.[1])) {
+    const nestedPromptAudit = valueEntryFromKeys(outputEntry[1], ['prompt_audit', 'promptAudit'])
+    if (nestedPromptAudit) appendPromptAuditTurns(turns, nestedPromptAudit[1])
+  }
+
+  if (outputEntry) {
+    consumedKeys.add(outputEntry[0])
+    appendAgentOutputTurn(turns, outputEntry[1])
+  } else {
+    const directOutput = valueEntryFromKeys(value, ['text', 'response', 'result'])
+    if (directOutput) {
+      consumedKeys.add(directOutput[0])
+      appendAgentOutputTurn(turns, directOutput[1])
+    } else if (hasValue(fallbackAgentOutput)) {
+      appendAgentOutputTurn(turns, fallbackAgentOutput)
+    }
+  }
+
+  return { turns, consumedKeys }
+}
+
+function appendRequestTurns(turns: TraceTurn[], value: unknown, label: string): void {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (isPlainObject(source)) {
+    appendMessageTurns(turns, source.prior_messages, 'Prior')
+    const text = traceRequestText(source)
+    turns.push({ role: 'user', label, value: text || source })
+    return
+  }
+  turns.push({ role: 'user', label, value: source })
+}
+
+function appendPromptAuditTurns(turns: TraceTurn[], value: unknown): void {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (!isPlainObject(source)) {
+    turns.push({ role: 'system', label: 'Prompt audit', value: source })
+    return
+  }
+
+  const systemPrompt = textFromKeys(source, ['system_prompt', 'systemPrompt'])
+  if (systemPrompt) turns.push({ role: 'system', label: 'System prompt', value: systemPrompt })
+  const priorMessages = valueEntryFromKeys(source, ['prior_messages', 'priorMessages', 'messages', 'chat', 'conversation', 'history'])
+  if (priorMessages) appendMessageTurns(turns, priorMessages[1], 'Prior')
+  const userPrompt = textFromKeys(source, ['user_prompt', 'userPrompt'])
+  if (userPrompt) turns.push({ role: 'user', label: 'User prompt', value: userPrompt })
+  if (!systemPrompt && !userPrompt && !isMessageList(priorMessages?.[1])) {
+    turns.push({ role: 'system', label: 'Prompt audit', value: source })
+  }
+}
+
+function appendAgentOutputTurn(turns: TraceTurn[], value: unknown): void {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (isPlainObject(source)) {
+    const nestedRequest = valueEntryFromKeys(source, ['request'])
+    const nestedPromptAudit = valueEntryFromKeys(source, ['prompt_audit', 'promptAudit'])
+    if (nestedRequest && !turns.some((turn) => turn.label === 'Request')) appendRequestTurns(turns, nestedRequest[1], 'Request')
+    if (nestedPromptAudit && !turns.some((turn) => turn.label === 'System prompt' || turn.label === 'Prompt audit')) {
+      appendPromptAuditTurns(turns, nestedPromptAudit[1])
+    }
+  }
+  turns.push({ role: 'agent', label: 'Agent output', value: traceAgentOutputValue(source) })
+}
+
+function appendMessageTurns(turns: TraceTurn[], value: unknown, labelPrefix: string): void {
+  if (!isMessageList(value)) return
+  for (const message of value) {
+    const role = messageRole(message)
+    const content = messageContent(message)
+    turns.push({
+      role: traceTurnRoleFromMessageRole(role),
+      label: labelPrefix ? `${labelPrefix} ${roleLabel(role)}` : roleLabel(role),
+      value: hasValue(content) ? content : message,
+    })
+  }
+}
+
+function compactTraceTurns(turns: TraceTurn[]): TraceTurn[] {
+  const compacted: TraceTurn[] = []
+  for (const turn of turns) {
+    const previous = compacted[compacted.length - 1]
+    if (
+      previous &&
+      previous.role === turn.role &&
+      previous.label === turn.label &&
+      traceTurnComparableValue(previous.value) === traceTurnComparableValue(turn.value)
+    ) {
+      continue
+    }
+    compacted.push(turn)
+  }
+  return compacted
+}
+
+function traceTurnComparableValue(value: unknown): string {
+  if (typeof value === 'string') return normalizeComparableText(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return normalizeComparableText(JSON.stringify(value))
+  } catch {
+    return ''
+  }
+}
+
+function traceRequestText(value: Record<string, unknown>): string {
+  const inputs = isPlainObject(value.inputs) ? value.inputs : null
+  const humanInput = inputs ? textFromKeys(inputs, TRACE_REQUEST_HUMAN_INPUT_KEYS) : ''
+  const directHuman = textFromKeys(value, ['user_message', 'userMessage', 'message', 'instruction'])
+  if (humanInput || directHuman) return uniqueMarkdownParts([humanInput, directHuman]).join('\n\n')
+
+  const directPrompt = textFromKeys(value, ['query', 'prompt', 'user_prompt', 'userPrompt'])
+  const inputPrompt = inputs ? textFromKeys(inputs, ['query', 'prompt']) : ''
+  const inputContext = inputs ? textFromKeys(inputs, TRACE_REQUEST_CONTEXT_KEYS) : ''
+  return uniqueMarkdownParts([directPrompt, inputPrompt, inputContext]).join('\n\n')
+}
+
+function traceBubbleMarkdown(role: TraceTurnRole, value: unknown): string {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (typeof source === 'string') return source
+
+  if (role === 'user' && isPlainObject(source)) {
+    const requestText = traceRequestText(source)
+    if (requestText) return requestText
+    const direct = textFromKeys(source, [
+      'content',
+      'text',
+      'message',
+      'query',
+      'instruction',
+      'prompt',
+      'target_text',
+      'targetText',
+      'selection_text',
+      'selectionText',
+      'user_prompt',
+      'userPrompt',
+    ])
+    if (direct) return direct
+  }
+
+  if (role === 'agent') {
+    const output = traceAgentOutputValue(source)
+    if (typeof output === 'string') return output
+  }
+
+  if (role === 'system' && isPlainObject(source)) {
+    const prompt = textFromKeys(source, ['system_prompt', 'systemPrompt', 'content', 'text', 'message'])
+    if (prompt) return prompt
+  }
+
+  return ''
+}
+
+function traceAgentOutputValue(value: unknown): unknown {
+  const normalized = normalizeAgentOutput(value)
+  if (normalized.body) return normalized.body
+  if (isPlainObject(value)) {
+    for (const key of ['outputs', 'output', 'result', 'response']) {
+      const nested = value[key]
+      if (!hasValue(nested)) continue
+      const nestedOutput = normalizeAgentOutput(nested)
+      if (nestedOutput.body) return nestedOutput.body
+    }
+  }
+  return value
+}
+
+function uniqueMarkdownParts(parts: string[]): string[] {
+  const seen = new Set<string>()
+  return parts
+    .map((part) => part.trim())
+    .filter((part) => {
+      const comparable = normalizeComparableText(part)
+      if (!comparable || seen.has(comparable)) return false
+      seen.add(comparable)
+      return true
+    })
+}
+
+function valueEntryFromKeys(value: Record<string, unknown>, keys: string[]): [string, unknown] | null {
+  for (const key of keys) {
+    const item = value[key]
+    if (hasValue(item)) return [key, item]
+  }
+  return null
+}
+
+function firstStringKey(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const item = value[key]
+    if (typeof item === 'string' && item.trim()) return key
+  }
+  return ''
+}
+
+function stringFromKeys(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const item = value[key]
+    if (!hasValue(item)) continue
+    if (typeof item === 'string') return normalizeComparableText(item)
+    if (typeof item === 'number' || typeof item === 'boolean') return String(item)
+  }
+  return ''
+}
+
+function textFromKeys(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const item = value[key]
+    if (!hasValue(item)) continue
+    if (typeof item === 'string') return item.trim()
+    if (typeof item === 'number' || typeof item === 'boolean') return String(item)
+  }
+  return ''
+}
+
+function isCompactPrimitive(value: unknown): value is string | number | boolean {
+  if (typeof value === 'number' || typeof value === 'boolean') return true
+  if (typeof value !== 'string') return false
+  const clean = normalizeComparableText(value)
+  return clean.length > 0 && clean.length <= 180
+}
+
+function isTraceMessageKey(value: string): boolean {
+  const normalized = normalizeMetadataKey(value)
+  return normalized.includes('message') || normalized.includes('chat')
+}
+
+function isConversationalTraceValue(key: string, value: unknown): boolean {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (isTraceMessageKey(key) && isMessageList(source)) return true
+  if (!isPlainObject(source)) return false
+  return Object.entries(source).some(([childKey, item]) => isTraceMessageKey(childKey) && isMessageList(item))
+}
+
+function isMessageList(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => {
+    if (!isPlainObject(item)) return false
+    return hasValue(item.content) || hasValue(item.text) || hasValue(item.message) || hasValue(item.role)
+  })
+}
+
+function traceTurnRoleFromMessageRole(role: string): TraceTurnRole {
+  if (role === 'user') return 'user'
+  if (role === 'assistant' || role === 'agent') return 'agent'
+  return 'system'
 }
 
 function rangeLabel(value: unknown): string {
@@ -1381,8 +2227,36 @@ function chatRoleClass(role: string): string {
   return 'message'
 }
 
-function messageContent(value: unknown): string {
+function messageContent(value: unknown): unknown {
   if (typeof value === 'string') return value
   if (!isPlainObject(value)) return ''
-  return stringValue(value.content ?? value.text ?? value.message, '')
+  return normalizeMessageContent(value.content ?? value.text ?? value.message)
+}
+
+function messageContentText(value: unknown): string {
+  const content = messageContent(value)
+  if (typeof content === 'string') return content
+  if (!hasValue(content)) return ''
+  return formatValue(content)
+}
+
+function normalizeMessageContent(value: unknown): unknown {
+  if (!hasValue(value)) return ''
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    const textParts = value
+      .map((item) => {
+        if (typeof item === 'string') return item.trim()
+        if (!isPlainObject(item)) return ''
+        return textFromKeys(item, ['text', 'content', 'message'])
+      })
+      .filter(Boolean)
+    return textParts.length > 0 ? uniqueMarkdownParts(textParts).join('\n\n') : value
+  }
+  if (isPlainObject(value)) {
+    const text = textFromKeys(value, ['text', 'content', 'message'])
+    return text || value
+  }
+  return value
 }

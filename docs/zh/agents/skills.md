@@ -216,11 +216,17 @@ GitHub用户名@Skill名
 运行时流程：
 
 1. 用户选择 Agent 运行。
-2. 后端读取 Agent 的 `skill_ids`。
-3. 后端只解密并加载这些 Skill。
-4. 未装配的 Skill 不会进入上下文。
-5. Provider 使用 Agent 指令 + 被装配 Skill + 用户输入生成结果。
+2. 后端扫描 Agent workspace 下的 `.agents/skills/` 文件夹，列出所有可用 Skill。
+3. 元数据（名称、描述、标签）从 `skill.yaml` 读取；如果没有 `skill.yaml`，则从 `SKILL.md` 的 YAML front matter 提取。
+4. Agent 的 system prompt 中会展示可用 Skill 列表（名称、描述、标签），但**不会预加载内容**。
+5. Agent 判断需要某个 Skill 时，调用 `use_skill(skill_id, reason)`。
+6. 后端返回该 Skill 的 `SKILL.md` 内容 + 文件树列表。
+7. Agent 根据需要自行读取额外文件（如 `references/xxx.md`）。
+8. 每次 `use_skill` 调用都会记录激活事件，保存在运行记录中。
 
-项目型 Skill 的运行时内容来自最近一次 cache：后端会读取缓存中的 `SKILL.md`，并把安全文本辅助文件以文件路径标签的形式追加到 Skill 内容里。二进制文件、大文件和 `.git` 内容不会进入运行时上下文。
+项目型 Skill 在 Agent workspace 中以 `.skillref.json` 引用文件存在，指向 `~/.yuwanlab/skills-cache/` 下的实际缓存目录。`use_skill` 会解析引用并从缓存目录读取内容。
 
-这个边界保证 Skill 很多时不会污染每个 Agent 的上下文，也减少无关能力带来的成本和行为漂移。
+这个设计保证：
+- 未装配的 Skill 不会进入上下文。
+- Agent 只在需要时才加载 Skill 内容，避免无关能力带来的成本和行为漂移。
+- Agent 可以按需读取 Skill 中的子文件，而不是一次性加载全部内容。

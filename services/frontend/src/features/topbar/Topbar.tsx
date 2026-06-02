@@ -18,9 +18,11 @@ export function Topbar({
   onOpenPersonalPanel,
 }: TopbarProps) {
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
-  const projectName = useProjectStore((s) =>
-    currentProjectId ? s.projects.find((p) => p.id === currentProjectId)?.name ?? null : null,
+  const currentProject = useProjectStore((s) =>
+    currentProjectId ? s.projects.find((p) => p.id === currentProjectId) ?? null : null,
   )
+  const projectName = currentProject?.name ?? null
+  const isDataProject = currentProject?.project_type === 'data'
 
   return (
     <header className="topbar">
@@ -34,11 +36,13 @@ export function Topbar({
             </>
           )}
         </div>
-        <div className="subtitle">Agent 原生的本地科研写作工作台</div>
+        <div className="subtitle">
+          {isDataProject ? 'Agent 原生的数据集工作台' : 'Agent 原生的本地科研写作工作台'}
+        </div>
       </div>
       <div className="topbar-actions">
         <PresenceIndicator />
-        <ViewControl />
+        {!isDataProject && <ViewControl />}
         <NotificationBell />
         <UserMenu onOpenPersonalPanel={onOpenPersonalPanel} />
       </div>

@@ -64,7 +64,7 @@ SuperLeaf 由三个独立服务组成，通过 HTTP 和 WebSocket 通信。
 ```
 选中文字 → 运行 workflow / 原生 Agent → Backend agent_orchestrator 或 NativeAgentRunner
     → 调用 Provider (Nanobot/Dify)
-    → 仅加载用户给该 Agent 装配的 Skill
+    → 从 Agent workspace 磁盘扫描已装配的 Skill 元数据，按需加载内容
     → 必要时调用用户启用的 MCP 工具
     → 解析输出 → 创建 Annotation → SSE 通知前端
     → 前端 annotationStore 更新 → 编辑器高亮装饰

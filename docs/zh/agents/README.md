@@ -18,7 +18,7 @@ has_children: true
 | Provider | 模型服务的连接方式，例如 Nanobot、Dify 或 OpenAI-compatible endpoint |
 | Native Agent Credential | 原生 Agent 运行需要的凭证，加密存储 |
 | Native Agent | 名称、模型、系统指令、Skill/MCP 列表和运行参数 |
-| Skill | `SKILL.md` 描述的一组能力说明，运行时注入给指定 Agent；可以来自上传、市场、共享或 Skill 项目 cache |
+| Skill | `SKILL.md` 描述的一组能力说明，运行时按需加载给指定 Agent；可以来自上传、市场、共享或 Skill 项目 cache |
 | AgentSkill | Agent 与 Skill 的绑定关系，一个 Agent 可以装配多个 Skill |
 | MCP | Agent 可按需调用的外部工具服务。公开版默认通过 Remote MCP endpoint 接入；本地可信部署可显式开启 stdio |
 

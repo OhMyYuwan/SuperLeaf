@@ -2641,6 +2641,10 @@ function SkillManagementPanel({
                       // ignore; treat as "no usage info"
                     }
                     const lines = [`从本地 Skill 库移除「${skillLabel(skill)}」？`]
+                    if (skill.source === 'project') {
+                      lines.push('')
+                      lines.push('源 Skill Project 会保留；以后打开该项目并更新 Skill 缓存即可重新加载。')
+                    }
                     if (usage.length > 0) {
                       lines.push('')
                       lines.push(`以下 ${usage.length} 个 Agent 正在使用，删除后这个 Skill 会从它们身上自动解绑：`)
@@ -2651,7 +2655,7 @@ function SkillManagementPanel({
                     void run(skill.id, () => onRemoveSkill(skill.id))
                   }}
                 >
-                  删除
+                  {skill.source === 'project' ? '移除' : '删除'}
                 </button>
               </div>
             </div>

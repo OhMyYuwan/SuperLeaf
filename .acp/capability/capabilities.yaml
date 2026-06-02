@@ -3,7 +3,9 @@
 # Each capability is a semantic surface, not a directory. Slices are the
 # narrowest authority boundaries; routing fields below are the contract that
 # keeps future Requests on rails.
-# Refreshed 2026-05-17 for REQ-0106 (native Agent / Skill support refresh).
+# Refreshed 2026-06-01 for REQ-0281.
+# Path convention: primary_paths are semantic shorthand. Expand backend/ to
+# services/backend/ and frontend/ to services/frontend/ when opening files.
 #
 # Alias notes for historical kernel records:
 #   * `frontend-workspace/agent-panel` in REQ-0001..0013 refers to the
@@ -35,10 +37,11 @@ capabilities:
         route_here_when: Work authors or revises product/architecture/plan documents.
         bridge_when: A plan implies code work — record a separate Request for the code change.
         primary_paths:
-          - docs/README.md
-          - docs/architecture/overview.md
-          - docs/providers/
-          - docs/workflows/
+          - docs/zh/README.md
+          - docs/zh/architecture/overview.md
+          - docs/zh/agents/
+          - docs/zh/providers/
+          - docs/zh/workflows/
       - id: dify-launcher
         summary: Wrapper script around Dify's official docker-compose stack under reference/dify/docker/.
         route_here_when: Work adjusts how we bring Dify up/down, .env initialization, or port mapping.
@@ -581,19 +584,21 @@ capabilities:
       Marketplace sync/install, Skill content encryption, share visibility, and
       AgentSkill assignment. Also owns the app-side consumption of
       `supports/SuperLeaf.MCPs` for catalog-driven MCP preset discovery,
-      probe, golden tests, and runtime tool calls.
+      probe, golden tests, and runtime tool calls. Project-backed Skills are
+      generated from Skill Projects via an explicit cache refresh and are
+      shared by project membership rather than copied per collaborator.
     slices:
       - id: backend-routes
-        summary: /api/native-agent routes for credentials, skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
-        route_here_when: Work changes native Agent, Skill, or MCP HTTP contracts, permission checks, marketplace/catalog endpoints, or response shape.
+        summary: /api/native-agent routes for credentials, uploaded/private/shared skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
+        route_here_when: Work changes native Agent, non-project Skill, MCP HTTP contracts, permission checks, marketplace/catalog endpoints, or response shape. Use project-skill-cache for Skill Project cache route changes.
         bridge_when: Frontend state or TeamTab UX must be updated with backend contract changes.
         primary_paths:
           - backend/app/api/native_agents.py
           - backend/app/schemas.py
       - id: backend-services
         summary: NativeAgentService + runner/registry + Skill crypto/marketplace services + MCP tool/catalog services.
-        route_here_when: Work changes encrypted credential handling, local Skill storage, visibility/share/delete semantics, marketplace sync, runtime Skill loading, MCP discovery, or MCP tool-call behavior.
-        bridge_when: Provider model changes route through workflow-integration/provider-registry.
+        route_here_when: Work changes encrypted credential handling, local Skill storage, non-project visibility/share/delete semantics, marketplace sync/install, native Agent runtime loading, MCP discovery, or MCP tool-call behavior. Use project-skill-cache for Skill Project lifecycle work.
+        bridge_when: Project membership changes route through collaboration/project-members; provider model changes route through workflow-integration/provider-registry.
         primary_paths:
           - backend/app/services/native_agent_service.py
           - backend/app/services/native_agent_runner.py
@@ -604,6 +609,30 @@ capabilities:
           - backend/app/services/skill_marketplace_service.py
           - backend/app/models.py
           - backend/app/settings.py
+      - id: project-skill-cache
+        summary: |
+          Skill Project cache lifecycle: README.md/SKILL.md project templates,
+          manual cache refresh, marketplace copy-to-project, collaborator
+          visibility, cache removal/recreate, and runtime loading from cached
+          project files.
+        route_here_when: Work changes Skill Project creation/templates, "更新 Skill 缓存", skills-cache path/reference behavior, .git/binary filtering, project-backed Skill visibility, removal/recovery, or Agent runtime consumption of cached references.
+        bridge_when: UI copy/navigation changes route through frontend-management; member role logic routes through collaboration/project-members.
+        primary_paths:
+          - backend/app/api/projects.py
+          - backend/app/services/native_agent_service.py
+          - backend/app/services/agent_registry_service.py
+          - backend/app/services/project_service.py
+          - backend/app/services/project_fs_service.py
+          - backend/app/services/project_member_service.py
+          - backend/app/services/skill_marketplace_service.py
+          - backend/test/test_project_skill_cache.py
+          - backend/test/test_skill_marketplace_project_clone.py
+          - frontend/src/features/right-panel/ProjectArchiveTab.tsx
+          - frontend/src/features/right-panel/TeamTab.tsx
+          - frontend/src/stores/nativeAgentStore.ts
+          - docs/zh/agents/skills.md
+          - docs/zh/architecture/overview.md
+          - README.md
       - id: frontend-management
         summary: TeamTab Agent, Skill, and MCP subtabs — AgentSkill capsules, local Skill library, Skill Market search/install, MCP catalog listing, MCP probe/golden-test, custom MCP summaries, private upload, share/update/unshare flows.
         route_here_when: Work changes the native Agent form, Skill management panel, MCP management panel, marketplace search/install UX, local library rows, or sharing dialog.

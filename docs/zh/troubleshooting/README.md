@@ -6,7 +6,7 @@ nav_order: 10
 
 # 故障排查
 
-按症状定位问题。优先确认服务是否启动，再看 Provider、Skill/MCP Market、版本归档、LaTeX 和协作链路。
+按症状定位问题。优先确认服务是否启动，再看 Provider、Skill/MCP Market、Skill 项目 cache、版本归档、LaTeX 和协作链路。
 
 ## 服务启动失败
 
@@ -83,6 +83,26 @@ https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.Skills/main/marketplace.js
 
 这类错误只影响市场同步，不影响已经安装的本地 Skill。
 
+## 项目型 Skill 不见了或不能重新加载
+
+项目型 Skill 的源项目和本地 Skill 库条目是两件事：
+
+| 症状 | 处理 |
+|---|---|
+| 在团队管理里移除了项目型 Skill | 源 Skill 项目不会被删除。打开源项目，进入 **版本 → 项目大版本 → Skill 缓存**，重新点击 **更新 Skill 缓存** |
+| 编辑了 `SKILL.md` 但 Agent 没变化 | 还没有更新 cache。Agent 只读取最近一次手动生成的 cache |
+| 协作者看不到项目型 Skill | 确认源 Skill 项目已经共享给对方，并且对方刷新 **团队管理 → Skill** |
+| 协作者不能更新 cache | 需要 `editor` 或 owner 权限；`viewer` 只能使用最近一次 cache |
+| 市场 Skill 想改成自己的版本 | 先安装市场 Skill，再点 **复制到本地**。系统会创建一个 Skill 项目 |
+
+缓存默认位于 Backend 数据目录：
+
+```text
+~/.yuwanlab/skills-cache/
+```
+
+不要手动编辑 cache 目录。应当编辑 Skill 项目里的文件，再用版本面板更新 cache。
+
 ## MCP Market 或 MCP 测试失败
 
 默认 MCP catalog：
@@ -111,6 +131,46 @@ https://raw.githubusercontent.com/OhMyYuwan/SuperLeaf.MCPs/main/catalog.json
 - 大小写必须完全匹配。
 - 上传私有 Skill 前需要连接 GitHub 账号。
 - 非作者不能编辑别人共享的 Skill。
+
+## Agent 没有创建文件
+
+原生 Agent 只有在它实际调用 `project_write_text_file` 时，才会在项目数据库树里创建文本文件。判断方式：
+
+| 现象 | 含义 |
+|---|---|
+| Agent 名称旁显示 `写文件 1` | 已经调用写入工具，左侧文件树应刷新 |
+| 只显示 `读文件 X`，没有 `写文件` | Agent 只读了上下文，没有真正创建文件 |
+| 输出 `[诊断] project_write_text_file 已被调用，但工具执行失败` | 工具调用了，但后端拒绝或报错，按诊断内容排查 |
+| 提示同名文件已存在 | 写入工具不会覆盖已有文档、二进制文件或文件夹，换一个路径或先手动处理旧文件 |
+
+如果 Agent 反复只说“我会创建文件”，可以重新发送更直接的要求，例如：
+
+```text
+请现在创建 references/experiment-design.md，并把完整实验设计写入该文件。
+```
+
+执行中输入区会变成停止按钮；如果上下文读取过多或方向明显不对，可以点停止后重新约束任务。
+
+## Chrome 打不开但 Safari 可以
+
+如果同一个局域网地址在 Safari 或手机 Chrome 能打开，但某台电脑的 Chrome 报 `ERR_ADDRESS_UNREACHABLE`，更可能是 Chrome 当前 profile 的站点数据、网络状态或扩展污染，而不是 SuperLeaf 服务端问题。
+
+排查顺序：
+
+1. 用临时 Chrome profile 打开同一地址。
+2. 如果临时 profile 可用，新建一个 SuperLeaf 专用 profile。
+3. 用专用 profile 访问局域网地址，例如 `http://192.168.100.100:5173`。
+
+macOS 可以用下面的方式启动一个独立 profile：
+
+```bash
+mkdir -p "$HOME/ChromeProfiles/SuperLeaf"
+open -na "Google Chrome" --args \
+  --user-data-dir="$HOME/ChromeProfiles/SuperLeaf" \
+  --new-window "http://192.168.100.100:5173"
+```
+
+如果命令行打开可用，但普通 Chrome 窗口仍不可用，继续使用专用 profile 会比反复 reset 原 profile 更稳定。
 
 ## LaTeX 编译失败
 
@@ -160,6 +220,7 @@ latexmk -version
 | `~/.yuwanlab/yuwanlab.db` | SQLite 数据库 |
 | `~/.yuwanlab/secrets.key` | Fernet 加密主密钥 |
 | `~/.yuwanlab/collab-data/` | Yjs LevelDB 数据 |
+| `~/.yuwanlab/skills-cache/` | Skill 项目生成给 Agent runtime 使用的 cache |
 
 {: .warning }
 为兼容改名前的本地安装，SuperLeaf 当前仍沿用旧的 `~/.yuwanlab/` 数据目录。不要把 `~/.yuwanlab/secrets.key` 提交到 GitHub。它能解密本机数据库里的敏感字段。

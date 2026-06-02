@@ -72,6 +72,8 @@ y-codemirror.next              y-protocols                    y-codemirror.next
 
 每个用户只能看到自己触发的 Agent 输出。这确保了个人的 AI 辅助工作流不会干扰他人。
 
+项目型 Skill 是一个例外：它的源头是共享项目本身，而不是某个用户的私有 Agent 资产。Skill 项目共享后，协作者会在 **团队管理 → Skill** 里看到同一个项目型 Skill，并可以装配最近一次 cache。`viewer` 只能使用 cache；`editor` 和 owner 可以回到 Skill 项目更新 cache。移除本地库里的项目型 Skill 不会删除源项目。
+
 ## 通知系统
 
 项目内的重要事件会通过通知推送：

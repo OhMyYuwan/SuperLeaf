@@ -13,6 +13,8 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useUserStore } from '../stores/userStore'
 import { BackendError } from '../services/backendApi'
+import { AuthSplitShell } from './components/AuthSplitShell'
+import { AUTH_SLIDES } from './authSlides'
 import './auth.css'
 
 interface LocationState {
@@ -28,33 +30,42 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (busy || !email.trim() || !password) return
-    setBusy(true)
-    setError(null)
-    try {
-      await login({ email: email.trim(), password })
-      const from = (location.state as LocationState | null)?.from || '/projects'
-      navigate(from, { replace: true })
-    } catch (e) {
-      setError(extractMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [activeSlideId, setActiveSlideId] = useState(AUTH_SLIDES[0].id)
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
+    <AuthSplitShell
+      slides={AUTH_SLIDES}
+      activeSlideId={activeSlideId}
+      onSlideChange={setActiveSlideId}
+      asideLabel="SuperLeaf 产品介绍"
+    >
+      <div className="auth-card auth-card-split">
         <div className="auth-brand">SuperLeaf</div>
-        <h1 className="auth-title">登录</h1>
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <h2 className="auth-title">登录</h2>
+        <p className="auth-subtle">进入你的协作写作工作台，继续上一次的项目进度。</p>
+        <form
+          className="auth-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (busy || !email.trim() || !password) return
+            setBusy(true)
+            setError(null)
+            void (async () => {
+              try {
+                await login({ email: email.trim(), password })
+                const from = (location.state as LocationState | null)?.from || '/projects'
+                navigate(from, { replace: true })
+              } catch (e) {
+                setError(extractMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
           <label className="auth-label">
             邮箱
             <input
-              autoFocus
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -82,7 +93,7 @@ export function LoginPage() {
           还没有账号？<Link to="/register">去注册</Link>
         </div>
       </div>
-    </div>
+    </AuthSplitShell>
   )
 }
 

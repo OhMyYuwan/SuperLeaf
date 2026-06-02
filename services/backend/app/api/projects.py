@@ -26,12 +26,12 @@ from ..schemas import (
     RecentCollaboratorOut,
     SkillOut,
 )
-from ..services.event_bus import bus
 from ..services.annotation_training_export_service import build_annotation_training_export_zip
+from ..services.event_bus import bus
 from ..services.github_service import GitHubError, GitHubService, parse_repo_url
+from ..services.native_agent_service import NativeAgentService
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
-from ..services.native_agent_service import NativeAgentService
 from ..services.skill_content_crypto import decrypt_skill_content
 from .deps import get_current_user, get_project_from_path
 
@@ -163,9 +163,8 @@ def update_project_skill_cache(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> ProjectSkillCacheOut:
-    svc = ProjectService(db)
-    project = svc.get(project_id, user_id=user.id)
-    if project is None:
+    project = db.get(Project, project_id)
+    if project is None or not ProjectMemberService(db).has_access(project.id, user.id):
         raise HTTPException(404, "Project not found")
     try:
         skill = NativeAgentService(db).update_project_skill_cache(project, user_id=user.id)

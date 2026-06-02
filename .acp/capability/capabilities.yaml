@@ -587,6 +587,9 @@ capabilities:
       probe, golden tests, and runtime tool calls. Project-backed Skills are
       generated from Skill Projects via an explicit cache refresh and are
       shared by project membership rather than copied per collaborator.
+      At runtime, Skills are loaded by scanning the Agent workspace disk
+      (.agents/skills/), not from the database; metadata comes from
+      skill.yaml or SKILL.md front matter.
     slices:
       - id: backend-routes
         summary: /api/native-agent routes for credentials, uploaded/private/shared skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
@@ -597,7 +600,7 @@ capabilities:
           - backend/app/schemas.py
       - id: backend-services
         summary: NativeAgentService + runner/registry + Skill crypto/marketplace services + MCP tool/catalog services.
-        route_here_when: Work changes encrypted credential handling, local Skill storage, non-project visibility/share/delete semantics, marketplace sync/install, native Agent runtime loading, MCP discovery, or MCP tool-call behavior. Use project-skill-cache for Skill Project lifecycle work.
+        route_here_when: Work changes encrypted credential handling, local Skill storage, non-project visibility/share/delete semantics, marketplace sync/install, native Agent runtime loading, disk-based Skill scanning from .agents/skills/, skill.yaml / SKILL.md front matter parsing, MCP discovery, or MCP tool-call behavior. Use project-skill-cache for Skill Project lifecycle work.
         bridge_when: Project membership changes route through collaboration/project-members; provider model changes route through workflow-integration/provider-registry.
         primary_paths:
           - backend/app/services/native_agent_service.py
@@ -614,8 +617,9 @@ capabilities:
           Skill Project cache lifecycle: README.md/SKILL.md project templates,
           manual cache refresh, marketplace copy-to-project, collaborator
           visibility, cache removal/recreate, and runtime loading from cached
-          project files.
-        route_here_when: Work changes Skill Project creation/templates, "更新 Skill 缓存", skills-cache path/reference behavior, .git/binary filtering, project-backed Skill visibility, removal/recovery, or Agent runtime consumption of cached references.
+          project files. Project skills are referenced from the Agent workspace
+          via .skillref.json files pointing to the cache directory.
+        route_here_when: Work changes Skill Project creation/templates, "更新 Skill 缓存", skills-cache path/reference behavior, .git/binary filtering, project-backed Skill visibility, removal/recovery, .skillref.json references, or Agent runtime consumption of cached references.
         bridge_when: UI copy/navigation changes route through frontend-management; member role logic routes through collaboration/project-members.
         primary_paths:
           - backend/app/api/projects.py

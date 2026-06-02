@@ -572,6 +572,11 @@ capability_routes:
       invariant: project-backed Skills are generated from database-backed Skill
       Projects through explicit "更新 Skill 缓存"; live edits do not affect
       Agents until refresh. Project membership controls collaborator access.
+      At runtime, Skills are loaded by scanning the Agent workspace disk
+      (.agents/skills/) — not by querying the Skill database table. Metadata
+      (name, description, tags) is read from skill.yaml or SKILL.md front
+      matter. use_skill returns only SKILL.md content + file tree; the Agent
+      reads additional files itself via read_agent_file.
     supporting_modules:
       - backend-services
       - support-skills

@@ -522,7 +522,7 @@ rules:
           - services/backend/app/services/skill_recipe_metadata.py
           - services/backend/app/models.py
         expand_when:
-          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, registry behavior, marketplace Skill install/update, or non-project Skill visibility changes
+          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, registry behavior, marketplace Skill install/update, non-project Skill visibility changes, or disk-based Skill loading from .agents/skills/ (skill.yaml / SKILL.md front matter metadata extraction, use_skill returning SKILL.md + file tree)
       frontend-management:
         start_with:
           - services/frontend/src/features/right-panel/TeamTab.tsx
@@ -549,7 +549,7 @@ rules:
           - docs/zh/architecture/overview.md
           - README.md
         expand_when:
-          - changing Skill Project templates, cache materialization, cache directory semantics, marketplace copy-to-Skill-Project behavior, collaboration access to project-backed Skills, "remove local Skill" behavior, or Agent runtime reading of cached project Skill files
+          - changing Skill Project templates, cache materialization, cache directory semantics, marketplace copy-to-Skill-Project behavior, collaboration access to project-backed Skills, "remove local Skill" behavior, .skillref.json references in Agent workspace, or Agent runtime reading of cached project Skill files
       skill-market:
         start_with:
           - supports/SuperLeaf.Skills/README.md

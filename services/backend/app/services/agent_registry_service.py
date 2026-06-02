@@ -162,23 +162,44 @@ class AgentRegistryService:
 
 
 def _read_skill_meta(folder: Path) -> dict:
-    """Read skill.yaml metadata from a skill folder. Returns {} if missing."""
+    """Read skill metadata: try skill.yaml, fall back to SKILL.md front matter."""
+    # 1) Try skill.yaml
     yaml_path = folder / "skill.yaml"
-    if not yaml_path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    # Normalize version to int
+    if yaml_path.is_file():
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return _normalize_meta(data)
+        except (OSError, yaml.YAMLError):
+            pass
+
+    # 2) Fall back to SKILL.md front matter
+    skill_md = folder / "SKILL.md"
+    if skill_md.is_file():
+        try:
+            text = skill_md.read_text(encoding="utf-8", errors="replace")
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end > 0:
+                    front = yaml.safe_load(text[3:end])
+                    if isinstance(front, dict):
+                        return _normalize_meta(front)
+        except (OSError, yaml.YAMLError):
+            pass
+
+    import logging
+
+    logging.getLogger(__name__).warning("No metadata found for skill folder: %s", folder.name)
+    return {}
+
+
+def _normalize_meta(data: dict) -> dict:
+    """Normalize skill metadata fields."""
     raw_ver = data.get("version", 1)
     try:
         data["version"] = int(str(raw_ver).split(".")[0])
     except (ValueError, TypeError):
         data["version"] = 1
-    # Normalize tags
     tags = data.get("tags", [])
     if not isinstance(tags, list):
         tags = []

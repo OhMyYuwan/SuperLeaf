@@ -13,7 +13,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from ..models import CachedWorkflow, NativeAgent, Project, Provider, Skill
+from ..models import CachedWorkflow, NativeAgent, NativeAgentSkillInstall, Project, Provider, Skill
 from .agent_workspace_service import AgentWorkspaceError, read_skill_folder_content
 from .native_agent_runner import NativeSkillBlock
 from .project_member_service import ProjectMemberService
@@ -89,6 +89,7 @@ class AgentRegistryService:
                     version=skill.version,
                     source=skill.source,
                     content=content,
+                    aliases=self._skill_aliases(agent, skill),
                     description=skill.description or "",
                     tags=list(skill.tags or []),
                     content_hash=_content_hash(content),
@@ -96,6 +97,21 @@ class AgentRegistryService:
                 )
             )
         return out
+
+    def _skill_aliases(self, agent: NativeAgent, skill: Skill) -> list[str]:
+        aliases = [skill.name, skill.public_name]
+        installs = (
+            self.db.query(NativeAgentSkillInstall)
+            .filter(
+                NativeAgentSkillInstall.agent_id == agent.id,
+                NativeAgentSkillInstall.skill_id == skill.id,
+                NativeAgentSkillInstall.status == "installed",
+            )
+            .all()
+        )
+        for install in installs:
+            aliases.extend([install.skill_name, install.folder_name, install.marketplace_id])
+        return _unique_non_empty(aliases)
 
     def _resolve_external(
         self,
@@ -148,3 +164,15 @@ class AgentRegistryService:
 
 def _content_hash(content: str) -> str:
     return "sha256:" + sha256(content.encode("utf-8")).hexdigest()
+
+
+def _unique_non_empty(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out

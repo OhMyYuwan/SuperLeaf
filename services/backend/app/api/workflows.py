@@ -508,6 +508,8 @@ def _run_native_agent(
         "skill_ids": list(agent.skill_ids or []),
         "available_skills": available_skills,
         "activated_skills": [],
+        "request": _native_request_trace(body),
+        "prompt_audit": {},
     }
     run = WorkflowRun(
         project_id=project.id,
@@ -579,6 +581,14 @@ def _run_native_agent(
                 conversation_id=body.conversation_id or f"ylw-native-{run.id}",
                 context_files=[ref.model_dump() for ref in body.context_files],
             )
+            trace_entry["request"] = _native_request_trace(
+                body,
+                inputs=payload.inputs,
+                context_files=payload.context_files,
+            )
+            trace_entry["prompt_audit"] = runner.prompt_audit_payload(payload)
+            run.trace = [dict(trace_entry)]
+            db.commit()
             async for evt in runner.stream(payload):
                 data = evt.get("data") or {}
                 if evt.get("event") == "native.agent.output.delta":
@@ -631,6 +641,29 @@ def _run_native_agent(
 
 def _skill_trace_summary(skill) -> dict[str, Any]:
     return skill.summary_payload()
+
+
+def _native_request_trace(
+    body: RunBody,
+    *,
+    inputs: dict | None = None,
+    context_files: list[dict] | None = None,
+) -> dict[str, Any]:
+    return {
+        "document_id": body.document_id,
+        "range_start": body.range_start,
+        "range_end": body.range_end,
+        "query": body.query,
+        "user": body.user,
+        "conversation_id": body.conversation_id,
+        "parent_run_id": body.parent_run_id,
+        "inputs": dict(inputs if inputs is not None else body.inputs or {}),
+        "context_files": list(
+            context_files
+            if context_files is not None
+            else [ref.model_dump() for ref in body.context_files]
+        ),
+    }
 # ---------------------------------------------------------------------------
 # Workflow Definition Management
 # ---------------------------------------------------------------------------

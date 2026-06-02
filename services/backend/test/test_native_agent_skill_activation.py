@@ -11,12 +11,13 @@ from app.services.native_agent_runner import (
 )
 
 
-def _skill() -> NativeSkillBlock:
+def _skill(*, aliases: list[str] | None = None) -> NativeSkillBlock:
     return NativeSkillBlock(
         id="skill-paper-review",
         name="Paper Review",
         version=3,
         source="upload",
+        aliases=aliases or [],
         description="Use when reviewing paper logic and evidence.",
         tags=["review", "paper"],
         content="# Paper Review\n\nSecret full rubric text.",
@@ -63,6 +64,20 @@ async def test_skill_prompt_exposes_metadata_without_full_content(tmp_path):
     assert "Secret full rubric text" not in prompt
 
 
+def test_prompt_audit_payload_records_system_and_user_prompts(tmp_path):
+    runner = _runner(tmp_path, skills=[_skill()])
+
+    audit = runner.prompt_audit_payload(_payload())
+
+    assert audit["message_count"] == 2
+    assert "Available Skills:" in audit["system_prompt"]
+    assert "User instruction:" in audit["user_prompt"]
+    assert "Check logic gaps." in audit["user_prompt"]
+    assert "intro text" in audit["user_prompt"]
+    assert audit["prior_messages"] == []
+    assert "Secret full rubric text" not in audit["system_prompt"]
+
+
 @pytest.mark.asyncio
 async def test_use_skill_returns_content_and_activation_payload(tmp_path):
     runner = _runner(tmp_path, skills=[_skill()])
@@ -96,6 +111,33 @@ async def test_use_skill_returns_content_and_activation_payload(tmp_path):
         "content_hash": "sha256:testhash",
         "reason": "Need paper review rubric.",
     }
+
+
+@pytest.mark.asyncio
+async def test_use_skill_accepts_public_or_folder_alias(tmp_path):
+    runner = _runner(tmp_path, skills=[_skill(aliases=["Q1ngsong@phd-mentor"])])
+    call = {
+        "id": "call-1",
+        "type": "function",
+        "function": {
+            "name": "use_skill",
+            "arguments": json.dumps(
+                {
+                    "skill_id": "Q1ngsong@phd-mentor",
+                    "reason": "Use the visible Skill folder name.",
+                }
+            ),
+        },
+    }
+
+    result = await runner._execute_tool(call, {}, _payload())
+
+    assert result.failed is False
+    assert result.tool_kind == "skill"
+    assert "Secret full rubric text" in result.content
+    assert result.trace_payload is not None
+    assert result.trace_payload["skill_id"] == "skill-paper-review"
+    assert result.trace_payload["skill_aliases"] == ["Q1ngsong@phd-mentor"]
 
 
 @pytest.mark.asyncio

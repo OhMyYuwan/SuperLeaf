@@ -163,6 +163,7 @@ function RunDetail({
     ? new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()
     : null
   const availableSkillCount = availableSkillCountForRun(run)
+  const auditEntries = auditEntriesForRun(run)
 
   return (
     <div className="run-history-detail">
@@ -209,11 +210,36 @@ function RunDetail({
           )}
         </div>
       )}
+      {auditEntries.length > 0 && (
+        <div className="run-detail-audit">
+          <div className="run-detail-section-label">Agent 输入</div>
+          {auditEntries.map((entry) => (
+            <div key={entry.id} className="run-detail-audit-entry">
+              <div className="run-detail-audit-title">{entry.label}</div>
+              <RunAuditBlock title="用户请求" value={entry.request} />
+              <RunAuditBlock title="Node 输入" value={entry.nodeInput} />
+              <RunAuditBlock title="System Prompt" value={entry.systemPrompt} />
+              <RunAuditBlock title="User Prompt" value={entry.userPrompt} />
+              <RunAuditBlock title="Prior Messages" value={entry.priorMessages} />
+            </div>
+          ))}
+        </div>
+      )}
       {run.error && <div className="run-detail-error">{run.error}</div>}
       {Object.keys(run.outputs).length > 0 && (
         <pre className="run-detail-outputs">{JSON.stringify(run.outputs, null, 2)}</pre>
       )}
     </div>
+  )
+}
+
+function RunAuditBlock({ title, value }: { title: string; value: unknown }) {
+  if (!hasRenderableValue(value)) return null
+  return (
+    <details className="run-detail-audit-block" open>
+      <summary>{title}</summary>
+      <pre className="run-detail-audit-content">{formatAuditValue(value)}</pre>
+    </details>
   )
 }
 
@@ -293,6 +319,73 @@ function stringFrom(value: unknown): string {
 
 function numberFrom(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+interface RunAuditEntry {
+  id: string
+  label: string
+  request?: unknown
+  nodeInput?: unknown
+  systemPrompt?: string
+  userPrompt?: string
+  priorMessages?: unknown
+}
+
+function auditEntriesForRun(run: WorkflowRun): RunAuditEntry[] {
+  const out: RunAuditEntry[] = []
+  for (const [index, item] of (run.trace as unknown[]).entries()) {
+    if (!isRecord(item)) continue
+    const output = isRecord(item.output) ? item.output : null
+    const promptAudit = promptAuditFrom(item.prompt_audit) ?? promptAuditFrom(output?.prompt_audit)
+    const request = item.request ?? output?.request
+    const nodeInput = item.input
+    if (!promptAudit && !hasRenderableValue(request) && !hasRenderableValue(nodeInput)) continue
+    out.push({
+      id: `${run.id}:audit:${index}`,
+      label: auditEntryLabel(item, index),
+      request,
+      nodeInput,
+      systemPrompt: promptAudit?.systemPrompt,
+      userPrompt: promptAudit?.userPrompt,
+      priorMessages: promptAudit?.priorMessages,
+    })
+  }
+  return out
+}
+
+function promptAuditFrom(value: unknown): Pick<RunAuditEntry, 'systemPrompt' | 'userPrompt' | 'priorMessages'> | null {
+  if (!isRecord(value)) return null
+  const systemPrompt = stringFrom(value.system_prompt)
+  const userPrompt = stringFrom(value.user_prompt)
+  const priorMessages = value.prior_messages
+  if (!systemPrompt && !userPrompt && !hasRenderableValue(priorMessages)) return null
+  return { systemPrompt, userPrompt, priorMessages }
+}
+
+function auditEntryLabel(item: Record<string, unknown>, index: number): string {
+  const nodeId = stringFrom(item.node_id) || stringFrom(item.nodeId)
+  const agentId = stringFrom(item.agent_id) || stringFrom(item.agentId)
+  if (nodeId && agentId) return `Node ${nodeId} · ${agentId}`
+  if (nodeId) return `Node ${nodeId}`
+  if (agentId) return `Agent ${agentId}`
+  return `Trace ${index + 1}`
+}
+
+function hasRenderableValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+function formatAuditValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function statusLabel(status: string): string {

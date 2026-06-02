@@ -670,6 +670,56 @@
   color: rgba(148, 163, 184, 0.82);
 }
 
+.run-detail-audit {
+  display: grid;
+  gap: 7px;
+}
+
+.run-detail-audit-entry {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.run-detail-audit-title {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-detail-audit-block {
+  min-width: 0;
+}
+
+.run-detail-audit-block summary {
+  cursor: pointer;
+  color: rgba(191, 219, 254, 0.86);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.run-detail-audit-content {
+  max-height: 260px;
+  margin: 6px 0 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.72);
+  color: rgba(226, 232, 240, 0.92);
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .run-detail-outputs {
   margin: 0;
   padding: 8px 10px;

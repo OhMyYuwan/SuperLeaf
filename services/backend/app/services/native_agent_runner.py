@@ -55,13 +55,14 @@ class NativeSkillBlock:
     version: int
     source: str
     content: str
+    aliases: list[str] = field(default_factory=list)
     description: str = ""
     tags: list[str] = field(default_factory=list)
     content_hash: str = ""
     cache_version: int = 0
 
     def summary_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "skill_id": self.id,
             "skill_name": self.name,
             "skill_version": self.version,
@@ -71,6 +72,10 @@ class NativeSkillBlock:
             "tags": list(self.tags or []),
             "content_hash": self.content_hash or _content_hash(self.content),
         }
+        aliases = _unique_non_empty(self.aliases)
+        if aliases:
+            payload["skill_aliases"] = aliases
+        return payload
 
     def activation_payload(self, *, reason: str = "") -> dict[str, Any]:
         return {**self.summary_payload(), "reason": reason.strip()}
@@ -185,6 +190,15 @@ class NativeAgentRunner:
                     "event": "native.agent.output.delta",
                     "data": {"delta": delta},
                 }
+
+    def prompt_audit_payload(self, payload: NativeRunPayload) -> dict[str, Any]:
+        prior_messages = list(payload.prior_messages or [])
+        return {
+            "system_prompt": self._system_prompt(payload),
+            "user_prompt": self._user_prompt(payload),
+            "prior_messages": prior_messages,
+            "message_count": len(prior_messages) + 2,
+        }
 
     def _system_prompt(self, payload: NativeRunPayload | None = None) -> str:
         inputs = (payload.inputs if payload else {}) or {}
@@ -317,6 +331,9 @@ class NativeAgentRunner:
                         f"({skill.source})"
                     ).strip()
                 )
+                aliases = _unique_non_empty(skill.aliases)
+                if aliases:
+                    parts.append(f"  Aliases: {', '.join(aliases)}")
                 if skill.description.strip():
                     parts.append(f"  Description: {skill.description.strip()}")
                 if skill.tags:
@@ -657,10 +674,14 @@ class NativeAgentRunner:
         reason = str(args.get("reason") or "").strip()
         if not skill_id:
             return _ToolExecutionResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
-        skill = self._skill_by_id(skill_id)
+        skill = self._skill_by_ref(skill_id)
         if skill is None:
+            available = ", ".join(_available_skill_refs(self.config.skills))
             return _ToolExecutionResult(
-                "ERROR: skill is not available to this Agent",
+                (
+                    "ERROR: skill is not available to this Agent. "
+                    f"Use one of the available Skill ids or aliases: {available}"
+                ),
                 failed=True,
                 tool_kind="skill",
             )
@@ -678,9 +699,11 @@ class NativeAgentRunner:
             trace_payload=payload,
         )
 
-    def _skill_by_id(self, skill_id: str) -> NativeSkillBlock | None:
+    def _skill_by_ref(self, skill_id: str) -> NativeSkillBlock | None:
+        needle = _normalize_skill_ref(skill_id)
         for skill in self.config.skills:
-            if skill.id == skill_id:
+            refs = [skill.id, skill.name, *skill.aliases]
+            if any(_normalize_skill_ref(ref) == needle for ref in refs):
                 return skill
         return None
 
@@ -1185,6 +1208,29 @@ def _content_hash(content: str) -> str:
     return "sha256:" + sha256(content.encode("utf-8")).hexdigest()
 
 
+def _unique_non_empty(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _normalize_skill_ref(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _available_skill_refs(skills: list[NativeSkillBlock]) -> list[str]:
+    refs: list[str] = []
+    for skill in skills:
+        refs.extend([skill.id, skill.name, *skill.aliases])
+    return _unique_non_empty(refs)
+
+
 def _normalize_project_create_path(raw_path: str) -> list[str]:
     path = raw_path.strip().replace("\\", "/")
     if not path:
@@ -1495,7 +1541,7 @@ def _skill_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "skill_id": {
                             "type": "string",
-                            "description": "The id from the Available Skills list.",
+                            "description": "The id or alias from the Available Skills list.",
                         },
                         "reason": {
                             "type": "string",

@@ -1157,6 +1157,17 @@ class WorkflowOrchestrator:
             prior_messages=prior_messages,
             allow_project_context=allow_project_context,
         )
+        request_audit = {
+            "document_id": payload.document_id,
+            "range_start": payload.range_start,
+            "range_end": payload.range_end,
+            "query": payload.query,
+            "inputs": dict(payload.inputs or {}),
+            "context_files": list(payload.context_files or []),
+            "prior_messages": list(payload.prior_messages or []),
+            "allow_project_context": allow_project_context,
+        }
+        prompt_audit = runner.prompt_audit_payload(payload)
         async for evt in runner.stream(payload):
             data = evt.get("data") or {}
             if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
@@ -1180,6 +1191,8 @@ class WorkflowOrchestrator:
             "model": native_agent.model,
             "native_agent_id": native_agent.id,
             "activated_skills": activated_skills,
+            "request": request_audit,
+            "prompt_audit": prompt_audit,
         }
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:

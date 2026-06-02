@@ -8,6 +8,7 @@ enabled-state checks so API validation and runtime dispatch agree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -83,10 +84,15 @@ class AgentRegistryService:
                 continue
             out.append(
                 NativeSkillBlock(
+                    id=skill.id,
                     name=skill.public_name or skill.name,
                     version=skill.version,
                     source=skill.source,
                     content=content,
+                    description=skill.description or "",
+                    tags=list(skill.tags or []),
+                    content_hash=_content_hash(content),
+                    cache_version=skill.cache_version or 0,
                 )
             )
         return out
@@ -138,3 +144,7 @@ class AgentRegistryService:
             provider=provider,
             native_agent=agent,
         )
+
+
+def _content_hash(content: str) -> str:
+    return "sha256:" + sha256(content.encode("utf-8")).hexdigest()

@@ -1137,6 +1137,7 @@ class WorkflowOrchestrator:
             )
         )
         accumulated_text: list[str] = []
+        activated_skills: list[dict] = []
         prior_messages = node.inputs.get("prior_messages")
         if not isinstance(prior_messages, list):
             prior_messages = _chat_log_to_messages(ctx.chat_log)
@@ -1162,6 +1163,8 @@ class WorkflowOrchestrator:
                 delta = data.get("delta")
                 if isinstance(delta, str):
                     accumulated_text.append(delta)
+            elif evt.get("event") == "native.agent.skill.activated" and isinstance(data, dict):
+                activated_skills.append(data)
         text = _strip_thinking("".join(accumulated_text)).strip()
         _append_agent_turn(
             ctx,
@@ -1176,6 +1179,7 @@ class WorkflowOrchestrator:
             "agent_source": "native",
             "model": native_agent.model,
             "native_agent_id": native_agent.id,
+            "activated_skills": activated_skills,
         }
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:

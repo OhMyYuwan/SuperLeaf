@@ -13,6 +13,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -49,10 +50,30 @@ _PROJECT_CREATE_DOC_EXTS: dict[str, str] = {
 
 @dataclass(slots=True)
 class NativeSkillBlock:
+    id: str
     name: str
     version: int
     source: str
     content: str
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
+    content_hash: str = ""
+    cache_version: int = 0
+
+    def summary_payload(self) -> dict[str, Any]:
+        return {
+            "skill_id": self.id,
+            "skill_name": self.name,
+            "skill_version": self.version,
+            "skill_source": self.source,
+            "skill_cache_version": self.cache_version,
+            "description": self.description,
+            "tags": list(self.tags or []),
+            "content_hash": self.content_hash or _content_hash(self.content),
+        }
+
+    def activation_payload(self, *, reason: str = "") -> dict[str, Any]:
+        return {**self.summary_payload(), "reason": reason.strip()}
 
 
 @dataclass(slots=True)
@@ -97,6 +118,7 @@ class _ToolExecutionResult:
     failed: bool = False
     failed_function_name: str = ""
     tool_kind: str = "workspace"
+    trace_payload: dict[str, Any] | None = None
     # Set when the tool wants the runner to surface a side-channel event
     # (e.g. propose_doc_edit emits an edit proposal card to the chat UI).
     side_event: dict[str, Any] | None = None
@@ -125,10 +147,11 @@ class NativeAgentRunner:
                 "agent_name": self.config.agent_name,
                 "model": self.config.model,
                 "skill_count": len(self.config.skills),
+                "available_skills": [skill.summary_payload() for skill in self.config.skills],
             },
         }
 
-        if self.config.workspace_root and (not in_workflow_chat or allow_project_context):
+        if self.config.workspace_root and (not in_workflow_chat or allow_project_context or self.config.skills):
             async for evt in self._stream_with_workspace_tools(
                 client,
                 system_prompt,
@@ -136,6 +159,7 @@ class NativeAgentRunner:
                 session_id,
                 payload,
                 project_context_only=in_workflow_chat and allow_project_context,
+                skill_only=in_workflow_chat and not allow_project_context,
             ):
                 yield evt
             return
@@ -285,10 +309,27 @@ class NativeAgentRunner:
             parts.extend(["", "Agent instructions:", self.config.instructions.strip()])
         if self.config.skills:
             parts.append("")
-            parts.append("Enabled Skills:")
+            parts.append("Available Skills:")
             for skill in self.config.skills:
-                parts.append(f"\n--- Skill: {skill.name} v{skill.version} ({skill.source}) ---")
-                parts.append(skill.content.strip())
+                parts.append(
+                    (
+                        f"- {skill.id}: {skill.name} v{skill.version} "
+                        f"({skill.source})"
+                    ).strip()
+                )
+                if skill.description.strip():
+                    parts.append(f"  Description: {skill.description.strip()}")
+                if skill.tags:
+                    parts.append(f"  Tags: {', '.join(str(tag) for tag in skill.tags if str(tag).strip())}")
+            parts.extend(
+                [
+                    (
+                        "If a Skill is relevant, call use_skill(skill_id, reason) "
+                        "before relying on its instructions."
+                    ),
+                    "Do not assume full Skill instructions unless use_skill returned them.",
+                ]
+            )
         if is_write_mode:
             doc_format = str(inputs.get("doc_format") or "").strip().lower()
             fence_lang = "latex" if doc_format == "tex" else ("markdown" if doc_format == "md" else "text")
@@ -448,15 +489,22 @@ class NativeAgentRunner:
         payload: NativeRunPayload,
         *,
         project_context_only: bool = False,
+        skill_only: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *payload.prior_messages,
             {"role": "user", "content": user_prompt},
         ]
-        mcp_refs = [] if project_context_only else await discover_mcp_tools(self.config.runtime_config)
+        mcp_refs = [] if project_context_only or skill_only else await discover_mcp_tools(self.config.runtime_config)
         mcp_tool_map = {ref.function_name: ref for ref in mcp_refs}
-        base_tools = _project_context_tools() if project_context_only else _workspace_tools()
+        if skill_only:
+            base_tools = _skill_tools()
+        elif project_context_only:
+            base_tools = _project_context_tools() + _skill_tools()
+        else:
+            base_tools = _workspace_tools()
+            base_tools = base_tools + _skill_tools()
         tools = base_tools + [ref.definition for ref in mcp_refs]
 
         while True:
@@ -501,6 +549,11 @@ class NativeAgentRunner:
                         "tool_kind": result.tool_kind,
                     },
                 }
+                if result.trace_payload and result.tool_kind == "skill" and not result.failed:
+                    yield {
+                        "event": "native.agent.skill.activated",
+                        "data": result.trace_payload,
+                    }
                 if result.side_event:
                     yield result.side_event
                 if result.tool_kind == "project_write" and not result.failed:
@@ -534,7 +587,7 @@ class NativeAgentRunner:
         self,
         call: dict[str, Any],
         mcp_tool_map: dict[str, McpToolRef],
-        payload: NativeRunPayload,
+        payload: NativeRunPayload | None = None,
     ) -> _ToolExecutionResult:
         fn = call.get("function") if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "")
@@ -558,6 +611,8 @@ class NativeAgentRunner:
                 path = str(args.get("path") or "")
                 content = read_agent_workspace_file(root, path)
                 return _ToolExecutionResult(content)
+            if name == "use_skill":
+                return self._tool_use_skill(args)
             if name == "project_list_docs":
                 return self._tool_project_list_docs(args)
             if name == "project_read_doc":
@@ -596,6 +651,38 @@ class NativeAgentRunner:
         except Exception as exc:  # noqa: BLE001
             return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
+
+    def _tool_use_skill(self, args: dict[str, Any]) -> _ToolExecutionResult:
+        skill_id = str(args.get("skill_id") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        if not skill_id:
+            return _ToolExecutionResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
+        skill = self._skill_by_id(skill_id)
+        if skill is None:
+            return _ToolExecutionResult(
+                "ERROR: skill is not available to this Agent",
+                failed=True,
+                tool_kind="skill",
+            )
+        content = skill.content.strip()
+        if not content:
+            return _ToolExecutionResult(
+                "ERROR: skill content is empty",
+                failed=True,
+                tool_kind="skill",
+            )
+        payload = skill.activation_payload(reason=reason)
+        return _ToolExecutionResult(
+            content,
+            tool_kind="skill",
+            trace_payload=payload,
+        )
+
+    def _skill_by_id(self, skill_id: str) -> NativeSkillBlock | None:
+        for skill in self.config.skills:
+            if skill.id == skill_id:
+                return skill
+        return None
 
     # ------------------------------------------------------------------
     # project_* tools. Every handler opens a short-lived session and filters
@@ -1094,6 +1181,10 @@ def _format_created_files_delta(files: list[dict[str, str]]) -> str:
     return f"\n\n已创建项目文件：\n{paths}"
 
 
+def _content_hash(content: str) -> str:
+    return "sha256:" + sha256(content.encode("utf-8")).hexdigest()
+
+
 def _normalize_project_create_path(raw_path: str) -> list[str]:
     path = raw_path.strip().replace("\\", "/")
     if not path:
@@ -1386,6 +1477,35 @@ def _workspace_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+    ]
+
+
+def _skill_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "use_skill",
+                "description": (
+                    "Load the full instructions for one available Skill. "
+                    "Calling this tool means the Skill is activated for this run."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill_id": {
+                            "type": "string",
+                            "description": "The id from the Available Skills list.",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief reason this Skill is needed now.",
+                        },
+                    },
+                    "required": ["skill_id"],
+                },
+            },
+        }
     ]
 
 

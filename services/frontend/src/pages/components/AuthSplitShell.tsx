@@ -146,51 +146,52 @@ export function AuthSplitShell({
                 </motion.p>
               </AnimatePresence>
 
-              <motion.div
-                className="auth-showcase-copy"
-                layout
-                transition={springTransition}
-              >
+              <div className="auth-showcase-row">
                 <motion.div
-                  className="auth-showcase-points"
+                  className="auth-showcase-copy"
                   layout
-                  role="tablist"
-                  aria-label={`${activeSlide.title} 要点`}
                   transition={springTransition}
                 >
-                  {activeSlide.points.map((point, index) => {
-                    const active = point.id === activePoint?.id
-                    return (
-                      <motion.button
-                        key={point.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        className={`auth-showcase-point ${active ? 'is-active' : ''}`}
-                        onClick={() => setActivePointIndex(index)}
-                        initial={prefersReducedMotion ? false : { opacity: 0, x: -18 }}
-                        animate={prefersReducedMotion ? { opacity: 1, x: 0 } : { opacity: 1, x: 0 }}
-                        transition={
-                          prefersReducedMotion
-                            ? { duration: 0 }
-                            : { ...springTransition, delay: 0.05 * (index + 1) }
-                        }
-                      >
-                        <span className="auth-showcase-point-marker">
-                          {String(index + 1).padStart(2, '0')}
-                        </span>
-                        <span className="auth-showcase-point-copy">
-                          <strong>{point.title}</strong>
-                          <span>{point.description}</span>
-                        </span>
-                      </motion.button>
-                    )
-                  })}
+                  <motion.div
+                    className="auth-showcase-points"
+                    layout
+                    role="tablist"
+                    aria-label={`${activeSlide.title} 要点`}
+                    transition={springTransition}
+                  >
+                    {activeSlide.points.map((point, index) => {
+                      const active = point.id === activePoint?.id
+                      return (
+                        <motion.button
+                          key={point.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          className={`auth-showcase-point ${active ? 'is-active' : ''}`}
+                          onClick={() => setActivePointIndex(index)}
+                          initial={prefersReducedMotion ? false : { opacity: 0, x: -18 }}
+                          animate={prefersReducedMotion ? { opacity: 1, x: 0 } : { opacity: 1, x: 0 }}
+                          transition={
+                            prefersReducedMotion
+                              ? { duration: 0 }
+                              : { ...springTransition, delay: 0.05 * (index + 1) }
+                          }
+                        >
+                          <span className="auth-showcase-point-marker">
+                            {String(index + 1).padStart(2, '0')}
+                          </span>
+                          <span className="auth-showcase-point-copy">
+                            <strong>{point.title}</strong>
+                            <span>{point.description}</span>
+                          </span>
+                        </motion.button>
+                      )
+                    })}
+                  </motion.div>
                 </motion.div>
-              </motion.div>
 
-              <motion.div
-                className="auth-showcase-image-slot"
+                <motion.div
+                  className="auth-showcase-image-slot"
                 initial={prefersReducedMotion ? false : { opacity: 0, y: 18, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={prefersReducedMotion ? { duration: 0 } : { ...springTransition, delay: 0.08 }}
@@ -258,6 +259,7 @@ export function AuthSplitShell({
                   </div>
                 </div>
               </motion.div>
+              </div>
             </div>
 
             <div className="auth-showcase-footer">

@@ -44,7 +44,10 @@ def _dataset_for_project(
         raise HTTPException(400, str(exc)) from exc
 
 
-def _record_out(row: DatasetRecord, response: DatasetResponse | None = None) -> DatasetRecordOut:
+def _record_out(
+    row: DatasetRecord,
+    response: DatasetResponse | None = None,
+) -> DatasetRecordOut:
     out = DatasetRecordOut.model_validate(row)
     if response is not None:
         out.my_response = DatasetResponseOut.model_validate(response)

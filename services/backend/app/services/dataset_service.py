@@ -318,11 +318,11 @@ class DatasetService:
         self.db.flush()
 
         fingerprints = [item["fingerprint"] for item in candidates]
-        existing = set()
+        existing: dict[str, DatasetRecord] = {}
         if fingerprints:
             existing = {
-                row[0]
-                for row in self.db.query(DatasetRecord.fingerprint)
+                row.fingerprint: row
+                for row in self.db.query(DatasetRecord)
                 .filter(
                     DatasetRecord.dataset_project_id == dataset.id,
                     DatasetRecord.fingerprint.in_(fingerprints),
@@ -333,7 +333,9 @@ class DatasetService:
         created = 0
         max_created_at: datetime | None = None
         for item in candidates:
-            if item["fingerprint"] in existing:
+            existing_record = existing.get(item["fingerprint"])
+            if existing_record is not None:
+                _refresh_existing_record_source_text(existing_record, item)
                 continue
             record = DatasetRecord(
                 dataset_project_id=dataset.id,
@@ -351,7 +353,7 @@ class DatasetService:
                 split="unassigned",
             )
             self.db.add(record)
-            existing.add(item["fingerprint"])
+            existing[item["fingerprint"]] = record
             created += 1
             source_created_at = item.get("source_created_at")
             if source_created_at and (max_created_at is None or source_created_at > max_created_at):
@@ -388,7 +390,7 @@ class DatasetService:
         if status and status != "all":
             query = query.filter(DatasetRecord.status == status)
         if source_type and source_type != "all":
-            query = query.filter(DatasetRecord.source_type == source_type)
+            query = query.filter(DatasetRecord.source_type == _stored_source_type(source_type))
         total = query.count()
         rows = (
             query.order_by(DatasetRecord.created_at.desc(), DatasetRecord.id.asc())
@@ -705,16 +707,10 @@ class DatasetService:
             ):
                 continue
             doc = self.db.get(Doc, row.document_id)
+            source_text = row.source_text or _source_text_from_workflow_run_trace(row.trace)
             fields = {
                 "chat": _trace_as_chat(row.trace),
-                "source_text": json.dumps(
-                    {
-                        "document_id": row.document_id,
-                        "range_start": row.range_start,
-                        "range_end": row.range_end,
-                    },
-                    ensure_ascii=False,
-                ),
+                "source_text": source_text,
                 "agent_output": json.dumps(row.outputs or {}, ensure_ascii=False, default=str),
                 "trace": _jsonable(row.trace or []),
             }
@@ -724,6 +720,7 @@ class DatasetService:
                 "workflow_definition_id": row.workflow_definition_id,
                 "document_id": row.document_id,
                 "document_name": doc.name if doc is not None else "",
+                "range": {"from": row.range_start, "to": row.range_end},
                 "external_run_id": row.external_run_id,
                 "error": row.error,
             }
@@ -866,6 +863,14 @@ def _candidate(
     }
 
 
+def _stored_source_type(source_type: str) -> str:
+    return {
+        "annotations": "annotation",
+        "conversations": "conversation",
+        "workflow_runs": "workflow_run",
+    }.get(source_type, source_type)
+
+
 def _thread_as_chat(thread: list | None) -> list[dict]:
     chat = []
     for item in thread or []:
@@ -895,6 +900,82 @@ def _trace_as_chat(trace: list | None) -> list[dict]:
         if node.get("output") not in (None, ""):
             chat.append({"id": f"{node_id}:output", "role": "agent", "content": _textify(node.get("output"))})
     return chat
+
+
+def _refresh_existing_record_source_text(record: DatasetRecord, candidate: dict[str, Any]) -> bool:
+    fields = dict(record.fields or {})
+    next_source = (candidate.get("fields") or {}).get("source_text")
+    if not isinstance(next_source, str) or not next_source.strip():
+        return False
+
+    current_source = fields.get("source_text")
+    if (
+        isinstance(current_source, str)
+        and current_source.strip()
+        and not _looks_like_source_pointer(current_source)
+    ):
+        return False
+    if isinstance(current_source, dict) and not _looks_like_source_pointer(current_source):
+        return False
+    if current_source == next_source:
+        return False
+
+    fields["source_text"] = next_source
+    record.fields = _jsonable(fields)
+    record.updated_at = datetime.utcnow()
+    return True
+
+
+def _looks_like_source_pointer(value: Any) -> bool:
+    return _source_text_pointer(value) is not None
+
+
+def _source_text_pointer(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    if not {"document_id", "range_start", "range_end"}.issubset(value.keys()):
+        return None
+    return value
+
+
+def _source_text_from_workflow_run_trace(trace: list | None) -> str:
+    for node in trace or []:
+        source_text = _source_text_from_trace_value(node)
+        if source_text:
+            return source_text
+    return ""
+
+
+def _source_text_from_trace_value(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            source_text = _source_text_from_trace_value(item)
+            if source_text:
+                return source_text
+        return ""
+    if not isinstance(value, dict):
+        return ""
+
+    for key in ("source_text", "target_text", "text", "selected_text", "selection_text"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip() and not _looks_like_source_pointer(item):
+            return item
+
+    for key in ("request", "inputs", "input"):
+        source_text = _source_text_from_trace_value(value.get(key))
+        if source_text:
+            return source_text
+
+    if value.get("node_type") == "input":
+        source_text = _source_text_from_trace_value(value.get("output"))
+        if source_text:
+            return source_text
+    return ""
 
 
 def _evaluation_payload(row: AnnotationEvaluation) -> dict:

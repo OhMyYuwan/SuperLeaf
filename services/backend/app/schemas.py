@@ -432,6 +432,7 @@ class WorkflowRunOut(BaseModel):
     document_id: str
     range_start: int
     range_end: int
+    source_text: str = ""
     status: str
     external_run_id: str
     outputs: dict

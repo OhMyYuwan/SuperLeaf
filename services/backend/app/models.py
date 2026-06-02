@@ -424,6 +424,9 @@ class WorkflowRun(Base):
     document_id: Mapped[str] = mapped_column(String(64))
     range_start: Mapped[int] = mapped_column(Integer)
     range_end: Mapped[int] = mapped_column(Integer)
+    # Snapshot of the selected/request source content at run time. Range fields
+    # remain navigational metadata, not the primary dataset content.
+    source_text: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="running")
     # Dify run id (returned by workflow API) — useful for cross-referencing in Dify logs.
     external_run_id: Mapped[str] = mapped_column(String(128), default="")

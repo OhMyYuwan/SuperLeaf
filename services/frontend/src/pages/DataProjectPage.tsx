@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
+import { AgentMarkdown } from '../features/shared/AgentMarkdown'
 import { Topbar } from '../features/topbar'
 import {
   datasetApi,
@@ -60,6 +61,8 @@ interface FilterLookups {
   skills: Map<string, DatasetFilterOption>
   workflows: Map<string, DatasetFilterOption>
 }
+
+type MetaRow = [string, unknown]
 
 const SOURCE_TYPES: DatasetSourceType[] = ['annotations', 'conversations', 'workflow_runs']
 const SOURCE_LABELS: Record<DatasetSourceType, string> = {
@@ -536,14 +539,6 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
                   </div>
                 </div>
                 <RecordFields record={selectedRecord} dataset={dataset} />
-                <details className="data-json-details">
-                  <summary><FileJson size={14} /> Raw record</summary>
-                  <pre>{formatValue({
-                    fields: selectedRecord.fields,
-                    metadata: selectedRecord.record_metadata,
-                    provenance: selectedRecord.provenance,
-                  })}</pre>
-                </details>
                 <section className="data-record-metadata">
                   <div className="data-section-heading">
                     <div>
@@ -551,7 +546,7 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
                       <strong>{selectedRecord.fingerprint.slice(0, 8)}</strong>
                     </div>
                   </div>
-                  <MetaRows rows={provenanceRows(selectedRecord, projects, rules)} />
+                  <RecordMetadata record={selectedRecord} projects={projects} rules={rules} />
                 </section>
               </>
             ) : (
@@ -844,7 +839,7 @@ function RecordFields({ record, dataset }: { record: DatasetRecord; dataset: Dat
               return (
                 <div key={`${record.id}-chat-${index}`} className={`data-chat-message role-${chatRoleClass(role)}`}>
                   <span>{roleLabel(role)}</span>
-                  <p>{messageContent(message)}</p>
+                  <AgentMarkdown source={messageContent(message)} className="data-chat-markdown" />
                 </div>
               )
             })}
@@ -854,11 +849,48 @@ function RecordFields({ record, dataset }: { record: DatasetRecord; dataset: Dat
       {[...schemaBlocks, ...extraBlocks].map((block) => (
         <section key={block.key} className="data-field-block">
           <div className="data-field-title">{block.title}</div>
-          <pre>{formatValue(block.value)}</pre>
+          <FieldValue fieldKey={block.key} value={block.value} />
         </section>
       ))}
       {chat.length === 0 && schemaBlocks.length === 0 && extraBlocks.length === 0 && (
-        <EmptyState title="没有可展示字段" detail="这条 record 只有元数据，可以在 Raw record 中查看完整 JSON。" />
+        <EmptyState title="没有可展示字段" detail="这条 record 目前只有元数据。" />
+      )}
+    </div>
+  )
+}
+
+function FieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+  if (fieldKey === 'agent_output') return <AgentOutputValue value={value} />
+  if (typeof value === 'string') {
+    const parsed = parseStructuredString(value)
+    if (parsed !== null) return <StructuredValue value={parsed} />
+    return (
+      <div className={`data-field-markdown ${fieldKey === 'source_text' ? 'is-source-text' : ''}`}>
+        <AgentMarkdown source={value} />
+      </div>
+    )
+  }
+  return <StructuredValue value={value} />
+}
+
+function AgentOutputValue({ value }: { value: unknown }) {
+  const output = normalizeAgentOutput(value)
+  return (
+    <div className="data-agent-output">
+      {output.body ? (
+        <div className="data-field-markdown is-agent-output">
+          <AgentMarkdown source={output.body} />
+        </div>
+      ) : (
+        <div className="data-output-fallback">
+          <StructuredValue value={output.fallback} compact />
+        </div>
+      )}
+      {output.metadata && hasValue(output.metadata) && (
+        <div className="data-output-metadata">
+          <strong>Output metadata</strong>
+          <StructuredValue value={output.metadata} compact />
+        </div>
       )}
     </div>
   )
@@ -910,17 +942,60 @@ function FilterSelect({
   )
 }
 
-function MetaRows({ rows }: { rows: Array<[string, string]> }) {
+function RecordMetadata({
+  record,
+  projects,
+  rules,
+}: {
+  record: DatasetRecord
+  projects: ProjectSummary[]
+  rules: DatasetSourceRule[]
+}) {
+  return (
+    <div className="data-metadata-stack">
+      <MetaRows rows={provenanceRows(record, projects, rules)} />
+      <div className="data-metadata-groups">
+        <MetadataGroup title="Record metadata" value={record.record_metadata} />
+        <MetadataGroup title="Provenance" value={record.provenance} />
+      </div>
+    </div>
+  )
+}
+
+function MetadataGroup({ title, value }: { title: string; value: Record<string, unknown> }) {
+  if (!hasValue(value)) return null
+  return (
+    <section className="data-metadata-group">
+      <strong>{title}</strong>
+      <StructuredValue value={value} compact />
+    </section>
+  )
+}
+
+function MetaRows({ rows }: { rows: MetaRow[] }) {
   return (
     <dl className="data-meta-rows">
       {rows.map(([label, value]) => (
         <div key={label}>
           <dt>{label}</dt>
-          <dd>{value || '-'}</dd>
+          <dd><MetaValue value={value} /></dd>
         </div>
       ))}
     </dl>
   )
+}
+
+function MetaValue({ value }: { value: unknown }) {
+  if (!hasValue(value)) return <span>-</span>
+  if (Array.isArray(value)) {
+    return (
+      <span className="data-chip-list">
+        {value.map((item, index) => <span key={`${index}:${formatInlineValue(item)}`}>{formatInlineValue(item)}</span>)}
+      </span>
+    )
+  }
+  if (isPlainObject(value)) return <StructuredValue value={value} compact />
+  return <span>{formatInlineValue(value)}</span>
 }
 
 function valuesFromRecord(record: DatasetRecord): LabelValues {
@@ -1021,20 +1096,28 @@ function provenanceRows(
   record: DatasetRecord,
   projects: ProjectSummary[],
   rules: DatasetSourceRule[],
-): Array<[string, string]> {
+): MetaRow[] {
   const sourceRule = rules.find((rule) => rule.id === record.source_rule_id)
   const provenance = record.provenance ?? {}
   const metadata = record.record_metadata ?? {}
-  return [
+  const range = rangeLabel(metadata.range ?? {
+    from: metadata.range_start,
+    to: metadata.range_end,
+  })
+  const rows: MetaRow[] = [
     ['source project', sourceRule ? sourceName(sourceRule.source_project_id, projects) : stringValue(provenance.project_id, '')],
     ['source rule', sourceRule?.name ?? record.source_rule_id],
     ['source type', sourceTypeLabel(record.source_type)],
     ['source id', record.source_id],
-    ['agent', stringValue(provenance.agent_name ?? provenance.agent_id ?? metadata.agent_name, '')],
-    ['skill', stringValue(provenance.skill_id ?? metadata.skill_id, '')],
-    ['workflow', stringValue(provenance.workflow_name ?? provenance.workflow_id ?? metadata.workflow_name, '')],
+    ['document', metadata.doc_name ?? metadata.document_name ?? metadata.document_id],
+    ['range', range],
+    ['agent', provenance.agent_name ?? provenance.agent_id ?? provenance.agent_ids ?? metadata.agent_name],
+    ['skill', provenance.skill_id ?? provenance.skill_ids ?? metadata.skill_id ?? metadata.skill_ids],
+    ['workflow', provenance.workflow_name ?? provenance.workflow_definition_id ?? provenance.workflow_id ?? metadata.workflow_name ?? metadata.workflow_definition_id ?? metadata.workflow_id],
+    ['status', metadata.status ?? record.status],
     ['fingerprint', record.fingerprint],
   ]
+  return rows.filter(([, value]) => hasValue(value))
 }
 
 function sourceName(projectId: string, projects: ProjectSummary[]): string {
@@ -1045,6 +1128,9 @@ function sourceTypeLabel(sourceType: string): string {
   if (sourceType === 'annotations' || sourceType === 'conversations' || sourceType === 'workflow_runs') {
     return SOURCE_LABELS[sourceType]
   }
+  if (sourceType === 'annotation') return SOURCE_LABELS.annotations
+  if (sourceType === 'conversation') return SOURCE_LABELS.conversations
+  if (sourceType === 'workflow_run') return SOURCE_LABELS.workflow_runs
   return sourceType
 }
 
@@ -1129,6 +1215,120 @@ function formatInlineValue(value: unknown): string {
 function formatValue(value: unknown): string {
   if (typeof value === 'string') return value
   return JSON.stringify(value, null, 2) ?? ''
+}
+
+function StructuredValue({ value, compact = false }: { value: unknown; compact?: boolean }) {
+  if (typeof value === 'string') {
+    const parsed = parseStructuredString(value)
+    if (parsed !== null) return <StructuredValue value={parsed} compact={compact} />
+    return <AgentMarkdown source={value} className={compact ? 'data-structured-markdown is-compact' : 'data-structured-markdown'} />
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="data-muted-value">empty</span>
+    if (value.every((item) => !isPlainObject(item) && !Array.isArray(item))) {
+      return (
+        <span className="data-chip-list">
+          {value.map((item, index) => <span key={`${index}:${formatInlineValue(item)}`}>{formatInlineValue(item)}</span>)}
+        </span>
+      )
+    }
+    return (
+      <div className={`data-structured-list ${compact ? 'is-compact' : ''}`}>
+        {value.map((item, index) => (
+          <div key={index} className="data-structured-card">
+            <StructuredValue value={item} compact />
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value).filter(([, item]) => hasValue(item))
+    if (entries.length === 0) return <span className="data-muted-value">empty</span>
+    return (
+      <dl className={`data-structured-rows ${compact ? 'is-compact' : ''}`}>
+        {entries.map(([key, item]) => (
+          <div key={key}>
+            <dt>{humanizeKey(key)}</dt>
+            <dd><StructuredValue value={item} compact /></dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+  if (!hasValue(value)) return <span className="data-muted-value">empty</span>
+  return <span>{formatInlineValue(value)}</span>
+}
+
+function parseStructuredString(value: string): unknown | null {
+  const trimmed = value.trim()
+  if (!trimmed || !['{', '['].includes(trimmed[0])) return null
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    return isPlainObject(parsed) || Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function normalizeAgentOutput(value: unknown): {
+  body: string
+  metadata: Record<string, unknown> | null
+  fallback: unknown
+} {
+  const parsed = typeof value === 'string' ? parseStructuredString(value) : null
+  const source = parsed ?? value
+  if (typeof source === 'string') {
+    return { body: source, metadata: null, fallback: source }
+  }
+  if (Array.isArray(source)) {
+    const stringItems = source.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    if (stringItems.length === source.length && stringItems.length > 0) {
+      return { body: stringItems.join('\n\n'), metadata: null, fallback: source }
+    }
+    return { body: '', metadata: null, fallback: source }
+  }
+  if (isPlainObject(source)) {
+    const primary = primaryOutputEntry(source)
+    if (primary) {
+      const metadata = Object.fromEntries(
+        Object.entries(source).filter(([key, item]) => key !== primary.key && hasValue(item)),
+      )
+      return {
+        body: primary.value,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null,
+        fallback: source,
+      }
+    }
+    return { body: '', metadata: null, fallback: source }
+  }
+  return { body: formatInlineValue(source), metadata: null, fallback: source }
+}
+
+function primaryOutputEntry(value: Record<string, unknown>): { key: string; value: string } | null {
+  const keys = ['text', 'answer', 'response', 'output', 'result', 'content', 'message', 'markdown', 'summary']
+  for (const key of keys) {
+    const item = value[key]
+    if (typeof item === 'string' && item.trim()) return { key, value: item }
+  }
+  const stringEntries = Object.entries(value).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
+  )
+  if (stringEntries.length === 1) return { key: stringEntries[0][0], value: stringEntries[0][1] }
+  return null
+}
+
+function rangeLabel(value: unknown): string {
+  if (!isPlainObject(value)) return ''
+  const from = Number(value.from)
+  const to = Number(value.to)
+  if (Number.isNaN(from) || Number.isNaN(to)) return ''
+  const length = Math.max(0, to - from)
+  return `${from} -> ${to}${length > 0 ? ` (${length} chars)` : ''}`
+}
+
+function humanizeKey(value: string): string {
+  return value.replace(/_/g, ' ')
 }
 
 function compactText(value: string, maxLength: number): string {

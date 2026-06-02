@@ -758,8 +758,7 @@
   letter-spacing: 0;
 }
 
-.data-field-block pre,
-.data-json-details pre {
+.data-field-block pre {
   width: 100%;
   margin: 0;
   padding: 10px;
@@ -771,6 +770,162 @@
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.data-field-markdown,
+.data-structured-rows,
+.data-structured-list {
+  min-width: 0;
+}
+
+.data-field-markdown,
+.data-structured-rows {
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 10, 14, 0.36);
+}
+
+.data-field-markdown.is-source-text {
+  background: #111820;
+  color: #e5e7eb;
+}
+
+.data-agent-output {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.data-field-markdown.is-agent-output {
+  background: #10141b;
+  color: #e5e7eb;
+}
+
+.data-output-fallback,
+.data-output-metadata {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.data-output-metadata > strong {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.data-agent-output .data-structured-rows div {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.data-agent-output .data-structured-rows dt {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.data-field-markdown .agent-md,
+.data-chat-markdown.agent-md,
+.data-structured-markdown.agent-md {
+  font-size: 12px;
+}
+
+.data-structured-markdown.is-compact.agent-md {
+  line-height: 1.45;
+}
+
+.data-structured-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.data-structured-rows div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(92px, 0.32fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.data-structured-rows.is-compact {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.data-structured-rows.is-compact div {
+  grid-template-columns: minmax(86px, 0.3fr) minmax(0, 1fr);
+}
+
+.data-structured-rows dt,
+.data-structured-rows dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.data-structured-rows dt {
+  color: #94a3b8;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.data-structured-rows dd {
+  color: #dbeafe;
+}
+
+.data-structured-list {
+  display: grid;
+  gap: 8px;
+}
+
+.data-structured-list.is-compact {
+  gap: 6px;
+}
+
+.data-structured-card {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.data-chip-list {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.data-chip-list span {
+  max-width: 100%;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(35, 39, 46, 0.56);
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.data-muted-value {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .data-chat-thread {
@@ -804,6 +959,10 @@
   overflow-wrap: anywhere;
 }
 
+.data-chat-markdown {
+  min-width: 0;
+}
+
 .data-chat-message.role-user span {
   color: #a7f3d0;
 }
@@ -812,25 +971,33 @@
   color: #fcd34d;
 }
 
-.data-json-details {
-  display: grid;
-  gap: 8px;
-}
-
-.data-json-details summary {
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #cbd5e1;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .data-record-metadata {
   display: grid;
   gap: 10px;
   padding-top: 2px;
+}
+
+.data-metadata-stack,
+.data-metadata-groups,
+.data-metadata-group {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.data-metadata-group {
+  padding: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.data-metadata-group > strong {
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .data-schema-list {
@@ -1016,7 +1183,9 @@
   }
 
   .data-chat-message,
-  .data-meta-rows div {
+  .data-meta-rows div,
+  .data-structured-rows div,
+  .data-structured-rows.is-compact div {
     grid-template-columns: 1fr;
   }
 

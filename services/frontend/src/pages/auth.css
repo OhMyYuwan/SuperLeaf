@@ -81,30 +81,23 @@
 
 .auth-showcase-panel {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  min-height: 700px;
+  justify-content: flex-start;
   padding: 38px;
   border-radius: 36px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.4));
-  border: 1px solid var(--auth-surface-border);
-  box-shadow: var(--auth-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  box-shadow: var(--auth-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   backdrop-filter: blur(26px) saturate(150%);
   min-width: 0;
 }
 
-.auth-showcase-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0));
-  pointer-events: none;
-}
-
 .auth-showcase-stage,
 .auth-showcase-footer,
+.auth-showcase-heading,
+.auth-showcase-row,
 .auth-showcase-copy,
 .auth-aside,
 .auth-card {
@@ -113,15 +106,26 @@
 }
 
 .auth-showcase-stage {
-  min-height: 410px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-showcase-heading {
+  min-width: 0;
+}
+
+.auth-showcase-description {
+  margin: 0;
+}
+
+.auth-showcase-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 28px;
 }
 
 .auth-showcase-copy {
-  max-width: 620px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -265,7 +269,6 @@
 }
 
 .auth-showcase-description {
-  margin: 18px 0 0;
   font-size: 17px;
   line-height: 1.82;
   color: var(--auth-text-muted);
@@ -343,7 +346,7 @@
 
 .auth-showcase-footer {
   display: grid;
-  gap: 12px;
+  gap: 0;
 }
 
 .auth-showcase-nav {
@@ -496,7 +499,6 @@
   align-items: stretch;
   justify-content: flex-end;
   min-width: 0;
-  min-height: 700px;
   padding-left: 12px;
 }
 
@@ -519,7 +521,6 @@
 
 .auth-card-split {
   width: min(100%, 304px);
-  min-height: 700px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -652,10 +653,10 @@
   }
 
   .auth-showcase-panel {
-    min-height: auto;
+    min-height: 0;
   }
 
-  .auth-showcase-stage {
+  .auth-showcase-row {
     flex-direction: column;
   }
 
@@ -712,7 +713,7 @@
   }
 
   .auth-showcase-stage {
-    min-height: auto;
+    min-height: 0;
     width: 100%;
   }
 

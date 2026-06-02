@@ -118,7 +118,7 @@ export function AuthSplitShell({
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeSlide.id}
-                  className="auth-showcase-copy"
+                  className="auth-showcase-heading"
                   initial={slideMotion.initial}
                   animate={slideMotion.animate}
                   exit={slideMotion.exit}
@@ -130,9 +130,28 @@ export function AuthSplitShell({
                   <motion.h1 className="auth-showcase-title" layout transition={springTransition}>
                     {activeSlide.title}
                   </motion.h1>
-                  <motion.p className="auth-showcase-description" layout transition={springTransition}>
-                    {activeSlide.description}
-                  </motion.p>
+                </motion.div>
+              </AnimatePresence>
+
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={activeSlide.id}
+                  className="auth-showcase-description"
+                  initial={prefersReducedMotion ? false : { opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={prefersReducedMotion ? undefined : { opacity: 0, y: -8 }}
+                  transition={prefersReducedMotion ? { duration: 0 } : springTransition}
+                >
+                  {activeSlide.description}
+                </motion.p>
+              </AnimatePresence>
+
+              <div className="auth-showcase-row">
+                <motion.div
+                  className="auth-showcase-copy"
+                  layout
+                  transition={springTransition}
+                >
                   <motion.div
                     className="auth-showcase-points"
                     layout
@@ -170,10 +189,9 @@ export function AuthSplitShell({
                     })}
                   </motion.div>
                 </motion.div>
-              </AnimatePresence>
 
-              <motion.div
-                className="auth-showcase-image-slot"
+                <motion.div
+                  className="auth-showcase-image-slot"
                 initial={prefersReducedMotion ? false : { opacity: 0, y: 18, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={prefersReducedMotion ? { duration: 0 } : { ...springTransition, delay: 0.08 }}
@@ -241,6 +259,7 @@ export function AuthSplitShell({
                   </div>
                 </div>
               </motion.div>
+              </div>
             </div>
 
             <div className="auth-showcase-footer">

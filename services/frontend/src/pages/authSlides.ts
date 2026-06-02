@@ -7,14 +7,14 @@ export const AUTH_SLIDES: AuthSlide[] = [
   {
     id: 'slide-01',
     eyebrow: 'Agent',
-    title: '多种 Agent，各司其职',
-    description: '从原生 Agent 到 Dify 工作流，再到你的专属小龙虾助手——把每项任务交给最擅长它的智能体。',
+    title: '多种智能体，各司其职',
+    description: '从原生 Agent 到 Dify 工作流，再到你的专属小龙虾助手，把每项任务交给最擅长它的智能体。',
     accent: 'pink',
     points: [
       {
         id: 'agent-native',
         title: '🤖 原生 Agent',
-        description: '在 SuperLeaf 内创建专属 Agent，绑定模型、技能与项目上下文，一站式运行。',
+        description: '在 SuperLeaf 内创建专属 Agent，绑定模型、技能，一站式运行。',
         visualLabel: '预留图 A',
         visualTitle: '原生 Agent 管理界面',
         visualHint: '建议放 Team / Agent 配置面板截图',
@@ -41,7 +41,7 @@ export const AUTH_SLIDES: AuthSlide[] = [
     id: 'slide-02',
     eyebrow: 'Skill',
     title: '按需装配，精准赋能',
-    description: '技能来自市场、私有上传或项目自定义——每个 Agent 只携带当前任务需要的能力，不多不少。',
+    description: '技能来自市场、私有上传或项目自定义，每个 Agent 只携带当前任务需要的能力，不多不少。',
     accent: 'blue',
     points: [
       {
@@ -74,13 +74,13 @@ export const AUTH_SLIDES: AuthSlide[] = [
     id: 'slide-03',
     eyebrow: 'MCP',
     title: '工具触手可及，用时再启动',
-    description: '把外部工具接入 Agent，写作任务即可触达文件、数据和外部服务——按需调用，不常驻。',
+    description: '把外部工具接入 Agent，写作任务即可触达文件、数据和外部服务，按需调用，不常驻。',
     accent: 'peach',
     points: [
       {
         id: 'mcp-catalog',
         title: '工具目录',
-        description: '通过 MCP Catalog 管理可用工具，区分官方预设、团队预设与自定义服务。',
+        description: '通过 MCP 管理可用工具，区分官方预设、团队预设与自定义服务。',
         visualLabel: '预留图 A',
         visualTitle: 'MCP 工具目录',
         visualHint: '建议放 MCP catalog 或工具列表截图',
@@ -140,13 +140,13 @@ export const AUTH_SLIDES: AuthSlide[] = [
     id: 'slide-05',
     eyebrow: 'Collaboration',
     title: '人与 Agent，并肩写作',
-    description: '多人实时编辑同一份文稿，Agent 通过 @ 即刻参与——讨论、编辑、审稿都在同一个上下文里完成。',
+    description: '多人/智能体实时编辑同一份文稿，@你的智能体即刻参与讨论、编辑、审稿。',
     accent: 'pink',
     points: [
       {
         id: 'collab-editing',
         title: '多人实时编辑',
-        description: '基于 Yjs CRDT 的协同编辑，多人同时处理 LaTeX 文稿，冲突自动合并。',
+        description: '基于 Yjs CRDT 的协同编辑，多人实时处理文稿，自动合并。',
         visualLabel: '预留图 A',
         visualTitle: '实时编辑状态',
         visualHint: '建议放编辑器多人 presence 截图',

@@ -60,7 +60,6 @@ export function AuthSplitShell({
   const activeSlide = slides[activeIndex] ?? slides[0]
   const activePoint = activeSlide.points[activePointIndex] ?? activeSlide.points[0]
   const paletteClass = useMemo(() => `auth-showcase-panel accent-${activeSlide.accent}`, [activeSlide.accent])
-  const previousSlide = slides[(activeIndex - 1 + slides.length) % slides.length]
   const nextSlide = slides[(activeIndex + 1) % slides.length]
 
   useEffect(() => {
@@ -245,37 +244,6 @@ export function AuthSplitShell({
             </div>
 
             <div className="auth-showcase-footer">
-              <div className="auth-showcase-meta">
-                <span className="auth-showcase-meta-label">Deck</span>
-                <div className="auth-showcase-meta-actions">
-                  <motion.button
-                    type="button"
-                    className="auth-showcase-arrow"
-                    aria-label={`上一页：${previousSlide.title}`}
-                    onClick={() => handleSlideChange(previousSlide.id)}
-                    whileHover={prefersReducedMotion ? undefined : { scale: 1.05, x: -1 }}
-                    whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
-                    transition={springTransition}
-                  >
-                    &lt;
-                  </motion.button>
-                  <span className="auth-showcase-meta-count">
-                    {String(activeIndex + 1).padStart(2, '0')} / {String(slides.length).padStart(2, '0')}
-                  </span>
-                  <motion.button
-                    type="button"
-                    className="auth-showcase-arrow"
-                    aria-label={`下一页：${nextSlide.title}`}
-                    onClick={() => handleSlideChange(nextSlide.id)}
-                    whileHover={prefersReducedMotion ? undefined : { scale: 1.05, x: 1 }}
-                    whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
-                    transition={springTransition}
-                  >
-                    &gt;
-                  </motion.button>
-                </div>
-              </div>
-
               <div
                 id={`auth-slide-panel-${activeSlide.id}`}
                 role="tabpanel"

@@ -85,7 +85,7 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  min-height: 700px;
+  height: 740px;
   padding: 38px;
   border-radius: 36px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.4));
@@ -105,6 +105,7 @@
 
 .auth-showcase-stage,
 .auth-showcase-footer,
+.auth-showcase-heading,
 .auth-showcase-copy,
 .auth-aside,
 .auth-card {
@@ -113,23 +114,33 @@
 }
 
 .auth-showcase-stage {
-  min-height: 410px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 28px;
+  height: 500px;
+  flex: 0 0 500px;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: auto auto 1fr;
+  gap: 12px 28px;
+  overflow: hidden;
+}
+
+.auth-showcase-heading {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.auth-showcase-description {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .auth-showcase-copy {
-  max-width: 620px;
   min-width: 0;
-  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .auth-showcase-image-slot {
-  align-self: flex-end;
+  align-self: end;
   width: 340px;
-  flex: 0 0 340px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -265,7 +276,6 @@
 }
 
 .auth-showcase-description {
-  margin: 18px 0 0;
   font-size: 17px;
   line-height: 1.82;
   color: var(--auth-text-muted);
@@ -343,7 +353,7 @@
 
 .auth-showcase-footer {
   display: grid;
-  gap: 12px;
+  gap: 0;
 }
 
 .auth-showcase-nav {
@@ -496,7 +506,7 @@
   align-items: stretch;
   justify-content: flex-end;
   min-width: 0;
-  min-height: 700px;
+  min-height: 740px;
   padding-left: 12px;
 }
 
@@ -519,7 +529,7 @@
 
 .auth-card-split {
   width: min(100%, 304px);
-  min-height: 700px;
+  min-height: 740px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -652,11 +662,24 @@
   }
 
   .auth-showcase-panel {
-    min-height: auto;
+    height: auto;
+    min-height: 0;
   }
 
   .auth-showcase-stage {
+    height: auto;
+    flex: 1 1 auto;
+    display: flex;
     flex-direction: column;
+    overflow: visible;
+  }
+
+  .auth-showcase-heading {
+    grid-column: auto;
+  }
+
+  .auth-showcase-description {
+    grid-column: auto;
   }
 
   .auth-showcase-image-slot {
@@ -669,6 +692,7 @@
     align-items: stretch;
     justify-content: stretch;
     min-height: 0;
+    height: auto;
     padding-left: 0;
   }
 
@@ -712,8 +736,11 @@
   }
 
   .auth-showcase-stage {
-    min-height: auto;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
     width: 100%;
+    overflow: visible;
   }
 
   .auth-showcase-copy {

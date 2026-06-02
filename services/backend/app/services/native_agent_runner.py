@@ -60,6 +60,7 @@ class NativeSkillBlock:
     tags: list[str] = field(default_factory=list)
     content_hash: str = ""
     cache_version: int = 0
+    folder_path: str = ""
 
     def summary_payload(self) -> dict[str, Any]:
         payload = {
@@ -676,25 +677,40 @@ class NativeAgentRunner:
             return _ToolExecutionResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
         skill = self._skill_by_ref(skill_id)
         if skill is None:
-            available = ", ".join(_available_skill_refs(self.config.skills))
+            available = ", ".join(s.name for s in self.config.skills)
             return _ToolExecutionResult(
-                (
-                    "ERROR: skill is not available to this Agent. "
-                    f"Use one of the available Skill ids or aliases: {available}"
-                ),
+                f"ERROR: skill not found. Available: {available}",
                 failed=True,
                 tool_kind="skill",
             )
-        content = skill.content.strip()
+        # Resolve the skill folder on disk
+        root = Path(self.config.workspace_root)
+        skill_path = root / ".agents" / skill.folder_path
+        # If pointing to a .skillref.json, resolve the target_path
+        if skill_path.is_file() and skill_path.suffix == ".json":
+            try:
+                ref = json.loads(skill_path.read_text(encoding="utf-8"))
+                target = ref.get("target_path", "")
+                folder = Path(target) if target else skill_path.parent
+            except (OSError, json.JSONDecodeError):
+                return _ToolExecutionResult("ERROR: cannot resolve skill reference", failed=True, tool_kind="skill")
+        else:
+            folder = skill_path
+        # Read only SKILL.md
+        skill_md = folder / "SKILL.md"
+        if not skill_md.is_file():
+            return _ToolExecutionResult("ERROR: SKILL.md not found", failed=True, tool_kind="skill")
+        try:
+            content = skill_md.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError as exc:
+            return _ToolExecutionResult(f"ERROR: {exc}", failed=True, tool_kind="skill")
         if not content:
-            return _ToolExecutionResult(
-                "ERROR: skill content is empty",
-                failed=True,
-                tool_kind="skill",
-            )
+            return _ToolExecutionResult("ERROR: SKILL.md is empty", failed=True, tool_kind="skill")
+        # Build file tree listing
+        tree = _skill_file_tree(folder)
         payload = skill.activation_payload(reason=reason)
         return _ToolExecutionResult(
-            content,
+            content + "\n\n---\n\nFiles in this Skill:\n" + tree,
             tool_kind="skill",
             trace_payload=payload,
         )
@@ -1224,11 +1240,20 @@ def _normalize_skill_ref(value: str) -> str:
     return str(value or "").strip().lower()
 
 
-def _available_skill_refs(skills: list[NativeSkillBlock]) -> list[str]:
-    refs: list[str] = []
-    for skill in skills:
-        refs.extend([skill.id, skill.name, *skill.aliases])
-    return _unique_non_empty(refs)
+def _skill_file_tree(folder: Path) -> str:
+    """Return a markdown-style file tree of a skill folder."""
+    lines: list[str] = []
+    _FORBIDDEN = {".git", "node_modules", "__pycache__", ".venv"}
+    for path in sorted(folder.rglob("*")):
+        if any(part in _FORBIDDEN for part in path.parts):
+            continue
+        rel = path.relative_to(folder).as_posix()
+        if path.is_dir():
+            lines.append(f"  {rel}/")
+        else:
+            size = path.stat().st_size
+            lines.append(f"  {rel}  ({size}B)")
+    return "\n".join(lines) if lines else "(empty)"
 
 
 def _normalize_project_create_path(raw_path: str) -> list[str]:

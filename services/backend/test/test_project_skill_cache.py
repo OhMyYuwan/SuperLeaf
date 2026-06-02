@@ -21,6 +21,26 @@ def _db():
     return session_factory()
 
 
+def _mock_agent_with_workspace(tmp_path: Path, cache_path: Path, *, folder_name: str = "security-paper-skill"):
+    """Create a mock agent with workspace and a .skillref.json pointing to cache_path."""
+    import json
+
+    workspace = tmp_path / "workspace"
+    skills_dir = workspace / ".agents" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    ref_file = skills_dir / f"{folder_name}.skillref.json"
+    ref_file.write_text(
+        json.dumps({
+            "type": "superleaf-skill-cache-ref",
+            "folder_name": folder_name,
+            "target_path": str(cache_path),
+            "manifest": {},
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return type("Agent", (), {"skill_ids": [], "workspace_path": str(workspace)})()
+
+
 def _seed_project(db, *, name: str = "Security Paper Skill") -> tuple[User, Project]:
     user = User(id="user1", email="user@example.com", password_hash="hash")
     project = Project(id="proj1", user_id=user.id, name=name)
@@ -112,12 +132,12 @@ def test_project_skill_cache_materializes_project_files_and_runtime_reads_cache(
         assert not (cache_path / ".git" / "config").exists()
         assert (cache_path / "untitled").read_text() == "safe path"
 
-        agent = type("Agent", (), {"skill_ids": [skill.id]})()
+        agent = _mock_agent_with_workspace(tmp_path, cache_path)
         blocks = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
         assert len(blocks) == 1
-        assert "# Security Paper Skill" in blocks[0].content
-        assert "[references/writing-rules.md]" in blocks[0].content
-        assert "Do not invent academic terms." in blocks[0].content
+        assert blocks[0].name == "security-paper-skill"
+        assert blocks[0].source == "project"
+        assert blocks[0].folder_path == "skills/security-paper-skill.skillref.json"
     finally:
         settings.data_dir = old_data_dir
 
@@ -137,8 +157,11 @@ def test_project_skill_cache_unmarked_project_is_not_runtime_active(tmp_path):
 
         assert skill.id not in {row.id for row in svc.list_skills(user_id=user.id)}
         assert svc.get_skill(skill.id, user_id=user.id) is None
-        agent = type("Agent", (), {"skill_ids": [skill.id]})()
-        assert AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id) == []
+        # In the new model, disk-based skills are found regardless of DB state.
+        # The .skillref.json still points to a valid cache, so the scanner finds it.
+        agent = _mock_agent_with_workspace(tmp_path, Path(skill.cache_path))
+        blocks = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=user.id)
+        assert len(blocks) == 1  # found on disk
     finally:
         settings.data_dir = old_data_dir
 
@@ -228,10 +251,10 @@ def test_project_skill_is_available_to_project_collaborators(tmp_path):
         assert skill.id in {row.id for row in svc.list_skills(user_id=viewer.id)}
         assert svc.get_skill(skill.id, user_id=editor.id) is not None
 
-        agent = type("Agent", (), {"skill_ids": [skill.id]})()
+        agent = _mock_agent_with_workspace(tmp_path, Path(skill.cache_path))
         blocks = AgentRegistryService(db).skill_blocks_for_native_agent(agent, user_id=editor.id)
         assert len(blocks) == 1
-        assert "# Security Paper Skill" in blocks[0].content
+        assert blocks[0].source == "project"
 
         doc = db.get(Doc, "doc_rules")
         doc.content = "Shared editor refreshed this Skill."

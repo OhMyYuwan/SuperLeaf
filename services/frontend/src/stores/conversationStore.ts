@@ -20,6 +20,7 @@ import {
 import { operationApi } from '../services/operationApi'
 import { applyWriteOutput, readCurrentText } from './writingStore'
 import { useCollaborationStore } from './collaborationStore'
+import { useDocumentStore } from './documentStore'
 import * as Y from 'yjs'
 
 export interface ProposalEntry extends EditProposal {
@@ -385,6 +386,21 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         from = absStart.index
         to = absEnd.index
       }
+    }
+    // Text anchor fallback: when Yjs anchors are not available (non-collab
+    // mode), use the agent's original_text to re-locate the edit range.
+    // This is more reliable than numeric offsets when the document has been
+    // edited since the proposal was created.
+    if (!inCollab && proposal.anchor_text) {
+      const fullContent =
+        useDocumentStore.getState().documents[proposal.document_id]?.content ?? ''
+      const anchorIdx = fullContent.indexOf(proposal.anchor_text)
+      if (anchorIdx !== -1) {
+        from = anchorIdx
+        to = anchorIdx + proposal.anchor_text.length
+      }
+      // If not found, fall back to the original numeric offsets (will go
+      // through the content check below and likely surface as stale).
     }
     // Content check: even with anchors, the *interior* of the range may have
     // been edited. Compare the current slice to the original_text snapshot.

@@ -288,11 +288,13 @@ class NativeAgentRunner:
                     (
                         "Document edit tool: when the user asks you to change the text of the "
                         "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
+                        "To specify the edit range, also pass the exact text you want to replace as "
+                        "original_text — the system will locate it automatically and character offsets "
+                        "become only a disambiguation hint. Always read the surrounding context first "
+                        "(project_read_doc) to get the exact text. "
                         "This proposes the change as a card in the chat — the user must click accept "
                         "to actually apply it. Do NOT paste the replacement text directly into your "
-                        "markdown reply; use the tool. After proposing, give a one-line summary of the "
-                        "intent. Always read the surrounding context first (project_read_doc) to make "
-                        "sure your character offsets are correct."
+                        "markdown reply; use the tool."
                     ),
                     (
                         "If MCP tools are available, call them only when the user explicitly asks "
@@ -975,9 +977,13 @@ class NativeAgentRunner:
         """Surface an edit proposal to the chat UI; never writes the doc.
 
         Scope is locked to payload.document_id — the agent cannot target other
-        docs. The handler verifies the range against the live doc, captures
-        the original_text snapshot for stale detection on the frontend, and
-        emits a side event the runner forwards as native.agent.edit_proposal.
+        docs. Supports two positioning modes:
+        - Text anchor (preferred): Agent passes ``original_text`` and the
+          handler locates it in the live document via ``str.find()``.
+        - Numeric offset (legacy/fallback): Agent passes ``range_start`` /
+          ``range_end`` directly.
+        When both are provided, ``original_text`` takes priority and offsets
+        are used only as a disambiguation hint for duplicate matches.
         """
         if not self._project_scope_ok():
             return _ToolExecutionResult("ERROR: project scope not available", failed=True)
@@ -998,6 +1004,7 @@ class NativeAgentRunner:
         if not isinstance(new_text, str):
             return _ToolExecutionResult("ERROR: new_text must be a string", failed=True)
         reason = str(args.get("reason") or "").strip()
+        original_text_arg = args.get("original_text")
 
         with SessionLocal() as db:
             doc = db.get(Doc, document_id)
@@ -1007,8 +1014,58 @@ class NativeAgentRunner:
                 )
             content = doc.content or ""
         total = len(content)
-        start = max(0, min(range_start, total))
-        end = max(start, min(range_end, total))
+
+        # --- Text anchor positioning (preferred) ---
+        anchor_text: str | None = None
+        if isinstance(original_text_arg, str) and original_text_arg.strip():
+            anchor = original_text_arg
+            anchor_text = anchor
+            # Find all occurrences
+            occurrences: list[int] = []
+            pos = 0
+            while True:
+                idx = content.find(anchor, pos)
+                if idx == -1:
+                    break
+                occurrences.append(idx)
+                pos = idx + 1
+
+            if len(occurrences) == 1:
+                start = occurrences[0]
+                end = start + len(anchor)
+            elif len(occurrences) > 1:
+                # Multiple matches — disambiguate using the best available hint.
+                # Priority: agent's range_start > payload's range_start (user selection)
+                hint = range_start if range_start > 0 else (payload.range_start or 0)
+                if hint > 0:
+                    closest = min(occurrences, key=lambda x: abs(x - hint))
+                    start = closest
+                    end = closest + len(anchor)
+                else:
+                    return _ToolExecutionResult(
+                        f"ERROR: original_text appears {len(occurrences)} times "
+                        f"in the document. Select the target text in the editor "
+                        f"so the system can disambiguate.",
+                        failed=True,
+                    )
+            else:
+                # Exact match failed — try fuzzy matching
+                fuzzy_pos = _fuzzy_find(content, anchor, threshold=0.85)
+                if fuzzy_pos is not None:
+                    start = fuzzy_pos
+                    end = fuzzy_pos + len(anchor)
+                else:
+                    return _ToolExecutionResult(
+                        "ERROR: original_text not found in document. "
+                        "The document may have changed. Please call project_read_doc "
+                        "to re-read the current content and try again.",
+                        failed=True,
+                    )
+        else:
+            # --- Legacy numeric offset ---
+            start = max(0, min(range_start, total))
+            end = max(start, min(range_end, total))
+
         original_text = content[start:end]
 
         proposal_id = uuid.uuid4().hex
@@ -1020,6 +1077,7 @@ class NativeAgentRunner:
             "original_text": original_text,
             "new_text": new_text,
             "reason": reason,
+            "anchor_text": anchor_text,
         }
 
         tool_reply = {
@@ -1038,6 +1096,33 @@ class NativeAgentRunner:
             tool_kind="edit_proposal",
             side_event={"event": "native.agent.edit_proposal", "data": proposal},
         )
+
+
+def _fuzzy_find(content: str, anchor: str, threshold: float = 0.85) -> int | None:
+    """Find the position in *content* most similar to *anchor*.
+
+    Uses a sliding-window approach with ``difflib.SequenceMatcher``.
+    Returns the start index or ``None`` if the best match is below *threshold*.
+    """
+    from difflib import SequenceMatcher
+
+    anchor_len = len(anchor)
+    if anchor_len == 0:
+        return None
+    best_ratio = 0.0
+    best_pos: int | None = None
+    step = max(1, anchor_len // 4)
+    for i in range(0, len(content) - anchor_len + 1, step):
+        window = content[i : i + anchor_len]
+        ratio = SequenceMatcher(None, anchor, window).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_pos = i
+            if ratio >= 0.95:
+                break  # Good enough — early exit.
+    if best_ratio >= threshold and best_pos is not None:
+        return best_pos
+    return None
 
 
 def _mcp_failure_result(
@@ -1517,16 +1602,28 @@ def _workspace_tools() -> list[dict[str, Any]]:
                     "Propose a text edit to the document currently open in this discussion. "
                     "PROPOSE ONLY — the edit is NOT applied until the user clicks accept "
                     "in the chat UI. Use this whenever the user asks you to change the text. "
-                    "Always read the surrounding context first (e.g. with project_read_doc) "
-                    "to compute correct character offsets. Scope is locked to the active "
-                    "document; you cannot target other docs."
+                    "Pass original_text (verbatim from project_read_doc) for reliable "
+                    "positioning; range_start/range_end are used as hints for disambiguation. "
+                    "Scope is locked to the active document."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "original_text": {
+                            "type": "string",
+                            "description": (
+                                "The exact text you want to replace. The system uses this to locate "
+                                "the correct position in the document, so character offsets are only "
+                                "a hint. Pass the verbatim text from project_read_doc. "
+                                "This is the recommended way to specify the edit range."
+                            ),
+                        },
                         "range_start": {
                             "type": "integer",
-                            "description": "Character offset where the replacement starts (inclusive).",
+                            "description": (
+                                "Character offset where the replacement starts (inclusive). "
+                                "Used as a disambiguation hint when original_text appears multiple times."
+                            ),
                         },
                         "range_end": {
                             "type": "integer",
@@ -1537,7 +1634,7 @@ def _workspace_tools() -> list[dict[str, Any]]:
                         },
                         "new_text": {
                             "type": "string",
-                            "description": "The replacement text. May be empty to delete the range.",
+                            "description": "The replacement text. May be empty to delete the matched text.",
                         },
                         "reason": {
                             "type": "string",

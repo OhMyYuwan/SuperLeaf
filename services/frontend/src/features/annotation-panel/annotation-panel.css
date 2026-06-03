@@ -333,6 +333,8 @@
   border-left: 2px solid rgba(148, 163, 184, 0.3);
   background: rgba(148, 163, 184, 0.08);
   font-size: 12px;
+  user-select: text;
+  cursor: text;
   color: rgba(226, 232, 240, 0.8);
   font-style: italic;
   white-space: pre-wrap;
@@ -348,6 +350,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  user-select: text;
+  cursor: text;
+}
+.ann-diff-row {
+  user-select: text;
 }
 .ann-diff-row.remove {
   color: #fca5a5;
@@ -362,6 +369,56 @@
   color: rgba(148, 163, 184, 0.85);
   font-style: italic;
 }
+.ann-diff-row.add {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ann-diff-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.ann-diff-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ann-diff-accept,
+.ann-diff-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+.ann-diff-accept:hover,
+.ann-diff-copy:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+.ann-diff-accept {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.ann-diff-accept:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+.ann-diff-reject {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.ann-diff-reject:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
 
 .ann-body {
   margin: 6px 0 0;
@@ -370,6 +427,8 @@
   color: rgba(226, 232, 240, 0.95);
   white-space: pre-wrap;
   word-break: break-word;
+  user-select: text;
+  cursor: text;
 }
 
 .ann-card > p,

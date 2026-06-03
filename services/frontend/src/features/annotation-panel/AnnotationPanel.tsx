@@ -60,6 +60,21 @@ interface AnnotationPanelProps {
   agents?: CachedWorkflow[]
 }
 
+/** Fallback clipboard copy using a hidden textarea. Works in non-HTTPS contexts. */
+function fallbackCopy(text: string): void {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    document.execCommand('copy')
+  } catch {
+    // silently fail
+  }
+  document.body.removeChild(ta)
+}
+
 export function AnnotationPanel({
   documentId,
   activeId,
@@ -118,7 +133,11 @@ export function AnnotationPanel({
     if (!documentId) return [] as AnnotationItem[]
     return Object.values(itemsById)
       .filter((it) => it.documentId === documentId && it.status === 'archived')
-      .sort((a, b) => a.range.from - b.range.from)
+      .sort((a, b) => {
+        const aTime = (a.archivedAt ?? a.createdAt).getTime()
+        const bTime = (b.archivedAt ?? b.createdAt).getTime()
+        return bTime - aTime
+      })
   }, [itemsById, documentId])
 
   const handleSubmitComment = async ({
@@ -319,6 +338,7 @@ function AnnotationCard({
 }) {
   const currentUserId = useUserStore((s) => s.currentUser?.id ?? '')
   const accept = useAnnotationStore((s) => s.accept)
+  const applySuggestion = useAnnotationStore((s) => s.applySuggestion)
   const remove = useAnnotationStore((s) => s.remove)
   const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
@@ -453,13 +473,18 @@ function AnnotationCard({
   const agentDeleted = isOwner && !agent && !!item.workflowId
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
-  const canFollowUp = isOwner && (isUserComment || (!!item.workflowId && agentActive))
+  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!item.workflowId && agentActive))
 
   return (
     <div
       ref={cardRef}
       className={`ann-card ann-${item.kind} sev-${item.severity} ${isActive ? 'active' : ''} ${isResolved ? 'resolved' : ''}`}
-      onClick={onFocus}
+      onClick={(e) => {
+        // Don't steal focus when clicking buttons or interactive elements
+        if (!(e.target as HTMLElement).closest('button, input, textarea, a, .ann-diff-copy, .ann-diff-accept')) {
+          onFocus()
+        }
+      }}
       onMouseEnter={() => onHover?.(true)}
       onMouseLeave={() => onHover?.(false)}
     >
@@ -499,6 +524,35 @@ function AnnotationCard({
           <div className="ann-diff-row remove">- {item.original}</div>
           <div className="ann-diff-row add">+ {item.proposed}</div>
           {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {!isResolved && (
+            <div className="ann-diff-actions">
+              <button
+                className="ann-diff-accept"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applySuggestion(item.id)
+                }}
+                title="将建议的修改应用到文档并归档"
+              >
+                <Check size={12} /> 接受
+              </button>
+              <button
+                className="ann-diff-copy"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const text = item.proposed ?? ''
+                  if (navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+                  } else {
+                    fallbackCopy(text)
+                  }
+                }}
+                title="复制建议文本到剪贴板"
+              >
+                复制
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -561,7 +615,7 @@ function AnnotationCard({
           className="ann-btn accept"
           onClick={handleAccept}
           disabled={isResolved}
-          title="标记已处理并归档（不会自动修改文档，请在编辑器里手动改）"
+          title="标记已处理并归档（不修改文档，用户可继续追问）"
         >
           <Check size={14} />
         </button>
@@ -570,7 +624,7 @@ function AnnotationCard({
             <Trash2 size={14} />
           </button>
         )}
-        {isOwner && item.workflowId && (
+        {isOwner && (item.workflowId || item.kind === 'suggestion') && (
           <button
             className={`ann-btn publish ${isPublished ? 'active' : ''}`}
             onClick={() => publish(item.id)}

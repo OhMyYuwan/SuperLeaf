@@ -18,8 +18,10 @@ import {
   type MessageSend,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
-import { applyWriteOutput, readCurrentText } from './writingStore'
+import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
+import { useAnnotationStore } from './annotationStore'
 import { useCollaborationStore } from './collaborationStore'
+import { useDocumentStore } from './documentStore'
 import * as Y from 'yjs'
 
 export interface ProposalEntry extends EditProposal {
@@ -386,6 +388,21 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         to = absEnd.index
       }
     }
+    // Text anchor fallback: when Yjs anchors are not available (non-collab
+    // mode), use the agent's original_text to re-locate the edit range.
+    // This is more reliable than numeric offsets when the document has been
+    // edited since the proposal was created.
+    if (!inCollab && proposal.anchor_text) {
+      const fullContent =
+        useDocumentStore.getState().documents[proposal.document_id]?.content ?? ''
+      const anchorIdx = fullContent.indexOf(proposal.anchor_text)
+      if (anchorIdx !== -1) {
+        from = anchorIdx
+        to = anchorIdx + proposal.anchor_text.length
+      }
+      // If not found, fall back to the original numeric offsets (will go
+      // through the content check below and likely surface as stale).
+    }
     // Content check: even with anchors, the *interior* of the range may have
     // been edited. Compare the current slice to the original_text snapshot.
     const live = readCurrentText(proposal.document_id, { from, to })
@@ -669,5 +686,39 @@ function handleMessageEvent(
         },
       }
     })
+  } else if (evt.event === 'ylw.msg.suggestion_created') {
+    const data = evt.data as Record<string, unknown> | null
+    if (!data?.suggestion_id || !data?.document_id) return
+
+    const documentId = String(data.document_id)
+    const rangeStart = Number(data.range_start ?? 0)
+    const rangeEnd = Number(data.range_end ?? 0)
+    const originalText = String(data.original_text ?? '')
+    const proposedText = String(data.proposed_text ?? '')
+    const content = String(data.content ?? '')
+    const reason = String(data.reason ?? '')
+
+    // Resolve conversation context for the annotation
+    const conversationId = evt.conversation_id ?? ''
+    const agentName = evt.agent_name ?? 'Agent'
+    const workflowId = conversationId
+
+    const annStore = useAnnotationStore.getState()
+    const annotationId = annStore.createFromAgent({
+      documentId,
+      range: { from: rangeStart, to: rangeEnd },
+      originalText,
+      proposedText: proposedText || undefined,
+      content,
+      reason: reason || undefined,
+      conversationId,
+      agentName,
+      workflowId,
+    })
+
+    // Insert a lightweight reference message into the chat stream
+    // The actual review happens in the annotation panel
+    // eslint-disable-next-line no-console
+    console.log('[conversationStore] Created suggestion annotation:', annotationId)
   }
 }

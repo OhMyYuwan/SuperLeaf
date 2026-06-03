@@ -288,11 +288,21 @@ class NativeAgentRunner:
                     (
                         "Document edit tool: when the user asks you to change the text of the "
                         "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
+                        "To specify the edit range, also pass the exact text you want to replace as "
+                        "original_text — the system will locate it automatically and character offsets "
+                        "become only a disambiguation hint. Always read the surrounding context first "
+                        "(project_read_doc) to get the exact text. "
                         "This proposes the change as a card in the chat — the user must click accept "
                         "to actually apply it. Do NOT paste the replacement text directly into your "
-                        "markdown reply; use the tool. After proposing, give a one-line summary of the "
-                        "intent. Always read the surrounding context first (project_read_doc) to make "
-                        "sure your character offsets are correct."
+                        "markdown reply; use the tool."
+                    ),
+                    (
+                        "Annotation tool: when the user EXPLICITLY asks to create an annotation, "
+                        "suggestion card, or persistent note, call create_suggestion(original_text, content). "
+                        "This creates a durable annotation in the annotation panel (saved to database). "
+                        "Do NOT use create_suggestion for normal editing requests — use propose_doc_edit. "
+                        "Only use create_suggestion when the user says things like "
+                        "'create an annotation', 'add a suggestion card', '留下批注' etc."
                     ),
                     (
                         "If MCP tools are available, call them only when the user explicitly asks "
@@ -645,6 +655,8 @@ class NativeAgentRunner:
                 return result
             if name == "propose_doc_edit":
                 return self._tool_propose_doc_edit(args, payload)
+            if name == "create_suggestion":
+                return self._tool_create_suggestion(args, payload)
             if name in mcp_tool_map:
                 ref = mcp_tool_map[name]
                 try:
@@ -975,9 +987,13 @@ class NativeAgentRunner:
         """Surface an edit proposal to the chat UI; never writes the doc.
 
         Scope is locked to payload.document_id — the agent cannot target other
-        docs. The handler verifies the range against the live doc, captures
-        the original_text snapshot for stale detection on the frontend, and
-        emits a side event the runner forwards as native.agent.edit_proposal.
+        docs. Supports two positioning modes:
+        - Text anchor (preferred): Agent passes ``original_text`` and the
+          handler locates it in the live document via ``str.find()``.
+        - Numeric offset (legacy/fallback): Agent passes ``range_start`` /
+          ``range_end`` directly.
+        When both are provided, ``original_text`` takes priority and offsets
+        are used only as a disambiguation hint for duplicate matches.
         """
         if not self._project_scope_ok():
             return _ToolExecutionResult("ERROR: project scope not available", failed=True)
@@ -998,6 +1014,7 @@ class NativeAgentRunner:
         if not isinstance(new_text, str):
             return _ToolExecutionResult("ERROR: new_text must be a string", failed=True)
         reason = str(args.get("reason") or "").strip()
+        original_text_arg = args.get("original_text")
 
         with SessionLocal() as db:
             doc = db.get(Doc, document_id)
@@ -1007,8 +1024,24 @@ class NativeAgentRunner:
                 )
             content = doc.content or ""
         total = len(content)
-        start = max(0, min(range_start, total))
-        end = max(start, min(range_end, total))
+
+        # --- Resolve range ---
+        anchor_text: str | None = None
+        if isinstance(original_text_arg, str) and original_text_arg.strip():
+            # Text anchor positioning (preferred)
+            # For propose_doc_edit, also consider payload.range_start as disambiguation hint
+            start, end, anchor_text, err = _resolve_text_range(
+                content, original_text_arg,
+                range_start if range_start > 0 else (payload.range_start or 0),
+                range_end,
+            )
+            if err:
+                return _ToolExecutionResult(err, failed=True)
+        else:
+            # Legacy numeric offset
+            start = max(0, min(range_start, total))
+            end = max(start, min(range_end, total))
+
         original_text = content[start:end]
 
         proposal_id = uuid.uuid4().hex
@@ -1020,6 +1053,7 @@ class NativeAgentRunner:
             "original_text": original_text,
             "new_text": new_text,
             "reason": reason,
+            "anchor_text": anchor_text,
         }
 
         tool_reply = {
@@ -1038,6 +1072,155 @@ class NativeAgentRunner:
             tool_kind="edit_proposal",
             side_event={"event": "native.agent.edit_proposal", "data": proposal},
         )
+
+    def _tool_create_suggestion(
+        self,
+        args: dict[str, Any],
+        payload: NativeRunPayload,
+    ) -> _ToolExecutionResult:
+        """Create a persistent suggestion annotation card.
+
+        Anchors to the document using the same text-anchor logic as
+        ``propose_doc_edit`` but emits a ``suggestion_created`` side event
+        instead of an ``edit_proposal``.
+        """
+        if not self._project_scope_ok():
+            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
+        document_id = (payload.document_id or "").strip()
+        if not document_id:
+            return _ToolExecutionResult(
+                "ERROR: create_suggestion requires an active document", failed=True
+            )
+        original_text_arg = args.get("original_text")
+        if not isinstance(original_text_arg, str) or not original_text_arg.strip():
+            return _ToolExecutionResult("ERROR: original_text is required", failed=True)
+        content_arg = args.get("content")
+        if not isinstance(content_arg, str) or not content_arg.strip():
+            return _ToolExecutionResult("ERROR: content is required", failed=True)
+        proposed_text = str(args.get("proposed_text") or "")
+        reason = str(args.get("reason") or "").strip()
+
+        try:
+            range_start = int(args.get("range_start") or 0)
+            range_end = int(args.get("range_end") or 0)
+        except (TypeError, ValueError):
+            range_start, range_end = 0, 0
+
+        with SessionLocal() as db:
+            doc = db.get(Doc, document_id)
+            if doc is None or doc.project_id != self.config.project_id:
+                return _ToolExecutionResult(
+                    "ERROR: active document not found in this project", failed=True
+                )
+            doc_content = doc.content or ""
+
+        # Resolve text range (same logic as propose_doc_edit)
+        start, end, anchor_text, err = _resolve_text_range(
+            doc_content, original_text_arg, range_start, range_end,
+        )
+        if err:
+            return _ToolExecutionResult(err, failed=True)
+
+        original_text = doc_content[start:end]
+
+        suggestion_id = uuid.uuid4().hex
+        suggestion = {
+            "suggestion_id": suggestion_id,
+            "document_id": document_id,
+            "range_start": start,
+            "range_end": end,
+            "original_text": original_text,
+            "proposed_text": proposed_text,
+            "content": content_arg,
+            "reason": reason,
+            "anchor_text": anchor_text,
+        }
+
+        return _ToolExecutionResult(
+            json.dumps(
+                {"status": "created", "suggestion_id": suggestion_id},
+                ensure_ascii=False,
+            ),
+            tool_kind="create_suggestion",
+            side_event={"event": "native.agent.suggestion_created", "data": suggestion},
+        )
+
+
+def _resolve_text_range(
+    content: str,
+    original_text: str,
+    range_start: int,
+    range_end: int,
+) -> tuple[int, int, str | None, str | None]:
+    """Resolve the text range for an edit or suggestion.
+
+    Returns ``(start, end, anchor_text, error)``.  On success ``error`` is
+    ``None``; on failure ``start/end`` are 0 and ``error`` contains the
+    error message.
+    """
+    total = len(content)
+    anchor = original_text
+    anchor_text: str | None = anchor
+
+    # Find all occurrences
+    occurrences: list[int] = []
+    pos = 0
+    while True:
+        idx = content.find(anchor, pos)
+        if idx == -1:
+            break
+        occurrences.append(idx)
+        pos = idx + 1
+
+    if len(occurrences) == 1:
+        return occurrences[0], occurrences[0] + len(anchor), anchor_text, None
+    elif len(occurrences) > 1:
+        hint = range_start if range_start > 0 else 0
+        if hint > 0:
+            closest = min(occurrences, key=lambda x: abs(x - hint))
+            return closest, closest + len(anchor), anchor_text, None
+        return 0, 0, None, (
+            f"ERROR: original_text appears {len(occurrences)} times "
+            f"in the document. Select the target text in the editor "
+            f"so the system can disambiguate."
+        )
+    else:
+        # Exact match failed — try fuzzy
+        fuzzy_pos = _fuzzy_find(content, anchor, threshold=0.85)
+        if fuzzy_pos is not None:
+            return fuzzy_pos, fuzzy_pos + len(anchor), anchor_text, None
+        return 0, 0, None, (
+            "ERROR: original_text not found in document. "
+            "The document may have changed. Please call project_read_doc "
+            "to re-read the current content and try again."
+        )
+
+
+def _fuzzy_find(content: str, anchor: str, threshold: float = 0.85) -> int | None:
+    """Find the position in *content* most similar to *anchor*.
+
+    Uses a sliding-window approach with ``difflib.SequenceMatcher``.
+    Returns the start index or ``None`` if the best match is below *threshold*.
+    """
+    from difflib import SequenceMatcher
+
+    anchor_len = len(anchor)
+    if anchor_len == 0:
+        return None
+    best_ratio = 0.0
+    best_pos: int | None = None
+    step = max(1, anchor_len // 4)
+    for i in range(0, len(content) - anchor_len + 1, step):
+        window = content[i : i + anchor_len]
+        ratio = SequenceMatcher(None, anchor, window).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_pos = i
+            if ratio >= 0.95:
+                break  # Good enough — early exit.
+    if best_ratio >= threshold and best_pos is not None:
+        return best_pos
+    return None
 
 
 def _mcp_failure_result(
@@ -1517,16 +1700,28 @@ def _workspace_tools() -> list[dict[str, Any]]:
                     "Propose a text edit to the document currently open in this discussion. "
                     "PROPOSE ONLY — the edit is NOT applied until the user clicks accept "
                     "in the chat UI. Use this whenever the user asks you to change the text. "
-                    "Always read the surrounding context first (e.g. with project_read_doc) "
-                    "to compute correct character offsets. Scope is locked to the active "
-                    "document; you cannot target other docs."
+                    "Pass original_text (verbatim from project_read_doc) for reliable "
+                    "positioning; range_start/range_end are used as hints for disambiguation. "
+                    "Scope is locked to the active document."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "original_text": {
+                            "type": "string",
+                            "description": (
+                                "The exact text you want to replace. The system uses this to locate "
+                                "the correct position in the document, so character offsets are only "
+                                "a hint. Pass the verbatim text from project_read_doc. "
+                                "This is the recommended way to specify the edit range."
+                            ),
+                        },
                         "range_start": {
                             "type": "integer",
-                            "description": "Character offset where the replacement starts (inclusive).",
+                            "description": (
+                                "Character offset where the replacement starts (inclusive). "
+                                "Used as a disambiguation hint when original_text appears multiple times."
+                            ),
                         },
                         "range_end": {
                             "type": "integer",
@@ -1537,7 +1732,7 @@ def _workspace_tools() -> list[dict[str, Any]]:
                         },
                         "new_text": {
                             "type": "string",
-                            "description": "The replacement text. May be empty to delete the range.",
+                            "description": "The replacement text. May be empty to delete the matched text.",
                         },
                         "reason": {
                             "type": "string",
@@ -1545,6 +1740,56 @@ def _workspace_tools() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["range_start", "range_end", "new_text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_suggestion",
+                "description": (
+                    "Create a persistent suggestion annotation card in the annotation panel. "
+                    "Unlike propose_doc_edit (which is a quick inline proposal in chat), "
+                    "this creates a durable annotation that is saved to the database. "
+                    "Only use this when the user EXPLICITLY asks to create an annotation "
+                    "or suggestion card. Do NOT use this for normal editing requests — "
+                    "use propose_doc_edit instead."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "original_text": {
+                            "type": "string",
+                            "description": (
+                                "The exact text the annotation refers to. Copy verbatim "
+                                "from project_read_doc. Used to anchor the annotation."
+                            ),
+                        },
+                        "proposed_text": {
+                            "type": "string",
+                            "description": "The suggested replacement text.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": (
+                                "The annotation content/explanation shown on the card. "
+                                "Describe what you suggest and why."
+                            ),
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Short reason for the suggestion.",
+                        },
+                        "range_start": {
+                            "type": "integer",
+                            "description": "Character offset hint for disambiguation.",
+                        },
+                        "range_end": {
+                            "type": "integer",
+                            "description": "Character offset hint for disambiguation.",
+                        },
+                    },
+                    "required": ["original_text", "content"],
                 },
             },
         },

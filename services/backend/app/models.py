@@ -991,6 +991,7 @@ class Annotation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 # ---------------------------------------------------------------------------

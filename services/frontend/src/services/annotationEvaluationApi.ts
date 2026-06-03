@@ -113,6 +113,7 @@ export interface AnnotationDto {
   attached_files: AnnotationAttachedFileDto[]
   created_at: string
   updated_at: string
+  archived_at: string | null
 }
 
 export interface AnnotationCreateIn {
@@ -145,6 +146,7 @@ export interface AnnotationPatchIn {
   content?: string
   thread?: AnnotationThreadMessageDto[]
   publish?: boolean
+  archived_at?: string | null
 }
 
 const enc = encodeURIComponent

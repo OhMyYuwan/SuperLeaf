@@ -70,6 +70,7 @@ def run_migrations(engine: Engine) -> None:
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
         _add_conversation_user_renamed(conn)
+        _add_archived_at_to_annotations(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -827,3 +828,20 @@ def _add_conversation_user_renamed(conn) -> None:
         conn.execute(
             text("ALTER TABLE conversations ADD COLUMN sort_index FLOAT DEFAULT NULL")
         )
+
+
+def _add_archived_at_to_annotations(conn) -> None:
+    """Add `archived_at` column to annotations for sorting archived cards."""
+    if not _table_exists(conn, "annotations"):
+        return
+    if not _column_exists(conn, "annotations", "archived_at"):
+        conn.execute(
+            text("ALTER TABLE annotations ADD COLUMN archived_at DATETIME DEFAULT NULL")
+        )
+    # Backfill: existing archived annotations get updated_at as a reasonable proxy.
+    conn.execute(
+        text(
+            "UPDATE annotations SET archived_at = updated_at "
+            "WHERE status = 'archived' AND archived_at IS NULL"
+        )
+    )

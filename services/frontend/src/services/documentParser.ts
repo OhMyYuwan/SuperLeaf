@@ -175,13 +175,13 @@ function splitParagraphs(content: string, sections: Section[]): Paragraph[] {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
-    if (line.isHeading || line.text.trim() === '') {
+    if (line.isHeading || line.text.trim() === '' || isLatexEnvBoundary(line.text)) {
       i++
       continue
     }
 
     const startIdx = i
-    while (i < lines.length && lines[i].text.trim() !== '' && !lines[i].isHeading) {
+    while (i < lines.length && lines[i].text.trim() !== '' && !lines[i].isHeading && !isLatexEnvBoundary(lines[i].text)) {
       i++
     }
     const endIdx = i - 1
@@ -210,6 +210,11 @@ function isHeadingLine(text: string): boolean {
   if (/^#{1,6}\s+/.test(trimmed)) return true
   if (/^\\(chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/.test(trimmed)) return true
   return false
+}
+
+function isLatexEnvBoundary(line: string): boolean {
+  const trimmed = line.trim()
+  return /^\\begin\s*\{/.test(trimmed) || /^\\end\s*\{/.test(trimmed)
 }
 
 function findDeepestSection(sections: Section[], pos: number): Section | undefined {

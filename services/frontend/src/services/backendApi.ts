@@ -1116,6 +1116,7 @@ export interface EditProposal {
   original_text: string
   new_text: string
   reason: string
+  anchor_text?: string  // Agent 传的 original_text 参数，用于前端文本锚点定位
 }
 
 export interface ConversationListQuery {

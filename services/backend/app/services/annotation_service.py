@@ -131,6 +131,10 @@ def patch(
 ) -> Annotation:
     if status is not None:
         row.status = status
+        if status == "archived" and row.archived_at is None:
+            row.archived_at = datetime.utcnow()
+        elif status != "archived":
+            row.archived_at = None
     if range_from is not None:
         row.range_from = range_from
     if range_to is not None:
@@ -180,4 +184,5 @@ def to_dict(row: Annotation) -> dict:
         "attached_files": row.attached_files or [],
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "archived_at": row.archived_at.isoformat() if row.archived_at else None,
     }

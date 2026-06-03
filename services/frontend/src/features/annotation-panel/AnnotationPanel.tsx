@@ -60,6 +60,21 @@ interface AnnotationPanelProps {
   agents?: CachedWorkflow[]
 }
 
+/** Fallback clipboard copy using a hidden textarea. Works in non-HTTPS contexts. */
+function fallbackCopy(text: string): void {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    document.execCommand('copy')
+  } catch {
+    // silently fail
+  }
+  document.body.removeChild(ta)
+}
+
 export function AnnotationPanel({
   documentId,
   activeId,
@@ -118,7 +133,11 @@ export function AnnotationPanel({
     if (!documentId) return [] as AnnotationItem[]
     return Object.values(itemsById)
       .filter((it) => it.documentId === documentId && it.status === 'archived')
-      .sort((a, b) => a.range.from - b.range.from)
+      .sort((a, b) => {
+        const aTime = (a.archivedAt ?? a.createdAt).getTime()
+        const bTime = (b.archivedAt ?? b.createdAt).getTime()
+        return bTime - aTime
+      })
   }, [itemsById, documentId])
 
   const handleSubmitComment = async ({
@@ -460,7 +479,12 @@ function AnnotationCard({
     <div
       ref={cardRef}
       className={`ann-card ann-${item.kind} sev-${item.severity} ${isActive ? 'active' : ''} ${isResolved ? 'resolved' : ''}`}
-      onClick={onFocus}
+      onClick={(e) => {
+        // Don't steal focus when clicking buttons or interactive elements
+        if (!(e.target as HTMLElement).closest('button, input, textarea, a, .ann-diff-copy, .ann-diff-accept')) {
+          onFocus()
+        }
+      }}
       onMouseEnter={() => onHover?.(true)}
       onMouseLeave={() => onHover?.(false)}
     >
@@ -498,20 +522,7 @@ function AnnotationCard({
       {item.kind === 'suggestion' && item.proposed && (
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
-          <div className="ann-diff-row add">
-            <span className="ann-diff-text">+ {item.proposed}</span>
-            <button
-              className="ann-diff-copy"
-              onClick={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                void navigator.clipboard.writeText(item.proposed ?? '')
-              }}
-              title="复制建议文本到剪贴板"
-            >
-              复制
-            </button>
-          </div>
+          <div className="ann-diff-row add">+ {item.proposed}</div>
           {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
           {!isResolved && (
             <div className="ann-diff-actions">
@@ -524,6 +535,21 @@ function AnnotationCard({
                 title="将建议的修改应用到文档并归档"
               >
                 <Check size={12} /> 接受
+              </button>
+              <button
+                className="ann-diff-copy"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const text = item.proposed ?? ''
+                  if (navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+                  } else {
+                    fallbackCopy(text)
+                  }
+                }}
+                title="复制建议文本到剪贴板"
+              >
+                复制
               </button>
             </div>
           )}

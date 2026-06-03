@@ -114,6 +114,7 @@ function itemFromDto(d: AnnotationDto): AnnotationItem {
       ? (d.attached_files as unknown as AttachedFile[])
       : undefined,
     createdAt: new Date(d.created_at),
+    archivedAt: d.archived_at ? new Date(d.archived_at) : undefined,
   }
 }
 
@@ -240,6 +241,7 @@ export interface AnnotationItem {
    *  Kept so the UI can render `📎 name` chips without hitting the filesystem. */
   attachedFiles?: AttachedFile[]
   createdAt: Date
+  archivedAt?: Date
 }
 
 interface AnnotationState {
@@ -467,7 +469,7 @@ export const useAnnotationStore = create<AnnotationState>()(
     set((state) => ({
       items: {
         ...state.items,
-        [annotationId]: { ...item, status: 'archived' },
+        [annotationId]: { ...item, status: 'archived', archivedAt: new Date() },
       },
     }))
     void annotationEvaluationApi
@@ -476,7 +478,7 @@ export const useAnnotationStore = create<AnnotationState>()(
         set((state) => {
           const cur = state.items[annotationId]
           if (!cur) return state
-          return { items: { ...state.items, [annotationId]: { ...cur, status: prevStatus } } }
+          return { items: { ...state.items, [annotationId]: { ...cur, status: prevStatus, archivedAt: undefined } } }
         })
         showToast(`未能应用批注：${errMsg(err)}`, { level: 'error' })
       })
@@ -496,7 +498,7 @@ export const useAnnotationStore = create<AnnotationState>()(
     set((state) => ({
       items: {
         ...state.items,
-        [id]: { ...item, status: 'archived' },
+        [id]: { ...item, status: 'archived', archivedAt: new Date() },
       },
     }))
     void annotationEvaluationApi
@@ -505,7 +507,7 @@ export const useAnnotationStore = create<AnnotationState>()(
         set((state) => {
           const cur = state.items[id]
           if (!cur) return state
-          return { items: { ...state.items, [id]: { ...cur, status: prevStatus } } }
+          return { items: { ...state.items, [id]: { ...cur, status: prevStatus, archivedAt: undefined } } }
         })
         showToast(`未能采纳批注：${errMsg(err)}`, { level: 'error' })
       })
@@ -562,13 +564,13 @@ export const useAnnotationStore = create<AnnotationState>()(
     const prev = get().items[id]
     if (!prev || prev.status === 'deleted' || prev.status === 'archived') return
     set((state) => ({
-      items: { ...state.items, [id]: { ...prev, status: 'archived' } },
+      items: { ...state.items, [id]: { ...prev, status: 'archived', archivedAt: new Date() } },
     }))
     void annotationEvaluationApi.patchAnnotation(id, { status: 'archived' }).catch((err) => {
       set((state) => {
         const cur = state.items[id]
         if (!cur) return state
-        return { items: { ...state.items, [id]: { ...cur, status: prev.status } } }
+        return { items: { ...state.items, [id]: { ...cur, status: prev.status, archivedAt: undefined } } }
       })
       showToast(`未能归档批注：${errMsg(err)}`, { level: 'error' })
     })
@@ -578,7 +580,7 @@ export const useAnnotationStore = create<AnnotationState>()(
     const prev = get().items[id]
     if (!prev || prev.status !== 'archived') return
     set((state) => ({
-      items: { ...state.items, [id]: { ...prev, status: 'pending' } },
+      items: { ...state.items, [id]: { ...prev, status: 'pending', archivedAt: undefined } },
     }))
     void annotationEvaluationApi.patchAnnotation(id, { status: 'pending' }).catch((err) => {
       set((state) => {
@@ -989,7 +991,13 @@ export const useAnnotationStore = create<AnnotationState>()(
   archivedForDocument: (documentId) =>
     Object.values(get().items)
       .filter((it) => it.documentId === documentId && it.status === 'archived')
-      .sort((a, b) => a.range.from - b.range.from),
+      .sort((a, b) => {
+        // Sort by archivedAt descending (most recently archived first).
+        // Fall back to createdAt for items archived before archived_at was added.
+        const aTime = (a.archivedAt ?? a.createdAt).getTime()
+        const bTime = (b.archivedAt ?? b.createdAt).getTime()
+        return bTime - aTime
+      }),
     }),
     {
       name: 'yuwan-annotations-v1',

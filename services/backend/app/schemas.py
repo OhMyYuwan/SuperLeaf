@@ -1283,6 +1283,7 @@ class AnnotationPatchIn(BaseModel):
     content: str | None = None
     thread: list[AnnotationThreadMessageIn] | None = None
     publish: bool | None = None
+    archived_at: datetime | None = None
 
 
 class AnnotationOut(BaseModel):
@@ -1310,6 +1311,7 @@ class AnnotationOut(BaseModel):
     attached_files: list
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------

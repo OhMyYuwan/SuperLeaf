@@ -18,7 +18,8 @@ import {
   type MessageSend,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
-import { applyWriteOutput, readCurrentText } from './writingStore'
+import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
+import { useAnnotationStore } from './annotationStore'
 import { useCollaborationStore } from './collaborationStore'
 import { useDocumentStore } from './documentStore'
 import * as Y from 'yjs'
@@ -685,5 +686,39 @@ function handleMessageEvent(
         },
       }
     })
+  } else if (evt.event === 'ylw.msg.suggestion_created') {
+    const data = evt.data as Record<string, unknown> | null
+    if (!data?.suggestion_id || !data?.document_id) return
+
+    const documentId = String(data.document_id)
+    const rangeStart = Number(data.range_start ?? 0)
+    const rangeEnd = Number(data.range_end ?? 0)
+    const originalText = String(data.original_text ?? '')
+    const proposedText = String(data.proposed_text ?? '')
+    const content = String(data.content ?? '')
+    const reason = String(data.reason ?? '')
+
+    // Resolve conversation context for the annotation
+    const conversationId = evt.conversation_id ?? ''
+    const agentName = evt.agent_name ?? 'Agent'
+    const workflowId = conversationId
+
+    const annStore = useAnnotationStore.getState()
+    const annotationId = annStore.createFromAgent({
+      documentId,
+      range: { from: rangeStart, to: rangeEnd },
+      originalText,
+      proposedText: proposedText || undefined,
+      content,
+      reason: reason || undefined,
+      conversationId,
+      agentName,
+      workflowId,
+    })
+
+    // Insert a lightweight reference message into the chat stream
+    // The actual review happens in the annotation panel
+    // eslint-disable-next-line no-console
+    console.log('[conversationStore] Created suggestion annotation:', annotationId)
   }
 }

@@ -32,6 +32,7 @@ import {
   type ReviewStateOut,
 } from '../services/annotationEvaluationApi'
 import { uuid } from '../lib/uuid'
+import { applyWriteOutput } from '../services/documentWriter'
 import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
 import { BackendError } from '../services/backendApi'
@@ -270,6 +271,22 @@ interface AnnotationState {
     attachedFiles?: AttachedFile[]
   }) => string
 
+  // Create a suggestion card from an agent's create_suggestion tool call.
+  createFromAgent: (params: {
+    documentId: string
+    range: { from: number; to: number }
+    originalText: string
+    proposedText?: string
+    content: string
+    reason?: string
+    conversationId?: string
+    agentName: string
+    workflowId: string
+  }) => string
+
+  // Apply a suggestion's proposed text to the document and archive the card.
+  applySuggestion: (annotationId: string) => void
+
   accept: (id: string) => void
   remove: (id: string) => void
   archive: (id: string) => void
@@ -391,6 +408,84 @@ export const useAnnotationStore = create<AnnotationState>()(
       })
     })
     return id
+  },
+
+  createFromAgent: ({
+    documentId, range, originalText, proposedText, content, reason,
+    conversationId, agentName, workflowId,
+  }) => {
+    const id = uuid()
+    const item: AnnotationItem = {
+      id,
+      documentId,
+      userId: getCurrentUserId(),
+      isGlobal: false,
+      workflowId,
+      agentName,
+      kind: 'suggestion',
+      status: 'pending',
+      range,
+      targetText: originalText,
+      content,
+      severity: 'medium',
+      original: originalText,
+      proposed: proposedText || undefined,
+      reason: reason || undefined,
+      conversationId,
+      thread: [
+        { id: uuid(), role: 'agent', content, createdAt: new Date() },
+      ],
+      createdAt: new Date(),
+    }
+    set((state) => ({ items: { ...state.items, [id]: item } }))
+    createAnnotationRemote(item, () => {
+      set((state) => {
+        if (!state.items[id]) return state
+        const items = { ...state.items }
+        delete items[id]
+        return { items }
+      })
+    })
+    return id
+  },
+
+  applySuggestion: (annotationId) => {
+    const item = get().items[annotationId]
+    if (!item || item.kind !== 'suggestion' || item.status !== 'pending') return
+    if (!item.proposed) return
+
+    // Write proposed text to document
+    applyWriteOutput({
+      docId: item.documentId,
+      mode: 'replace-range',
+      range: item.range,
+      text: item.proposed,
+    })
+
+    // Archive the card
+    const prevStatus = item.status
+    set((state) => ({
+      items: {
+        ...state.items,
+        [annotationId]: { ...item, status: 'archived' },
+      },
+    }))
+    void annotationEvaluationApi
+      .patchAnnotation(annotationId, { status: 'archived' })
+      .catch((err) => {
+        set((state) => {
+          const cur = state.items[annotationId]
+          if (!cur) return state
+          return { items: { ...state.items, [annotationId]: { ...cur, status: prevStatus } } }
+        })
+        showToast(`未能应用批注：${errMsg(err)}`, { level: 'error' })
+      })
+    void operationApi
+      .record(item.documentId, {
+        type: 'apply_suggestion',
+        payload: { annotation_id: annotationId, range: item.range },
+      })
+      .catch(() => undefined)
   },
 
   accept: (id) => {

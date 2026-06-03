@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
+import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power, FileCheck } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
@@ -319,6 +319,7 @@ function AnnotationCard({
 }) {
   const currentUserId = useUserStore((s) => s.currentUser?.id ?? '')
   const accept = useAnnotationStore((s) => s.accept)
+  const applySuggestion = useAnnotationStore((s) => s.applySuggestion)
   const remove = useAnnotationStore((s) => s.remove)
   const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
@@ -565,6 +566,15 @@ function AnnotationCard({
         >
           <Check size={14} />
         </button>
+        {item.kind === 'suggestion' && item.proposed && !isResolved && (
+          <button
+            className="ann-btn apply"
+            onClick={() => applySuggestion(item.id)}
+            title="将建议的修改应用到文档并归档"
+          >
+            <FileCheck size={14} />
+          </button>
+        )}
         {isOwner && (
           <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
             <Trash2 size={14} />

@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power, FileCheck } from 'lucide-react'
+import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
@@ -454,7 +454,7 @@ function AnnotationCard({
   const agentDeleted = isOwner && !agent && !!item.workflowId
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
-  const canFollowUp = isOwner && (isUserComment || (!!item.workflowId && agentActive))
+  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!item.workflowId && agentActive))
 
   return (
     <div
@@ -498,8 +498,35 @@ function AnnotationCard({
       {item.kind === 'suggestion' && item.proposed && (
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
-          <div className="ann-diff-row add">+ {item.proposed}</div>
+          <div className="ann-diff-row add">
+            <span className="ann-diff-text">+ {item.proposed}</span>
+            <button
+              className="ann-diff-copy"
+              onClick={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                void navigator.clipboard.writeText(item.proposed ?? '')
+              }}
+              title="复制建议文本到剪贴板"
+            >
+              复制
+            </button>
+          </div>
           {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {!isResolved && (
+            <div className="ann-diff-actions">
+              <button
+                className="ann-diff-accept"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applySuggestion(item.id)
+                }}
+                title="将建议的修改应用到文档并归档"
+              >
+                <Check size={12} /> 接受
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -562,25 +589,16 @@ function AnnotationCard({
           className="ann-btn accept"
           onClick={handleAccept}
           disabled={isResolved}
-          title="标记已处理并归档（不会自动修改文档，请在编辑器里手动改）"
+          title="标记已处理并归档（不修改文档，用户可继续追问）"
         >
           <Check size={14} />
         </button>
-        {item.kind === 'suggestion' && item.proposed && !isResolved && (
-          <button
-            className="ann-btn apply"
-            onClick={() => applySuggestion(item.id)}
-            title="将建议的修改应用到文档并归档"
-          >
-            <FileCheck size={14} />
-          </button>
-        )}
         {isOwner && (
           <button className="ann-btn delete" onClick={handleDelete} disabled={isResolved} title="永久删除">
             <Trash2 size={14} />
           </button>
         )}
-        {isOwner && item.workflowId && (
+        {isOwner && (item.workflowId || item.kind === 'suggestion') && (
           <button
             className={`ann-btn publish ${isPublished ? 'active' : ''}`}
             onClick={() => publish(item.id)}

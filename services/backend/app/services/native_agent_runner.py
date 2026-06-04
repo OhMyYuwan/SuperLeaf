@@ -1406,6 +1406,16 @@ def browser_nanobot_system_prompt() -> str:
             "The browser is your transport; SuperLeaf backend executes project tools after authorization.",
             "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
             (
+                "Do not use your own local filesystem or shell as a substitute for SuperLeaf project tools. "
+                "SuperLeaf project context exists only through the tools listed in this prompt."
+            ),
+            (
+                "If this API channel cannot call tools natively, request exactly one SuperLeaf tool by "
+                "replying with only this marker and no Markdown: "
+                '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>. '
+                "Replace name and arguments as needed."
+            ),
+            (
                 "When the user asks you to change the current document, call "
                 "propose_doc_edit with original_text copied from project_read_doc, "
                 "range_start/range_end as hints, replacement new_text, and a short reason."

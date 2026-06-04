@@ -215,6 +215,20 @@ def _build_agent_query(
             user_message=body.content,
         )
     )
+    if document is not None:
+        current_doc_parts = [
+            "[CURRENT SUPERLEAF DOCUMENT]",
+            f"doc_id: {document.id}",
+            f"name: {document.name}",
+            f"format: {document.format}",
+            (
+                "This is the document currently bound to the SuperLeaf editor conversation. "
+                "When the user says current document, active document, this file, or the text in the editor, "
+                f"use doc_id {document.id}. Do not assume the current document is main.tex unless this name says so."
+            ),
+            "[END CURRENT SUPERLEAF DOCUMENT]",
+        ]
+        prompt_parts.append("\n".join(current_doc_parts))
 
     if has_selection:
         context_parts: list[str] = ["[DISCUSSION CONTEXT]"]

@@ -64,7 +64,7 @@ export async function discoverBrowserNanobotAgents(endpoint: string, apiKey = 'd
 
 export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Promise<BrowserNanobotTurnResult> {
   const body: Record<string, unknown> = {
-    messages: compactNanobotMessages(args.messages),
+    messages: compactNanobotMessages(args.messages, args.tools),
     stream: false,
     temperature: 0.2,
     max_tokens: 4000,
@@ -139,14 +139,86 @@ export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Pr
   return { content: contentParts.join(''), toolCalls: toolAccumulator.calls() }
 }
 
-function compactNanobotMessages(messages: NanobotChatMessage[]): NanobotChatMessage[] {
+function compactNanobotMessages(
+  messages: NanobotChatMessage[],
+  tools: NanobotToolDefinition[] = [],
+): NanobotChatMessage[] {
+  const system = messages
+    .filter((message) => message.role === 'system' && message.content)
+    .map((message) => String(message.content))
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')
-  if (lastUser) {
-    return [{ role: 'user', content: lastUser.content }]
+  const toolNames = toolCallNameMap(messages)
+  const toolResults = messages.filter((message) => message.role === 'tool')
+  const sections: string[] = []
+  if (system.length > 0) {
+    sections.push(`[SUPERLEAF INSTRUCTIONS]\n${system.join('\n\n')}`)
   }
+  if (tools.length > 0) {
+    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatToolDefinitions(tools)}`)
+  }
+  if (lastUser?.content) {
+    sections.push(`[CURRENT USER MESSAGE]\n${lastUser.content}`)
+  }
+  if (toolResults.length > 0) {
+    sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults, toolNames)}`)
+    sections.push(
+      [
+        'Use the tool results above to answer the user.',
+        'If more SuperLeaf project context is needed, call another available tool.',
+        'Do not repeat a tool call whose result is already shown unless the user asks or the result is insufficient.',
+      ].join(' '),
+    )
+  }
+  if (sections.length > 0) return [{ role: 'user', content: sections.join('\n\n') }]
   const last = messages[messages.length - 1]
   if (!last) return []
   return [{ role: 'user', content: last.content ?? '' }]
+}
+
+function formatToolDefinitions(tools: NanobotToolDefinition[]): string {
+  const rendered = tools.map((tool) => {
+    const fn = tool.function
+    return [
+      `- ${fn.name}`,
+      fn.description ? `  description: ${fn.description}` : '',
+      `  arguments_schema: ${JSON.stringify(fn.parameters ?? { type: 'object', properties: {} })}`,
+    ].filter(Boolean).join('\n')
+  })
+  return [
+    'These tools are available through SuperLeaf backend authorization even if this API channel cannot call OpenAI tools natively.',
+    'Never say these tools are not mounted or unavailable.',
+    'Do not use your own local filesystem or shell as a substitute for these tools.',
+    'To request one tool, reply with exactly one marker and no prose:',
+    '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>',
+    'Available schemas:',
+    ...rendered,
+  ].join('\n')
+}
+
+function toolCallNameMap(messages: NanobotChatMessage[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const message of messages) {
+    if (!Array.isArray(message.tool_calls)) continue
+    for (const call of message.tool_calls) {
+      if (call.id) names.set(call.id, call.function?.name || 'tool')
+    }
+  }
+  return names
+}
+
+function formatToolResults(messages: NanobotChatMessage[], names: Map<string, string>): string {
+  return messages
+    .map((message, idx) => {
+      const callId = message.tool_call_id || `tool-${idx + 1}`
+      const name = names.get(callId) || 'tool'
+      return [
+        `Tool result ${idx + 1}: ${name}`,
+        `tool_call_id: ${callId}`,
+        'content:',
+        message.content ?? '',
+      ].join('\n')
+    })
+    .join('\n\n')
 }
 
 function normalizeNanobotEndpoint(endpoint: string): string {
@@ -227,10 +299,16 @@ function extractCompletionResult(evt: unknown): BrowserNanobotTurnResult {
   if (delta.content || delta.toolCalls.length > 0) {
     const toolAccumulator = new ToolCallAccumulator()
     toolAccumulator.add(delta.toolCalls)
-    return { content: delta.content, toolCalls: toolAccumulator.calls() }
+    const nativeCalls = toolAccumulator.calls()
+    const textCalls = nativeCalls.length === 0 ? extractTextToolCalls(delta.content) : []
+    return {
+      content: textCalls.length > 0 ? '' : delta.content,
+      toolCalls: nativeCalls.length > 0 ? nativeCalls : textCalls,
+    }
   }
   if (typeof evt === 'string') {
-    return { content: evt, toolCalls: [] }
+    const calls = extractTextToolCalls(evt)
+    return { content: calls.length > 0 ? '' : evt, toolCalls: calls }
   }
   if (!evt || typeof evt !== 'object') {
     return { content: '', toolCalls: [] }
@@ -238,15 +316,59 @@ function extractCompletionResult(evt: unknown): BrowserNanobotTurnResult {
   const raw = evt as Record<string, unknown>
   for (const key of ['content', 'answer', 'response', 'output', 'text']) {
     const value = raw[key]
-    if (typeof value === 'string') return { content: value, toolCalls: [] }
+    if (typeof value === 'string') {
+      const calls = extractTextToolCalls(value)
+      return { content: calls.length > 0 ? '' : value, toolCalls: calls }
+    }
   }
   const message = raw.message
-  if (typeof message === 'string') return { content: message, toolCalls: [] }
+  if (typeof message === 'string') {
+    const calls = extractTextToolCalls(message)
+    return { content: calls.length > 0 ? '' : message, toolCalls: calls }
+  }
   if (message && typeof message === 'object') {
     const content = (message as Record<string, unknown>).content
-    if (typeof content === 'string') return { content, toolCalls: [] }
+    if (typeof content === 'string') {
+      const calls = extractTextToolCalls(content)
+      return { content: calls.length > 0 ? '' : content, toolCalls: calls }
+    }
   }
   return { content: '', toolCalls: [] }
+}
+
+function extractTextToolCalls(content: string): NanobotToolCall[] {
+  const pattern = /<superleaf_tool_call>\s*([\s\S]*?)\s*<\/superleaf_tool_call>/giu
+  const calls: NanobotToolCall[] = []
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(content)) !== null) {
+    const parsed = parseTextToolCall(match[1])
+    if (parsed) calls.push(parsed)
+  }
+  return calls
+}
+
+function parseTextToolCall(rawJson: string): NanobotToolCall | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawJson)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const raw = parsed as Record<string, unknown>
+  const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+  if (!name) return null
+  const args = raw.arguments && typeof raw.arguments === 'object'
+    ? raw.arguments
+    : {}
+  return {
+    id: `text_tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'function',
+    function: {
+      name,
+      arguments: JSON.stringify(args),
+    },
+  }
 }
 
 function normalizeToolDelta(item: unknown, fallbackIndex: number): StreamingToolCallDelta | null {

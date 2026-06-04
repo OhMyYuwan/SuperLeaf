@@ -12,11 +12,13 @@ import {
   buildHeaders,
   type Conversation,
   type ConversationCreate,
+  type BrowserNanobotPrepare,
   type EditProposal,
   type Message,
   type MessageInject,
   type MessageSend,
   type NanobotChatMessage,
+  type NanobotToolCall,
   type Provider,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
@@ -559,6 +561,42 @@ async function sendViaBrowserNanobot(args: {
   const messages: NanobotChatMessage[] = prepared.messages.slice()
   const finalParts: string[] = []
   const maxToolRounds = 8
+  const preflightToolCalls = inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
+
+  if (preflightToolCalls.length > 0) {
+    messages.push({
+      role: 'system',
+      content: [
+        'SuperLeaf has already executed the read-only project tool request below before the Nanobot model turn.',
+        'Use the tool result. Do not say the API channel has no SuperLeaf tools.',
+        'If more project context is needed, request another available SuperLeaf tool.',
+      ].join(' '),
+    })
+    messages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: preflightToolCalls,
+    })
+    for (const toolCall of preflightToolCalls) {
+      const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
+        run_id: prepared.run_id,
+        document_id: prepared.document_id,
+        range_start: prepared.range_start,
+        range_end: prepared.range_end,
+        inputs: prepared.inputs,
+        tool_call: toolCall,
+      })
+      args.markActivity()
+      for (const evt of result.events) {
+        handleMessageEvent(args.set, args.conversationId, evt)
+      }
+      messages.push({
+        role: 'tool',
+        tool_call_id: result.tool_call_id,
+        content: result.content,
+      })
+    }
+  }
 
   for (let round = 0; round < maxToolRounds; round++) {
     const turn = await streamBrowserNanobotTurn({
@@ -619,6 +657,157 @@ async function sendViaBrowserNanobot(args: {
   }
 
   throw new Error('Nanobot 工具调用轮次过多，已停止以避免无限循环')
+}
+
+const PREFLIGHT_READ_TOOL_NAMES = new Set([
+  'project_list_docs',
+  'project_read_doc',
+  'project_grep',
+  'project_outline',
+])
+
+function inferBrowserNanobotPreflightToolCalls(
+  content: string,
+  prepared: BrowserNanobotPrepare,
+): NanobotToolCall[] {
+  const text = content.trim()
+  if (!text) return []
+  const explicitToolNames = orderedExplicitReadToolNames(text)
+  const wantsTool = explicitToolNames.length > 0 || hasExplicitSuperLeafToolCue(text)
+  if (!wantsTool) return []
+
+  const requested = explicitToolNames.length > 0
+    ? explicitToolNames
+    : inferNaturalReadToolNames(text)
+  return requested
+    .map((name) => buildBrowserNanobotPreflightToolCall(name, text, prepared))
+    .filter((call): call is NanobotToolCall => Boolean(call))
+}
+
+function orderedExplicitReadToolNames(text: string): string[] {
+  const out: string[] = []
+  const lower = text.toLowerCase()
+  const pattern = /\bproject_(list_docs|read_doc|grep|outline)\b/gu
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(lower)) !== null) {
+    const name = `project_${match[1]}`
+    if (PREFLIGHT_READ_TOOL_NAMES.has(name) && !out.includes(name)) {
+      out.push(name)
+    }
+  }
+  return out
+}
+
+function hasExplicitSuperLeafToolCue(text: string): boolean {
+  return (
+    /SuperLeaf\s*(?:工具|tool)/iu.test(text) ||
+    /(?:调用|使用|执行|先用|通过).{0,12}(?:工具|tool)/iu.test(text) ||
+    /(?:工具|tool).{0,12}(?:读取|搜索|查找|列出|生成大纲|大纲)/iu.test(text)
+  )
+}
+
+function inferNaturalReadToolNames(text: string): string[] {
+  if (/(?:搜索|查找|检索|grep|find)/iu.test(text)) return ['project_grep']
+  if (/(?:大纲|outline|章节|目录|结构)/iu.test(text)) return ['project_outline']
+  if (/(?:列出|列表|所有文档|项目文档|文档清单)/iu.test(text)) return ['project_list_docs']
+  if (/(?:读取|读一下|查看|打开|当前(?:编辑区)?文档|active document|current document)/iu.test(text)) {
+    return ['project_read_doc']
+  }
+  return []
+}
+
+function buildBrowserNanobotPreflightToolCall(
+  name: string,
+  text: string,
+  prepared: BrowserNanobotPrepare,
+): NanobotToolCall | null {
+  let args: Record<string, unknown>
+  if (name === 'project_list_docs') {
+    args = {}
+  } else if (name === 'project_read_doc') {
+    args = { doc_id: prepared.document_id }
+    if (shouldReadSelection(text, prepared)) {
+      args.range_start = prepared.range_start
+      args.range_end = prepared.range_end
+    }
+  } else if (name === 'project_outline') {
+    args = { doc_id: prepared.document_id }
+  } else if (name === 'project_grep') {
+    const pattern = inferGrepPattern(text)
+    if (!pattern) return null
+    args = { pattern, max_results: 30 }
+    const format = inferFormatFilter(text)
+    if (format) args.format = format
+  } else {
+    return null
+  }
+  return {
+    id: `preflight_${name}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'function',
+    function: {
+      name,
+      arguments: JSON.stringify(args),
+    },
+  }
+}
+
+function shouldReadSelection(text: string, prepared: BrowserNanobotPrepare): boolean {
+  return prepared.range_end > prepared.range_start && /(?:选中|选择|selection|selected)/iu.test(text)
+}
+
+function inferGrepPattern(text: string): string {
+  const terms = new Set<string>()
+  for (const pattern of [
+    /`([^`]{1,80})`/gu,
+    /"([^"]{1,80})"/gu,
+    /'([^']{1,80})'/gu,
+    /“([^”]{1,80})”/gu,
+    /‘([^’]{1,80})’/gu,
+  ]) {
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(text)) !== null) {
+      addGrepTerm(terms, match[1])
+    }
+  }
+
+  const searchMatch = text.match(/(?:搜索|查找|检索|grep|find)\s*(?:当前(?:项目|文档|编辑区文档)?(?:中|里)?|所有文档(?:中|里)?)?\s*([^，。；;,.!?！？\n]{1,120})/iu)
+  if (searchMatch?.[1]) {
+    for (const part of searchMatch[1].split(/(?:\s+或\s+|\s+和\s+|\s+or\s+|\s+and\s+|[、/])/iu)) {
+      addGrepTerm(terms, part)
+    }
+  }
+
+  if (terms.size === 0) {
+    const words = text.match(/\b[A-Za-z_][A-Za-z0-9_:-]{1,80}\b/gu) ?? []
+    for (const word of words) {
+      if (!word.startsWith('project_') && !['SuperLeaf', 'tool', 'grep', 'find'].includes(word)) {
+        addGrepTerm(terms, word)
+      }
+    }
+  }
+
+  return [...terms].map(escapeRegex).join('|')
+}
+
+function addGrepTerm(terms: Set<string>, raw: string): void {
+  const term = raw
+    .replace(/^(?:中|里|位置|出现|出现位置|的位置|的出现|内容|关键词)\s*/u, '')
+    .replace(/\s*(?:中|里|位置|出现|出现位置|的位置|的出现|内容|关键词)$/u, '')
+    .trim()
+  if (!term || term.length > 80) return
+  if (/^(?:当前|项目|文档|所有文档|使用|调用|工具|SuperLeaf)$/iu.test(term)) return
+  terms.add(term)
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/gu, '\\$&')
+}
+
+function inferFormatFilter(text: string): string {
+  if (/\b(?:tex|latex)\b|\.tex\b/iu.test(text)) return 'tex'
+  if (/\b(?:md|markdown)\b|\.md\b/iu.test(text)) return 'md'
+  if (/\btxt\b|\.txt\b/iu.test(text)) return 'txt'
+  return ''
 }
 
 function findEventBoundary(buf: string): { start: number; end: number } | null {

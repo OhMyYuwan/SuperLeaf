@@ -12,7 +12,15 @@ from sqlalchemy.orm import Session
 
 from ..database import get_session
 from ..models import Provider, User
-from ..schemas import AgentStatOut, ProviderIn, ProviderModelOut, ProviderOut, ProviderStatsOut, ProviderUpdate
+from ..schemas import (
+    AgentStatOut,
+    BrowserNanobotModelSyncIn,
+    ProviderIn,
+    ProviderModelOut,
+    ProviderOut,
+    ProviderStatsOut,
+    ProviderUpdate,
+)
 from ..services import stats_service
 from ..services.provider_service import ProviderService
 from .deps import get_current_user
@@ -58,6 +66,7 @@ def create_provider(
         endpoint=body.endpoint,
         api_key=body.api_key,
         activate=body.activate,
+        transport=body.transport,
     )
     return _to_out(p)
 
@@ -70,13 +79,17 @@ def update_provider(
     db: Session = Depends(get_session),
 ) -> ProviderOut:
     svc = ProviderService(db)
-    p = svc.update(
-        provider_id,
-        user_id=user.id,
-        name=body.name,
-        endpoint=body.endpoint,
-        api_key=body.api_key,
-    )
+    try:
+        p = svc.update(
+            provider_id,
+            user_id=user.id,
+            name=body.name,
+            endpoint=body.endpoint,
+            api_key=body.api_key,
+            transport=body.transport,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if p is None:
         raise HTTPException(404, "Provider not found")
     return _to_out(p)
@@ -129,6 +142,27 @@ async def list_provider_models(
     if rows is None:
         raise HTTPException(404, "Provider not found")
     return [ProviderModelOut(**row) for row in rows]
+
+
+@router.post("/{provider_id}/browser-nanobot-models", response_model=ProviderOut)
+def sync_browser_nanobot_models(
+    provider_id: str,
+    body: BrowserNanobotModelSyncIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProviderOut:
+    try:
+        p = ProviderService(db).sync_browser_nanobot_models(
+            provider_id,
+            user_id=user.id,
+            provider_name=body.provider_name,
+            models=[row.model_dump() for row in body.models],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if p is None:
+        raise HTTPException(404, "Provider not found")
+    return _to_out(p)
 
 
 @router.get("/{provider_id}/stats", response_model=ProviderStatsOut)

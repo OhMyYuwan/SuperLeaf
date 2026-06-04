@@ -16,12 +16,20 @@ import {
   type Message,
   type MessageInject,
   type MessageSend,
+  type NanobotChatMessage,
+  type Provider,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
+import {
+  readBrowserNanobotApiKey,
+  streamBrowserNanobotTurn,
+} from '../services/nanobotBrowserClient'
 import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
 import { useAnnotationStore } from './annotationStore'
 import { useCollaborationStore } from './collaborationStore'
 import { useDocumentStore } from './documentStore'
+import { useSettingsStore } from './settingsStore'
+import { useWorkflowStore } from './workflowStore'
 import * as Y from 'yjs'
 
 export interface ProposalEntry extends EditProposal {
@@ -248,6 +256,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
 
     try {
+      const browserNanobot = findBrowserNanobotProvider(conversationId, get)
+      if (browserNanobot) {
+        let gotFirstChunk = false
+        const markActivity = () => {
+          if (!gotFirstChunk) {
+            clearTimeout(firstByteTimer)
+            gotFirstChunk = true
+          }
+        }
+        await sendViaBrowserNanobot({
+          conversationId,
+          body,
+          provider: browserNanobot,
+          signal: abortCtl.signal,
+          markActivity,
+          set,
+        })
+        return
+      }
+
       const headers = buildHeaders({ Accept: 'text/event-stream' })
       const resp = await fetch(conversationApi.sendMessageUrl(conversationId), {
         method: 'POST',
@@ -492,6 +520,107 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 }))
 
+function findBrowserNanobotProvider(
+  conversationId: string,
+  get: () => ConversationState,
+): Provider | null {
+  const conv = get().conversations[conversationId]
+  if (!conv) return null
+  const workflows = useWorkflowStore.getState().workflows
+  const workflow = workflows.find((item) => item.id === conv.workflow_id)
+  const providerId = workflow?.provider_id ?? providerIdFromWorkflowId(conv.workflow_id)
+  if (!providerId) return null
+  const provider = useSettingsStore.getState().providers.find((item) => item.id === providerId)
+  if (!provider || provider.kind !== 'nanobot') return null
+  return provider.meta?.transport === 'browser' ? provider : null
+}
+
+function providerIdFromWorkflowId(workflowId: string): string {
+  const idx = workflowId.indexOf(':')
+  return idx > 0 ? workflowId.slice(0, idx) : ''
+}
+
+async function sendViaBrowserNanobot(args: {
+  conversationId: string
+  body: MessageSend
+  provider: Provider
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<void> {
+  const prepared = await conversationApi.prepareBrowserNanobot(args.conversationId, args.body)
+  args.markActivity()
+  handleMessageEvent(args.set, args.conversationId, {
+    event: 'ylw.msg.user',
+    data: prepared.user_message,
+  })
+
+  const apiKey = readBrowserNanobotApiKey(args.provider.id)
+  const messages: NanobotChatMessage[] = prepared.messages.slice()
+  const finalParts: string[] = []
+  const maxToolRounds = 8
+
+  for (let round = 0; round < maxToolRounds; round++) {
+    const turn = await streamBrowserNanobotTurn({
+      endpoint: prepared.endpoint,
+      apiKey,
+      model: prepared.model,
+      sessionId: prepared.run_id,
+      messages,
+      tools: prepared.tools,
+      signal: args.signal,
+      onActivity: args.markActivity,
+      onDelta: (delta) => {
+        finalParts.push(delta)
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'ylw.msg.delta',
+          data: { delta },
+        })
+      },
+    })
+
+    if (turn.toolCalls.length === 0) {
+      const finished = await conversationApi.finishBrowserNanobot(args.conversationId, {
+        run_id: prepared.run_id,
+        content: finalParts.join('') || turn.content,
+      })
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'ylw.msg.finished',
+        data: finished,
+      })
+      return
+    }
+
+    messages.push({
+      role: 'assistant',
+      content: turn.content || null,
+      tool_calls: turn.toolCalls,
+    })
+
+    for (const toolCall of turn.toolCalls) {
+      const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
+        run_id: prepared.run_id,
+        document_id: prepared.document_id,
+        range_start: prepared.range_start,
+        range_end: prepared.range_end,
+        inputs: prepared.inputs,
+        tool_call: toolCall,
+      })
+      args.markActivity()
+      for (const evt of result.events) {
+        handleMessageEvent(args.set, args.conversationId, evt)
+      }
+      messages.push({
+        role: 'tool',
+        tool_call_id: result.tool_call_id,
+        content: result.content,
+      })
+    }
+  }
+
+  throw new Error('Nanobot 工具调用轮次过多，已停止以避免无限循环')
+}
+
 function findEventBoundary(buf: string): { start: number; end: number } | null {
   const crlf = buf.indexOf('\r\n\r\n')
   const lf = buf.indexOf('\n\n')
@@ -699,9 +828,9 @@ function handleMessageEvent(
     const reason = String(data.reason ?? '')
 
     // Resolve conversation context for the annotation
-    const conversationId = evt.conversation_id ?? ''
-    const agentName = evt.agent_name ?? 'Agent'
-    const workflowId = conversationId
+    const sourceConversationId = conversationId
+    const agentName = String(data.agent_name ?? 'Agent')
+    const workflowId = sourceConversationId
 
     const annStore = useAnnotationStore.getState()
     const annotationId = annStore.createFromAgent({
@@ -711,7 +840,7 @@ function handleMessageEvent(
       proposedText: proposedText || undefined,
       content,
       reason: reason || undefined,
-      conversationId,
+      conversationId: sourceConversationId,
       agentName,
       workflowId,
     })

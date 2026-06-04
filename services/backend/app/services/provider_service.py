@@ -57,13 +57,18 @@ class ProviderService:
         endpoint: str,
         api_key: str,
         activate: bool = False,
+        transport: str | None = None,
     ) -> Provider:
+        meta: dict[str, Any] = {}
+        if kind == "nanobot":
+            meta["transport"] = transport or "backend"
         p = Provider(
             user_id=user_id,
             name=name,
             kind=kind,
             endpoint=self._normalize_endpoint(kind, endpoint),
             api_key_enc=encrypt(api_key),
+            meta=meta,
         )
         self.db.add(p)
         self.db.flush()
@@ -81,6 +86,7 @@ class ProviderService:
         name: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
+        transport: str | None = None,
     ) -> Provider | None:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
@@ -100,6 +106,10 @@ class ProviderService:
             p.endpoint = self._normalize_endpoint(p.kind, endpoint)
         if api_key:  # only rotate if non-empty
             p.api_key_enc = encrypt(api_key)
+        if transport is not None:
+            if p.kind != "nanobot":
+                raise ValueError("transport can only be set for Nanobot providers")
+            p.meta = {**(p.meta or {}), "transport": transport}
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)
@@ -164,6 +174,20 @@ class ProviderService:
             except Exception as e:  # network errors etc.
                 p.status = "error"
                 p.status_detail = f"{type(e).__name__}: {e}"[:512] or f"{type(e).__name__}: (no message)"
+            p.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(p)
+            return p
+
+        if p.kind == "nanobot" and _provider_transport(p) == "browser":
+            model_count = int((p.meta or {}).get("model_count") or 0)
+            p.status = "ok" if model_count > 0 else "unknown"
+            p.status_detail = (
+                f"浏览器直连 Nanobot · 已同步 {model_count} 个 Agent 条目"
+                if model_count > 0
+                else "浏览器直连 Nanobot · 请在前端测连并同步 Agent"
+            )
+            p.meta = {**(p.meta or {}), "transport": "browser"}
             p.updated_at = datetime.utcnow()
             self.db.commit()
             self.db.refresh(p)
@@ -251,6 +275,17 @@ class ProviderService:
             return None
         if p.kind not in ("native", "nanobot"):
             return []
+        if p.kind == "nanobot" and _provider_transport(p) == "browser":
+            models = list((p.meta or {}).get("models") or [])
+            return [
+                {
+                    "id": str(model.get("id") or ""),
+                    "name": str(model.get("name") or model.get("id") or ""),
+                    "description": str(model.get("description") or ""),
+                }
+                for model in models
+                if str(model.get("id") or "").strip()
+            ]
         models = await self._list_openai_models(p)
         p.meta = {
             **(p.meta or {}),
@@ -275,6 +310,73 @@ class ProviderService:
             for model in models
         ]
 
+    def sync_browser_nanobot_models(
+        self,
+        provider_id: str,
+        *,
+        user_id: str,
+        provider_name: str = "",
+        models: list[dict[str, Any]],
+    ) -> Provider | None:
+        p = self.get(provider_id, user_id=user_id)
+        if p is None:
+            return None
+        if p.kind != "nanobot":
+            raise ValueError("provider is not Nanobot")
+        normalized: list[dict[str, Any]] = []
+        for item in models:
+            ident = str(item.get("id") or "").strip()
+            if not ident:
+                continue
+            normalized.append(
+                {
+                    "id": ident,
+                    "name": str(item.get("name") or ident).strip() or ident,
+                    "description": str(item.get("description") or ""),
+                    "raw": item.get("raw") if isinstance(item.get("raw"), dict) else {},
+                }
+            )
+        self._sync_cached_workflows(
+            p,
+            [
+                {
+                    "external_id": item["id"],
+                    "name": p.name,
+                    "description": item["description"],
+                    "kind": "nanobot",
+                    "tags": _tags_from_raw(item["raw"]),
+                    "raw": item["raw"],
+                }
+                for item in normalized
+            ],
+        )
+        p.status = "ok" if normalized else "error"
+        p.status_detail = (
+            f"浏览器直连 Nanobot · 已同步 {len(normalized)} 个 Agent 条目"
+            if normalized
+            else "浏览器直连 Nanobot 未返回可用 Agent"
+        )
+        p.meta = {
+            **(p.meta or {}),
+            "transport": "browser",
+            "provider_name": provider_name or p.name,
+            "model_count": len(normalized),
+            "model_ids": [item["id"] for item in normalized],
+            "models": [
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "description": item["description"],
+                }
+                for item in normalized
+            ],
+            "models_scanned_at": datetime.utcnow().isoformat(),
+        }
+        p.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(p)
+        return p
+
     # --- Helpers ------------------------------------------------------------
 
     async def _list_openai_models(self, provider: Provider) -> list:
@@ -287,11 +389,17 @@ class ProviderService:
 
     def _make_client(self, provider: Provider) -> DifyClient | NanobotClient:
         endpoint = self._normalize_endpoint(provider.kind, provider.endpoint)
-        api_key = decrypt(provider.api_key_enc)
         if provider.kind == "native":
             raise ValueError("native provider does not use external workflow probe")
         if provider.kind == "nanobot":
+            if _provider_transport(provider) == "browser":
+                raise ValueError(
+                    "browser Nanobot providers cannot be called by the backend; "
+                    "use the browser Nanobot transport endpoints"
+                )
+            api_key = decrypt(provider.api_key_enc)
             return NanobotClient(endpoint=endpoint, api_key=api_key)
+        api_key = decrypt(provider.api_key_enc)
         return DifyClient(endpoint=endpoint, api_key=api_key)
 
     def _normalize_endpoint(self, kind: str, endpoint: str) -> str:
@@ -326,3 +434,7 @@ def _tags_from_raw(raw: dict[str, Any]) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return []
+
+
+def _provider_transport(provider: Provider) -> str:
+    return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"

@@ -484,7 +484,7 @@ export const useAnnotationStore = create<AnnotationState>()(
       })
     void operationApi
       .record(item.documentId, {
-        type: 'apply_suggestion',
+        type: 'accept_suggestion',
         payload: { annotation_id: annotationId, range: item.range },
       })
       .catch(() => undefined)

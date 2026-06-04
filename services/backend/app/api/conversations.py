@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,10 @@ from sse_starlette.sse import EventSourceResponse
 from ..database import get_session
 from ..models import Conversation, Doc, Message, Project, User
 from ..schemas import (
+    BrowserNanobotFinishIn,
+    BrowserNanobotPrepareOut,
+    BrowserNanobotToolIn,
+    BrowserNanobotToolOut,
     ConversationCreateIn,
     ConversationOut,
     ConversationUpdateIn,
@@ -27,6 +32,7 @@ from ..schemas import (
     MessageOut,
     MessageSendIn,
 )
+from ..secrets_vault import decrypt
 from ..services.agent_registry_service import AgentRegistryService, ResolvedAgent
 from ..services.agent_workspace_service import AgentWorkspaceService
 from ..services.attached_files import (
@@ -47,9 +53,10 @@ from ..services.native_agent_runner import (
     NativeAgentRunner,
     NativeAgentRuntimeConfig,
     NativeRunPayload,
+    browser_nanobot_system_prompt,
+    browser_nanobot_tools,
 )
 from ..services.provider_service import ProviderService
-from ..secrets_vault import decrypt
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -151,6 +158,166 @@ def _agent_name(resolved: ResolvedAgent) -> str:
     if resolved.cached_workflow is not None:
         return resolved.cached_workflow.name
     return resolved.workflow_id
+
+
+def _provider_transport(provider: Any) -> str:
+    return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"
+
+
+def _conversation_message_rows(db: Session, conversation_id: str) -> list[Message]:
+    return (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+
+
+def _sync_conversation_session(db: Session, conv: Conversation) -> None:
+    write_conversation_session(conv, _conversation_message_rows(db, conv.id))
+
+
+def _build_agent_query(
+    db: Session,
+    conv: Conversation,
+    body: MessageSendIn,
+    current_message_id: str | None = None,
+) -> dict[str, Any]:
+    history_rows = [
+        row
+        for row in _conversation_message_rows(db, conv.id)
+        if row.id != current_message_id
+    ]
+    session_context = render_session_messages_for_prompt(
+        conversation_session_messages_from_rows(history_rows)
+    )
+
+    target_text = str(body.inputs.get("target_text") or "").strip()
+    before = str(body.inputs.get("before") or "").strip()
+    after = str(body.inputs.get("after") or "").strip()
+    section_title = str(body.inputs.get("section_title") or "").strip()
+    document = db.get(Doc, conv.document_id)
+    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
+    attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+    image_attachments = collect_image_attachments(attached_files)
+    has_selection = bool(target_text) and (
+        body.range_start is not None and body.range_end is not None
+    )
+
+    prompt_parts: list[str] = []
+    if session_context:
+        prompt_parts.append(session_context)
+
+    prompt_parts.append(
+        _panel_reply_contract(
+            doc_format=doc_format,
+            target_text=target_text,
+            user_message=body.content,
+        )
+    )
+
+    if has_selection:
+        context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
+        if section_title:
+            context_parts.append(f"章节：{section_title}")
+        context_parts.append(
+            f"选区位置：文档偏移 {body.range_start}–{body.range_end}"
+        )
+        if before:
+            context_parts.append(f"上文：\n{before}")
+        context_parts.append(f"选中文本：\n{target_text}")
+        if after:
+            context_parts.append(f"下文：\n{after}")
+        context_parts.append("[END DISCUSSION CONTEXT]")
+        prompt_parts.append("\n\n".join(context_parts))
+
+    attached_block = render_attached_files_block(attached_files)
+    if attached_block:
+        prompt_parts.append(attached_block)
+
+    if prompt_parts:
+        prompt_parts.append(f"[CURRENT USER MESSAGE]\n{body.content}")
+        agent_query = "\n\n".join(prompt_parts)
+    else:
+        agent_query = body.content
+
+    return {
+        "agent_query": agent_query,
+        "doc_format": doc_format,
+        "attached_files": attached_files,
+        "image_attachments": image_attachments,
+    }
+
+
+def _persist_user_message(
+    db: Session,
+    conv: Conversation,
+    body: MessageSendIn,
+) -> Message:
+    user_msg = Message(
+        conversation_id=conv.id,
+        role="user",
+        content=body.content,
+        range_start=body.range_start,
+        range_end=body.range_end,
+    )
+    db.add(user_msg)
+
+    if not conv.user_renamed and (not conv.title or conv.title == "新对话"):
+        conv.title = body.content[:50] + ("..." if len(body.content) > 50 else "")
+
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user_msg)
+    return user_msg
+
+
+def _browser_nanobot_runner(
+    *,
+    provider: Any,
+    project: Project,
+    user: User,
+    model: str,
+) -> NativeAgentRunner:
+    return NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id=f"browser-nanobot:{provider.id}",
+            agent_name=provider.name,
+            provider_endpoint=provider.endpoint,
+            api_key="",
+            model=model,
+            instructions="",
+            skills=[],
+            workspace_root="",
+            project_id=project.id,
+            user_id=user.id,
+        )
+    )
+
+
+def _browser_tool_events(result: Any, call: dict[str, Any]) -> list[dict[str, Any]]:
+    name = str((call.get("function") or {}).get("name") or "")
+    events = [
+        {
+            "event": "native.agent.tool",
+            "data": {
+                "name": name,
+                "result_preview": str(result.content)[:500],
+                "failed": bool(result.failed),
+                "tool_kind": result.tool_kind,
+            },
+        }
+    ]
+    if result.side_event:
+        event = str(result.side_event.get("event") or "")
+        data = result.side_event.get("data") or {}
+        if event == "native.agent.edit_proposal":
+            events.append({"event": "ylw.msg.edit_proposal", "data": data})
+        elif event == "native.agent.suggestion_created":
+            events.append({"event": "ylw.msg.suggestion_created", "data": data})
+        else:
+            events.append({"event": event, "data": data})
+    return events
 
 
 @router.get("", response_model=list[ConversationOut])
@@ -329,100 +496,26 @@ async def send_message(
     cw = resolved.cached_workflow
     if resolved.source != "native" and cw is None:
         raise HTTPException(404, "Agent (workflow) gone")
+    if (
+        resolved.source != "native"
+        and provider.kind == "nanobot"
+        and _provider_transport(provider) == "browser"
+    ):
+        raise HTTPException(
+            400,
+            "Nanobot provider uses browser transport; call the browser Nanobot endpoints instead.",
+        )
     client = ProviderService(db).make_client(provider) if resolved.source != "native" else None
 
-    # Persist user message immediately so the UI can echo even if Dify fails.
-    user_msg = Message(
-        conversation_id=conversation_id,
-        role="user",
-        content=body.content,
-        range_start=body.range_start,
-        range_end=body.range_end,
-    )
-    db.add(user_msg)
-
-    # Auto-generate title from first user message only if the user hasn't renamed it.
-    if not conv.user_renamed and (not conv.title or conv.title == "新对话"):
-        conv.title = body.content[:50] + ("..." if len(body.content) > 50 else "")
-
-    conv.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(user_msg)
+    # Persist user message immediately so the UI can echo even if the provider fails.
+    user_msg = _persist_user_message(db, conv, body)
 
     user_msg_payload = MessageOut.model_validate(user_msg).model_dump(mode="json")
 
-    def _conversation_message_rows() -> list[Message]:
-        return (
-            db.query(Message)
-            .filter(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.asc())
-            .all()
-        )
-
-    def _sync_conversation_session() -> None:
-        write_conversation_session(conv, _conversation_message_rows())
-
-    all_message_rows = _conversation_message_rows()
-    _sync_conversation_session()
-    history_rows = [row for row in all_message_rows if row.id != user_msg.id]
-    session_context = render_session_messages_for_prompt(
-        conversation_session_messages_from_rows(history_rows)
-    )
-
-    # Build the prompt that actually goes to the agent. When the user has a
-    # selection active, weave it into the query so the agent can see the
-    # discussed text + its neighbouring context. We do this here (not in the
-    # Message.content) so the persisted conversation log keeps the user's own
-    # words, while the agent still gets enough context to answer coherently.
-    target_text = str(body.inputs.get("target_text") or "").strip()
-    before = str(body.inputs.get("before") or "").strip()
-    after = str(body.inputs.get("after") or "").strip()
-    section_title = str(body.inputs.get("section_title") or "").strip()
-    document = db.get(Doc, conv.document_id)
-    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
-    attached_files = normalize_attached_files(body.inputs.get("attached_files"))
-    image_attachments = collect_image_attachments(attached_files)
-
-    has_selection = bool(target_text) and (
-        body.range_start is not None and body.range_end is not None
-    )
-
-    prompt_parts: list[str] = []
-    if session_context:
-        prompt_parts.append(session_context)
-
-    prompt_parts.append(
-        _panel_reply_contract(
-            doc_format=doc_format,
-            target_text=target_text,
-            user_message=body.content,
-        )
-    )
-
-    if has_selection:
-        context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
-        if section_title:
-            context_parts.append(f"章节：{section_title}")
-        context_parts.append(
-            f"选区位置：文档偏移 {body.range_start}–{body.range_end}"
-        )
-        if before:
-            context_parts.append(f"上文：\n{before}")
-        context_parts.append(f"选中文本：\n{target_text}")
-        if after:
-            context_parts.append(f"下文：\n{after}")
-        context_parts.append("[END DISCUSSION CONTEXT]")
-        prompt_parts.append("\n\n".join(context_parts))
-
-    attached_block = render_attached_files_block(attached_files)
-    if attached_block:
-        prompt_parts.append(attached_block)
-
-    if prompt_parts:
-        prompt_parts.append(f"[CURRENT USER MESSAGE]\n{body.content}")
-        agent_query = "\n\n".join(prompt_parts)
-    else:
-        agent_query = body.content
+    _sync_conversation_session(db, conv)
+    prompt_payload = _build_agent_query(db, conv, body, current_message_id=user_msg.id)
+    agent_query = str(prompt_payload["agent_query"])
+    image_attachments = prompt_payload["image_attachments"]
 
     async def event_gen():
         yield {"event": "ylw.msg.user", "data": json.dumps(user_msg_payload)}
@@ -572,7 +665,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
-            _sync_conversation_session()
+            _sync_conversation_session(db, conv)
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
         except Exception as e:  # noqa: BLE001
@@ -586,7 +679,7 @@ async def send_message(
             )
             db.add(agent_msg)
             db.commit()
-            _sync_conversation_session()
+            _sync_conversation_session(db, conv)
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
 
@@ -603,7 +696,7 @@ async def send_message(
         conv.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(agent_msg)
-        _sync_conversation_session()
+        _sync_conversation_session(db, conv)
 
         yield {
             "event": "ylw.msg.finished",
@@ -611,6 +704,129 @@ async def send_message(
         }
 
     return EventSourceResponse(event_gen())
+
+
+@router.post("/{conversation_id}/browser-nanobot/prepare", response_model=BrowserNanobotPrepareOut)
+def prepare_browser_nanobot_message(
+    conversation_id: str,
+    body: MessageSendIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserNanobotPrepareOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "nanobot" or _provider_transport(provider) != "browser":
+        raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
+
+    user_msg = _persist_user_message(db, conv, body)
+    _sync_conversation_session(db, conv)
+    prompt_payload = _build_agent_query(db, conv, body, current_message_id=user_msg.id)
+    model = resolved.cached_workflow.external_id
+    run_id = f"browser-nanobot-{uuid.uuid4().hex}"
+    return BrowserNanobotPrepareOut(
+        run_id=run_id,
+        provider_id=provider.id,
+        endpoint=provider.endpoint,
+        model=model,
+        messages=[
+            {"role": "system", "content": browser_nanobot_system_prompt()},
+            {"role": "user", "content": str(prompt_payload["agent_query"])},
+        ],
+        tools=browser_nanobot_tools(),
+        user_message=MessageOut.model_validate(user_msg),
+        document_id=conv.document_id,
+        range_start=body.range_start or 0,
+        range_end=body.range_end or 0,
+        inputs=dict(body.inputs or {}),
+    )
+
+
+@router.post("/{conversation_id}/browser-nanobot/tool", response_model=BrowserNanobotToolOut)
+async def execute_browser_nanobot_tool(
+    conversation_id: str,
+    body: BrowserNanobotToolIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserNanobotToolOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "nanobot" or _provider_transport(provider) != "browser":
+        raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
+
+    payload = NativeRunPayload(
+        document_id=body.document_id or conv.document_id,
+        range_start=body.range_start,
+        range_end=body.range_end,
+        inputs=dict(body.inputs or {}),
+        query="",
+        conversation_id=body.run_id,
+    )
+    runner = _browser_nanobot_runner(
+        provider=provider,
+        project=project,
+        user=user,
+        model=resolved.cached_workflow.external_id,
+    )
+    result = await runner.execute_browser_nanobot_tool(body.tool_call, payload)
+    call_id = str(body.tool_call.get("id") or "browser-tool-call")
+    name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    return BrowserNanobotToolOut(
+        tool_call_id=call_id,
+        content=result.content,
+        failed=result.failed,
+        name=name,
+        tool_kind=result.tool_kind,
+        events=_browser_tool_events(result, body.tool_call),
+    )
+
+
+@router.post("/{conversation_id}/browser-nanobot/finish", response_model=MessageOut, status_code=201)
+def finish_browser_nanobot_message(
+    conversation_id: str,
+    body: BrowserNanobotFinishIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> MessageOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.provider.kind != "nanobot" or _provider_transport(resolved.provider) != "browser":
+        raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
+
+    content = body.content.strip()
+    error = body.error.strip()
+    if not content and error:
+        content = "Nanobot browser run failed."
+    if not content:
+        content = "Nanobot returned no content."
+    agent_msg = Message(
+        conversation_id=conversation_id,
+        role="agent",
+        content=content,
+        error=error,
+        external_message_id=body.run_id,
+    )
+    db.add(agent_msg)
+    conv.external_conversation_id = body.run_id
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(agent_msg)
+    _sync_conversation_session(db, conv)
+    return MessageOut.model_validate(agent_msg)
 
 
 @router.post("/{conversation_id}/messages/inject", response_model=MessageOut, status_code=201)

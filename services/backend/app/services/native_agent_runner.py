@@ -46,6 +46,14 @@ _PROJECT_CREATE_DOC_EXTS: dict[str, str] = {
     "markdown": "md",
     "txt": "txt",
 }
+_BROWSER_NANOBOT_TOOL_NAMES = {
+    "project_list_docs",
+    "project_read_doc",
+    "project_grep",
+    "project_outline",
+    "propose_doc_edit",
+    "create_suggestion",
+}
 
 
 @dataclass(slots=True)
@@ -200,6 +208,28 @@ class NativeAgentRunner:
             "prior_messages": prior_messages,
             "message_count": len(prior_messages) + 2,
         }
+
+    async def execute_browser_nanobot_tool(
+        self,
+        call: dict[str, Any],
+        payload: NativeRunPayload,
+    ) -> _ToolExecutionResult:
+        """Execute the small SuperLeaf tool subset exposed to browser Nanobot.
+
+        Browser-side Nanobot runs are transported by the frontend, but the
+        backend remains the authorization boundary for project reads and edit
+        proposals. Keep this surface intentionally narrower than native Agents:
+        no workspace file reads, no project file creation, no MCP calls.
+        """
+        name = _tool_call_name(call)
+        if name not in _BROWSER_NANOBOT_TOOL_NAMES:
+            return _ToolExecutionResult(
+                f"ERROR: tool {name or '(missing)'} is not available for browser Nanobot runs",
+                failed=True,
+                failed_function_name=name,
+                tool_kind="browser_nanobot",
+            )
+        return await self._execute_tool(call, {}, payload)
 
     def _system_prompt(self, payload: NativeRunPayload | None = None) -> str:
         inputs = (payload.inputs if payload else {}) or {}
@@ -1158,7 +1188,6 @@ def _resolve_text_range(
     ``None``; on failure ``start/end`` are 0 and ``error`` contains the
     error message.
     """
-    total = len(content)
     anchor = original_text
     anchor_text: str | None = anchor
 
@@ -1368,6 +1397,45 @@ def _delta_text(evt: dict[str, Any]) -> str:
         return message["content"]
     text = first.get("text")
     return text if isinstance(text, str) else ""
+
+
+def browser_nanobot_system_prompt() -> str:
+    return "\n".join(
+        [
+            "You are a local Nanobot Agent collaborating inside SuperLeaf.",
+            "The browser is your transport; SuperLeaf backend executes project tools after authorization.",
+            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "When the user asks you to change the current document, call "
+                "propose_doc_edit with original_text copied from project_read_doc, "
+                "range_start/range_end as hints, replacement new_text, and a short reason."
+            ),
+            (
+                "Do not claim that an edit has been applied. propose_doc_edit only creates "
+                "a proposal card; the user must accept it before the document changes."
+            ),
+            "Do not ask SuperLeaf to record local files read, commands run, or internal reasoning.",
+            "Return concise Markdown for ordinary answers.",
+        ]
+    )
+
+
+def browser_nanobot_tools() -> list[dict[str, Any]]:
+    return [
+        tool
+        for tool in _workspace_tools()
+        if _tool_definition_name(tool) in _BROWSER_NANOBOT_TOOL_NAMES
+    ]
+
+
+def _tool_definition_name(tool: dict[str, Any]) -> str:
+    fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+    return str(fn.get("name") or "")
+
+
+def _tool_call_name(call: dict[str, Any]) -> str:
+    fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+    return str(fn.get("name") or "")
 
 
 def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:

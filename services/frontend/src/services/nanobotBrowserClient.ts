@@ -1,0 +1,298 @@
+import type {
+  NanobotChatMessage,
+  NanobotToolCall,
+  NanobotToolDefinition,
+  ProviderModel,
+} from './backendApi'
+
+const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
+const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
+
+export interface BrowserNanobotTurnResult {
+  content: string
+  toolCalls: NanobotToolCall[]
+}
+
+export interface BrowserNanobotTurnArgs {
+  endpoint: string
+  apiKey?: string
+  model: string
+  sessionId?: string
+  messages: NanobotChatMessage[]
+  tools?: NanobotToolDefinition[]
+  signal?: AbortSignal
+  onDelta?: (delta: string) => void
+  onActivity?: () => void
+}
+
+export function storeBrowserNanobotApiKey(providerId: string, apiKey: string): void {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(`${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`, apiKey)
+}
+
+export function readBrowserNanobotApiKey(providerId: string): string {
+  if (typeof localStorage === 'undefined') return 'dummy'
+  return localStorage.getItem(`${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`) || 'dummy'
+}
+
+export async function probeBrowserNanobot(endpoint: string, apiKey = 'dummy'): Promise<unknown> {
+  const resp = await fetch(`${normalizeNanobotEndpoint(endpoint)}/health`, {
+    method: 'GET',
+    headers: authHeaders(apiKey),
+  })
+  if (!resp.ok && resp.status !== 404 && resp.status !== 405) {
+    throw new Error(`Nanobot health ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`)
+  }
+  if (!resp.headers.get('content-type')?.toLowerCase().includes('json')) return {}
+  return resp.json().catch(() => ({}))
+}
+
+export async function discoverBrowserNanobotAgents(endpoint: string, apiKey = 'dummy'): Promise<ProviderModel[]> {
+  const health = await probeBrowserNanobot(endpoint, apiKey)
+  const name = health && typeof health === 'object'
+    ? String((health as Record<string, unknown>).name ?? (health as Record<string, unknown>).service ?? 'Nanobot')
+    : 'Nanobot'
+  return [
+    {
+      id: DEFAULT_NANOBOT_AGENT_ID,
+      name,
+      description: 'Integrated local Nanobot Agent.',
+      raw: { id: DEFAULT_NANOBOT_AGENT_ID, source: 'health', health },
+    },
+  ]
+}
+
+export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Promise<BrowserNanobotTurnResult> {
+  const body: Record<string, unknown> = {
+    messages: compactNanobotMessages(args.messages),
+    stream: false,
+    temperature: 0.2,
+    max_tokens: 4000,
+  }
+  if (args.model && args.model !== DEFAULT_NANOBOT_AGENT_ID) {
+    body.model = args.model
+  }
+  if (args.sessionId) {
+    body.session_id = args.sessionId
+  }
+  if (args.tools && args.tools.length > 0) {
+    body.tools = args.tools
+    body.tool_choice = 'auto'
+  }
+
+  const resp = await fetch(`${normalizeNanobotEndpoint(args.endpoint)}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(args.apiKey || 'dummy'),
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify(body),
+    signal: args.signal,
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Nanobot chat ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`)
+  }
+  if (!resp.headers.get('content-type')?.toLowerCase().includes('event-stream')) {
+    const result = extractCompletionResult(await readResponsePayload(resp))
+    if (result.content) args.onDelta?.(result.content)
+    args.onActivity?.()
+    return result
+  }
+
+  const decoder = new TextDecoder('utf-8')
+  const reader = resp.body.getReader()
+  const contentParts: string[] = []
+  const toolAccumulator = new ToolCallAccumulator()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    args.onActivity?.()
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split(/\r?\n/u)
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      const payload = parseDataLine(line)
+      if (!payload) continue
+      if (payload === '[DONE]') {
+        return { content: contentParts.join(''), toolCalls: toolAccumulator.calls() }
+      }
+      let evt: unknown
+      try {
+        evt = JSON.parse(payload)
+      } catch {
+        continue
+      }
+      const delta = extractDelta(evt)
+      if (delta.content) {
+        contentParts.push(delta.content)
+        args.onDelta?.(delta.content)
+      }
+      if (delta.toolCalls.length > 0) {
+        toolAccumulator.add(delta.toolCalls)
+      }
+    }
+  }
+
+  return { content: contentParts.join(''), toolCalls: toolAccumulator.calls() }
+}
+
+function compactNanobotMessages(messages: NanobotChatMessage[]): NanobotChatMessage[] {
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+  if (lastUser) {
+    return [{ role: 'user', content: lastUser.content }]
+  }
+  const last = messages[messages.length - 1]
+  if (!last) return []
+  return [{ role: 'user', content: last.content ?? '' }]
+}
+
+function normalizeNanobotEndpoint(endpoint: string): string {
+  let cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '')
+  if (cleaned.endsWith('/v1')) cleaned = cleaned.slice(0, -3).replace(/\/+$/u, '')
+  return cleaned
+}
+
+function authHeaders(apiKey: string): Record<string, string> {
+  const token = apiKey.trim()
+  if (!token || token === 'dummy') return {}
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function readResponsePayload(resp: Response): Promise<unknown> {
+  const text = await resp.text()
+  if (!text.trim()) return {}
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+function parseDataLine(line: string): string | null {
+  const trimmed = line.trim()
+  if (!trimmed || !trimmed.startsWith('data:')) return null
+  return trimmed.slice(5).trim()
+}
+
+interface DeltaResult {
+  content: string
+  toolCalls: StreamingToolCallDelta[]
+}
+
+interface StreamingToolCallDelta {
+  index: number
+  id?: string
+  type?: string
+  function?: {
+    name?: string
+    arguments?: string
+  }
+}
+
+function extractDelta(evt: unknown): DeltaResult {
+  if (!evt || typeof evt !== 'object') return { content: '', toolCalls: [] }
+  const choices = (evt as { choices?: unknown }).choices
+  if (!Array.isArray(choices) || choices.length === 0) return { content: '', toolCalls: [] }
+  const first = choices[0]
+  if (!first || typeof first !== 'object') return { content: '', toolCalls: [] }
+  const delta = (first as { delta?: unknown; message?: unknown; text?: unknown }).delta
+  if (delta && typeof delta === 'object') {
+    const raw = delta as { content?: unknown; tool_calls?: unknown }
+    return {
+      content: typeof raw.content === 'string' ? raw.content : '',
+      toolCalls: Array.isArray(raw.tool_calls)
+        ? raw.tool_calls.map((item, idx) => normalizeToolDelta(item, idx)).filter(isToolDelta)
+        : [],
+    }
+  }
+  const message = (first as { message?: unknown }).message
+  if (message && typeof message === 'object') {
+    const raw = message as { content?: unknown; tool_calls?: unknown }
+    return {
+      content: typeof raw.content === 'string' ? raw.content : '',
+      toolCalls: Array.isArray(raw.tool_calls)
+        ? raw.tool_calls.map((item, idx) => normalizeToolDelta(item, idx)).filter(isToolDelta)
+        : [],
+    }
+  }
+  const text = (first as { text?: unknown }).text
+  return { content: typeof text === 'string' ? text : '', toolCalls: [] }
+}
+
+function extractCompletionResult(evt: unknown): BrowserNanobotTurnResult {
+  const delta = extractDelta(evt)
+  if (delta.content || delta.toolCalls.length > 0) {
+    const toolAccumulator = new ToolCallAccumulator()
+    toolAccumulator.add(delta.toolCalls)
+    return { content: delta.content, toolCalls: toolAccumulator.calls() }
+  }
+  if (typeof evt === 'string') {
+    return { content: evt, toolCalls: [] }
+  }
+  if (!evt || typeof evt !== 'object') {
+    return { content: '', toolCalls: [] }
+  }
+  const raw = evt as Record<string, unknown>
+  for (const key of ['content', 'answer', 'response', 'output', 'text']) {
+    const value = raw[key]
+    if (typeof value === 'string') return { content: value, toolCalls: [] }
+  }
+  const message = raw.message
+  if (typeof message === 'string') return { content: message, toolCalls: [] }
+  if (message && typeof message === 'object') {
+    const content = (message as Record<string, unknown>).content
+    if (typeof content === 'string') return { content, toolCalls: [] }
+  }
+  return { content: '', toolCalls: [] }
+}
+
+function normalizeToolDelta(item: unknown, fallbackIndex: number): StreamingToolCallDelta | null {
+  if (!item || typeof item !== 'object') return null
+  const raw = item as Record<string, unknown>
+  const fn = raw.function && typeof raw.function === 'object'
+    ? raw.function as Record<string, unknown>
+    : undefined
+  return {
+    index: typeof raw.index === 'number' ? raw.index : fallbackIndex,
+    id: typeof raw.id === 'string' ? raw.id : undefined,
+    type: typeof raw.type === 'string' ? raw.type : undefined,
+    function: fn
+      ? {
+          name: typeof fn.name === 'string' ? fn.name : undefined,
+          arguments: typeof fn.arguments === 'string' ? fn.arguments : undefined,
+        }
+      : undefined,
+  }
+}
+
+function isToolDelta(item: StreamingToolCallDelta | null): item is StreamingToolCallDelta {
+  return item !== null
+}
+
+class ToolCallAccumulator {
+  private readonly byIndex = new Map<number, NanobotToolCall>()
+
+  add(deltas: StreamingToolCallDelta[]): void {
+    for (const delta of deltas) {
+      const existing = this.byIndex.get(delta.index) ?? {
+        id: delta.id || `tool_${delta.index}`,
+        type: 'function' as const,
+        function: { name: '', arguments: '' },
+      }
+      if (delta.id) existing.id = delta.id
+      if (delta.function?.name) existing.function.name += delta.function.name
+      if (delta.function?.arguments) existing.function.arguments += delta.function.arguments
+      this.byIndex.set(delta.index, existing)
+    }
+  }
+
+  calls(): NanobotToolCall[] {
+    return Array.from(this.byIndex.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, call]) => call)
+      .filter((call) => call.function.name.trim())
+  }
+}

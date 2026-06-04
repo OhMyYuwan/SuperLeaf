@@ -55,7 +55,13 @@ import type {
   WorkflowDefinition,
   WorkflowDefinitionDraft,
 } from '../../services/backendApi'
-import { BACKEND_BASE, getLocalServiceUrl, nativeAgentApi } from '../../services/backendApi'
+import {
+  BACKEND_BASE,
+  getBrowserLocalServiceUrl,
+  nativeAgentApi,
+  providerApi,
+} from '../../services/backendApi'
+import { discoverBrowserNanobotAgents, storeBrowserNanobotApiKey } from '../../services/nanobotBrowserClient'
 import { statsApi, type AgentStat } from '../../services/statsApi'
 import { computeAgentQuality } from '../../services/agentQuality'
 import type { Selection } from '../../types/editor'
@@ -3395,12 +3401,14 @@ function AgentQualityRow({ workflowId }: { workflowId: string }) {
 function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const create = useSettingsStore((s) => s.create)
   const probe = useSettingsStore((s) => s.probe)
+  const loadProviders = useSettingsStore((s) => s.load)
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
     endpoint: 'http://localhost:8080/v1',
     api_key: '',
     activate: true,
+    transport: 'backend',
   })
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -3409,6 +3417,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setDraft((d) => ({
       ...d,
       kind,
+      transport: kind === 'nanobot' ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
@@ -3417,7 +3426,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             : kind === 'native'
               ? 'https://api.openai.com/v1'
             : kind === 'nanobot'
-              ? getLocalServiceUrl(8902)
+              ? getBrowserLocalServiceUrl(8900)
               : 'http://localhost:8080/v1',
       api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
@@ -3435,9 +3444,32 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       return
     }
     setSubmitting(true)
+    let browserAgents: Awaited<ReturnType<typeof discoverBrowserNanobotAgents>> | null = null
+    if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser') {
+      try {
+        browserAgents = await discoverBrowserNanobotAgents(filledDraft.endpoint, filledDraft.api_key)
+      } catch (err) {
+        setSubmitting(false)
+        setFormError(
+          err instanceof Error
+            ? `浏览器无法访问本机 Nanobot：${err.message}`
+            : '浏览器无法访问本机 Nanobot',
+        )
+        return
+      }
+    }
     const result = await create(filledDraft)
     if (result) {
-      await probe(result.id)
+      if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser' && browserAgents) {
+        storeBrowserNanobotApiKey(result.id, filledDraft.api_key)
+        await providerApi.syncBrowserNanobotModels(result.id, {
+          provider_name: result.name,
+          models: browserAgents,
+        })
+        await loadProviders()
+      } else {
+        await probe(result.id)
+      }
       setSubmitting(false)
       onClose()
       onCreated()
@@ -3481,13 +3513,25 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
           placeholder={
             draft.kind === 'nanobot'
-              ? getLocalServiceUrl(8902)
+              ? getBrowserLocalServiceUrl(8900)
               : draft.kind === 'native'
                 ? 'https://api.openai.com/v1'
                 : 'http://localhost:8080/v1'
           }
         />
       </label>
+      {draft.kind === 'nanobot' && (
+        <label className="full">
+          <span>调用位置</span>
+          <select
+            value={draft.transport ?? 'browser'}
+            onChange={(e) => setDraft({ ...draft, transport: e.target.value as 'backend' | 'browser' })}
+          >
+            <option value="browser">浏览器直连本机 Nanobot</option>
+            <option value="backend">后端直连 Nanobot</option>
+          </select>
+        </label>
+      )}
       <label className="full">
         <span>API Key</span>
         <input

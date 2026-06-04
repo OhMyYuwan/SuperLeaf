@@ -10,7 +10,14 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft } from '../../services/backendApi'
-import { BACKEND_BASE, getLocalServiceUrl, githubApi } from '../../services/backendApi'
+import {
+  BACKEND_BASE,
+  getBrowserLocalServiceUrl,
+  getLocalServiceUrl,
+  githubApi,
+  providerApi,
+} from '../../services/backendApi'
+import { discoverBrowserNanobotAgents, storeBrowserNanobotApiKey } from '../../services/nanobotBrowserClient'
 import { useSettingsStore } from '../../stores/settingsStore'
 import './settings.css'
 
@@ -433,12 +440,14 @@ function ProviderRow({ provider }: { provider: Provider }) {
 
 function ProviderForm({ onClose }: { onClose: () => void }) {
   const create = useSettingsStore((s) => s.create)
+  const loadProviders = useSettingsStore((s) => s.load)
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
     endpoint: 'http://localhost:8080/v1',
     api_key: '',
     activate: true,
+    transport: 'backend',
   })
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -447,13 +456,14 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     setDraft((d) => ({
       ...d,
       kind,
+      transport: kind === 'nanobot' ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
             : kind === 'nanobot'
-              ? getLocalServiceUrl(8902)
+              ? getBrowserLocalServiceUrl(8900)
               : 'http://localhost:8080/v1',
       api_key: kind === 'nanobot' && !d.api_key.trim() ? 'dummy' : d.api_key,
     }))
@@ -471,9 +481,31 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
       return
     }
     setSubmitting(true)
+    let browserAgents: Awaited<ReturnType<typeof discoverBrowserNanobotAgents>> | null = null
+    if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser') {
+      try {
+        browserAgents = await discoverBrowserNanobotAgents(filledDraft.endpoint, filledDraft.api_key)
+      } catch (err) {
+        setSubmitting(false)
+        setFormError(
+          err instanceof Error
+            ? `浏览器无法访问本机 Nanobot：${err.message}`
+            : '浏览器无法访问本机 Nanobot',
+        )
+        return
+      }
+    }
     const result = await create(filledDraft)
     setSubmitting(false)
     if (result) {
+      if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser' && browserAgents) {
+        storeBrowserNanobotApiKey(result.id, filledDraft.api_key)
+        await providerApi.syncBrowserNanobotModels(result.id, {
+          provider_name: result.name,
+          models: browserAgents,
+        })
+        await loadProviders()
+      }
       onClose()
     } else {
       setFormError('创建失败，查看控制台')
@@ -507,9 +539,21 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-          placeholder={getLocalServiceUrl(8902)}
+          placeholder={draft.kind === 'nanobot' ? getBrowserLocalServiceUrl(8900) : getLocalServiceUrl(8902)}
         />
       </label>
+      {draft.kind === 'nanobot' && (
+        <label className="full">
+          <span>调用位置</span>
+          <select
+            value={draft.transport ?? 'browser'}
+            onChange={(e) => setDraft({ ...draft, transport: e.target.value as 'backend' | 'browser' })}
+          >
+            <option value="browser">浏览器直连本机 Nanobot</option>
+            <option value="backend">后端直连 Nanobot</option>
+          </select>
+        </label>
+      )}
       <label className="full">
         <span>API Key</span>
         <input

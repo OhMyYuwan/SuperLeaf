@@ -51,6 +51,10 @@ export function getLocalServiceUrl(port: number): string {
   return `http://127.0.0.1:${port}`
 }
 
+export function getBrowserLocalServiceUrl(port: number): string {
+  return `http://127.0.0.1:${port}`
+}
+
 export interface Provider {
   id: string
   name: string
@@ -71,18 +75,21 @@ export interface ProviderDraft {
   endpoint: string
   api_key: string
   activate?: boolean
+  transport?: 'backend' | 'browser'
 }
 
 export interface ProviderUpdate {
   name?: string
   endpoint?: string
   api_key?: string
+  transport?: 'backend' | 'browser'
 }
 
 export interface ProviderModel {
   id: string
   name: string
   description: string
+  raw?: Record<string, unknown>
 }
 
 export async function http<T>(path: string, init?: HttpInit): Promise<T> {
@@ -270,6 +277,14 @@ export const providerApi = {
     http<Provider>(`/api/providers/${id}/probe`, { method: 'POST' }),
   listModels: (id: string) =>
     http<ProviderModel[]>(`/api/providers/${id}/models`),
+  syncBrowserNanobotModels: (
+    id: string,
+    body: { provider_name?: string; models: ProviderModel[] },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-nanobot-models`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 }
 
 export interface NativeAgentCredential {
@@ -1095,6 +1110,57 @@ export interface MessageSend {
   inputs?: Record<string, unknown>
 }
 
+export interface BrowserNanobotPrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  model: string
+  messages: NanobotChatMessage[]
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  inputs: Record<string, unknown>
+}
+
+export interface NanobotToolFunction {
+  name: string
+  description?: string
+  parameters?: Record<string, unknown>
+}
+
+export interface NanobotToolDefinition {
+  type: 'function'
+  function: NanobotToolFunction
+}
+
+export interface NanobotToolCall {
+  id: string
+  type: 'function'
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+export interface NanobotChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content?: string | null
+  tool_calls?: NanobotToolCall[]
+  tool_call_id?: string
+}
+
+export interface BrowserNanobotToolResult {
+  role: 'tool'
+  tool_call_id: string
+  content: string
+  failed: boolean
+  name: string
+  tool_kind: string
+  events: Array<{ event: string; data: unknown }>
+}
+
 export interface MessageInject {
   role: 'agent' | 'user' | 'system'
   content: string
@@ -1150,6 +1216,34 @@ export const conversationApi = {
   injectMessage: (conversationId: string, body: MessageInject) =>
     http<Message>(
       `/api/conversations/${encodeURIComponent(conversationId)}/messages/inject`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserNanobot: (conversationId: string, body: MessageSend) =>
+    http<BrowserNanobotPrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserNanobotTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserNanobot: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/finish`,
       { method: 'POST', body: JSON.stringify(body) },
     ),
 }

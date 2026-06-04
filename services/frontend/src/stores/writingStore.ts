@@ -20,7 +20,6 @@ import type { Document, DocumentFormat } from '../types/document'
 import {
   buildParagraphChunks as _buildParagraphChunks,
   countChunkableParagraphs,
-  AUTO_MARKER_RE,
   type ParagraphChunk,
 } from '../services/paragraphChunking'
 import {
@@ -296,7 +295,7 @@ async function runSingleCall(args: {
     })
     return
   }
-  const written = applyWriteOutput({
+  const written = _applyWriteOutput({
     docId: doc.id,
     mode: mode === 'append' ? 'append' : 'replace-doc',
     range,
@@ -355,7 +354,7 @@ async function runPolishLoop(args: {
     }
 
     // 重新读取该范围的当前文本，作为最新原文给 agent（可能因之前段落的写入有局部改动）
-    const liveText = readCurrentText(doc.id, adjustedRange)
+    const liveText = _readCurrentText(doc.id, adjustedRange)
     const query = buildPolishQuery({
       doc,
       chunk: { ...chunk, text: liveText || chunk.text },
@@ -408,7 +407,7 @@ async function runPolishLoop(args: {
 
     // 校验：写入前检查 adjustedRange 处的文本是否仍与预期一致，
     // 防止 cumulativeDelta 漂移导致写错位置。
-    const preWriteText = readCurrentText(doc.id, adjustedRange)
+    const preWriteText = _readCurrentText(doc.id, adjustedRange)
     if (preWriteText !== chunk.text) {
       const similarity = simpleSimilarity(preWriteText, chunk.text)
       if (similarity < 0.8) {
@@ -420,7 +419,7 @@ async function runPolishLoop(args: {
     }
 
     const oldLen = adjustedRange.to - adjustedRange.from
-    const written = applyWriteOutput({
+    const written = _applyWriteOutput({
       docId: doc.id,
       mode: 'replace-range',
       range: adjustedRange,

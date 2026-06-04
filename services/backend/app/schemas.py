@@ -13,12 +13,14 @@ class ProviderIn(BaseModel):
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1, max_length=1024)
     activate: bool = False
+    transport: str | None = Field(default=None, pattern="^(backend|browser)$")
 
 
 class ProviderUpdate(BaseModel):
     name: str | None = None
     endpoint: str | None = None
     api_key: str | None = None  # empty/None means "don't rotate"
+    transport: str | None = Field(default=None, pattern="^(backend|browser)$")
 
 
 class ProviderOut(BaseModel):
@@ -43,6 +45,18 @@ class ProviderModelOut(BaseModel):
     id: str
     name: str
     description: str = ""
+
+
+class BrowserNanobotModelIn(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    name: str = Field(default="", max_length=512)
+    description: str = Field(default="", max_length=2048)
+    raw: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotModelSyncIn(BaseModel):
+    provider_name: str = ""
+    models: list[BrowserNanobotModelIn]
 
 
 class CachedWorkflowOut(BaseModel):
@@ -1035,6 +1049,45 @@ class MessageSendIn(BaseModel):
     # When provided, anchored selection text + neighbouring context to send to
     # Dify's `inputs` map. Otherwise we send only the message text.
     inputs: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotPrepareOut(BaseModel):
+    run_id: str
+    provider_id: str
+    endpoint: str
+    model: str
+    messages: list[dict]
+    tools: list[dict]
+    user_message: MessageOut
+    document_id: str
+    range_start: int
+    range_end: int
+    inputs: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotToolIn(BaseModel):
+    run_id: str
+    document_id: str
+    range_start: int = 0
+    range_end: int = 0
+    inputs: dict = Field(default_factory=dict)
+    tool_call: dict
+
+
+class BrowserNanobotToolOut(BaseModel):
+    role: str = "tool"
+    tool_call_id: str
+    content: str
+    failed: bool = False
+    name: str = ""
+    tool_kind: str = ""
+    events: list[dict] = Field(default_factory=list)
+
+
+class BrowserNanobotFinishIn(BaseModel):
+    run_id: str
+    content: str = ""
+    error: str = ""
 
 
 class MessageInjectIn(BaseModel):

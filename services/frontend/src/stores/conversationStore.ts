@@ -12,7 +12,6 @@ import {
   buildHeaders,
   type Conversation,
   type ConversationCreate,
-  type BrowserNanobotPrepare,
   type EditProposal,
   type Message,
   type MessageInject,
@@ -26,6 +25,10 @@ import {
   readBrowserNanobotApiKey,
   streamBrowserNanobotTurn,
 } from '../services/nanobotBrowserClient'
+import {
+  createBrowserCodexSession,
+  runBrowserCodexTurn,
+} from '../services/codexBrowserClient'
 import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
 import { useAnnotationStore } from './annotationStore'
 import { useCollaborationStore } from './collaborationStore'
@@ -271,6 +274,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           conversationId,
           body,
           provider: browserNanobot,
+          signal: abortCtl.signal,
+          markActivity,
+          set,
+        })
+        return
+      }
+      const browserCodex = findBrowserCodexProvider(conversationId, get)
+      if (browserCodex) {
+        let gotFirstChunk = false
+        const markActivity = () => {
+          if (!gotFirstChunk) {
+            clearTimeout(firstByteTimer)
+            gotFirstChunk = true
+          }
+        }
+        await sendViaBrowserCodex({
+          conversationId,
+          body,
+          provider: browserCodex,
           signal: abortCtl.signal,
           markActivity,
           set,
@@ -537,6 +559,20 @@ function findBrowserNanobotProvider(
   return provider.meta?.transport === 'browser' ? provider : null
 }
 
+function findBrowserCodexProvider(
+  conversationId: string,
+  get: () => ConversationState,
+): Provider | null {
+  const conv = get().conversations[conversationId]
+  if (!conv) return null
+  const workflows = useWorkflowStore.getState().workflows
+  const workflow = workflows.find((item) => item.id === conv.workflow_id)
+  const providerId = workflow?.provider_id ?? providerIdFromWorkflowId(conv.workflow_id)
+  if (!providerId) return null
+  const provider = useSettingsStore.getState().providers.find((item) => item.id === providerId)
+  return provider?.kind === 'codex-local' ? provider : null
+}
+
 function providerIdFromWorkflowId(workflowId: string): string {
   const idx = workflowId.indexOf(':')
   return idx > 0 ? workflowId.slice(0, idx) : ''
@@ -659,6 +695,123 @@ async function sendViaBrowserNanobot(args: {
   throw new Error('Nanobot 工具调用轮次过多，已停止以避免无限循环')
 }
 
+async function sendViaBrowserCodex(args: {
+  conversationId: string
+  body: MessageSend
+  provider: Provider
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<void> {
+  const prepared = await conversationApi.prepareBrowserCodex(args.conversationId, args.body)
+  args.markActivity()
+  handleMessageEvent(args.set, args.conversationId, {
+    event: 'ylw.msg.user',
+    data: prepared.user_message,
+  })
+
+  const session = await createBrowserCodexSession({
+    endpoint: prepared.endpoint,
+    prepared,
+    providerName: args.provider.name,
+  })
+  args.markActivity()
+  handleMessageEvent(args.set, args.conversationId, {
+    event: 'native.agent.tool',
+    data: {
+      name: 'codex_local_session',
+      tool_kind: 'codex_local',
+      failed: false,
+    },
+  })
+
+  const toolResults: Awaited<ReturnType<typeof conversationApi.executeBrowserCodexTool>>[] = []
+  const finalParts: string[] = []
+  let lastError = ''
+  let lastCodexSessionId = session.codex_session_id || ''
+  const maxToolRounds = 8
+  const preflightToolCalls = inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
+
+  for (const toolCall of preflightToolCalls) {
+    const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
+      run_id: prepared.run_id,
+      document_id: prepared.document_id,
+      range_start: prepared.range_start,
+      range_end: prepared.range_end,
+      inputs: prepared.inputs,
+      tool_call: toolCall,
+    })
+    args.markActivity()
+    for (const evt of result.events) {
+      handleMessageEvent(args.set, args.conversationId, evt)
+    }
+    toolResults.push(result)
+  }
+
+  for (let round = 0; round < maxToolRounds; round++) {
+    let streamedRoundContent = ''
+    const result = await runBrowserCodexTurn({
+      endpoint: prepared.endpoint,
+      sessionId: session.id,
+      prepared,
+      toolResults,
+      signal: args.signal,
+      onActivity: args.markActivity,
+      onDelta: (delta) => {
+        streamedRoundContent += delta
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'ylw.msg.delta',
+          data: { delta },
+        })
+      },
+    })
+    lastError = result.error
+    lastCodexSessionId = result.codexSessionId || lastCodexSessionId
+
+    if (result.toolCalls.length === 0) {
+      const content = result.output.trim() || finalParts.join('').trim() || '(Codex 没有返回可见文本。)'
+      if (content && !streamedRoundContent.trim()) {
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'ylw.msg.delta',
+          data: { delta: content },
+        })
+      }
+      const finished = await conversationApi.finishBrowserCodex(args.conversationId, {
+        run_id: prepared.run_id,
+        content,
+        error: lastError,
+        codex_session_id: lastCodexSessionId,
+      })
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'ylw.msg.finished',
+        data: finished,
+      })
+      return
+    }
+
+    if (result.output.trim()) {
+      finalParts.push(result.output.trim())
+    }
+    for (const toolCall of result.toolCalls) {
+      const toolResult = await conversationApi.executeBrowserCodexTool(args.conversationId, {
+        run_id: prepared.run_id,
+        document_id: prepared.document_id,
+        range_start: prepared.range_start,
+        range_end: prepared.range_end,
+        inputs: prepared.inputs,
+        tool_call: toolCall,
+      })
+      args.markActivity()
+      for (const evt of toolResult.events) {
+        handleMessageEvent(args.set, args.conversationId, evt)
+      }
+      toolResults.push(toolResult)
+    }
+  }
+
+  throw new Error('Codex 工具调用轮次过多，已停止以避免无限循环')
+}
+
 const PREFLIGHT_READ_TOOL_NAMES = new Set([
   'project_list_docs',
   'project_read_doc',
@@ -666,9 +819,15 @@ const PREFLIGHT_READ_TOOL_NAMES = new Set([
   'project_outline',
 ])
 
+interface BrowserToolPreparedContext {
+  document_id: string
+  range_start: number
+  range_end: number
+}
+
 function inferBrowserNanobotPreflightToolCalls(
   content: string,
-  prepared: BrowserNanobotPrepare,
+  prepared: BrowserToolPreparedContext,
 ): NanobotToolCall[] {
   const text = content.trim()
   if (!text) return []
@@ -719,7 +878,7 @@ function inferNaturalReadToolNames(text: string): string[] {
 function buildBrowserNanobotPreflightToolCall(
   name: string,
   text: string,
-  prepared: BrowserNanobotPrepare,
+  prepared: BrowserToolPreparedContext,
 ): NanobotToolCall | null {
   let args: Record<string, unknown>
   if (name === 'project_list_docs') {
@@ -751,7 +910,7 @@ function buildBrowserNanobotPreflightToolCall(
   }
 }
 
-function shouldReadSelection(text: string, prepared: BrowserNanobotPrepare): boolean {
+function shouldReadSelection(text: string, prepared: BrowserToolPreparedContext): boolean {
   return prepared.range_end > prepared.range_start && /(?:选中|选择|selection|selected)/iu.test(text)
 }
 

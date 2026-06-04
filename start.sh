@@ -18,7 +18,7 @@ BACKEND_PORT="${YLW_BACKEND_PORT:-8000}"
 COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
 LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
 LOCAL_AGENT_HOST_PORT="${SL_LOCAL_AGENT_HOST_PORT:-8787}"
-LOCAL_AGENT_HOST_NANOBOT_URL="${SL_LOCAL_AGENT_HOST_NANOBOT_URL:-http://127.0.0.1:9527}"
+LOCAL_AGENT_HOST_NANOBOT_URL="${SL_LOCAL_AGENT_HOST_NANOBOT_URL:-http://127.0.0.1:8900}"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -580,7 +580,7 @@ Usage:
   ./start.sh collab       Start collab-server only
   ./start.sh frontend     Start frontend only
   ./start.sh local-agent-host
-                          Start hello-only Local Agent Host test proxy
+                          Start Local Agent Host proxy/bridge
   ./start.sh frontend-preview
                           Build + start frontend preview only (no HMR)
   ./start.sh build        Build frontend production bundle
@@ -601,7 +601,7 @@ Env:
                            Local Agent Host port
   SL_LOCAL_AGENT_HOST_ORIGINS=*
                            Local Agent Host CORS allow-list
-  SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:9527
+  SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
                            Local Nanobot base URL proxied by Local Agent Host
   VITE_COLLAB_WS_URL       WebSocket URL for collab (default: ws://localhost:4444)
 

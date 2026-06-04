@@ -58,10 +58,31 @@ class ProviderService:
         api_key: str,
         activate: bool = False,
         transport: str | None = None,
+        workspace_path: str | None = None,
+        codex_model: str | None = None,
+        codex_effort: str | None = None,
+        codex_summary: str | None = None,
+        codex_service_tier: str | None = None,
+        codex_sandbox: str | None = None,
+        codex_approval_policy: str | None = None,
+        codex_prompt_mode: str | None = None,
     ) -> Provider:
         meta: dict[str, Any] = {}
         if kind == "nanobot":
             meta["transport"] = transport or "backend"
+        if kind == "codex-local":
+            meta.update(
+                _codex_meta_patch(
+                    workspace_path=workspace_path,
+                    codex_model=codex_model,
+                    codex_effort=codex_effort,
+                    codex_summary=codex_summary,
+                    codex_service_tier=codex_service_tier,
+                    codex_sandbox=codex_sandbox,
+                    codex_approval_policy=codex_approval_policy,
+                    codex_prompt_mode=codex_prompt_mode,
+                )
+            )
         p = Provider(
             user_id=user_id,
             name=name,
@@ -87,6 +108,14 @@ class ProviderService:
         endpoint: str | None = None,
         api_key: str | None = None,
         transport: str | None = None,
+        workspace_path: str | None = None,
+        codex_model: str | None = None,
+        codex_effort: str | None = None,
+        codex_summary: str | None = None,
+        codex_service_tier: str | None = None,
+        codex_sandbox: str | None = None,
+        codex_approval_policy: str | None = None,
+        codex_prompt_mode: str | None = None,
     ) -> Provider | None:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
@@ -107,9 +136,28 @@ class ProviderService:
         if api_key:  # only rotate if non-empty
             p.api_key_enc = encrypt(api_key)
         if transport is not None:
-            if p.kind != "nanobot":
-                raise ValueError("transport can only be set for Nanobot providers")
+            if p.kind not in ("nanobot", "codex-local"):
+                raise ValueError("transport can only be set for browser-local providers")
             p.meta = {**(p.meta or {}), "transport": transport}
+        if workspace_path is not None:
+            if p.kind != "codex-local":
+                raise ValueError("workspace_path can only be set for Codex Local providers")
+            p.meta = {**(p.meta or {}), "workspace_path": str(workspace_path or "").strip()}
+        codex_patch = _codex_meta_patch(
+            workspace_path=None,
+            codex_model=codex_model,
+            codex_effort=codex_effort,
+            codex_summary=codex_summary,
+            codex_service_tier=codex_service_tier,
+            codex_sandbox=codex_sandbox,
+            codex_approval_policy=codex_approval_policy,
+            codex_prompt_mode=codex_prompt_mode,
+            include_workspace=False,
+        )
+        if codex_patch:
+            if p.kind != "codex-local":
+                raise ValueError("Codex settings can only be set for Codex Local providers")
+            p.meta = {**(p.meta or {}), **codex_patch}
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)
@@ -188,6 +236,33 @@ class ProviderService:
                 else "浏览器直连 Nanobot · 请在前端测连并同步 Agent"
             )
             p.meta = {**(p.meta or {}), "transport": "browser"}
+            p.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(p)
+            return p
+
+        if p.kind == "codex-local":
+            has_workspace = bool(str((p.meta or {}).get("workspace_path") or "").strip())
+            self._sync_cached_workflows(
+                p,
+                [
+                    {
+                        "external_id": "codex",
+                        "name": p.name,
+                        "description": "Local Codex Agent via SuperLeaf Local Agent Host.",
+                        "kind": "codex-local",
+                        "tags": ["local", "codex"],
+                        "raw": {"transport": "browser", "workspace_path_set": has_workspace},
+                    }
+                ],
+            )
+            p.status = "unknown"
+            p.status_detail = (
+                "浏览器本机 Codex · 请由前端 Local Agent Host 测连"
+                if has_workspace
+                else "浏览器本机 Codex · 请设置代码项目 workspace path"
+            )
+            p.meta = {**(p.meta or {}), "transport": "browser", "kind": "codex-local"}
             p.updated_at = datetime.utcnow()
             self.db.commit()
             self.db.refresh(p)
@@ -273,8 +348,16 @@ class ProviderService:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
-        if p.kind not in ("native", "nanobot"):
+        if p.kind not in ("native", "nanobot", "codex-local"):
             return []
+        if p.kind == "codex-local":
+            return [
+                {
+                    "id": "codex",
+                    "name": p.name,
+                    "description": "Local Codex Agent via SuperLeaf Local Agent Host.",
+                }
+            ]
         if p.kind == "nanobot" and _provider_transport(p) == "browser":
             models = list((p.meta or {}).get("models") or [])
             return [
@@ -377,6 +460,89 @@ class ProviderService:
         self.db.refresh(p)
         return p
 
+    def sync_browser_codex_agent(
+        self,
+        provider_id: str,
+        *,
+        user_id: str,
+        health: dict[str, Any] | None = None,
+        models: list[dict[str, Any]] | None = None,
+    ) -> Provider | None:
+        p = self.get(provider_id, user_id=user_id)
+        if p is None:
+            return None
+        if p.kind != "codex-local":
+            raise ValueError("provider is not Codex Local")
+        workspace_path = str((p.meta or {}).get("workspace_path") or "").strip()
+        version = str((health or {}).get("codex_version") or "").strip()
+        normalized_models = _normalize_codex_models(models or [])
+        model_ids = [item["id"] for item in normalized_models]
+        self._sync_cached_workflows(
+            p,
+            [
+                {
+                    "external_id": "codex",
+                    "name": p.name,
+                    "description": version or "Local Codex Agent.",
+                    "kind": "codex-local",
+                    "tags": ["local", "codex"],
+                    "raw": {
+                        "transport": "browser",
+                        "health": health or {},
+                        "workspace_path_set": bool(workspace_path),
+                        "models": normalized_models,
+                    },
+                }
+            ],
+        )
+        p.status = "ok" if (health or {}).get("status") == "ok" else "unknown"
+        p.status_detail = (
+            f"浏览器本机 Codex · {version}"
+            if version
+            else "浏览器本机 Codex · 已同步 Agent"
+        )
+        meta_patch: dict[str, Any] = {
+            "transport": "browser",
+            "kind": "codex-local",
+            "provider_name": p.name,
+            "codex_health": health or {},
+            "models_scanned_at": datetime.utcnow().isoformat(),
+        }
+        if normalized_models:
+            selected_model = str((p.meta or {}).get("codex_model") or "").strip()
+            meta_patch.update(
+                {
+                    "model_count": len(normalized_models),
+                    "model_ids": model_ids,
+                    "models": [
+                        {
+                            "id": item["id"],
+                            "name": item["name"],
+                            "description": item["description"],
+                            "raw": item["raw"],
+                        }
+                        for item in normalized_models
+                    ],
+                }
+            )
+            if selected_model and selected_model not in model_ids:
+                meta_patch["codex_model"] = ""
+        else:
+            meta_patch.update(
+                {
+                    "model_count": 0,
+                    "model_ids": [],
+                    "models": [],
+                }
+            )
+        p.meta = {
+            **(p.meta or {}),
+            **meta_patch,
+        }
+        self.db.commit()
+        self.db.refresh(p)
+        return p
+
     # --- Helpers ------------------------------------------------------------
 
     async def _list_openai_models(self, provider: Provider) -> list:
@@ -391,6 +557,11 @@ class ProviderService:
         endpoint = self._normalize_endpoint(provider.kind, provider.endpoint)
         if provider.kind == "native":
             raise ValueError("native provider does not use external workflow probe")
+        if provider.kind == "codex-local":
+            raise ValueError(
+                "Codex Local providers cannot be called by the backend; "
+                "use the browser Codex transport endpoints"
+            )
         if provider.kind == "nanobot":
             if _provider_transport(provider) == "browser":
                 raise ValueError(
@@ -436,5 +607,107 @@ def _tags_from_raw(raw: dict[str, Any]) -> list[str]:
     return []
 
 
+def _normalize_codex_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in models:
+        ident = str(item.get("model") or item.get("id") or "").strip()
+        if not ident or ident in seen:
+            continue
+        seen.add(ident)
+        name = str(item.get("name") or item.get("model") or ident).strip() or ident
+        description = str(item.get("description") or "")
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        raw_patch = {
+            "model": str(item.get("model") or ident).strip() or ident,
+            "hidden": bool(item.get("hidden")),
+            "is_default": bool(item.get("is_default")),
+            "default_reasoning_effort": str(item.get("default_reasoning_effort") or ""),
+            "supported_reasoning_efforts": _string_list(item.get("supported_reasoning_efforts")),
+            "service_tiers": item.get("service_tiers") if isinstance(item.get("service_tiers"), list) else [],
+            "default_service_tier": str(item.get("default_service_tier") or ""),
+        }
+        normalized.append(
+            {
+                "id": ident,
+                "name": name,
+                "description": description,
+                "raw": {**raw, **raw_patch},
+            }
+        )
+    return normalized
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
 def _provider_transport(provider: Provider) -> str:
     return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"
+
+
+def _codex_meta_patch(
+    *,
+    workspace_path: str | None = None,
+    codex_model: str | None = None,
+    codex_effort: str | None = None,
+    codex_summary: str | None = None,
+    codex_service_tier: str | None = None,
+    codex_sandbox: str | None = None,
+    codex_approval_policy: str | None = None,
+    codex_prompt_mode: str | None = None,
+    include_workspace: bool = True,
+) -> dict[str, Any]:
+    if not include_workspace and all(
+        value is None
+        for value in (
+            codex_model,
+            codex_effort,
+            codex_summary,
+            codex_service_tier,
+            codex_sandbox,
+            codex_approval_policy,
+            codex_prompt_mode,
+        )
+    ):
+        return {}
+    patch: dict[str, Any] = {
+        "transport": "browser",
+        "kind": "codex-local",
+    }
+    if include_workspace:
+        patch["workspace_path"] = str(workspace_path or "").strip()
+    if codex_model is not None:
+        patch["codex_model"] = str(codex_model or "").strip()
+    if codex_effort is not None:
+        patch["codex_effort"] = _codex_effort_choice(codex_effort)
+    if codex_summary is not None:
+        patch["codex_summary"] = _choice(codex_summary, {"none", "auto", "concise", "detailed"}, "none")
+    if codex_service_tier is not None:
+        patch["codex_service_tier"] = str(codex_service_tier or "").strip()
+    if codex_sandbox is not None:
+        patch["codex_sandbox"] = _choice(codex_sandbox, {"read-only", "workspace-write", "danger-full-access"}, "read-only")
+    if codex_approval_policy is not None:
+        patch["codex_approval_policy"] = _choice(codex_approval_policy, {"never", "untrusted", "on-request", "on-failure"}, "never")
+    if codex_prompt_mode is not None:
+        patch["codex_prompt_mode"] = _choice(codex_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
+    patch.setdefault("codex_effort", "low")
+    patch.setdefault("codex_summary", "none")
+    patch.setdefault("codex_sandbox", "read-only")
+    patch.setdefault("codex_approval_policy", "never")
+    patch.setdefault("codex_prompt_mode", "fast-edit")
+    return patch
+
+
+def _choice(value: str | None, allowed: set[str], default: str) -> str:
+    cleaned = str(value or "").strip()
+    return cleaned if cleaned in allowed else default
+
+
+def _codex_effort_choice(value: str | None) -> str:
+    cleaned = str(value or "").strip()
+    if cleaned == "minimal":
+        return "low"
+    return cleaned if cleaned in {"none", "low", "medium", "high", "xhigh"} else "low"

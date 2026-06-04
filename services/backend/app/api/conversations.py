@@ -21,6 +21,10 @@ from sse_starlette.sse import EventSourceResponse
 from ..database import get_session
 from ..models import Conversation, Doc, Message, Project, User
 from ..schemas import (
+    BrowserCodexFinishIn,
+    BrowserCodexPrepareOut,
+    BrowserCodexToolIn,
+    BrowserCodexToolOut,
     BrowserNanobotFinishIn,
     BrowserNanobotPrepareOut,
     BrowserNanobotToolIn,
@@ -53,6 +57,7 @@ from ..services.native_agent_runner import (
     NativeAgentRunner,
     NativeAgentRuntimeConfig,
     NativeRunPayload,
+    browser_codex_system_prompt,
     browser_nanobot_system_prompt,
     browser_nanobot_tools,
 )
@@ -263,6 +268,105 @@ def _build_agent_query(
     }
 
 
+def _build_light_browser_codex_query(
+    db: Session,
+    conv: Conversation,
+    body: MessageSendIn,
+) -> dict[str, Any]:
+    document = db.get(Doc, conv.document_id)
+    target_text = str(body.inputs.get("target_text") or "").strip()
+    before = str(body.inputs.get("before") or "").strip()
+    after = str(body.inputs.get("after") or "").strip()
+    section_title = str(body.inputs.get("section_title") or "").strip()
+    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
+    attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+    image_attachments = collect_image_attachments(attached_files)
+
+    parts = [
+        "[SUPERLEAF QUICK CONTEXT]",
+        "This is a lightweight SuperLeaf UI turn. Prefer a concise answer or one edit proposal.",
+    ]
+    if document is not None:
+        parts.extend(
+            [
+                f"current_doc_id: {document.id}",
+                f"current_doc_name: {document.name}",
+                f"current_doc_format: {document.format}",
+            ]
+        )
+    if section_title:
+        parts.append(f"section: {section_title}")
+    if body.range_start is not None and body.range_end is not None:
+        parts.append(f"selection_range: {body.range_start}-{body.range_end}")
+    if target_text:
+        if before:
+            parts.append(f"before_selection:\n{_clip_prompt_text(before, 2000)}")
+        parts.append(f"selected_text:\n{_clip_prompt_text(target_text, 12000)}")
+        if after:
+            parts.append(f"after_selection:\n{_clip_prompt_text(after, 2000)}")
+        parts.append(
+            "If the user asks to rewrite, polish, translate, shorten, or modify this selection, "
+            "request propose_doc_edit using original_text equal to selected_text, the provided "
+            "selection_range, and the replacement text."
+        )
+    else:
+        parts.append(
+            "No selected text was provided. If exact document content is needed, request "
+            "project_read_doc or project_grep through a SuperLeaf tool marker."
+        )
+    parts.append("[END SUPERLEAF QUICK CONTEXT]")
+
+    attached_block = render_attached_files_block(attached_files)
+    if attached_block:
+        parts.append(_clip_prompt_text(attached_block, 6000))
+    parts.append(
+        _panel_reply_contract(
+            doc_format=doc_format,
+            target_text=target_text,
+            user_message=body.content,
+        )
+    )
+    parts.append(f"[CURRENT USER MESSAGE]\n{body.content}")
+    return {
+        "agent_query": "\n\n".join(parts),
+        "doc_format": doc_format,
+        "attached_files": attached_files,
+        "image_attachments": image_attachments,
+    }
+
+
+def _clip_prompt_text(value: str, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n[...trimmed {len(text) - limit} chars...]"
+
+
+def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
+    meta = provider.meta or {}
+    return {
+        "model": str(meta.get("codex_model") or "").strip(),
+        "effort": _codex_effort_choice(meta.get("codex_effort")),
+        "summary": _settings_choice(meta.get("codex_summary"), {"none", "auto", "concise", "detailed"}, "none"),
+        "service_tier": str(meta.get("codex_service_tier") or "").strip(),
+        "sandbox": _settings_choice(meta.get("codex_sandbox"), {"read-only", "workspace-write", "danger-full-access"}, "read-only"),
+        "approval_policy": _settings_choice(meta.get("codex_approval_policy"), {"never", "untrusted", "on-request", "on-failure"}, "never"),
+        "prompt_mode": _settings_choice(meta.get("codex_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
+    }
+
+
+def _settings_choice(value: Any, allowed: set[str], default: str) -> str:
+    cleaned = str(value or "").strip()
+    return cleaned if cleaned in allowed else default
+
+
+def _codex_effort_choice(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    if cleaned == "minimal":
+        return "low"
+    return cleaned if cleaned in {"none", "low", "medium", "high", "xhigh"} else "low"
+
+
 def _persist_user_message(
     db: Session,
     conv: Conversation,
@@ -296,6 +400,29 @@ def _browser_nanobot_runner(
     return NativeAgentRunner(
         NativeAgentRuntimeConfig(
             agent_id=f"browser-nanobot:{provider.id}",
+            agent_name=provider.name,
+            provider_endpoint=provider.endpoint,
+            api_key="",
+            model=model,
+            instructions="",
+            skills=[],
+            workspace_root="",
+            project_id=project.id,
+            user_id=user.id,
+        )
+    )
+
+
+def _browser_codex_runner(
+    *,
+    provider: Any,
+    project: Project,
+    user: User,
+    model: str,
+) -> NativeAgentRunner:
+    return NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id=f"browser-codex:{provider.id}",
             agent_name=provider.name,
             provider_endpoint=provider.endpoint,
             api_key="",
@@ -519,6 +646,11 @@ async def send_message(
             400,
             "Nanobot provider uses browser transport; call the browser Nanobot endpoints instead.",
         )
+    if resolved.source != "native" and provider.kind == "codex-local":
+        raise HTTPException(
+            400,
+            "Codex Local provider uses browser transport; call the browser Codex endpoints instead.",
+        )
     client = ProviderService(db).make_client(provider) if resolved.source != "native" else None
 
     # Persist user message immediately so the UI can echo even if the provider fails.
@@ -718,6 +850,153 @@ async def send_message(
         }
 
     return EventSourceResponse(event_gen())
+
+
+@router.post("/{conversation_id}/browser-codex/prepare", response_model=BrowserCodexPrepareOut)
+def prepare_browser_codex_message(
+    conversation_id: str,
+    body: MessageSendIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserCodexPrepareOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "codex-local":
+        raise HTTPException(400, "Conversation is not configured for browser Codex transport")
+
+    user_msg = _persist_user_message(db, conv, body)
+    _sync_conversation_session(db, conv)
+    codex_settings = _codex_settings_from_provider(provider)
+    prompt_payload = (
+        _build_agent_query(db, conv, body, current_message_id=user_msg.id)
+        if codex_settings["prompt_mode"] == "full-agent"
+        else _build_light_browser_codex_query(db, conv, body)
+    )
+    run_id = f"browser-codex-{uuid.uuid4().hex}"
+    workspace_path = str((provider.meta or {}).get("workspace_path") or "").strip()
+    doc = db.get(Doc, conv.document_id)
+    superleaf_context = {
+        "project_id": project.id,
+        "conversation_id": conversation_id,
+        "document_id": conv.document_id,
+        "document_name": doc.name if doc is not None else "",
+        "document_format": doc.format if doc is not None else "",
+        "range_start": body.range_start or 0,
+        "range_end": body.range_end or 0,
+        "provider_id": provider.id,
+        "provider_name": provider.name,
+    }
+    return BrowserCodexPrepareOut(
+        run_id=run_id,
+        provider_id=provider.id,
+        endpoint=provider.endpoint,
+        model=codex_settings["model"] or resolved.cached_workflow.external_id or "codex",
+        system_prompt=browser_codex_system_prompt(),
+        prompt=str(prompt_payload["agent_query"]),
+        tools=browser_nanobot_tools(),
+        user_message=MessageOut.model_validate(user_msg),
+        document_id=conv.document_id,
+        range_start=body.range_start or 0,
+        range_end=body.range_end or 0,
+        workspace_path=workspace_path,
+        prompt_mode=codex_settings["prompt_mode"],
+        codex_settings=codex_settings,
+        superleaf_context=superleaf_context,
+        inputs=dict(body.inputs or {}),
+    )
+
+
+@router.post("/{conversation_id}/browser-codex/tool", response_model=BrowserCodexToolOut)
+async def execute_browser_codex_tool(
+    conversation_id: str,
+    body: BrowserCodexToolIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserCodexToolOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "codex-local":
+        raise HTTPException(400, "Conversation is not configured for browser Codex transport")
+
+    payload = NativeRunPayload(
+        document_id=body.document_id or conv.document_id,
+        range_start=body.range_start,
+        range_end=body.range_end,
+        inputs=dict(body.inputs or {}),
+        query="",
+        conversation_id=body.run_id,
+    )
+    runner = _browser_codex_runner(
+        provider=provider,
+        project=project,
+        user=user,
+        model=resolved.cached_workflow.external_id or "codex",
+    )
+    result = await runner.execute_browser_superleaf_tool(
+        body.tool_call,
+        payload,
+        tool_kind="browser_codex",
+        surface_name="browser Codex",
+    )
+    call_id = str(body.tool_call.get("id") or "browser-tool-call")
+    name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    return BrowserCodexToolOut(
+        tool_call_id=call_id,
+        content=result.content,
+        failed=result.failed,
+        name=name,
+        tool_kind=result.tool_kind,
+        events=_browser_tool_events(result, body.tool_call),
+    )
+
+
+@router.post("/{conversation_id}/browser-codex/finish", response_model=MessageOut, status_code=201)
+def finish_browser_codex_message(
+    conversation_id: str,
+    body: BrowserCodexFinishIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> MessageOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.provider.kind != "codex-local":
+        raise HTTPException(400, "Conversation is not configured for browser Codex transport")
+
+    content = body.content.strip()
+    error = body.error.strip()
+    if not content and error:
+        content = "Codex local run failed."
+    if not content:
+        content = "Codex returned no content."
+    agent_msg = Message(
+        conversation_id=conversation_id,
+        role="agent",
+        content=content,
+        error=error,
+        external_message_id=body.codex_session_id or body.run_id,
+    )
+    db.add(agent_msg)
+    conv.external_conversation_id = body.codex_session_id or body.run_id
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(agent_msg)
+    _sync_conversation_session(db, conv)
+    return MessageOut.model_validate(agent_msg)
 
 
 @router.post("/{conversation_id}/browser-nanobot/prepare", response_model=BrowserNanobotPrepareOut)

@@ -58,7 +58,7 @@ export function getBrowserLocalServiceUrl(port: number): string {
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native' | 'codex-local'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string
@@ -76,6 +76,14 @@ export interface ProviderDraft {
   api_key: string
   activate?: boolean
   transport?: 'backend' | 'browser'
+  workspace_path?: string
+  codex_model?: string
+  codex_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  codex_summary?: 'none' | 'auto' | 'concise' | 'detailed'
+  codex_service_tier?: string
+  codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'
+  codex_approval_policy?: 'never' | 'untrusted' | 'on-request' | 'on-failure'
+  codex_prompt_mode?: 'fast-edit' | 'full-agent'
 }
 
 export interface ProviderUpdate {
@@ -83,12 +91,27 @@ export interface ProviderUpdate {
   endpoint?: string
   api_key?: string
   transport?: 'backend' | 'browser'
+  workspace_path?: string
+  codex_model?: string
+  codex_effort?: ProviderDraft['codex_effort']
+  codex_summary?: ProviderDraft['codex_summary']
+  codex_service_tier?: string
+  codex_sandbox?: ProviderDraft['codex_sandbox']
+  codex_approval_policy?: ProviderDraft['codex_approval_policy']
+  codex_prompt_mode?: ProviderDraft['codex_prompt_mode']
 }
 
 export interface ProviderModel {
   id: string
   name: string
   description: string
+  model?: string
+  hidden?: boolean
+  is_default?: boolean
+  default_reasoning_effort?: string
+  supported_reasoning_efforts?: string[]
+  service_tiers?: Array<{ id: string; name: string; description?: string }>
+  default_service_tier?: string
   raw?: Record<string, unknown>
 }
 
@@ -282,6 +305,14 @@ export const providerApi = {
     body: { provider_name?: string; models: ProviderModel[] },
   ) =>
     http<Provider>(`/api/providers/${id}/browser-nanobot-models`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  syncBrowserCodexAgent: (
+    id: string,
+    body: { health?: Record<string, unknown>; models?: ProviderModel[] },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-codex-agent`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -1124,6 +1155,34 @@ export interface BrowserNanobotPrepare {
   inputs: Record<string, unknown>
 }
 
+export interface BrowserCodexPrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  model: string
+  system_prompt: string
+  prompt: string
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  workspace_path: string
+  prompt_mode: 'fast-edit' | 'full-agent'
+  codex_settings: {
+    model?: string
+    effort?: ProviderDraft['codex_effort']
+    summary?: ProviderDraft['codex_summary']
+    service_tier?: string
+    sandbox?: ProviderDraft['codex_sandbox']
+    approval_policy?: ProviderDraft['codex_approval_policy']
+    prompt_mode?: ProviderDraft['codex_prompt_mode']
+    [key: string]: unknown
+  }
+  superleaf_context: Record<string, unknown>
+  inputs: Record<string, unknown>
+}
+
 export interface NanobotToolFunction {
   name: string
   description?: string
@@ -1244,6 +1303,34 @@ export const conversationApi = {
   ) =>
     http<Message>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/finish`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserCodex: (conversationId: string, body: MessageSend) =>
+    http<BrowserCodexPrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserCodexTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserCodex: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string; codex_session_id?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/finish`,
       { method: 'POST', body: JSON.stringify(body) },
     ),
 }

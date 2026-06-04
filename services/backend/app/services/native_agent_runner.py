@@ -221,13 +221,29 @@ class NativeAgentRunner:
         proposals. Keep this surface intentionally narrower than native Agents:
         no workspace file reads, no project file creation, no MCP calls.
         """
+        return await self.execute_browser_superleaf_tool(
+            call,
+            payload,
+            tool_kind="browser_nanobot",
+            surface_name="browser Nanobot",
+        )
+
+    async def execute_browser_superleaf_tool(
+        self,
+        call: dict[str, Any],
+        payload: NativeRunPayload,
+        *,
+        tool_kind: str = "browser_local_agent",
+        surface_name: str = "browser local Agent",
+    ) -> _ToolExecutionResult:
+        """Execute the small SuperLeaf tool subset exposed to browser transports."""
         name = _tool_call_name(call)
         if name not in _BROWSER_NANOBOT_TOOL_NAMES:
             return _ToolExecutionResult(
-                f"ERROR: tool {name or '(missing)'} is not available for browser Nanobot runs",
+                f"ERROR: tool {name or '(missing)'} is not available for {surface_name} runs",
                 failed=True,
                 failed_function_name=name,
-                tool_kind="browser_nanobot",
+                tool_kind=tool_kind,
             )
         return await self._execute_tool(call, {}, payload)
 
@@ -1425,6 +1441,33 @@ def browser_nanobot_system_prompt() -> str:
                 "a proposal card; the user must accept it before the document changes."
             ),
             "Do not ask SuperLeaf to record local files read, commands run, or internal reasoning.",
+            "Return concise Markdown for ordinary answers.",
+        ]
+    )
+
+
+def browser_codex_system_prompt() -> str:
+    return "\n".join(
+        [
+            "You are a local Codex Agent collaborating inside SuperLeaf.",
+            "You may use your normal local code and repository capabilities when relevant.",
+            "SuperLeaf project documents, comments, selections, and edit proposals are not your local filesystem; access them through the SuperLeaf tools listed in this prompt.",
+            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "If you need one SuperLeaf tool, reply with exactly one marker and no prose: "
+                '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>. '
+                "Replace name and arguments as needed."
+            ),
+            (
+                "When the user asks you to modify a SuperLeaf document, first read the relevant text if needed, "
+                "then call propose_doc_edit with original_text copied verbatim from project_read_doc, "
+                "range_start/range_end as hints, replacement new_text, and a short reason."
+            ),
+            (
+                "Do not claim that a SuperLeaf edit has been applied. propose_doc_edit only creates "
+                "a proposal card; the user must accept it before the document changes."
+            ),
+            "Do not ask SuperLeaf to record local files read, shell commands, or internal reasoning.",
             "Return concise Markdown for ordinary answers.",
         ]
     )

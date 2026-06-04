@@ -14,6 +14,7 @@ from ..database import get_session
 from ..models import Provider, User
 from ..schemas import (
     AgentStatOut,
+    BrowserCodexAgentSyncIn,
     BrowserNanobotModelSyncIn,
     ProviderIn,
     ProviderModelOut,
@@ -67,6 +68,14 @@ def create_provider(
         api_key=body.api_key,
         activate=body.activate,
         transport=body.transport,
+        workspace_path=body.workspace_path,
+        codex_model=body.codex_model,
+        codex_effort=body.codex_effort,
+        codex_summary=body.codex_summary,
+        codex_service_tier=body.codex_service_tier,
+        codex_sandbox=body.codex_sandbox,
+        codex_approval_policy=body.codex_approval_policy,
+        codex_prompt_mode=body.codex_prompt_mode,
     )
     return _to_out(p)
 
@@ -87,6 +96,14 @@ def update_provider(
             endpoint=body.endpoint,
             api_key=body.api_key,
             transport=body.transport,
+            workspace_path=body.workspace_path,
+            codex_model=body.codex_model,
+            codex_effort=body.codex_effort,
+            codex_summary=body.codex_summary,
+            codex_service_tier=body.codex_service_tier,
+            codex_sandbox=body.codex_sandbox,
+            codex_approval_policy=body.codex_approval_policy,
+            codex_prompt_mode=body.codex_prompt_mode,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -156,6 +173,27 @@ def sync_browser_nanobot_models(
             provider_id,
             user_id=user.id,
             provider_name=body.provider_name,
+            models=[row.model_dump() for row in body.models],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if p is None:
+        raise HTTPException(404, "Provider not found")
+    return _to_out(p)
+
+
+@router.post("/{provider_id}/browser-codex-agent", response_model=ProviderOut)
+def sync_browser_codex_agent(
+    provider_id: str,
+    body: BrowserCodexAgentSyncIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProviderOut:
+    try:
+        p = ProviderService(db).sync_browser_codex_agent(
+            provider_id,
+            user_id=user.id,
+            health=body.health,
             models=[row.model_dump() for row in body.models],
         )
     except ValueError as exc:

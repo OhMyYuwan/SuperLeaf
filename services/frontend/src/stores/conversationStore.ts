@@ -768,6 +768,12 @@ async function sendViaBrowserCodex(args: {
     lastError = result.error
     lastCodexSessionId = result.codexSessionId || lastCodexSessionId
 
+    if (result.toolCalls.length > 0) {
+      args.set((s) => ({
+        streamingDelta: { ...s.streamingDelta, [args.conversationId]: '' },
+      }))
+    }
+
     if (result.toolCalls.length === 0) {
       const content = result.output.trim() || finalParts.join('').trim() || '(Codex 没有返回可见文本。)'
       if (content && !streamedRoundContent.trim()) {

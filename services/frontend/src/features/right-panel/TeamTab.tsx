@@ -176,6 +176,8 @@ export function TeamTab({
   const [onlyTrainingCandidates, setOnlyTrainingCandidates] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [localHostDownloading, setLocalHostDownloading] = useState(false)
+  const [localHostDownloadError, setLocalHostDownloadError] = useState<string | null>(null)
   const [officialBadgeStyle, setOfficialBadgeStyle] = useState<OfficialBadgeStyle>('metal')
 
   useEffect(() => {
@@ -241,6 +243,19 @@ export function TeamTab({
     }
   }
 
+  const handleLocalHostDownload = async () => {
+    if (localHostDownloading) return
+    setLocalHostDownloading(true)
+    setLocalHostDownloadError(null)
+    try {
+      await nativeAgentApi.localAgentHost.download()
+    } catch (err) {
+      setLocalHostDownloadError(err instanceof Error ? err.message : '下载 Local Agent Host 失败')
+    } finally {
+      setLocalHostDownloading(false)
+    }
+  }
+
   return (
     <OfficialBadgeStyleContext.Provider value={officialBadgeStyle}>
       <div className="tab-content-wrapper">
@@ -277,6 +292,15 @@ export function TeamTab({
           <div className="tab-header-row">
             <span>Agent 团队：{activeCount} 个活跃 · {disabledCount} 个禁用</span>
             <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="small-btn"
+                onClick={() => void handleLocalHostDownload()}
+                disabled={localHostDownloading}
+                title="下载 SuperLeaf Local Agent Host，用于连接本机 Nanobot / Codex"
+              >
+                {localHostDownloading ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                Local Host
+              </button>
               {disabledCount > 0 && (
                 <button
                   className="small-btn"
@@ -295,6 +319,7 @@ export function TeamTab({
           <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
 
           {workflowError && <div className="tab-error">{workflowError}</div>}
+          {localHostDownloadError && <div className="tab-error">{localHostDownloadError}</div>}
           {mcpCatalogError && <div className="tab-error">MCP catalog: {mcpCatalogError}</div>}
           {mcpPolicyError && <div className="tab-error">MCP policy: {mcpPolicyError}</div>}
 

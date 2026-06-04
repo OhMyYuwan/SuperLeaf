@@ -692,6 +692,11 @@ export const nativeAgentApi = {
   ui: {
     officialBadge: () => http<OfficialBadgeUiSettings>('/api/native-agent/ui/official-badge'),
   },
+  localAgentHost: {
+    downloadUrl: () => `${BASE}/api/native-agent/local-agent-host/download`,
+    download: (fallbackFilename = 'superleaf-local-agent-host.zip') =>
+      downloadBackendFile('/api/native-agent/local-agent-host/download', fallbackFilename),
+  },
   credentials: {
     list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
     create: (draft: NativeAgentCredentialDraft) =>

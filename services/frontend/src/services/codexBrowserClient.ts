@@ -38,6 +38,8 @@ export interface BrowserCodexTurnResult {
   toolCalls: NanobotToolCall[]
 }
 
+const SUPERLEAF_TOOL_MARKER = '<superleaf_tool_call'
+
 export async function probeBrowserCodex(endpoint: string): Promise<BrowserCodexHealth> {
   const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/health`, {
     method: 'GET',
@@ -143,7 +145,7 @@ export async function runBrowserCodexTurn(args: {
     : explicitError || (typeof payload.stderr === 'string' ? payload.stderr : '')
   return {
     session: payload.session as BrowserCodexSession,
-    output: stripCodexToolCalls(rawOutput),
+    output: toolCalls.length > 0 ? '' : stripCodexToolCalls(rawOutput),
     error,
     codexSessionId: typeof payload.codex_session_id === 'string' ? payload.codex_session_id : '',
     events: Array.isArray(payload.events) ? payload.events : [],
@@ -202,7 +204,8 @@ async function readCodexSse(
       const trimmed = rawOutput.trimStart()
       if (
         '<superleaf_tool_call>'.startsWith(trimmed) ||
-        trimmed.startsWith('<superleaf_tool_call')
+        trimmed.startsWith(SUPERLEAF_TOOL_MARKER) ||
+        rawOutput.includes(SUPERLEAF_TOOL_MARKER)
       ) {
         suppressToolMarkerOutput = true
       }
@@ -363,7 +366,7 @@ function formatToolDefinitions(tools: NanobotToolDefinition[]): string {
     'These tools are executed by SuperLeaf backend authorization, not by your local shell.',
     'Never say these tools are not mounted or unavailable.',
     'Do not use your own local filesystem as a substitute for SuperLeaf project/document tools.',
-    'To request one tool, reply with exactly one marker and no prose:',
+    'To request one tool, reply with exactly one marker and no prose. Use standard ASCII JSON double quotes and include the closing tag:',
     '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>',
     'Available schemas:',
     ...rendered,
@@ -387,7 +390,7 @@ function formatCompactToolGuide(tools: NanobotToolDefinition[]): string {
   })
   return [
     'Tools are executed by SuperLeaf backend authorization, not by local shell.',
-    'To request exactly one tool, reply only with:',
+    'To request exactly one tool, reply only with standard ASCII JSON double quotes and the closing tag:',
     '<superleaf_tool_call>{"name":"project_read_doc","arguments":{"doc_id":"..."}}</superleaf_tool_call>',
     'Use propose_doc_edit for document changes; it creates an approval proposal, not an applied edit.',
     ...rendered,
@@ -407,24 +410,93 @@ function formatToolResults(results: BrowserNanobotToolResult[]): string {
 }
 
 export function extractCodexToolCalls(content: string): NanobotToolCall[] {
-  const pattern = /<superleaf_tool_call>\s*([\s\S]*?)\s*<\/superleaf_tool_call>/giu
   const calls: NanobotToolCall[] = []
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(content)) !== null) {
-    const parsed = parseTextToolCall(match[1])
+  for (const raw of extractTextToolCallPayloads(content)) {
+    const parsed = parseTextToolCall(raw)
     if (parsed) calls.push(parsed)
   }
   return calls
 }
 
 function stripCodexToolCalls(content: string): string {
-  return content.replace(/<superleaf_tool_call>\s*[\s\S]*?\s*<\/superleaf_tool_call>/giu, '').trim()
+  const marker = content.toLowerCase().indexOf(SUPERLEAF_TOOL_MARKER)
+  if (marker === -1) return content.trim()
+  const closePattern = /<\/superleaf_tool_call>/iu
+  const afterMarker = content.slice(marker)
+  const close = afterMarker.search(closePattern)
+  if (close === -1) return content.slice(0, marker).trim()
+  return `${content.slice(0, marker)}${afterMarker.slice(close).replace(closePattern, '')}`.trim()
+}
+
+function extractTextToolCallPayloads(content: string): string[] {
+  const payloads: string[] = []
+  let cursor = 0
+  while (cursor < content.length) {
+    const lower = content.toLowerCase()
+    const marker = lower.indexOf(SUPERLEAF_TOOL_MARKER, cursor)
+    if (marker === -1) break
+    const tagEnd = content.indexOf('>', marker)
+    const bodyStart = tagEnd === -1 ? marker + SUPERLEAF_TOOL_MARKER.length : tagEnd + 1
+    const objectStart = content.indexOf('{', bodyStart)
+    if (objectStart === -1) break
+    const extracted = extractBalancedJsonLikeObject(content, objectStart)
+    if (!extracted) {
+      cursor = objectStart + 1
+      continue
+    }
+    payloads.push(extracted.text)
+    cursor = extracted.end
+  }
+  return payloads
+}
+
+function extractBalancedJsonLikeObject(content: string, start: number): { text: string; end: number } | null {
+  let depth = 0
+  let quote: '"' | "'" | '“' | '‘' | null = null
+  let escaped = false
+  for (let idx = start; idx < content.length; idx += 1) {
+    const ch = content[idx]
+    if (quote) {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (ch === '\\') {
+        escaped = true
+        continue
+      }
+      if (
+        ch === quote ||
+        (quote === '“' && ch === '”') ||
+        (quote === '‘' && ch === '’')
+      ) {
+        quote = null
+      }
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '“' || ch === '‘') {
+      quote = ch as '"' | "'" | '“' | '‘'
+      continue
+    }
+    if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        return {
+          text: content.slice(start, idx + 1),
+          end: idx + 1,
+        }
+      }
+    }
+  }
+  return null
 }
 
 function parseTextToolCall(rawJson: string): NanobotToolCall | null {
   let parsed: unknown
   try {
-    parsed = JSON.parse(rawJson)
+    parsed = JSON.parse(normalizeJsonLikeToolCall(rawJson))
   } catch {
     return null
   }
@@ -432,9 +504,7 @@ function parseTextToolCall(rawJson: string): NanobotToolCall | null {
   const raw = parsed as Record<string, unknown>
   const name = typeof raw.name === 'string' ? raw.name.trim() : ''
   if (!name) return null
-  const args = raw.arguments && typeof raw.arguments === 'object'
-    ? raw.arguments
-    : {}
+  const args = parseToolArguments(raw.arguments)
   return {
     id: `codex_text_tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     type: 'function',
@@ -443,6 +513,87 @@ function parseTextToolCall(rawJson: string): NanobotToolCall | null {
       arguments: JSON.stringify(args),
     },
   }
+}
+
+function normalizeJsonLikeToolCall(rawJson: string): string {
+  const normalized = rawJson
+    .trim()
+    .replace(/[\u201C\u201D]/gu, '"')
+    .replace(/[\u2018\u2019]/gu, "'")
+    .replace(/^\uFEFF/u, '')
+  return escapeInvalidJsonBackslashes(escapeLiteralNewlinesInJsonStrings(normalized))
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(normalizeJsonLikeToolCall(value))
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {}
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
+function escapeInvalidJsonBackslashes(value: string): string {
+  let out = ''
+  for (let idx = 0; idx < value.length; idx += 1) {
+    const ch = value[idx]
+    if (ch !== '\\') {
+      out += ch
+      continue
+    }
+    const next = value[idx + 1] ?? ''
+    if (/["\\/bfnrtu]/u.test(next)) {
+      out += ch
+      if (next) {
+        out += next
+        idx += 1
+      }
+    } else {
+      out += '\\\\'
+    }
+  }
+  return out
+}
+
+function escapeLiteralNewlinesInJsonStrings(value: string): string {
+  let quote = false
+  let escaped = false
+  let out = ''
+  for (const ch of value) {
+    if (escaped) {
+      out += ch
+      escaped = false
+      continue
+    }
+    if (ch === '\\') {
+      out += ch
+      escaped = true
+      continue
+    }
+    if (ch === '"') {
+      quote = !quote
+      out += ch
+      continue
+    }
+    if (quote && ch === '\n') {
+      out += '\\n'
+      continue
+    }
+    if (quote && ch === '\r') {
+      out += '\\r'
+      continue
+    }
+    out += ch
+  }
+  return out
 }
 
 function codexModel(prepared: BrowserCodexPrepare): string {

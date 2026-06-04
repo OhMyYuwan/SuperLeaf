@@ -73,6 +73,18 @@ router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
 
 OFFICIAL_BADGE_STYLES = {"metal", "minimal"}
 _official_badge_style_override: str | None = None
+LOCAL_AGENT_HOST_PACKAGE_GLOB = "superleaf-local-agent-host-*.zip"
+LOCAL_AGENT_HOST_BUNDLE_FILES = [
+    "package.json",
+    "server.mjs",
+    "README.md",
+    ".env.example",
+    "start-local-agent-host.sh",
+    "start-local-agent-host.command",
+    "start-local-agent-host-background.command",
+    "stop-local-agent-host.command",
+    "scripts/package.mjs",
+]
 
 
 class OfficialBadgeUiPatch(BaseModel):
@@ -180,6 +192,42 @@ def _project_skill_export_archive(row: Skill) -> tuple[str, bytes]:
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         )
     return folder_name, archive.getvalue()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _local_agent_host_package() -> tuple[str, bytes]:
+    root = _repo_root()
+    packaged = sorted(
+        (root / "dist").glob(LOCAL_AGENT_HOST_PACKAGE_GLOB),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if packaged:
+        package_path = packaged[0]
+        return package_path.name, package_path.read_bytes()
+
+    host_root = root / "services" / "local-agent-host"
+    if not host_root.exists() or not host_root.is_dir():
+        raise FileNotFoundError("Local Agent Host source directory is missing")
+    package_json = host_root / "package.json"
+    version = "0.1.0"
+    if package_json.exists():
+        try:
+            version = json.loads(package_json.read_text(encoding="utf-8")).get("version") or version
+        except (OSError, json.JSONDecodeError):
+            version = "0.1.0"
+    bundle_name = f"superleaf-local-agent-host-{version}"
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for relative in LOCAL_AGENT_HOST_BUNDLE_FILES:
+            source = host_root / relative
+            if not source.is_file():
+                continue
+            zf.write(source, f"{bundle_name}/{relative}")
+    return f"{bundle_name}.zip", archive.getvalue()
 
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
@@ -688,6 +736,23 @@ def delete_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+
+
+@router.get("/local-agent-host/download")
+def download_local_agent_host(
+    user: User = Depends(get_current_user),
+) -> Response:
+    del user
+    try:
+        filename, payload = _local_agent_host_package()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    disposition = f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.get("/skills/{skill_id}/download")

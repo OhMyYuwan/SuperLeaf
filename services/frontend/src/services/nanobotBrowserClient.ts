@@ -164,7 +164,7 @@ function compactNanobotMessages(
     sections.push(
       [
         'Use the tool results above to answer the user.',
-        'If more SuperLeaf project context is needed, call another available tool.',
+        'If more SuperLeaf project context is needed, call additional available tools as needed.',
         'Do not repeat a tool call whose result is already shown unless the user asks or the result is insufficient.',
       ].join(' '),
     )

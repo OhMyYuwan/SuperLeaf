@@ -596,7 +596,6 @@ async function sendViaBrowserNanobot(args: {
   const apiKey = readBrowserNanobotApiKey(args.provider.id)
   const messages: NanobotChatMessage[] = prepared.messages.slice()
   const finalParts: string[] = []
-  const maxToolRounds = 8
   const preflightToolCalls = inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
 
   if (preflightToolCalls.length > 0) {
@@ -634,7 +633,7 @@ async function sendViaBrowserNanobot(args: {
     }
   }
 
-  for (let round = 0; round < maxToolRounds; round++) {
+  while (true) {
     const turn = await streamBrowserNanobotTurn({
       endpoint: prepared.endpoint,
       apiKey,
@@ -691,8 +690,6 @@ async function sendViaBrowserNanobot(args: {
       })
     }
   }
-
-  throw new Error('Nanobot 工具调用轮次过多，已停止以避免无限循环')
 }
 
 async function sendViaBrowserCodex(args: {
@@ -729,7 +726,6 @@ async function sendViaBrowserCodex(args: {
   const finalParts: string[] = []
   let lastError = ''
   let lastCodexSessionId = session.codex_session_id || ''
-  const maxToolRounds = 8
   const preflightToolCalls = inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
 
   for (const toolCall of preflightToolCalls) {
@@ -748,7 +744,7 @@ async function sendViaBrowserCodex(args: {
     toolResults.push(result)
   }
 
-  for (let round = 0; round < maxToolRounds; round++) {
+  while (true) {
     let streamedRoundContent = ''
     const result = await runBrowserCodexTurn({
       endpoint: prepared.endpoint,
@@ -814,8 +810,6 @@ async function sendViaBrowserCodex(args: {
       toolResults.push(toolResult)
     }
   }
-
-  throw new Error('Codex 工具调用轮次过多，已停止以避免无限循环')
 }
 
 const PREFLIGHT_READ_TOOL_NAMES = new Set([

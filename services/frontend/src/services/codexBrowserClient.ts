@@ -319,7 +319,7 @@ function buildCodexPrompt(
     sections.push(
       [
         'Use the tool results above to answer the user.',
-        'If more SuperLeaf project context is needed, request exactly one additional SuperLeaf tool call marker.',
+        'If more SuperLeaf project context is needed, request additional SuperLeaf tool call markers as needed.',
         'Do not repeat a tool call whose result is already shown unless the user asks or the result is insufficient.',
       ].join(' '),
     )
@@ -347,7 +347,7 @@ function buildFastCodexPrompt(
   }
   if (toolResults.length > 0) {
     sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults)}`)
-    sections.push('Use the tool results above. If one more project read is necessary, request exactly one new tool marker.')
+    sections.push('Use the tool results above. If more project reads are necessary, request additional tool markers as needed.')
   }
   sections.push(prepared.prompt)
   return sections.join('\n\n')

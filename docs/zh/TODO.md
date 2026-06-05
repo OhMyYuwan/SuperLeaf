@@ -8,6 +8,18 @@ nav_order: 99
 
 这个文件记录短时间内不进入第一版、但未来需要继续推进的能力。
 
+## SuperLeaf MCP 架构迭代
+
+详细方案见 [SuperLeaf MCP 构建方案](./superleaf-mcp-architecture-plan.html)。
+
+- Phase 1a（已启动）：Local Host MCP registry 与前端 Codex/Nanobot fallback 工具说明已抽出复用。
+- Phase 1b：继续统一 SuperLeaf 工具注册表，用同一份 JSON schema 生成 Local Host、Codex、Nanobot、后端 Native Agent 的 tool schema。
+- Phase 2：Local Agent Host 的 `/mcp` 从手写 JSON-RPC 迁移到 MCP TypeScript SDK，补齐 stateful session、timeout、event replay。
+- Phase 3：抽出通用 BrowserToolBridge，让 Codex、Nanobot、Claude local adapter 共用 context 注册、工具轮询和结果回填。
+- Phase 4：实现 Nanobot Tool Adapter，优先 OpenAI-compatible `tool_calls`，marker 仅作为 fallback。
+- Phase 5：完善 Codex/Claude 本地安装与 MCP 注册体验。
+- Phase 6：建设 Remote SuperLeaf MCP Endpoint，使用 OAuth 或 capability token 支持团队/远程 Agent。
+
 ## 批注训练数据
 
 - 根据 document version 精确复原“批注发生时”的上下文，而不是只使用当前行内容。
@@ -63,4 +75,3 @@ nav_order: 99
 - 改动比 [Agent 写入 第一版](#讨论区-agent让-agent-成为-yjs-peerb-方案) 那次更大，但消灭了一套并行数据流，长期更易维护
 - 需要保留兼容：现有已落库的 Operation `accept_suggestion` payload 现在带 `source: agent_propose_doc_edit` 字段，重做后这种 source 不会再出现，旧记录读取时按"如有 proposed 则视为已写入"理解
 - Yjs 锚点 + B 方案的优势是源头精度（亚秒级窗口），重做成批注后丢失这个精度，回到 `mapRange` 的 best-effort 漂移合并；多数场景够用，B 方案如做仍可在批注层之上叠加
-

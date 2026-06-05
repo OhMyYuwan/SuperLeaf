@@ -84,6 +84,7 @@ export interface ProviderDraft {
   codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'
   codex_approval_policy?: 'never' | 'untrusted' | 'on-request' | 'on-failure'
   codex_prompt_mode?: 'fast-edit' | 'full-agent'
+  codex_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
 }
 
 export interface ProviderUpdate {
@@ -99,6 +100,7 @@ export interface ProviderUpdate {
   codex_sandbox?: ProviderDraft['codex_sandbox']
   codex_approval_policy?: ProviderDraft['codex_approval_policy']
   codex_prompt_mode?: ProviderDraft['codex_prompt_mode']
+  codex_tool_mode?: ProviderDraft['codex_tool_mode']
 }
 
 export interface ProviderModel {
@@ -1182,6 +1184,7 @@ export interface BrowserCodexPrepare {
     sandbox?: ProviderDraft['codex_sandbox']
     approval_policy?: ProviderDraft['codex_approval_policy']
     prompt_mode?: ProviderDraft['codex_prompt_mode']
+    tool_mode?: ProviderDraft['codex_tool_mode']
     [key: string]: unknown
   }
   superleaf_context: Record<string, unknown>

@@ -1,11 +1,12 @@
+import { BACKEND_BASE } from './backendApi'
 import type {
   BrowserCodexPrepare,
   BrowserNanobotToolResult,
   NanobotToolCall,
-  NanobotToolDefinition,
   ProviderDraft,
   ProviderModel,
 } from './backendApi'
+import { formatCompactSuperleafToolGuide, formatSuperleafToolDefinitions } from './superleafTools'
 
 export interface BrowserCodexHealth {
   status: string
@@ -36,6 +37,28 @@ export interface BrowserCodexTurnResult {
   codexSessionId: string
   events: unknown[]
   toolCalls: NanobotToolCall[]
+}
+
+export interface BrowserCodexMcpContext {
+  status: string
+  context_id: string
+  mcp_url: string
+  tool_count: number
+  expires_at: number
+}
+
+export interface BrowserCodexMcpToolRequest {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+  context_id: string
+  project_id: string
+  conversation_id: string
+  document_id: string
+  range_start: number
+  range_end: number
+  inputs: Record<string, unknown>
+  created_at: string
 }
 
 const SUPERLEAF_TOOL_MARKER = '<superleaf_tool_call'
@@ -90,6 +113,7 @@ export async function createBrowserCodexSession(args: {
       summary: codexSummary(args.prepared),
       sandbox: codexSandbox(args.prepared),
       approval_policy: codexApprovalPolicy(args.prepared),
+      tool_mode: codexToolMode(args.prepared),
       metadata: {
         provider_id: args.prepared.provider_id,
         provider_name: args.providerName,
@@ -102,6 +126,83 @@ export async function createBrowserCodexSession(args: {
     throw new Error(`Codex session ${resp.status}: ${stringError(payload) || resp.statusText}`)
   }
   return payload as BrowserCodexSession
+}
+
+export async function registerBrowserCodexMcpContext(args: {
+  endpoint: string
+  prepared: BrowserCodexPrepare
+  superleafOrigin?: string
+}): Promise<BrowserCodexMcpContext> {
+  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: String(args.prepared.superleaf_context.project_id ?? ''),
+      conversation_id: String(args.prepared.superleaf_context.conversation_id ?? ''),
+      document_id: args.prepared.document_id,
+      range_start: args.prepared.range_start,
+      range_end: args.prepared.range_end,
+      inputs: args.prepared.inputs,
+      superleaf_origin: args.superleafOrigin ?? window.location.origin,
+      backend_url: BACKEND_BASE,
+    }),
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`SuperLeaf MCP context ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
+  return payload as unknown as BrowserCodexMcpContext
+}
+
+export async function pollBrowserCodexMcpToolRequests(args: {
+  endpoint: string
+  contextId: string
+  signal?: AbortSignal
+  waitMs?: number
+}): Promise<BrowserCodexMcpToolRequest[]> {
+  const url = new URL(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/tool-requests`)
+  url.searchParams.set('context_id', args.contextId)
+  url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
+  const resp = await fetch(url.toString(), {
+    method: 'GET',
+    signal: args.signal,
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`SuperLeaf MCP poll ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
+  return Array.isArray(payload.requests)
+    ? payload.requests.map(normalizeMcpToolRequest).filter((item): item is BrowserCodexMcpToolRequest => Boolean(item))
+    : []
+}
+
+export async function submitBrowserCodexMcpToolResult(args: {
+  endpoint: string
+  requestId: string
+  content: string
+  failed: boolean
+  name: string
+  toolKind?: string
+  events?: Array<{ event: string; data: unknown }>
+  signal?: AbortSignal
+}): Promise<void> {
+  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/tool-results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      request_id: args.requestId,
+      content: args.content,
+      failed: args.failed,
+      name: args.name,
+      tool_kind: args.toolKind ?? '',
+      events: args.events ?? [],
+    }),
+    signal: args.signal,
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`SuperLeaf MCP result ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
 }
 
 export async function runBrowserCodexTurn(args: {
@@ -126,6 +227,7 @@ export async function runBrowserCodexTurn(args: {
       summary: codexSummary(args.prepared),
       sandbox: codexSandbox(args.prepared),
       approval_policy: codexApprovalPolicy(args.prepared),
+      tool_mode: codexToolMode(args.prepared),
     }),
     signal: args.signal,
   })
@@ -275,6 +377,29 @@ function normalizeBrowserCodexModel(value: unknown): ProviderModel {
   }
 }
 
+function normalizeMcpToolRequest(value: unknown): BrowserCodexMcpToolRequest | null {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const id = stringValue(raw.id)
+  const name = stringValue(raw.name)
+  const contextId = stringValue(raw.context_id)
+  if (!id || !name || !contextId) return null
+  return {
+    id,
+    name,
+    arguments: raw.arguments && typeof raw.arguments === 'object'
+      ? raw.arguments as Record<string, unknown>
+      : {},
+    context_id: contextId,
+    project_id: stringValue(raw.project_id),
+    conversation_id: stringValue(raw.conversation_id),
+    document_id: stringValue(raw.document_id),
+    range_start: Number(raw.range_start || 0),
+    range_end: Number(raw.range_end || 0),
+    inputs: raw.inputs && typeof raw.inputs === 'object' ? raw.inputs as Record<string, unknown> : {},
+    created_at: stringValue(raw.created_at),
+  }
+}
+
 function normalizeBrowserCodexReasoningEffort(value: unknown): string {
   if (typeof value === 'string') return value.trim()
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -311,8 +436,9 @@ function buildCodexPrompt(
   if (prepared.system_prompt.trim()) {
     sections.push(`[SUPERLEAF INSTRUCTIONS]\n${prepared.system_prompt.trim()}`)
   }
+  sections.push(`[SUPERLEAF TOOL MODE]\n${codexToolModePrompt(prepared)}`)
   if (prepared.tools.length > 0) {
-    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatToolDefinitions(prepared.tools)}`)
+    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatSuperleafToolDefinitions(prepared.tools)}`)
   }
   if (toolResults.length > 0) {
     sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults)}`)
@@ -337,13 +463,14 @@ function buildFastCodexPrompt(
       '[SUPERLEAF FAST MODE]',
       'You are local Codex inside the SuperLeaf editor.',
       'Stay concise. Preserve SuperLeaf as the editing and collaboration UI.',
+      codexToolModePrompt(prepared),
       'For selected-text rewrites, request propose_doc_edit instead of telling the user to edit manually.',
       'Do not claim edits are applied; SuperLeaf shows proposal cards for user approval.',
       '[END SUPERLEAF FAST MODE]',
     ].join('\n'),
   ]
   if (prepared.tools.length > 0) {
-    sections.push(`[SUPERLEAF TOOL GUIDE]\n${formatCompactToolGuide(prepared.tools)}`)
+    sections.push(`[SUPERLEAF TOOL GUIDE]\n${formatCompactSuperleafToolGuide(prepared.tools)}`)
   }
   if (toolResults.length > 0) {
     sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults)}`)
@@ -351,50 +478,6 @@ function buildFastCodexPrompt(
   }
   sections.push(prepared.prompt)
   return sections.join('\n\n')
-}
-
-function formatToolDefinitions(tools: NanobotToolDefinition[]): string {
-  const rendered = tools.map((tool) => {
-    const fn = tool.function
-    return [
-      `- ${fn.name}`,
-      fn.description ? `  description: ${fn.description}` : '',
-      `  arguments_schema: ${JSON.stringify(fn.parameters ?? { type: 'object', properties: {} })}`,
-    ].filter(Boolean).join('\n')
-  })
-  return [
-    'These tools are executed by SuperLeaf backend authorization, not by your local shell.',
-    'Never say these tools are not mounted or unavailable.',
-    'Do not use your own local filesystem as a substitute for SuperLeaf project/document tools.',
-    'To request one tool, reply with exactly one marker and no prose. Use standard ASCII JSON double quotes and include the closing tag:',
-    '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>',
-    'Available schemas:',
-    ...rendered,
-  ].join('\n')
-}
-
-function formatCompactToolGuide(tools: NanobotToolDefinition[]): string {
-  const rendered = tools.map((tool) => {
-    const fn = tool.function
-    const params = fn.parameters ?? {}
-    const required = Array.isArray(params.required) ? params.required.map(String) : []
-    const props = params.properties && typeof params.properties === 'object'
-      ? Object.keys(params.properties)
-      : []
-    const args = required.length > 0
-      ? `required: ${required.join(', ')}`
-      : props.length > 0
-        ? `args: ${props.join(', ')}`
-        : 'args: none'
-    return `- ${fn.name} (${args})`
-  })
-  return [
-    'Tools are executed by SuperLeaf backend authorization, not by local shell.',
-    'To request exactly one tool, reply only with standard ASCII JSON double quotes and the closing tag:',
-    '<superleaf_tool_call>{"name":"project_read_doc","arguments":{"doc_id":"..."}}</superleaf_tool_call>',
-    'Use propose_doc_edit for document changes; it creates an approval proposal, not an applied edit.',
-    ...rendered,
-  ].join('\n')
 }
 
 function formatToolResults(results: BrowserNanobotToolResult[]): string {
@@ -629,6 +712,24 @@ function codexApprovalPolicy(prepared: BrowserCodexPrepare): ProviderDraft['code
   return isOneOf(value, ['never', 'untrusted', 'on-request', 'on-failure'])
     ? value as ProviderDraft['codex_approval_policy']
     : 'never'
+}
+
+export function codexToolMode(prepared: BrowserCodexPrepare): NonNullable<ProviderDraft['codex_tool_mode']> {
+  const value = stringSetting(prepared.codex_settings?.tool_mode)
+  return isOneOf(value, ['mcp-first', 'browser-preflight', 'marker-only'])
+    ? value as NonNullable<ProviderDraft['codex_tool_mode']>
+    : 'mcp-first'
+}
+
+function codexToolModePrompt(prepared: BrowserCodexPrepare): string {
+  const mode = codexToolMode(prepared)
+  if (mode === 'browser-preflight') {
+    return 'SuperLeaf may pre-execute obvious read-only document tools through the browser before the Codex turn; use those results first. For new tool needs, prefer direct SuperLeaf MCP when available.'
+  }
+  if (mode === 'marker-only') {
+    return 'SuperLeaf direct MCP is disabled for this provider. Request SuperLeaf tools only by emitting the fallback marker format exactly.'
+  }
+  return 'SuperLeaf MCP is the primary tool channel. Prefer direct SuperLeaf MCP tools over fallback markers; the browser bridge executes those tools with the current SuperLeaf login context.'
 }
 
 function stringSetting(value: unknown): string {

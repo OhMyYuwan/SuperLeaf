@@ -1454,7 +1454,9 @@ def browser_codex_system_prompt() -> str:
             "SuperLeaf project documents, comments, selections, and edit proposals are not your local filesystem; access them through the SuperLeaf tools listed in this prompt.",
             "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
             (
-                "If you need one SuperLeaf tool, reply with exactly one marker and no prose: "
+                "If native MCP/function tools are available, call the SuperLeaf tool directly. "
+                "Only if no direct tool channel is available, request one SuperLeaf tool by replying "
+                "with exactly one marker and no prose: "
                 '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>. '
                 "Replace name and arguments as needed."
             ),

@@ -76,6 +76,7 @@ def create_provider(
         codex_sandbox=body.codex_sandbox,
         codex_approval_policy=body.codex_approval_policy,
         codex_prompt_mode=body.codex_prompt_mode,
+        codex_tool_mode=body.codex_tool_mode,
     )
     return _to_out(p)
 
@@ -104,6 +105,7 @@ def update_provider(
             codex_sandbox=body.codex_sandbox,
             codex_approval_policy=body.codex_approval_policy,
             codex_prompt_mode=body.codex_prompt_mode,
+            codex_tool_mode=body.codex_tool_mode,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

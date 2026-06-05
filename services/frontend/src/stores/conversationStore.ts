@@ -27,7 +27,12 @@ import {
 } from '../services/nanobotBrowserClient'
 import {
   createBrowserCodexSession,
+  codexToolMode,
+  pollBrowserCodexMcpToolRequests,
+  registerBrowserCodexMcpContext,
   runBrowserCodexTurn,
+  submitBrowserCodexMcpToolResult,
+  type BrowserCodexMcpToolRequest,
 } from '../services/codexBrowserClient'
 import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
 import { useAnnotationStore } from './annotationStore'
@@ -726,7 +731,41 @@ async function sendViaBrowserCodex(args: {
   const finalParts: string[] = []
   let lastError = ''
   let lastCodexSessionId = session.codex_session_id || ''
-  const preflightToolCalls = inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
+  let stopMcpBridge = () => {}
+  const toolMode = codexToolMode(prepared)
+  const preflightToolCalls = toolMode === 'browser-preflight'
+    ? inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
+    : []
+
+  if (toolMode !== 'marker-only') {
+    try {
+      const mcpContext = await registerBrowserCodexMcpContext({
+        endpoint: prepared.endpoint,
+        prepared,
+      })
+      args.markActivity()
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'native.agent.tool',
+        data: {
+          name: 'superleaf_mcp_context',
+          tool_kind: 'superleaf_mcp',
+          failed: false,
+        },
+      })
+      stopMcpBridge = startBrowserCodexMcpBridge({
+        endpoint: prepared.endpoint,
+        contextId: mcpContext.context_id,
+        conversationId: args.conversationId,
+        runId: prepared.run_id,
+        parentSignal: args.signal,
+        markActivity: args.markActivity,
+        set: args.set,
+      })
+    } catch {
+      // Keep marker/preflight fallback if the downloaded Local Host is old or
+      // the MCP context endpoint is temporarily absent.
+    }
+  }
 
   for (const toolCall of preflightToolCalls) {
     const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
@@ -744,72 +783,190 @@ async function sendViaBrowserCodex(args: {
     toolResults.push(result)
   }
 
-  while (true) {
-    let streamedRoundContent = ''
-    const result = await runBrowserCodexTurn({
-      endpoint: prepared.endpoint,
-      sessionId: session.id,
-      prepared,
-      toolResults,
-      signal: args.signal,
-      onActivity: args.markActivity,
-      onDelta: (delta) => {
-        streamedRoundContent += delta
-        handleMessageEvent(args.set, args.conversationId, {
-          event: 'ylw.msg.delta',
-          data: { delta },
-        })
-      },
-    })
-    lastError = result.error
-    lastCodexSessionId = result.codexSessionId || lastCodexSessionId
+  const maxToolRounds = 8
+  try {
+    for (let round = 0; round < maxToolRounds; round += 1) {
+      let streamedRoundContent = ''
+      const result = await runBrowserCodexTurn({
+        endpoint: prepared.endpoint,
+        sessionId: session.id,
+        prepared,
+        toolResults,
+        signal: args.signal,
+        onActivity: args.markActivity,
+        onDelta: (delta) => {
+          streamedRoundContent += delta
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'ylw.msg.delta',
+            data: { delta },
+          })
+        },
+      })
+      lastError = result.error
+      lastCodexSessionId = result.codexSessionId || lastCodexSessionId
 
-    if (result.toolCalls.length > 0) {
-      args.set((s) => ({
-        streamingDelta: { ...s.streamingDelta, [args.conversationId]: '' },
-      }))
-    }
-
-    if (result.toolCalls.length === 0) {
-      const content = result.output.trim() || finalParts.join('').trim() || '(Codex 没有返回可见文本。)'
-      if (content && !streamedRoundContent.trim()) {
-        handleMessageEvent(args.set, args.conversationId, {
-          event: 'ylw.msg.delta',
-          data: { delta: content },
-        })
+      if (result.toolCalls.length > 0) {
+        args.set((s) => ({
+          streamingDelta: { ...s.streamingDelta, [args.conversationId]: '' },
+        }))
       }
-      const finished = await conversationApi.finishBrowserCodex(args.conversationId, {
-        run_id: prepared.run_id,
-        content,
-        error: lastError,
-        codex_session_id: lastCodexSessionId,
-      })
-      handleMessageEvent(args.set, args.conversationId, {
-        event: 'ylw.msg.finished',
-        data: finished,
-      })
-      return
+
+      if (result.toolCalls.length === 0) {
+        const content = result.output.trim() || finalParts.join('').trim() || '(Codex 没有返回可见文本。)'
+        if (content && !streamedRoundContent.trim()) {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'ylw.msg.delta',
+            data: { delta: content },
+          })
+        }
+        const finished = await conversationApi.finishBrowserCodex(args.conversationId, {
+          run_id: prepared.run_id,
+          content,
+          error: lastError,
+          codex_session_id: lastCodexSessionId,
+        })
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'ylw.msg.finished',
+          data: finished,
+        })
+        return
+      }
+
+      if (result.output.trim()) {
+        finalParts.push(result.output.trim())
+      }
+      for (const toolCall of result.toolCalls) {
+        const toolResult = await conversationApi.executeBrowserCodexTool(args.conversationId, {
+          run_id: prepared.run_id,
+          document_id: prepared.document_id,
+          range_start: prepared.range_start,
+          range_end: prepared.range_end,
+          inputs: prepared.inputs,
+          tool_call: toolCall,
+        })
+        args.markActivity()
+        for (const evt of toolResult.events) {
+          handleMessageEvent(args.set, args.conversationId, evt)
+        }
+        toolResults.push(toolResult)
+      }
     }
 
-    if (result.output.trim()) {
-      finalParts.push(result.output.trim())
-    }
-    for (const toolCall of result.toolCalls) {
-      const toolResult = await conversationApi.executeBrowserCodexTool(args.conversationId, {
-        run_id: prepared.run_id,
-        document_id: prepared.document_id,
-        range_start: prepared.range_start,
-        range_end: prepared.range_end,
-        inputs: prepared.inputs,
-        tool_call: toolCall,
-      })
-      args.markActivity()
-      for (const evt of toolResult.events) {
-        handleMessageEvent(args.set, args.conversationId, evt)
-      }
-      toolResults.push(toolResult)
-    }
+    throw new Error('Codex 工具调用轮次过多，已停止以避免无限循环')
+  } finally {
+    stopMcpBridge()
   }
+}
+
+function startBrowserCodexMcpBridge(args: {
+  endpoint: string
+  contextId: string
+  conversationId: string
+  runId: string
+  parentSignal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): () => void {
+  const ctl = new AbortController()
+  const stop = () => ctl.abort('stopped')
+  if (args.parentSignal.aborted) stop()
+  else args.parentSignal.addEventListener('abort', stop, { once: true })
+
+  void (async () => {
+    while (!ctl.signal.aborted) {
+      let requests: BrowserCodexMcpToolRequest[] = []
+      try {
+        requests = await pollBrowserCodexMcpToolRequests({
+          endpoint: args.endpoint,
+          contextId: args.contextId,
+          signal: ctl.signal,
+        })
+      } catch (err) {
+        if (ctl.signal.aborted) break
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'native.agent.tool',
+          data: {
+            name: 'superleaf_mcp_poll',
+            tool_kind: 'superleaf_mcp',
+            failed: true,
+          },
+        })
+        await sleep(800)
+        continue
+      }
+      for (const request of requests) {
+        await executeBrowserCodexMcpRequest({
+          ...args,
+          request,
+          signal: ctl.signal,
+        })
+      }
+    }
+  })()
+
+  return () => {
+    args.parentSignal.removeEventListener('abort', stop)
+    stop()
+  }
+}
+
+async function executeBrowserCodexMcpRequest(args: {
+  endpoint: string
+  conversationId: string
+  runId: string
+  request: BrowserCodexMcpToolRequest
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}) {
+  const toolCall: NanobotToolCall = {
+    id: args.request.id,
+    type: 'function',
+    function: {
+      name: args.request.name,
+      arguments: JSON.stringify(args.request.arguments ?? {}),
+    },
+  }
+  try {
+    const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
+      run_id: args.runId,
+      document_id: args.request.document_id,
+      range_start: args.request.range_start,
+      range_end: args.request.range_end,
+      inputs: args.request.inputs,
+      tool_call: toolCall,
+    })
+    args.markActivity()
+    for (const evt of result.events) {
+      handleMessageEvent(args.set, args.conversationId, evt)
+    }
+    await submitBrowserCodexMcpToolResult({
+      endpoint: args.endpoint,
+      requestId: args.request.id,
+      content: result.content,
+      failed: result.failed,
+      name: result.name || args.request.name,
+      toolKind: result.tool_kind,
+      events: result.events,
+      signal: args.signal,
+    })
+  } catch (err) {
+    if (args.signal.aborted) return
+    await submitBrowserCodexMcpToolResult({
+      endpoint: args.endpoint,
+      requestId: args.request.id,
+      content: err instanceof Error ? err.message : String(err),
+      failed: true,
+      name: args.request.name,
+      toolKind: 'superleaf_mcp',
+      events: [],
+      signal: args.signal,
+    }).catch(() => undefined)
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 const PREFLIGHT_READ_TOOL_NAMES = new Set([
@@ -832,12 +989,13 @@ function inferBrowserNanobotPreflightToolCalls(
   const text = content.trim()
   if (!text) return []
   const explicitToolNames = orderedExplicitReadToolNames(text)
-  const wantsTool = explicitToolNames.length > 0 || hasExplicitSuperLeafToolCue(text)
-  if (!wantsTool) return []
-
+  const naturalToolNames = inferNaturalReadToolNames(text)
   const requested = explicitToolNames.length > 0
     ? explicitToolNames
-    : inferNaturalReadToolNames(text)
+    : naturalToolNames.length > 0 || hasExplicitSuperLeafToolCue(text)
+      ? naturalToolNames
+      : []
+  if (requested.length === 0) return []
   return requested
     .map((name) => buildBrowserNanobotPreflightToolCall(name, text, prepared))
     .filter((call): call is NanobotToolCall => Boolean(call))
@@ -950,8 +1108,8 @@ function inferGrepPattern(text: string): string {
 
 function addGrepTerm(terms: Set<string>, raw: string): void {
   const term = raw
-    .replace(/^(?:中|里|位置|出现|出现位置|的位置|的出现|内容|关键词)\s*/u, '')
-    .replace(/\s*(?:中|里|位置|出现|出现位置|的位置|的出现|内容|关键词)$/u, '')
+    .replace(/^(?:出现位置|的位置|的出现|中|里|位置|出现|内容|关键词)\s*/u, '')
+    .replace(/\s*(?:出现位置|的位置|的出现|中|里|位置|出现|内容|关键词)$/u, '')
     .trim()
   if (!term || term.length > 80) return
   if (/^(?:当前|项目|文档|所有文档|使用|调用|工具|SuperLeaf)$/iu.test(term)) return

@@ -66,6 +66,7 @@ class ProviderService:
         codex_sandbox: str | None = None,
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
+        codex_tool_mode: str | None = None,
     ) -> Provider:
         meta: dict[str, Any] = {}
         if kind == "nanobot":
@@ -81,6 +82,7 @@ class ProviderService:
                     codex_sandbox=codex_sandbox,
                     codex_approval_policy=codex_approval_policy,
                     codex_prompt_mode=codex_prompt_mode,
+                    codex_tool_mode=codex_tool_mode,
                 )
             )
         p = Provider(
@@ -116,6 +118,7 @@ class ProviderService:
         codex_sandbox: str | None = None,
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
+        codex_tool_mode: str | None = None,
     ) -> Provider | None:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
@@ -152,6 +155,7 @@ class ProviderService:
             codex_sandbox=codex_sandbox,
             codex_approval_policy=codex_approval_policy,
             codex_prompt_mode=codex_prompt_mode,
+            codex_tool_mode=codex_tool_mode,
             include_workspace=False,
         )
         if codex_patch:
@@ -658,6 +662,7 @@ def _codex_meta_patch(
     codex_sandbox: str | None = None,
     codex_approval_policy: str | None = None,
     codex_prompt_mode: str | None = None,
+    codex_tool_mode: str | None = None,
     include_workspace: bool = True,
 ) -> dict[str, Any]:
     if not include_workspace and all(
@@ -670,6 +675,7 @@ def _codex_meta_patch(
             codex_sandbox,
             codex_approval_policy,
             codex_prompt_mode,
+            codex_tool_mode,
         )
     ):
         return {}
@@ -693,11 +699,14 @@ def _codex_meta_patch(
         patch["codex_approval_policy"] = _choice(codex_approval_policy, {"never", "untrusted", "on-request", "on-failure"}, "never")
     if codex_prompt_mode is not None:
         patch["codex_prompt_mode"] = _choice(codex_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
+    if codex_tool_mode is not None:
+        patch["codex_tool_mode"] = _choice(codex_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
     patch.setdefault("codex_effort", "low")
     patch.setdefault("codex_summary", "none")
     patch.setdefault("codex_sandbox", "read-only")
     patch.setdefault("codex_approval_policy", "never")
     patch.setdefault("codex_prompt_mode", "fast-edit")
+    patch.setdefault("codex_tool_mode", "mcp-first")
     return patch
 
 

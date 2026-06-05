@@ -15,6 +15,7 @@ nav_order: 2
 - [原生 Agent](./agents/README.html)：后端原生 Agent、凭证、模型、AgentSkill。
 - [Skill 使用与市场](./agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill、项目化 Skill 开发。
 - [MCP 使用与市场](./agents/mcps.html)：拥有的 MCP、自定义 MCP、连通性和功能性检查。
+- [SuperLeaf MCP 构建方案](./superleaf-mcp-architecture-plan.html)：本地 Agent、Browser Bridge、Tool Kernel、Remote MCP 的大版本迭代计划。
 - [Provider 配置](./providers/README.html)：外部模型服务的接入方式。
   - [Nanobot](./providers/nanobot.html) — 已完成，推荐本地单用户首选
   - [Dify](./providers/dify.html)

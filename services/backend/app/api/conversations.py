@@ -352,6 +352,7 @@ def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
         "sandbox": _settings_choice(meta.get("codex_sandbox"), {"read-only", "workspace-write", "danger-full-access"}, "read-only"),
         "approval_policy": _settings_choice(meta.get("codex_approval_policy"), {"never", "untrusted", "on-request", "on-failure"}, "never"),
         "prompt_mode": _settings_choice(meta.get("codex_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
+        "tool_mode": _settings_choice(meta.get("codex_tool_mode"), {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first"),
     }
 
 

@@ -4,6 +4,7 @@ import type {
   NanobotToolDefinition,
   ProviderModel,
 } from './backendApi'
+import { formatSuperleafToolDefinitions } from './superleafTools'
 
 const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
 const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
@@ -154,7 +155,7 @@ function compactNanobotMessages(
     sections.push(`[SUPERLEAF INSTRUCTIONS]\n${system.join('\n\n')}`)
   }
   if (tools.length > 0) {
-    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatToolDefinitions(tools)}`)
+    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatSuperleafToolDefinitions(tools)}`)
   }
   if (lastUser?.content) {
     sections.push(`[CURRENT USER MESSAGE]\n${lastUser.content}`)
@@ -173,26 +174,6 @@ function compactNanobotMessages(
   const last = messages[messages.length - 1]
   if (!last) return []
   return [{ role: 'user', content: last.content ?? '' }]
-}
-
-function formatToolDefinitions(tools: NanobotToolDefinition[]): string {
-  const rendered = tools.map((tool) => {
-    const fn = tool.function
-    return [
-      `- ${fn.name}`,
-      fn.description ? `  description: ${fn.description}` : '',
-      `  arguments_schema: ${JSON.stringify(fn.parameters ?? { type: 'object', properties: {} })}`,
-    ].filter(Boolean).join('\n')
-  })
-  return [
-    'These tools are available through SuperLeaf backend authorization even if this API channel cannot call OpenAI tools natively.',
-    'Never say these tools are not mounted or unavailable.',
-    'Do not use your own local filesystem or shell as a substitute for these tools.',
-    'To request one tool, reply with exactly one marker and no prose:',
-    '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>',
-    'Available schemas:',
-    ...rendered,
-  ].join('\n')
 }
 
 function toolCallNameMap(messages: NanobotChatMessage[]): Map<string, string> {

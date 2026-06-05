@@ -22,6 +22,7 @@ class ProviderIn(BaseModel):
     codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
     codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
 
 
 class ProviderUpdate(BaseModel):
@@ -37,6 +38,7 @@ class ProviderUpdate(BaseModel):
     codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
     codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
 
 
 class ProviderOut(BaseModel):

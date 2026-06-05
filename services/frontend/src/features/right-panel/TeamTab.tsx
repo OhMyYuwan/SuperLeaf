@@ -692,6 +692,7 @@ function ProviderBlock({
       {provider.status_detail && provider.status === 'error' && (
         <div className="detail error">{provider.status_detail}</div>
       )}
+      {provider.kind === 'codex-local' && <CodexMcpStatus provider={provider} />}
 
       {editingProvider && (
         <form className="provider-edit-form" onSubmit={handleProviderUpdate}>
@@ -806,6 +807,37 @@ function ProviderBlock({
       )}
       {provider.kind === 'native' && modelError && <div className="form-error">{modelError}</div>}
       {provider.kind === 'native' && nativeError && <div className="form-error">{nativeError}</div>}
+    </div>
+  )
+}
+
+function CodexMcpStatus({ provider }: { provider: Provider }) {
+  const health = objectMeta(provider.meta, 'codex_health')
+  const toolMode = enumMeta(provider.meta, 'codex_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first')
+  const bound = booleanRecordValue(health, 'codex_mcp_bound') || booleanRecordValue(health, 'codex_auto_mcp')
+  const connected = booleanRecordValue(health, 'codex_app_server_connected')
+  const mcpUrl = stringRecordValue(health, 'superleaf_mcp_url')
+  const toolCount = numberRecordValue(health, 'superleaf_mcp_tool_count')
+  const contexts = numberRecordValue(health, 'mcp_contexts')
+  const pending = numberRecordValue(health, 'mcp_pending_calls')
+  const trust = stringRecordValue(health, 'codex_mcp_trust_level') || 'trusted'
+  const statusTone = bound ? 'ok' : 'warn'
+  return (
+    <div className={`codex-mcp-status ${statusTone}`}>
+      <div className="codex-mcp-status-title">
+        {bound ? <CheckCircle2 size={12} /> : <CircleAlert size={12} />}
+        <strong>SuperLeaf MCP</strong>
+        <span className={`native-pill ${bound ? 'ok' : 'neutral'}`}>{bound ? 'bound' : 'not bound'}</span>
+        <span className="native-pill neutral">{toolMode}</span>
+      </div>
+      <div className="codex-mcp-status-grid">
+        <span>app-server: {connected ? 'connected' : 'idle'}</span>
+        <span>trust: {trust}</span>
+        <span>tools: {toolCount || '-'}</span>
+        <span>contexts: {contexts}</span>
+        <span>pending: {pending}</span>
+      </div>
+      {mcpUrl && <div className="codex-mcp-url" title={mcpUrl}>{mcpUrl}</div>}
     </div>
   )
 }
@@ -3807,6 +3839,7 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_sandbox: 'read-only',
   codex_approval_policy: 'never',
   codex_prompt_mode: 'fast-edit',
+  codex_tool_mode: 'mcp-first',
 } satisfies Partial<ProviderDraft>
 
 type CodexSettingsDraft = Pick<
@@ -3818,6 +3851,7 @@ type CodexSettingsDraft = Pick<
   | 'codex_sandbox'
   | 'codex_approval_policy'
   | 'codex_prompt_mode'
+  | 'codex_tool_mode'
 >
 
 function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
@@ -3830,6 +3864,7 @@ function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
     codex_sandbox: enumMeta(provider.meta, 'codex_sandbox', ['read-only', 'workspace-write', 'danger-full-access'], 'read-only') as ProviderDraft['codex_sandbox'],
     codex_approval_policy: enumMeta(provider.meta, 'codex_approval_policy', ['never', 'untrusted', 'on-request', 'on-failure'], 'never') as ProviderDraft['codex_approval_policy'],
     codex_prompt_mode: enumMeta(provider.meta, 'codex_prompt_mode', ['fast-edit', 'full-agent'], 'fast-edit') as ProviderDraft['codex_prompt_mode'],
+    codex_tool_mode: enumMeta(provider.meta, 'codex_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first') as ProviderDraft['codex_tool_mode'],
   }
 }
 
@@ -3842,6 +3877,7 @@ function codexSettingsPatch(source: Partial<CodexSettingsDraft>): Partial<Provid
     codex_sandbox: source.codex_sandbox ?? 'read-only',
     codex_approval_policy: source.codex_approval_policy ?? 'never',
     codex_prompt_mode: source.codex_prompt_mode ?? 'fast-edit',
+    codex_tool_mode: source.codex_tool_mode ?? 'mcp-first',
   }
 }
 
@@ -3894,6 +3930,20 @@ function CodexSettingsFields({
           </select>
         </label>
       </div>
+      <label className="full">
+        <span>Tool Mode</span>
+        <select
+          value={draft.codex_tool_mode ?? 'mcp-first'}
+          onChange={(event) => onChange({ codex_tool_mode: event.target.value as ProviderDraft['codex_tool_mode'] })}
+        >
+          <option value="mcp-first">MCP first</option>
+          <option value="browser-preflight">Browser preflight first</option>
+          <option value="marker-only">Marker fallback only</option>
+        </select>
+        <small>
+          MCP first 会把 SuperLeaf /mcp 绑定给本机 Codex；Browser preflight 会先由浏览器执行明显的只读工具。
+        </small>
+      </label>
       <div className="form-row">
         <label>
           <span>Reasoning</span>
@@ -3960,6 +4010,25 @@ function CodexSettingsFields({
 function stringMeta(meta: Record<string, unknown>, key: string): string {
   const value = meta[key]
   return typeof value === 'string' ? value : ''
+}
+
+function objectMeta(meta: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = meta[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function stringRecordValue(record: Record<string, unknown>, key: string): string {
+  const value = record[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function numberRecordValue(record: Record<string, unknown>, key: string): number {
+  const value = record[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function booleanRecordValue(record: Record<string, unknown>, key: string): boolean {
+  return record[key] === true
 }
 
 function codexModelOptionLabel(model: ProviderModel): string {

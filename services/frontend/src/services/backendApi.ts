@@ -1121,6 +1121,21 @@ export interface CompileResult {
   pdf_bytes: number
 }
 
+export interface CompileSyncToPdfRequest {
+  document_id: string
+  offset: number
+}
+
+export interface CompileSyncToPdfResult {
+  page: number
+  x: number
+  y: number
+  width: number | null
+  height: number | null
+  line: number
+  column: number
+}
+
 export interface CompileSettings {
   main_doc_id: string
   compiler: string
@@ -1134,6 +1149,11 @@ export const compileApi = {
     http<CompileResult>('/api/compile', {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
+    }),
+  syncToPdf: (body: CompileSyncToPdfRequest) =>
+    http<CompileSyncToPdfResult>('/api/compile/sync-to-pdf', {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
   pdfUrl: (projectId: string) => `${BASE}/api/projects/${projectId}/compile.pdf`,
   getLog: async () => {

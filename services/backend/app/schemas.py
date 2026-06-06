@@ -1025,6 +1025,21 @@ class CompileOut(BaseModel):
     pdf_bytes: int
 
 
+class CompileSyncToPdfIn(BaseModel):
+    document_id: str
+    offset: int
+
+
+class CompileSyncToPdfOut(BaseModel):
+    page: int
+    x: float
+    y: float
+    width: float | None = None
+    height: float | None = None
+    line: int
+    column: int
+
+
 class ProjectCompileSettingsIn(BaseModel):
     main_doc_id: str | None = None
     compiler: str | None = None

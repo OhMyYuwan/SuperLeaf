@@ -15,14 +15,21 @@ import type { Document } from '../../types/document'
 import type { ActivePreviewFile } from '../../stores/filesystemStore'
 import { MarkdownPreview, LatexPreview } from '../preview'
 import type { SourceJump } from '../../services/previewSourceMap'
+import type { PdfSourceSyncRequest } from '../preview/LatexPreview'
 
 interface PreviewColumnProps {
   doc: Document | null
   previewFile?: ActivePreviewFile | null
   onSourceJump?: (jump: SourceJump) => void
+  syncToPdfRequest?: PdfSourceSyncRequest | null
 }
 
-export function PreviewColumn({ doc, previewFile, onSourceJump }: PreviewColumnProps) {
+export function PreviewColumn({
+  doc,
+  previewFile,
+  onSourceJump,
+  syncToPdfRequest,
+}: PreviewColumnProps) {
   const markdownPreviewRef = useRef<HTMLDivElement | null>(null)
 
   if (previewFile) {
@@ -46,7 +53,12 @@ export function PreviewColumn({ doc, previewFile, onSourceJump }: PreviewColumnP
           <Wand2 size={16} /> 预览
         </div>
         <div className="preview-box">
-          <LatexPreview documentId={doc.id} source={doc.content} onSourceJump={onSourceJump} />
+          <LatexPreview
+            documentId={doc.id}
+            source={doc.content}
+            onSourceJump={onSourceJump}
+            syncToPdfRequest={syncToPdfRequest}
+          />
         </div>
       </div>
     )

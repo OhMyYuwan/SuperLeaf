@@ -55,6 +55,40 @@ export function sourceJumpFromPreviewText(
   return null
 }
 
+export function previewTextCandidatesNearOffset(source: string, offset: number): string[] {
+  if (!source.trim()) return []
+
+  const safeOffset = Math.max(0, Math.min(offset, source.length))
+  const lines = source.split(/\r?\n/)
+  const lineStarts: number[] = []
+  let cursor = 0
+  for (const line of lines) {
+    lineStarts.push(cursor)
+    cursor += line.length + 1
+  }
+
+  const lineIndex = Math.max(
+    0,
+    lineStarts.findIndex((start, index) => {
+      const next = lineStarts[index + 1] ?? Number.POSITIVE_INFINITY
+      return safeOffset >= start && safeOffset < next
+    }),
+  )
+
+  const currentLine = cleanLatexSourceForPreview(lines[lineIndex] ?? '')
+  const paragraph = cleanLatexSourceForPreview(collectSourceParagraph(lines, lineIndex))
+  const candidates = [
+    currentLine,
+    ...windowedWordCandidates(currentLine),
+    paragraph,
+    ...windowedWordCandidates(paragraph),
+  ]
+
+  return Array.from(new Set(candidates.map(normalizeWhitespace))).filter(
+    (candidate) => candidate.length >= 3,
+  )
+}
+
 function getLookupCandidates(rawText: string | null | undefined): string[] {
   const text = (rawText ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return []
@@ -65,6 +99,48 @@ function getLookupCandidates(rawText: string | null | undefined): string[] {
     .filter((word) => word.length >= 3)
 
   return Array.from(new Set([text, ...words])).filter((item) => item.length >= 2)
+}
+
+function collectSourceParagraph(lines: string[], lineIndex: number): string {
+  let start = lineIndex
+  while (start > 0 && lines[start - 1]?.trim()) start -= 1
+
+  let end = lineIndex
+  while (end < lines.length - 1 && lines[end + 1]?.trim()) end += 1
+
+  return lines.slice(start, end + 1).join(' ')
+}
+
+function cleanLatexSourceForPreview(value: string): string {
+  return normalizeWhitespace(
+    value
+      .replace(/(^|[^\\])%.*/g, '$1')
+      .replace(/\\(?:section|subsection|subsubsection|paragraph|subparagraph|caption|title|author)\*?\{([^{}]*)\}/g, '$1')
+      .replace(/\\(?:textbf|textit|emph|underline|texttt|textrm|textsf)\{([^{}]*)\}/g, '$1')
+      .replace(/\\(?:cite|citep|citet|ref|eqref|label|url|href)(?:\[[^\]]*])*\{[^{}]*\}/g, ' ')
+      .replace(/\\[a-zA-Z@]+(?:\*|\[[^\]]*])*/g, ' ')
+      .replace(/[{}$&_^~#]/g, ' ')
+  )
+}
+
+function windowedWordCandidates(value: string): string[] {
+  const words = value
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter((word) => word.length >= 3)
+
+  const candidates: string[] = []
+  for (const size of [8, 6, 4, 3]) {
+    if (words.length < size) continue
+    const start = Math.max(0, Math.floor((words.length - size) / 2))
+    candidates.push(words.slice(start, start + size).join(' '))
+    candidates.push(words.slice(0, size).join(' '))
+  }
+  return candidates
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
 }
 
 function findNormalized(source: string, candidate: string): SourceJump | null {

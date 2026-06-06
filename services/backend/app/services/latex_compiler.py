@@ -33,7 +33,6 @@ from sqlalchemy.orm import Session
 
 from ..models import Doc, FileBlob, Folder, Project
 
-
 # All known TeX Live / MacTeX binaries we'll try to detect.
 KNOWN_COMPILERS = ("latexmk", "pdflatex", "xelatex", "lualatex")
 GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
@@ -48,10 +47,13 @@ GRAPHICSPATH_ENTRY_RE = re.compile(r"\{(?P<path>[^{}]*)\}")
 class CompileResult:
     ok: bool
     pdf: bytes | None
+    synctex: bytes | None
     log: str
     error: str
     compiler: str
     duration_ms: int
+    source_paths: dict[str, str] = field(default_factory=dict)
+    main_rel_path: str = ""
     started_at: float = field(default_factory=time.time)
 
 
@@ -117,6 +119,7 @@ class LatexCompilerService:
             result = CompileResult(
                 ok=False,
                 pdf=None,
+                synctex=None,
                 log="",
                 error="未检测到 LaTeX 编译器。请安装 MacTeX 或 TeX Live。",
                 compiler="",
@@ -130,6 +133,7 @@ class LatexCompilerService:
             result = CompileResult(
                 ok=False,
                 pdf=None,
+                synctex=None,
                 log="",
                 error=f"请求的编译器 {chosen_compiler} 在系统上不可用。",
                 compiler=chosen_compiler,
@@ -148,6 +152,7 @@ class LatexCompilerService:
             result = CompileResult(
                 ok=False,
                 pdf=None,
+                synctex=None,
                 log="",
                 error="项目中找不到可编译的 .tex 文件。",
                 compiler=chosen_compiler,
@@ -159,7 +164,7 @@ class LatexCompilerService:
         # Write project tree to temp dir and compile.
         with tempfile.TemporaryDirectory(prefix="ylw-tex-") as tmp:
             tmpdir = Path(tmp)
-            main_rel_path, placeholder_warnings = self._write_project_tree(
+            main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
                 db, project_id, tmpdir, main_doc
             )
 
@@ -167,6 +172,7 @@ class LatexCompilerService:
                 tmpdir=tmpdir,
                 main_rel_path=main_rel_path,
                 compiler=chosen_compiler,
+                source_paths=source_paths,
             )
 
         result.duration_ms = int((time.time() - started) * 1000)
@@ -212,7 +218,7 @@ class LatexCompilerService:
 
     def _write_project_tree(
         self, db: Session, project_id: str, tmpdir: Path, main_doc: Doc
-    ) -> tuple[Path, list[str]]:
+    ) -> tuple[Path, list[str], dict[str, str]]:
         """Write all docs + files of the project into tmpdir, preserving folder
         structure. Returns the relative path of the main doc within tmpdir."""
 
@@ -256,6 +262,7 @@ class LatexCompilerService:
 
         # Write all docs (text).
         main_rel_path = Path(main_doc.name)
+        doc_rel_paths: dict[str, Path] = {}
         for d in docs:
             folder_path = resolve_folder_path(d.folder_id)
             file_path = folder_path / d.name
@@ -270,6 +277,7 @@ class LatexCompilerService:
                     warnings=placeholder_warnings,
                 )
             file_path.write_text(content, encoding="utf-8")
+            doc_rel_paths[d.id] = file_path.relative_to(tmpdir)
             if d.id == main_doc.id:
                 main_rel_path = file_path.relative_to(tmpdir)
 
@@ -280,7 +288,20 @@ class LatexCompilerService:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(f.blob or b"")
 
-        return main_rel_path, placeholder_warnings
+        main_parent = main_rel_path.parent
+        source_paths = {
+            doc_id: self._relative_posix_path(rel_path, main_parent)
+            for doc_id, rel_path in doc_rel_paths.items()
+        }
+
+        return main_rel_path, placeholder_warnings, source_paths
+
+    @staticmethod
+    def _relative_posix_path(path: Path, base: Path) -> str:
+        base_posix = base.as_posix()
+        if base_posix in ("", "."):
+            return posixpath.normpath(path.as_posix())
+        return posixpath.normpath(posixpath.relpath(path.as_posix(), base_posix))
 
     def _replace_missing_graphics(
         self,
@@ -386,7 +407,12 @@ class LatexCompilerService:
         return "".join(replacements.get(ch, ch) for ch in text)
 
     async def _run_compiler(
-        self, *, tmpdir: Path, main_rel_path: Path, compiler: str
+        self,
+        *,
+        tmpdir: Path,
+        main_rel_path: Path,
+        compiler: str,
+        source_paths: dict[str, str],
     ) -> CompileResult:
         """Run the chosen compiler and collect output."""
         main_stem = main_rel_path.stem
@@ -399,6 +425,7 @@ class LatexCompilerService:
                 [
                     "latexmk",
                     "-pdf",
+                    "-synctex=1",
                     "-interaction=nonstopmode",
                     "-halt-on-error",
                     "-file-line-error",
@@ -411,6 +438,7 @@ class LatexCompilerService:
             # two more LaTeX passes to resolve citations and references.
             base = [
                 compiler,
+                "-synctex=1",
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 "-file-line-error",
@@ -425,6 +453,7 @@ class LatexCompilerService:
                 return CompileResult(
                     ok=False,
                     pdf=None,
+                    synctex=None,
                     log="\n\n".join(all_log),
                     error=f"启动编译器失败：{proc_result[1]}",
                     compiler=compiler,
@@ -434,6 +463,7 @@ class LatexCompilerService:
                 return CompileResult(
                     ok=False,
                     pdf=None,
+                    synctex=None,
                     log="\n".join(all_log),
                     error="编译超时（120 秒）",
                     compiler=compiler,
@@ -454,6 +484,7 @@ class LatexCompilerService:
                     return CompileResult(
                         ok=False,
                         pdf=None,
+                        synctex=None,
                         log="\n\n".join(all_log),
                         error=f"启动 BibTeX 失败：{bib_result[1]}",
                         compiler=compiler,
@@ -463,6 +494,7 @@ class LatexCompilerService:
                     return CompileResult(
                         ok=False,
                         pdf=None,
+                        synctex=None,
                         log="\n".join(all_log),
                         error="BibTeX 超时（120 秒）",
                         compiler=compiler,
@@ -474,6 +506,7 @@ class LatexCompilerService:
                     return CompileResult(
                         ok=False,
                         pdf=None,
+                        synctex=None,
                         log=full_log[-20000:],
                         error=self._extract_first_error(full_log) or "BibTeX 运行失败。查看日志获取详情。",
                         compiler=compiler,
@@ -482,6 +515,7 @@ class LatexCompilerService:
 
             base = [
                 compiler,
+                "-synctex=1",
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 "-file-line-error",
@@ -501,13 +535,18 @@ class LatexCompilerService:
         pdf_path = working_dir / f"{main_stem}.pdf"
         if pdf_path.exists():
             pdf_bytes = pdf_path.read_bytes()
+            synctex_path = working_dir / f"{main_stem}.synctex.gz"
+            synctex_bytes = synctex_path.read_bytes() if synctex_path.exists() else None
             return CompileResult(
                 ok=True,
                 pdf=pdf_bytes,
+                synctex=synctex_bytes,
                 log=full_log[-20000:],  # cap log size
                 error="",
                 compiler=compiler,
                 duration_ms=0,
+                source_paths=source_paths,
+                main_rel_path=main_rel_path.as_posix(),
             )
 
         # Extract first error line from the log.
@@ -515,11 +554,111 @@ class LatexCompilerService:
         return CompileResult(
             ok=False,
             pdf=None,
+            synctex=None,
             log=full_log[-20000:],
             error=error_line or "编译失败，未生成 PDF。查看日志获取详情。",
             compiler=compiler,
             duration_ms=0,
         )
+
+    def sync_to_pdf(
+        self,
+        db: Session,
+        project_id: str,
+        document_id: str,
+        offset: int,
+    ) -> dict[str, int | float | None] | None:
+        cached = self._pdf_cache.get(project_id)
+        if cached is None or not cached.ok or cached.pdf is None or cached.synctex is None:
+            return None
+
+        doc = db.get(Doc, document_id)
+        if doc is None or doc.project_id != project_id:
+            return None
+
+        source_path = cached.source_paths.get(document_id)
+        if not source_path:
+            return None
+
+        line, column = self._line_column_from_offset(doc.content or "", offset)
+        with tempfile.TemporaryDirectory(prefix="ylw-synctex-") as tmp:
+            tmpdir = Path(tmp)
+            pdf_path = tmpdir / "output.pdf"
+            synctex_path = tmpdir / "output.synctex.gz"
+            pdf_path.write_bytes(cached.pdf)
+            synctex_path.write_bytes(cached.synctex)
+
+            # Some synctex versions resolve relative source paths against cwd.
+            source_file = tmpdir / source_path
+            source_file.parent.mkdir(parents=True, exist_ok=True)
+            source_file.write_text(doc.content or "", encoding="utf-8")
+
+            try:
+                proc = subprocess.run(
+                    [
+                        "synctex",
+                        "view",
+                        "-i",
+                        f"{line}:{column}:{source_path}",
+                        "-o",
+                        str(pdf_path),
+                    ],
+                    cwd=tmpdir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                return None
+
+        if proc.returncode != 0:
+            return None
+
+        parsed = self._parse_synctex_view_output(proc.stdout)
+        if parsed is None:
+            return None
+        parsed["line"] = line
+        parsed["column"] = column
+        return parsed
+
+    @staticmethod
+    def _line_column_from_offset(source: str, offset: int) -> tuple[int, int]:
+        safe_offset = max(0, min(offset, len(source)))
+        prefix = source[:safe_offset]
+        line = prefix.count("\n") + 1
+        last_newline = prefix.rfind("\n")
+        column = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
+        return line, column
+
+    @staticmethod
+    def _parse_synctex_view_output(output: str) -> dict[str, int | float | None] | None:
+        values: dict[str, float] = {}
+        for raw_line in output.splitlines():
+            if ":" not in raw_line:
+                continue
+            key, raw_value = raw_line.split(":", 1)
+            key = key.strip()
+            if key not in {"Page", "x", "y", "h", "v", "W", "H"}:
+                continue
+            try:
+                values[key] = float(raw_value.strip())
+            except ValueError:
+                continue
+
+        page = values.get("Page")
+        x = values.get("x", values.get("h"))
+        y = values.get("y", values.get("v"))
+        if page is None or x is None or y is None:
+            return None
+        return {
+            "page": int(page),
+            "x": x,
+            "y": y,
+            "width": values.get("W"),
+            "height": values.get("H"),
+        }
 
     @staticmethod
     def _extract_first_error(log: str) -> str:
@@ -550,7 +689,7 @@ class LatexCompilerService:
             return "missing", str(e)
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except ProcessLookupError:

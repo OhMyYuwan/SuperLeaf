@@ -89,6 +89,7 @@ export function LatexPreview({
   )
 
   const [numPages, setNumPages] = useState<number>(0)
+  const [currentPage, setCurrentPage] = useState<number>(1)
   const [showLog, setShowLog] = useState(false)
   const [showCompileSettings, setShowCompileSettings] = useState(false)
   const [pageWidth, setPageWidth] = useState(700)
@@ -267,6 +268,28 @@ export function LatexPreview({
     showPdfSyncMarker(location.page, xRatio, yRatio)
     setPdfSyncMessage(null)
     return true
+  }
+
+  function updateCurrentPdfPage(scroller: HTMLElement) {
+    const pages = Array.from(scroller.querySelectorAll<HTMLElement>('.latex-pdf-page-shell'))
+    if (pages.length === 0) return
+
+    const viewportTop = scroller.getBoundingClientRect().top
+    const anchorY = viewportTop + Math.min(96, scroller.clientHeight * 0.3)
+    let bestPage = 1
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (const page of pages) {
+      const rect = page.getBoundingClientRect()
+      const distance = Math.abs(rect.top - anchorY)
+      const pageNumber = Number.parseInt(page.dataset.pageNumber ?? '', 10)
+      if (Number.isFinite(pageNumber) && distance < bestDistance) {
+        bestDistance = distance
+        bestPage = pageNumber
+      }
+    }
+
+    setCurrentPage((page) => (page === bestPage ? page : bestPage))
   }
 
   useEffect(() => {
@@ -504,6 +527,9 @@ export function LatexPreview({
         </div>
 
         <div className="latex-preview-zoom">
+          <span className="latex-page-indicator" title="当前页 / 总页数">
+            {numPages > 0 ? `${currentPage} / ${numPages} 页` : '— / — 页'}
+          </span>
           <button
             className="small-btn"
             onClick={() => setToolbarZoom((z) => z - 0.1)}
@@ -572,6 +598,7 @@ export function LatexPreview({
         ref={pdfScrollRef}
         onScroll={(event) => {
           pdfScrollTopRef.current = event.currentTarget.scrollTop
+          updateCurrentPdfPage(event.currentTarget)
         }}
         onDoubleClick={handlePdfDoubleClick}
       >
@@ -591,7 +618,13 @@ export function LatexPreview({
             file={pdfFile}
             onLoadSuccess={({ numPages }) => {
               setNumPages(numPages)
+              setCurrentPage(numPages > 0 ? 1 : 0)
               restorePdfScrollSoon()
+              window.requestAnimationFrame(() => {
+                if (pdfScrollRef.current) {
+                  updateCurrentPdfPage(pdfScrollRef.current)
+                }
+              })
             }}
             onLoadError={(err) => console.error('PDF load error', err)}
             loading={<div className="latex-preview-empty">加载 PDF…</div>}

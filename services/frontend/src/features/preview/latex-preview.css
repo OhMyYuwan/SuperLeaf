@@ -147,6 +147,16 @@
   background: #f1f5f9;
 }
 
+.latex-page-indicator {
+  min-width: 62px;
+  padding: 0 6px;
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .latex-preview-download {
   display: inline-flex;
   align-items: center;

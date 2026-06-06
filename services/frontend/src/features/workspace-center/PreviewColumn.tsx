@@ -129,7 +129,7 @@ function FilePreview({ file }: { file: ActivePreviewFile }) {
     return (
       <iframe
         className="file-preview-pdf"
-        src={file.url}
+        src={pdfPreviewUrl(file.url)}
         title={file.name}
         style={{ width: '100%', height: '100%', border: 0 }}
       />
@@ -151,6 +151,11 @@ function guessMime(name: string): string {
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return `image/${ext === 'jpg' ? 'jpeg' : ext}`
   if (ext === 'pdf') return 'application/pdf'
   return 'application/octet-stream'
+}
+
+function pdfPreviewUrl(url: string): string {
+  const separator = url.includes('#') ? '&' : '#'
+  return `${url}${separator}navpanes=0&toolbar=0&view=FitH`
 }
 
 function exportMarkdownPreviewToPdf(doc: Document, previewElement: HTMLDivElement | null) {

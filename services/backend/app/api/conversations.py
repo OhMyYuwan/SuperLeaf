@@ -8,6 +8,7 @@ hitting Dify, and so the chat stays coherent if the Dify side resets.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from datetime import datetime
@@ -355,17 +356,27 @@ def _clip_prompt_text(value: str, limit: int) -> str:
     return f"{text[:limit]}\n[...trimmed {len(text) - limit} chars...]"
 
 
+def _superleaf_text_hash(value: str) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
     meta = provider.meta or {}
+    context_mode = _settings_choice(meta.get("codex_context_mode"), {"legacy-blocks", "lease"}, "legacy-blocks")
     return {
         "model": str(meta.get("codex_model") or "").strip(),
         "effort": _codex_effort_choice(meta.get("codex_effort")),
         "summary": _settings_choice(meta.get("codex_summary"), {"none", "auto", "concise", "detailed"}, "none"),
         "service_tier": str(meta.get("codex_service_tier") or "").strip(),
-        "sandbox": _settings_choice(meta.get("codex_sandbox"), {"read-only", "workspace-write", "danger-full-access"}, "read-only"),
-        "approval_policy": _settings_choice(meta.get("codex_approval_policy"), {"never", "untrusted", "on-request", "on-failure"}, "never"),
+        "sandbox": _settings_choice(meta.get("codex_sandbox"), {"read-only", "workspace-write", "danger-full-access"}, "danger-full-access"),
+        "approval_policy": _settings_choice(meta.get("codex_approval_policy"), {"never", "untrusted", "on-request", "on-failure"}, "on-request"),
         "prompt_mode": _settings_choice(meta.get("codex_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
         "tool_mode": _settings_choice(meta.get("codex_tool_mode"), {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first"),
+        "context_mode": context_mode,
+        "codex_context_mode": context_mode,
     }
 
 
@@ -927,16 +938,32 @@ def prepare_browser_codex_message(
     run_id = f"browser-codex-{uuid.uuid4().hex}"
     workspace_path = str((provider.meta or {}).get("workspace_path") or "").strip()
     doc = db.get(Doc, conv.document_id)
+    target_text = str(body.inputs.get("target_text") or "").strip()
+    context_mode = codex_settings["context_mode"]
+    prompt_policy = {
+        "context_mode": context_mode,
+        "boot_mode": "per-session" if context_mode == "lease" else "per-turn",
+        "inject_prompt_context": context_mode != "lease",
+        "tool_guide_mode": "fallback-only" if context_mode == "lease" else "always",
+    }
     superleaf_context = {
         "project_id": project.id,
         "conversation_id": conversation_id,
         "document_id": conv.document_id,
         "document_name": doc.name if doc is not None else "",
         "document_format": doc.format if doc is not None else "",
+        "doc_version": doc.updated_at.isoformat() if doc is not None and doc.updated_at is not None else "",
         "range_start": body.range_start or 0,
         "range_end": body.range_end or 0,
         "provider_id": provider.id,
         "provider_name": provider.name,
+        "context_mode": context_mode,
+        "prompt_policy": prompt_policy,
+        "selection_hash": _superleaf_text_hash(target_text),
+        "selection_preview": _clip_prompt_text(target_text, 240) if target_text else "",
+        "tool_surface": "codex-local",
+        "tool_manifest_version": "superleaf-tools@1",
+        "context_changed": "selection" if target_text else "turn",
     }
     return BrowserCodexPrepareOut(
         run_id=run_id,

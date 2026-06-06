@@ -775,6 +775,7 @@ async function sendViaBrowserCodex(args: {
   let lastError = ''
   let lastCodexSessionId = session.codex_session_id || ''
   let stopMcpBridge = () => {}
+  let mcpContextId = ''
   const toolMode = codexToolMode(prepared)
   const preflightToolCalls = toolMode === 'browser-preflight'
     ? inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
@@ -791,6 +792,19 @@ async function sendViaBrowserCodex(args: {
           rangeStart: prepared.range_start,
           rangeEnd: prepared.range_end,
           inputs: prepared.inputs,
+          contextMode: String(prepared.codex_settings?.context_mode || prepared.codex_settings?.codex_context_mode || ''),
+          promptPolicy: objectRecord(prepared.superleaf_context.prompt_policy),
+          providerId: prepared.provider_id,
+          providerName: String(prepared.superleaf_context.provider_name ?? ''),
+          documentName: String(prepared.superleaf_context.document_name ?? ''),
+          documentFormat: String(prepared.superleaf_context.document_format ?? ''),
+          selectionHash: String(prepared.superleaf_context.selection_hash ?? ''),
+          selectionPreview: String(prepared.superleaf_context.selection_preview ?? ''),
+          docVersion: String(prepared.superleaf_context.doc_version ?? ''),
+          toolSurface: 'codex-local',
+          toolManifestVersion: String(prepared.superleaf_context.tool_manifest_version ?? ''),
+          contextChanged: String(prepared.superleaf_context.context_changed ?? ''),
+          accessMode: prepared.codex_settings?.sandbox === 'read-only' ? 'read-only' : 'full',
         },
         parentSignal: args.signal,
         onActivity: args.markActivity,
@@ -838,12 +852,14 @@ async function sendViaBrowserCodex(args: {
           }),
       })
       args.markActivity()
+      mcpContextId = bridge.context.context_id
       handleMessageEvent(args.set, args.conversationId, {
         event: 'native.agent.tool',
         data: {
           name: 'superleaf_mcp_context',
           tool_kind: 'superleaf_mcp',
           failed: false,
+          context_id: mcpContextId,
         },
       })
       stopMcpBridge = bridge.stop
@@ -874,6 +890,7 @@ async function sendViaBrowserCodex(args: {
         endpoint: prepared.endpoint,
         sessionId: session.id,
         prepared,
+        contextId: mcpContextId,
         toolResults,
         signal: args.signal,
         onActivity: args.markActivity,
@@ -1262,6 +1279,10 @@ async function executeClaudeBrowserToolRequest(args: {
 function claudeToolMode(prepared: { claude_settings?: { tool_mode?: unknown } }): 'mcp-first' | 'browser-preflight' | 'marker-only' {
   const value = String(prepared.claude_settings?.tool_mode || 'mcp-first')
   return value === 'browser-preflight' || value === 'marker-only' ? value : 'mcp-first'
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 const PREFLIGHT_READ_TOOL_NAMES = new Set([

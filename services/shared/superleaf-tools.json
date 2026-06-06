@@ -5,6 +5,8 @@
     "mcp": [
       "Use these tools to access the active SuperLeaf project/document context.",
       "Read SuperLeaf documents through project_read_doc/project_grep instead of local files.",
+      "Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content.",
+      "Full access additionally allows propose_doc_edit and project_write_text_file; these are controlled SuperLeaf operations with history/proposal records.",
       "Use propose_doc_edit for paper edits and create_suggestion only when the user asks for an annotation/suggestion card."
     ]
   },
@@ -18,7 +20,7 @@
       "name": "SuperLeaf MCP Instructions",
       "description": "Operational guidance for local agents using SuperLeaf tools safely.",
       "mimeType": "text/plain",
-      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Use propose_doc_edit for normal paper edits because it creates a user-approved proposal. Use create_suggestion only when the user explicitly asks for an annotation, comment, or suggestion card. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
+      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content. Full access additionally allows propose_doc_edit and project_write_text_file; these are controlled SuperLeaf operations with history/proposal records. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
     },
     {
       "uri": "superleaf://tool-kernel/tools",
@@ -170,6 +172,63 @@
         },
         "required": [
           "doc_id"
+        ]
+      }
+    },
+    {
+      "name": "project_write_text_file",
+      "description": "Create a new text document in the current SuperLeaf project by relative path and write its full content. Intermediate folders are created automatically. The tool refuses to overwrite existing documents, files, or folders. Use this when the user explicitly asks to create, write, add, or generate a new project file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative project path, for example references/paper-style.md or examples/rule.txt."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full UTF-8 text content for the new file."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "tex",
+              "md",
+              "txt"
+            ],
+            "description": "Optional stored document format. If omitted, inferred from the filename extension when supported, otherwise txt."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "project_create_text_file",
+      "description": "Alias of project_write_text_file. Create a new text document in the current SuperLeaf project by relative path. The tool refuses to overwrite existing documents, files, or folders.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "tex",
+              "md",
+              "txt"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "content"
         ]
       }
     },

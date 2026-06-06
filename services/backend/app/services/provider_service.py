@@ -67,6 +67,7 @@ class ProviderService:
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
         codex_tool_mode: str | None = None,
+        codex_context_mode: str | None = None,
         claude_model: str | None = None,
         claude_prompt_mode: str | None = None,
         claude_tool_mode: str | None = None,
@@ -86,6 +87,7 @@ class ProviderService:
                     codex_approval_policy=codex_approval_policy,
                     codex_prompt_mode=codex_prompt_mode,
                     codex_tool_mode=codex_tool_mode,
+                    codex_context_mode=codex_context_mode,
                 )
             )
         if kind == "claude-local":
@@ -131,6 +133,7 @@ class ProviderService:
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
         codex_tool_mode: str | None = None,
+        codex_context_mode: str | None = None,
         claude_model: str | None = None,
         claude_prompt_mode: str | None = None,
         claude_tool_mode: str | None = None,
@@ -171,6 +174,7 @@ class ProviderService:
             codex_approval_policy=codex_approval_policy,
             codex_prompt_mode=codex_prompt_mode,
             codex_tool_mode=codex_tool_mode,
+            codex_context_mode=codex_context_mode,
             include_workspace=False,
         )
         if codex_patch:
@@ -877,6 +881,7 @@ def _codex_meta_patch(
     codex_approval_policy: str | None = None,
     codex_prompt_mode: str | None = None,
     codex_tool_mode: str | None = None,
+    codex_context_mode: str | None = None,
     include_workspace: bool = True,
 ) -> dict[str, Any]:
     if not include_workspace and all(
@@ -890,6 +895,7 @@ def _codex_meta_patch(
             codex_approval_policy,
             codex_prompt_mode,
             codex_tool_mode,
+            codex_context_mode,
         )
     ):
         return {}
@@ -908,19 +914,22 @@ def _codex_meta_patch(
     if codex_service_tier is not None:
         patch["codex_service_tier"] = str(codex_service_tier or "").strip()
     if codex_sandbox is not None:
-        patch["codex_sandbox"] = _choice(codex_sandbox, {"read-only", "workspace-write", "danger-full-access"}, "read-only")
+        patch["codex_sandbox"] = _choice(codex_sandbox, {"read-only", "workspace-write", "danger-full-access"}, "danger-full-access")
     if codex_approval_policy is not None:
-        patch["codex_approval_policy"] = _choice(codex_approval_policy, {"never", "untrusted", "on-request", "on-failure"}, "never")
+        patch["codex_approval_policy"] = _choice(codex_approval_policy, {"never", "untrusted", "on-request", "on-failure"}, "on-request")
     if codex_prompt_mode is not None:
         patch["codex_prompt_mode"] = _choice(codex_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
     if codex_tool_mode is not None:
         patch["codex_tool_mode"] = _choice(codex_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
+    if codex_context_mode is not None:
+        patch["codex_context_mode"] = _choice(codex_context_mode, {"legacy-blocks", "lease"}, "legacy-blocks")
     patch.setdefault("codex_effort", "low")
     patch.setdefault("codex_summary", "none")
-    patch.setdefault("codex_sandbox", "read-only")
-    patch.setdefault("codex_approval_policy", "never")
+    patch.setdefault("codex_sandbox", "danger-full-access")
+    patch.setdefault("codex_approval_policy", "on-request")
     patch.setdefault("codex_prompt_mode", "fast-edit")
     patch.setdefault("codex_tool_mode", "mcp-first")
+    patch.setdefault("codex_context_mode", "legacy-blocks")
     return patch
 
 

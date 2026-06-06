@@ -85,6 +85,7 @@ export interface ProviderDraft {
   codex_approval_policy?: 'never' | 'untrusted' | 'on-request' | 'on-failure'
   codex_prompt_mode?: 'fast-edit' | 'full-agent'
   codex_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
+  codex_context_mode?: 'legacy-blocks' | 'lease'
   claude_model?: string
   claude_prompt_mode?: 'fast-edit' | 'full-agent'
   claude_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
@@ -104,6 +105,7 @@ export interface ProviderUpdate {
   codex_approval_policy?: ProviderDraft['codex_approval_policy']
   codex_prompt_mode?: ProviderDraft['codex_prompt_mode']
   codex_tool_mode?: ProviderDraft['codex_tool_mode']
+  codex_context_mode?: ProviderDraft['codex_context_mode']
   claude_model?: string
   claude_prompt_mode?: ProviderDraft['claude_prompt_mode']
   claude_tool_mode?: ProviderDraft['claude_tool_mode']
@@ -1258,6 +1260,8 @@ export interface BrowserCodexPrepare {
     approval_policy?: ProviderDraft['codex_approval_policy']
     prompt_mode?: ProviderDraft['codex_prompt_mode']
     tool_mode?: ProviderDraft['codex_tool_mode']
+    context_mode?: ProviderDraft['codex_context_mode']
+    codex_context_mode?: ProviderDraft['codex_context_mode']
     [key: string]: unknown
   }
   superleaf_context: Record<string, unknown>

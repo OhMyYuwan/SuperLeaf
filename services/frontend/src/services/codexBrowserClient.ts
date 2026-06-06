@@ -13,7 +13,11 @@ import {
   type BrowserToolBridgeContext,
   type BrowserToolBridgeRequest,
 } from './browserToolBridge'
-import { formatCompactSuperleafToolGuide, formatSuperleafToolDefinitions } from './superleafTools'
+import {
+  buildCodexPromptWithPolicy,
+  codexEffectiveApprovalPolicy,
+  codexToolMode,
+} from './agentPromptPolicy'
 
 export interface BrowserCodexHealth {
   status: string
@@ -59,6 +63,8 @@ export type BrowserCodexMcpContext = BrowserToolBridgeContext
 export type BrowserCodexMcpToolRequest = BrowserToolBridgeRequest
 
 const SUPERLEAF_TOOL_MARKER = '<superleaf_tool_call'
+
+export { codexToolMode } from './agentPromptPolicy'
 
 export async function probeBrowserCodex(endpoint: string): Promise<BrowserCodexHealth> {
   const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/health`, {
@@ -109,7 +115,7 @@ export async function createBrowserCodexSession(args: {
       effort: codexEffort(args.prepared),
       summary: codexSummary(args.prepared),
       sandbox: codexSandbox(args.prepared),
-      approval_policy: codexApprovalPolicy(args.prepared),
+      approval_policy: codexEffectiveApprovalPolicy(args.prepared),
       tool_mode: codexToolMode(args.prepared),
       metadata: {
         provider_id: args.prepared.provider_id,
@@ -173,6 +179,19 @@ export async function registerBrowserCodexMcpContext(args: {
       rangeEnd: args.prepared.range_end,
       inputs: args.prepared.inputs,
       superleafOrigin: args.superleafOrigin,
+      contextMode: String(args.prepared.codex_settings?.context_mode || args.prepared.codex_settings?.codex_context_mode || ''),
+      promptPolicy: objectValue(args.prepared.superleaf_context.prompt_policy),
+      providerId: args.prepared.provider_id,
+      providerName: String(args.prepared.superleaf_context.provider_name ?? ''),
+      documentName: String(args.prepared.superleaf_context.document_name ?? ''),
+      documentFormat: String(args.prepared.superleaf_context.document_format ?? ''),
+      selectionHash: String(args.prepared.superleaf_context.selection_hash ?? ''),
+      selectionPreview: String(args.prepared.superleaf_context.selection_preview ?? ''),
+      docVersion: String(args.prepared.superleaf_context.doc_version ?? ''),
+      toolSurface: 'codex-local',
+      toolManifestVersion: String(args.prepared.superleaf_context.tool_manifest_version ?? ''),
+      contextChanged: String(args.prepared.superleaf_context.context_changed ?? ''),
+      accessMode: codexSandbox(args.prepared) === 'read-only' ? 'read-only' : 'full',
     },
   })
 }
@@ -203,6 +222,7 @@ export async function runBrowserCodexTurn(args: {
   endpoint: string
   sessionId: string
   prepared: BrowserCodexPrepare
+  contextId?: string
   toolResults?: BrowserNanobotToolResult[]
   signal?: AbortSignal
   onActivity?: () => void
@@ -213,14 +233,18 @@ export async function runBrowserCodexTurn(args: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       stream: true,
-      prompt: buildCodexPrompt(args.prepared, args.toolResults ?? []),
-      superleaf_context: args.prepared.superleaf_context,
+      prompt: buildCodexPromptWithPolicy({
+        prepared: args.prepared,
+        toolResults: args.toolResults ?? [],
+        contextId: args.contextId,
+      }),
+      superleaf_context: codexSuperleafContextForTurn(args.prepared, args.contextId),
       model: codexModel(args.prepared),
       service_tier: codexServiceTier(args.prepared),
       effort: codexEffort(args.prepared),
       summary: codexSummary(args.prepared),
       sandbox: codexSandbox(args.prepared),
-      approval_policy: codexApprovalPolicy(args.prepared),
+      approval_policy: codexEffectiveApprovalPolicy(args.prepared),
       tool_mode: codexToolMode(args.prepared),
     }),
     signal: args.signal,
@@ -251,6 +275,37 @@ export async function runBrowserCodexTurn(args: {
 
 export function normalizeCodexEndpoint(endpoint: string): string {
   return normalizeLocalAgentHostEndpoint(endpoint)
+}
+
+function codexSuperleafContextForTurn(
+  prepared: BrowserCodexPrepare,
+  contextId?: string,
+): Record<string, unknown> {
+  const mode =
+    String(prepared.codex_settings?.context_mode || prepared.codex_settings?.codex_context_mode || '').trim()
+  const leaseContextId = String(contextId || prepared.superleaf_context.context_id || '').trim()
+  if (mode !== 'lease' || !leaseContextId) {
+    if (mode !== 'lease') return prepared.superleaf_context
+    return {
+      ...prepared.superleaf_context,
+      context_mode: 'legacy-blocks',
+      prompt_policy: {
+        context_mode: 'legacy-blocks',
+        inject_prompt_context: true,
+        tool_guide_mode: 'always',
+      },
+    }
+  }
+  return {
+    ...prepared.superleaf_context,
+    context_id: leaseContextId,
+    context_mode: 'lease',
+    prompt_policy: {
+      context_mode: 'lease',
+      inject_prompt_context: false,
+      tool_guide_mode: 'fallback-only',
+    },
+  }
 }
 
 async function readJson(resp: Response): Promise<Record<string, unknown>> {
@@ -348,6 +403,10 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
 function normalizeBrowserCodexModel(value: unknown): ProviderModel {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const model = stringValue(raw.model) || stringValue(raw.id)
@@ -393,73 +452,6 @@ function normalizeBrowserCodexServiceTiers(value: unknown): Array<{ id: string; 
       }
     })
     .filter((item) => item.id)
-}
-
-function buildCodexPrompt(
-  prepared: BrowserCodexPrepare,
-  toolResults: BrowserNanobotToolResult[],
-): string {
-  if (prepared.prompt_mode !== 'full-agent') {
-    return buildFastCodexPrompt(prepared, toolResults)
-  }
-  const sections: string[] = []
-  if (prepared.system_prompt.trim()) {
-    sections.push(`[SUPERLEAF INSTRUCTIONS]\n${prepared.system_prompt.trim()}`)
-  }
-  sections.push(`[SUPERLEAF TOOL MODE]\n${codexToolModePrompt(prepared)}`)
-  if (prepared.tools.length > 0) {
-    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatSuperleafToolDefinitions(prepared.tools)}`)
-  }
-  if (toolResults.length > 0) {
-    sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults)}`)
-    sections.push(
-      [
-        'Use the tool results above to answer the user.',
-        'If more SuperLeaf project context is needed, request additional SuperLeaf tool call markers as needed.',
-        'Do not repeat a tool call whose result is already shown unless the user asks or the result is insufficient.',
-      ].join(' '),
-    )
-  }
-  sections.push(`[CURRENT USER MESSAGE]\n${prepared.prompt}`)
-  return sections.join('\n\n')
-}
-
-function buildFastCodexPrompt(
-  prepared: BrowserCodexPrepare,
-  toolResults: BrowserNanobotToolResult[],
-): string {
-  const sections: string[] = [
-    [
-      '[SUPERLEAF FAST MODE]',
-      'You are local Codex inside the SuperLeaf editor.',
-      'Stay concise. Preserve SuperLeaf as the editing and collaboration UI.',
-      codexToolModePrompt(prepared),
-      'For selected-text rewrites, request propose_doc_edit instead of telling the user to edit manually.',
-      'Do not claim edits are applied; SuperLeaf shows proposal cards for user approval.',
-      '[END SUPERLEAF FAST MODE]',
-    ].join('\n'),
-  ]
-  if (prepared.tools.length > 0) {
-    sections.push(`[SUPERLEAF TOOL GUIDE]\n${formatCompactSuperleafToolGuide(prepared.tools)}`)
-  }
-  if (toolResults.length > 0) {
-    sections.push(`[SUPERLEAF TOOL RESULTS]\n${formatToolResults(toolResults)}`)
-    sections.push('Use the tool results above. If more project reads are necessary, request additional tool markers as needed.')
-  }
-  sections.push(prepared.prompt)
-  return sections.join('\n\n')
-}
-
-function formatToolResults(results: BrowserNanobotToolResult[]): string {
-  return results
-    .map((result, idx) => [
-      `Tool result ${idx + 1}: ${result.name || 'tool'}`,
-      `tool_call_id: ${result.tool_call_id}`,
-      `failed: ${result.failed ? 'true' : 'false'}`,
-      'content:',
-      result.content ?? '',
-    ].join('\n'))
-    .join('\n\n')
 }
 
 export function extractCodexToolCalls(content: string): NanobotToolCall[] {
@@ -674,32 +666,7 @@ function codexSandbox(prepared: BrowserCodexPrepare): ProviderDraft['codex_sandb
   const value = stringSetting(prepared.codex_settings?.sandbox)
   return isOneOf(value, ['read-only', 'workspace-write', 'danger-full-access'])
     ? value as ProviderDraft['codex_sandbox']
-    : 'read-only'
-}
-
-function codexApprovalPolicy(prepared: BrowserCodexPrepare): ProviderDraft['codex_approval_policy'] {
-  const value = stringSetting(prepared.codex_settings?.approval_policy)
-  return isOneOf(value, ['never', 'untrusted', 'on-request', 'on-failure'])
-    ? value as ProviderDraft['codex_approval_policy']
-    : 'never'
-}
-
-export function codexToolMode(prepared: BrowserCodexPrepare): NonNullable<ProviderDraft['codex_tool_mode']> {
-  const value = stringSetting(prepared.codex_settings?.tool_mode)
-  return isOneOf(value, ['mcp-first', 'browser-preflight', 'marker-only'])
-    ? value as NonNullable<ProviderDraft['codex_tool_mode']>
-    : 'mcp-first'
-}
-
-function codexToolModePrompt(prepared: BrowserCodexPrepare): string {
-  const mode = codexToolMode(prepared)
-  if (mode === 'browser-preflight') {
-    return 'SuperLeaf may pre-execute obvious read-only document tools through the browser before the Codex turn; use those results first. For new tool needs, prefer direct SuperLeaf MCP when available.'
-  }
-  if (mode === 'marker-only') {
-    return 'SuperLeaf direct MCP is disabled for this provider. Request SuperLeaf tools only by emitting the fallback marker format exactly.'
-  }
-  return 'SuperLeaf MCP is the primary tool channel. Prefer direct SuperLeaf MCP tools over fallback markers; the browser bridge executes those tools with the current SuperLeaf login context.'
+    : 'danger-full-access'
 }
 
 function stringSetting(value: unknown): string {

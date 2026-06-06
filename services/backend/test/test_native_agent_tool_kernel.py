@@ -9,6 +9,7 @@ from app.models import Doc, Project, User
 from app.services import native_agent_tool_kernel as kernel_module
 from app.services.native_agent_tool_kernel import (
     NativeAgentToolContext,
+    browser_superleaf_tools,
     execute_native_agent_db_tool,
     execute_native_agent_local_tool,
 )
@@ -95,6 +96,54 @@ def test_tool_kernel_reads_searches_and_outlines_project_docs(monkeypatch):
         {"level": 2, "kind": "section", "title": "Method", "offset": 0},
         {"level": 3, "kind": "subsection", "title": "Metrics", "offset": 39},
     ]
+
+
+def test_tool_kernel_defaults_read_and_outline_to_active_document(monkeypatch):
+    monkeypatch.setattr(kernel_module, "SessionLocal", _session_factory())
+    context = _context(active_document_id="doc1")
+
+    read = execute_native_agent_db_tool("project_read_doc", {"range_start": 0, "range_end": 16}, context)
+    assert read is not None
+    read_payload = json.loads(read.content)
+    assert read_payload["doc_id"] == "doc1"
+    assert read_payload["name"] == "main.tex"
+    assert read_payload["content"] == "\\section{Method}"
+
+    outline = execute_native_agent_db_tool("project_outline", {}, context)
+    assert outline is not None
+    outline_payload = json.loads(outline.content)
+    assert outline_payload["doc_id"] == "doc1"
+    assert outline_payload["sections"][0]["title"] == "Method"
+
+
+def test_tool_kernel_requires_doc_id_when_no_active_document(monkeypatch):
+    monkeypatch.setattr(kernel_module, "SessionLocal", _session_factory())
+    context = _context(active_document_id="")
+
+    read = execute_native_agent_db_tool("project_read_doc", {}, context)
+    assert read is not None
+    assert read.failed is True
+    assert "no active document" in read.content
+
+
+def test_browser_superleaf_tools_expose_full_project_surface():
+    tool_names = {
+        tool["function"]["name"]
+        for tool in browser_superleaf_tools()
+        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+    }
+
+    assert {
+        "project_list_docs",
+        "project_read_doc",
+        "project_grep",
+        "project_outline",
+        "create_suggestion",
+        "propose_doc_edit",
+        "project_write_text_file",
+        "project_create_text_file",
+    } <= tool_names
+    assert "read_agent_file" not in tool_names
 
 
 def test_tool_kernel_creates_project_file_and_side_event(monkeypatch):

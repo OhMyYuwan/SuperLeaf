@@ -54,6 +54,8 @@ BROWSER_SUPERLEAF_TOOL_NAMES = frozenset(
         "project_read_doc",
         "project_grep",
         "project_outline",
+        "project_write_text_file",
+        "project_create_text_file",
         "propose_doc_edit",
         "create_suggestion",
     }
@@ -461,9 +463,9 @@ def _tool_project_read_doc(
 ) -> NativeAgentToolResult:
     if not context.project_scope_ok():
         return NativeAgentToolResult("ERROR: project scope not available", failed=True)
-    doc_id = str(args.get("doc_id") or "").strip()
+    doc_id = _resolve_active_doc_id(args, context)
     if not doc_id:
-        return NativeAgentToolResult("ERROR: doc_id is required", failed=True)
+        return NativeAgentToolResult("ERROR: doc_id is required and no active document is available", failed=True)
     try:
         range_start = int(args.get("range_start") or 0)
         range_end_raw = args.get("range_end")
@@ -562,9 +564,9 @@ def _tool_project_outline(
 ) -> NativeAgentToolResult:
     if not context.project_scope_ok():
         return NativeAgentToolResult("ERROR: project scope not available", failed=True)
-    doc_id = str(args.get("doc_id") or "").strip()
+    doc_id = _resolve_active_doc_id(args, context)
     if not doc_id:
-        return NativeAgentToolResult("ERROR: doc_id is required", failed=True)
+        return NativeAgentToolResult("ERROR: doc_id is required and no active document is available", failed=True)
     with SessionLocal() as db:
         doc = db.get(Doc, doc_id)
         if doc is None or doc.project_id != context.project_id:
@@ -579,6 +581,10 @@ def _tool_project_outline(
             ensure_ascii=False,
         )
     )
+
+
+def _resolve_active_doc_id(args: dict[str, Any], context: NativeAgentToolContext) -> str:
+    return str(args.get("doc_id") or context.active_document_id or "").strip()
 
 
 def _tool_project_write_text_file(

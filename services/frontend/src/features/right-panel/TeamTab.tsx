@@ -4542,10 +4542,11 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_effort: 'low',
   codex_summary: 'none',
   codex_service_tier: '',
-  codex_sandbox: 'read-only',
-  codex_approval_policy: 'never',
+  codex_sandbox: 'danger-full-access',
+  codex_approval_policy: 'on-request',
   codex_prompt_mode: 'fast-edit',
   codex_tool_mode: 'mcp-first',
+  codex_context_mode: 'legacy-blocks',
 } satisfies Partial<ProviderDraft>
 
 const DEFAULT_CLAUDE_SETTINGS = {
@@ -4564,6 +4565,7 @@ type CodexSettingsDraft = Pick<
   | 'codex_approval_policy'
   | 'codex_prompt_mode'
   | 'codex_tool_mode'
+  | 'codex_context_mode'
 >
 
 type ClaudeSettingsDraft = Pick<
@@ -4580,10 +4582,11 @@ function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
     codex_effort: enumMeta(provider.meta, 'codex_effort', ['none', 'low', 'medium', 'high', 'xhigh'], 'low') as ProviderDraft['codex_effort'],
     codex_summary: enumMeta(provider.meta, 'codex_summary', ['none', 'auto', 'concise', 'detailed'], 'none') as ProviderDraft['codex_summary'],
     codex_service_tier: stringMeta(provider.meta, 'codex_service_tier'),
-    codex_sandbox: enumMeta(provider.meta, 'codex_sandbox', ['read-only', 'workspace-write', 'danger-full-access'], 'read-only') as ProviderDraft['codex_sandbox'],
-    codex_approval_policy: enumMeta(provider.meta, 'codex_approval_policy', ['never', 'untrusted', 'on-request', 'on-failure'], 'never') as ProviderDraft['codex_approval_policy'],
+    codex_sandbox: enumMeta(provider.meta, 'codex_sandbox', ['read-only', 'workspace-write', 'danger-full-access'], 'danger-full-access') as ProviderDraft['codex_sandbox'],
+    codex_approval_policy: enumMeta(provider.meta, 'codex_approval_policy', ['never', 'untrusted', 'on-request', 'on-failure'], 'on-request') as ProviderDraft['codex_approval_policy'],
     codex_prompt_mode: enumMeta(provider.meta, 'codex_prompt_mode', ['fast-edit', 'full-agent'], 'fast-edit') as ProviderDraft['codex_prompt_mode'],
     codex_tool_mode: enumMeta(provider.meta, 'codex_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first') as ProviderDraft['codex_tool_mode'],
+    codex_context_mode: enumMeta(provider.meta, 'codex_context_mode', ['legacy-blocks', 'lease'], 'legacy-blocks') as ProviderDraft['codex_context_mode'],
   }
 }
 
@@ -4602,10 +4605,11 @@ function codexSettingsPatch(source: Partial<CodexSettingsDraft>): Partial<Provid
     codex_effort: source.codex_effort === 'minimal' ? 'low' : source.codex_effort ?? 'low',
     codex_summary: source.codex_summary ?? 'none',
     codex_service_tier: source.codex_service_tier?.trim() ?? '',
-    codex_sandbox: source.codex_sandbox ?? 'read-only',
-    codex_approval_policy: source.codex_approval_policy ?? 'never',
+    codex_sandbox: source.codex_sandbox ?? 'danger-full-access',
+    codex_approval_policy: source.codex_approval_policy ?? 'on-request',
     codex_prompt_mode: source.codex_prompt_mode ?? 'fast-edit',
     codex_tool_mode: source.codex_tool_mode ?? 'mcp-first',
+    codex_context_mode: source.codex_context_mode ?? 'legacy-blocks',
   }
 }
 
@@ -4631,11 +4635,11 @@ function CodexSettingsFields({
   const selectedModel = draft.codex_model ?? ''
   const selectedModelInOptions = !selectedModel || modelOptions.some((model) => model.id === selectedModel)
   return (
-    <>
-      <div className="form-row">
-        <label>
-          <span>Codex Model</span>
+    <div className="codex-settings-compact">
+      <label className="codex-field codex-field-full">
+        <span>Model</span>
           <select
+            className="codex-select"
             value={selectedModel}
             onChange={(event) => onChange({ codex_model: event.target.value })}
           >
@@ -4654,92 +4658,111 @@ function CodexSettingsFields({
               </option>
             )}
           </select>
-        </label>
-        <label>
-          <span>Prompt Mode</span>
-          <select
-            value={draft.codex_prompt_mode ?? 'fast-edit'}
-            onChange={(event) => onChange({ codex_prompt_mode: event.target.value as ProviderDraft['codex_prompt_mode'] })}
-          >
-            <option value="fast-edit">快速编辑</option>
-            <option value="full-agent">完整 Agent</option>
-          </select>
-        </label>
-      </div>
-      <label className="full">
-        <span>Tool Mode</span>
-        <select
-          value={draft.codex_tool_mode ?? 'mcp-first'}
-          onChange={(event) => onChange({ codex_tool_mode: event.target.value as ProviderDraft['codex_tool_mode'] })}
-        >
-          <option value="mcp-first">MCP first</option>
-          <option value="browser-preflight">Browser preflight first</option>
-          <option value="marker-only">Marker fallback only</option>
-        </select>
-        <small>
-          MCP first 会把 SuperLeaf /mcp 绑定给本机 Codex；Browser preflight 会先由浏览器执行明显的只读工具。
-        </small>
       </label>
-      <div className="form-row">
-        <label>
-          <span>Reasoning</span>
-          <select
+      <CodexSegmentedControl
+        label="Access"
+        value={draft.codex_sandbox === 'read-only' ? 'read-only' : 'danger-full-access'}
+        options={[
+          { value: 'danger-full-access', label: 'Full' },
+          { value: 'read-only', label: '只读' },
+        ]}
+        onChange={(value) => onChange({ codex_sandbox: value as ProviderDraft['codex_sandbox'] })}
+      />
+      <CodexSegmentedControl
+        label="Mode"
+        value={draft.codex_prompt_mode ?? 'fast-edit'}
+        options={[
+          { value: 'fast-edit', label: '快速编辑' },
+          { value: 'full-agent', label: '完整 Agent' },
+        ]}
+        onChange={(value) => onChange({ codex_prompt_mode: value as ProviderDraft['codex_prompt_mode'] })}
+      />
+      <CodexSegmentedControl
+        label="Tools"
+        value={draft.codex_tool_mode ?? 'mcp-first'}
+        options={[
+          { value: 'mcp-first', label: 'MCP' },
+          { value: 'browser-preflight', label: '浏览器优先' },
+          { value: 'marker-only', label: '标记' },
+        ]}
+        onChange={(value) => onChange({ codex_tool_mode: value as ProviderDraft['codex_tool_mode'] })}
+      />
+      <CodexSegmentedControl
+        label="Context"
+        value={draft.codex_context_mode ?? 'legacy-blocks'}
+        options={[
+          { value: 'legacy-blocks', label: '完整提示' },
+          { value: 'lease', label: '轻量缓存' },
+        ]}
+        onChange={(value) => onChange({ codex_context_mode: value as ProviderDraft['codex_context_mode'] })}
+      />
+      <details className="codex-advanced">
+        <summary>高级设置</summary>
+        <div className="codex-advanced-grid">
+          <CodexSegmentedControl
+            label="Reasoning"
             value={draft.codex_effort ?? 'low'}
-            onChange={(event) => onChange({ codex_effort: event.target.value as ProviderDraft['codex_effort'] })}
-          >
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="none">none</option>
-          </select>
-        </label>
-        <label>
-          <span>Summary</span>
-          <select
+            options={[
+              { value: 'low', label: 'low' },
+              { value: 'medium', label: 'medium' },
+              { value: 'high', label: 'high' },
+              { value: 'none', label: 'none' },
+            ]}
+            onChange={(value) => onChange({ codex_effort: value as ProviderDraft['codex_effort'] })}
+          />
+          <CodexSegmentedControl
+            label="Summary"
             value={draft.codex_summary ?? 'none'}
-            onChange={(event) => onChange({ codex_summary: event.target.value as ProviderDraft['codex_summary'] })}
+            options={[
+              { value: 'none', label: 'none' },
+              { value: 'auto', label: 'auto' },
+              { value: 'concise', label: 'concise' },
+              { value: 'detailed', label: 'detailed' },
+            ]}
+            onChange={(value) => onChange({ codex_summary: value as ProviderDraft['codex_summary'] })}
+          />
+          <label className="codex-field codex-field-full">
+            <span>Service Tier</span>
+            <input
+              value={draft.codex_service_tier ?? ''}
+              onChange={(event) => onChange({ codex_service_tier: event.target.value })}
+              placeholder="本机默认"
+            />
+          </label>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function CodexSegmentedControl({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: Array<{ value: string; label: string }>
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="codex-field">
+      <span>{label}</span>
+      <div className="codex-segmented" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={option.value === value ? 'active' : ''}
+            onClick={() => onChange(option.value)}
+            aria-pressed={option.value === value}
           >
-            <option value="none">none</option>
-            <option value="concise">concise</option>
-            <option value="auto">auto</option>
-            <option value="detailed">detailed</option>
-          </select>
-        </label>
+            {option.label}
+          </button>
+        ))}
       </div>
-      <div className="form-row">
-        <label>
-          <span>Sandbox</span>
-          <select
-            value={draft.codex_sandbox ?? 'read-only'}
-            onChange={(event) => onChange({ codex_sandbox: event.target.value as ProviderDraft['codex_sandbox'] })}
-          >
-            <option value="read-only">read-only</option>
-            <option value="workspace-write">workspace-write</option>
-            <option value="danger-full-access">danger-full-access</option>
-          </select>
-        </label>
-        <label>
-          <span>Approval</span>
-          <select
-            value={draft.codex_approval_policy ?? 'never'}
-            onChange={(event) => onChange({ codex_approval_policy: event.target.value as ProviderDraft['codex_approval_policy'] })}
-          >
-            <option value="never">never</option>
-            <option value="on-request">on-request</option>
-            <option value="on-failure">on-failure</option>
-            <option value="untrusted">untrusted</option>
-          </select>
-        </label>
-      </div>
-      <label className="full">
-        <span>Service Tier</span>
-        <input
-          value={draft.codex_service_tier ?? ''}
-          onChange={(event) => onChange({ codex_service_tier: event.target.value })}
-          placeholder="留空使用本机默认"
-        />
-      </label>
-    </>
+    </div>
   )
 }
 

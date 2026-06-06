@@ -9,6 +9,19 @@ export interface BrowserToolBridgeContextInput {
   inputs: Record<string, unknown>
   superleafOrigin?: string
   backendUrl?: string
+  contextMode?: string
+  promptPolicy?: Record<string, unknown>
+  providerId?: string
+  providerName?: string
+  documentName?: string
+  documentFormat?: string
+  selectionHash?: string
+  selectionPreview?: string
+  docVersion?: string | number
+  toolSurface?: string
+  toolManifestVersion?: string
+  contextChanged?: string
+  accessMode?: string
 }
 
 export interface BrowserToolBridgeContext {
@@ -137,6 +150,19 @@ export async function registerBrowserToolBridgeContext(args: {
       inputs: args.context.inputs,
       superleaf_origin: args.context.superleafOrigin ?? window.location.origin,
       backend_url: args.context.backendUrl ?? BACKEND_BASE,
+      context_mode: args.context.contextMode ?? '',
+      prompt_policy: args.context.promptPolicy ?? {},
+      provider_id: args.context.providerId ?? '',
+      provider_name: args.context.providerName ?? '',
+      document_name: args.context.documentName ?? '',
+      document_format: args.context.documentFormat ?? '',
+      selection_hash: args.context.selectionHash ?? '',
+      selection_preview: args.context.selectionPreview ?? '',
+      doc_version: args.context.docVersion ?? '',
+      tool_surface: args.context.toolSurface ?? '',
+      tool_manifest_version: args.context.toolManifestVersion ?? '',
+      context_changed: args.context.contextChanged ?? '',
+      access_mode: args.context.accessMode ?? '',
     }),
     signal: args.signal,
   })

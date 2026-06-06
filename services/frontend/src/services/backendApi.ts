@@ -670,6 +670,39 @@ export interface OfficialBadgeUiSettings {
   source: 'env' | 'runtime_override' | string
 }
 
+export interface LocalAgentHostPackageInfo {
+  version: string
+  filename: string
+  size_bytes: number
+  checksum_algorithm: string
+  sha256: string
+  download_path: string
+  endpoint: string
+  mcp_url: string
+  manifest_filename: string
+  manifest: Record<string, unknown>
+  included_files: string[]
+  macos: Record<string, string>
+  windows: Record<string, string>
+  codex_env: Record<string, string>
+  claude_env: Record<string, string>
+}
+
+export interface LocalAgentHostUpdateInfo {
+  status: string
+  channel: string
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  update_strategy: string
+  download_path: string
+  checksum_algorithm: string
+  sha256: string
+  manifest_filename: string
+  manifest: Record<string, unknown>
+  package: LocalAgentHostPackageInfo
+}
+
 export interface AgentWorkspaceFile {
   path: string
   type: 'file' | 'directory' | string
@@ -709,6 +742,11 @@ export const nativeAgentApi = {
     officialBadge: () => http<OfficialBadgeUiSettings>('/api/native-agent/ui/official-badge'),
   },
   localAgentHost: {
+    info: () => http<LocalAgentHostPackageInfo>('/api/native-agent/local-agent-host/package'),
+    update: (currentVersion = '') =>
+      http<LocalAgentHostUpdateInfo>(
+        `/api/native-agent/local-agent-host/update${currentVersion ? `?current_version=${encodeURIComponent(currentVersion)}` : ''}`,
+      ),
     downloadUrl: () => `${BASE}/api/native-agent/local-agent-host/download`,
     download: (fallbackFilename = 'superleaf-local-agent-host.zip') =>
       downloadBackendFile('/api/native-agent/local-agent-host/download', fallbackFilename),

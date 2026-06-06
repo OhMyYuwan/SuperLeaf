@@ -12,7 +12,7 @@ nav_order: 98
 
 ## 执行状态
 
-截至 2026-06-06，已经完成计划持久化、Phase 1a、Phase 1b 的 Tool Kernel 初版、Phase 2 的前四段，以及 Phase 3/Phase 4 收尾：
+截至 2026-06-06，已经完成计划持久化、Phase 1a、Phase 1b 的 Tool Kernel 初版、Phase 2 的前四段、Phase 3/Phase 4 收尾，以及 Phase 5 的本地安装与常驻运行首段：
 
 - `services/shared/superleaf-tools.json` 已成为第一批 SuperLeaf 工具的共享注册表。
 - Local Agent Host 的 MCP `tools/list` 从共享注册表派生，并且下载包会携带冻结的 registry JSON。
@@ -26,6 +26,10 @@ nav_order: 98
 - 讨论区 Agent 气泡已显示 BrowserToolBridge 状态：MCP 已连接、重连中或错误，错误详情可通过状态 chip 查看。
 - Local Agent Host 已支持 `GET /codex/sessions` 与 `GET /claude/sessions`，可以按 SuperLeaf conversation/project/workspace 反查本机 Codex/Claude session 映射；讨论区 Agent 气泡也会显示 Local Host session 与 Codex/Claude 外部 session 的短 id。
 - 团队管理 Agent 页已加入 Local Host 诊断面板，按 endpoint 汇总 `/health`、`/superleaf/mcp/status`、Codex/Claude health/session list 和 Nanobot Tool Adapter 状态。
+- 团队管理 Agent 页已加入 Codex/Claude 本地安装卡片；后端 `/api/native-agent/local-agent-host/package` 会返回安装包版本、文件名、大小、SHA-256 checksum、默认 endpoint/MCP URL、安装 manifest、macOS/Windows 启停命令、start-at-login 安装/卸载命令和 Codex/Claude 环境开关；后端 fallback ZIP 与真实 package 都携带 Windows launcher、常驻运行脚本、`superleaf-tools.json`、安装 manifest、SDK 迁移 gate 和 smoke/matrix 诊断脚本，并会忽略缺少 Phase 5 必需资产的旧 `dist` 包；安装卡片可以在未创建 provider 前直接验证默认 Local Host 的 `/health`、`/superleaf/mcp/status` 和 `/superleaf/install/status`，并显示后台常驻状态、package version、data dir、pid 与 manifest 状态。
+- 后端已提供 `/api/native-agent/local-agent-host/update` 只读 update metadata，用于后续自动升级前先统一 latest version、checksum、manifest 和下载路径；当前策略仍是 `manual-download`，不会自动替换用户本机文件。
+- Local Host 已新增 `npm run gate:mcp-sdk`，参考官方 MCP TypeScript SDK 的 stateful Streamable HTTP transport 与 MCP Inspector 的 Streamable HTTP client/server 测试形状，固定迁移前必须保持的 session header、missing/unknown session、SSE、Last-Event-ID replay 和 DELETE close 语义。当前只判定“可作为 SDK 迁移候选”，没有替换零依赖兼容层。
+- Local Host 已新增 `npm run inspector:config|ui|cli`，生成官方 MCP Inspector `streamable-http` 配置，并可按需通过 `npx @modelcontextprotocol/inspector` 打开 Inspector UI 或 CLI；Inspector 不作为下载包 runtime dependency。
 - 后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `services/backend/app/services/native_agent_tool_kernel.py`；项目文档读写、搜索、outline、edit proposal 和 suggestion 等 DB-backed 执行 handler 也已迁入 Tool Kernel 执行层。`NativeAgentRunner` 现在保留编排、`.agents` 工作区文件读取、Skill 激活和外部 MCP 调度。
 
 ## 目标
@@ -429,16 +433,25 @@ Local Agent Host 保存：
 
 目标：
 
-- Team 管理提供 Local Host 下载、健康检查、MCP 注册指引。
-- Codex 显示自动注入状态。
-- Claude 生成配置片段。
-- Local Host installer 可持久运行。
+- Team 管理提供 Local Host 下载、安装包信息、健康检查、MCP 注册指引。
+- Codex 显示自动注入状态，默认使用 `MCP first`。
+- Claude 通过 Local Host 临时 MCP config 使用 SuperLeaf tools。
+- Local Host 下载包同时支持 macOS 和 Windows，并携带本地诊断脚本、安装 manifest 和 checksum。
+- Local Host 下载包提供 macOS LaunchAgent 与 Windows Scheduled Task 的 start-at-login 安装/卸载脚本，并通过状态接口报告是否常驻。
+- 后端提供只读 update metadata，为后续自动升级 UI/installer 做版本、checksum、manifest 和下载路径的统一入口。
+- 原生 installer、自动替换、签名/公证、系统托盘等桌面体验暂缓，保留为桌面分发阶段任务。
 
 验收：
 
 - 新机器下载 Local Host 后可连通。
 - Codex/Claude provider 能检测 MCP tools。
 - 用户知道当前 Agent 是否能看到 SuperLeaf tools。
+- 用户能在尚未添加 provider 前验证 Local Host 是否已启动、MCP tools 是否可见。
+- 下载包 metadata 可以在 SuperLeaf UI 中显示，且后端 fallback ZIP 不会缺少 Windows 或 MCP 诊断资产。
+- 下载包 checksum、manifest 和必需文件列表可以由 SuperLeaf 后端统一校验，为后续自动升级做准备。
+- 用户能在安装卡或诊断面板看到 Local Host 是否已配置登录启动、当前 package version、data dir、pid 和 manifest 状态。
+- 后端 update metadata 可以在不执行安装动作的前提下告诉前端当前包是否有新版本。
+- SDK 迁移 gate 可以稳定通过，且任何未来 SDK transport 替换都必须继续通过 smoke、gate、Inspector CLI、matrix 四类检查。
 
 ### Phase 6：Remote MCP 与团队 Agent
 
@@ -492,8 +505,8 @@ Local Agent Host 保存：
 
 继续推进 Phase 5 和后续工具内核整理：
 
-1. 完善 Codex/Claude 本地安装、持久运行、MCP 注册和新机器首次启动体验。
-2. 在打包器能稳定携带依赖后，再评估是否用官方 MCP TypeScript SDK 替换当前零依赖兼容层。
-3. 后续再接入真正的 MCP Inspector UI/CLI，用于人工调试复杂 client 兼容问题。
-4. 根据 `matrix:nanobot-tools` 的 live probe 结果，长期观察是否可以弱化 marker 提示。
-5. 后续再评估是否把 `.agents` 工作区文件读取与 Skill 激活也纳入 Tool Kernel 的非 DB 执行层。
+1. 根据 `matrix:nanobot-tools` 的 live probe 结果，长期观察是否可以弱化 marker 提示。
+2. 后续再评估是否把 `.agents` 工作区文件读取与 Skill 激活也纳入 Tool Kernel 的非 DB 执行层。
+3. Phase 6：建设 Remote SuperLeaf MCP Endpoint，使用 OAuth 或 capability token 支持团队/远程 Agent。
+4. 后续如果要替换官方 MCP TypeScript SDK transport，必须先保持 `smoke:mcp`、`gate:mcp-sdk`、Inspector CLI 和 matrix 都通过。
+5. 暂缓：Local Host 纳入版本控制、原生 installer、自动替换升级、签名/公证、系统托盘和首次启动向导。

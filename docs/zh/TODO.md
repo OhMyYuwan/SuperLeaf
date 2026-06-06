@@ -14,11 +14,15 @@ nav_order: 99
 
 - Phase 1a（已完成）：Local Host MCP registry 与前端 Codex/Nanobot fallback 工具说明已抽出复用。
 - Phase 1b（已完成 Tool Kernel 初版）：新增 `services/shared/superleaf-tools.json` 作为共享工具注册表，Local Host、前端 Codex/Nanobot tool guide、后端 browser Agent tool schema 已从同一份 JSON 派生；后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `native_agent_tool_kernel.py`，项目文档读写、搜索、outline、edit proposal 和 suggestion 等 DB-backed 执行 handler 也已迁入 Tool Kernel 执行层。runner 现在保留编排、`.agents` 工作区文件读取、Skill 激活和外部 MCP 调度。
-- Phase 2（已完成第四步）：Local Agent Host `/mcp` 已补上 stateful session metadata、session TTL、`DELETE /mcp` close、`GET /mcp` SSE、`Last-Event-ID` reconnect replay、内存 event store、`/superleaf/mcp/status` 诊断、pending-call cleanup、零依赖 MCP Inspector-style 自动烟测 `npm run smoke:mcp`，以及 registry-backed `resources/list/read` 与 `prompts/list/get`。后续在打包器可稳定携带依赖后再评估迁移到 MCP TypeScript SDK。
+- Phase 2（已完成 SDK 迁移 gate 与 Inspector 入口）：Local Agent Host `/mcp` 已补上 stateful session metadata、session TTL、`DELETE /mcp` close、`GET /mcp` SSE、`Last-Event-ID` reconnect replay、内存 event store、`/superleaf/mcp/status` 诊断、pending-call cleanup、零依赖 MCP Inspector-style 自动烟测 `npm run smoke:mcp`，以及 registry-backed `resources/list/read` 与 `prompts/list/get`；已新增 `npm run gate:mcp-sdk`，固定官方 TypeScript SDK / MCP Inspector 迁移前必须保持的 session header、missing/unknown session、SSE、replay 和 close 语义；已新增 `npm run inspector:config|ui|cli`，生成官方 Inspector `streamable-http` config，并可按需通过 `npx @modelcontextprotocol/inspector` 打开 UI 或 CLI。当前结论：可以作为 SDK 迁移候选，但尚未替换零依赖兼容层。
 - Phase 3（已完成收尾）：已新增通用 `BrowserToolBridge`，Codex MCP bridge 已迁移到共享 context 注册、工具轮询、结果回填、heartbeat/context refresh 和 poll 失败恢复逻辑；Nanobot 的 preflight 与 OpenAI-compatible `tool_calls` 执行也已复用同一套 bridge request/result 形状；讨论区会显示 MCP 已连接、重连中、错误等 bridge 状态；`claude-local` 第一版已通过 Local Agent Host `/claude/*`、后端 `browser-claude/*` 与前端 Provider/会话分发复用同一条 MCP bridge；Codex/Claude Local Host 现在都可以按 SuperLeaf conversation 反查本机会话映射，讨论区 Agent 回复也会显示本机/外部 session 短 id；团队管理 Agent 页已加入 Local Host 诊断面板；已补充 Codex/Claude Local 兼容矩阵与只读 readiness 脚本 `npm run matrix:local-agents`。
 - Phase 4（已完成收尾）：Local Agent Host 已新增 `/nanobot/health` 与 `/nanobot/tools`，从共享 Tool Kernel registry 暴露 Nanobot OpenAI-compatible tool adapter 诊断；前端创建/同步浏览器 Nanobot provider 时会读取并保存 SuperLeaf tool 数量、工具名和 `local_agent_host_endpoint`；旧 provider 若误指向 Nanobot 本体，UI 会显示 `needs Local Host` 并提供同步动作，诊断也会优先使用已保存的 Local Host endpoint；已新增 `npm run matrix:nanobot-tools`，默认只读检查 adapter，显式 `SL_NANOBOT_TOOL_CALL_LIVE=1` 时分类原生 `tool_calls` / marker fallback / plain text。结论：SuperLeaf 支持原生 `tool_calls`，但 marker fallback 仍保留。
-- Phase 5：完善 Codex/Claude 本地安装与 MCP 注册体验。
+- Phase 5（已完成常驻运行首段）：团队管理 Agent 页已新增 Codex/Claude 本地安装卡片，后端提供 `/api/native-agent/local-agent-host/package` 安装包 metadata；Local Host 下载包和后端 fallback ZIP 都包含 macOS/Windows launcher、start-at-login 安装/卸载脚本、`superleaf-tools.json`、安装 manifest、MCP smoke test、SDK 迁移 gate、Codex/Claude 兼容矩阵和 Nanobot tool_calls 矩阵脚本；metadata 与下载响应都会暴露 SHA-256 checksum，并且后端会忽略缺少 Phase 5 资产的旧 `dist` 包；安装卡片现在可以在未创建 provider 前直接验证默认 Local Host 的 `/health`、`/superleaf/mcp/status` 与 `/superleaf/install/status`，并显示后台常驻状态、package version、data dir、pid 和 manifest 状态；后端已提供 `/api/native-agent/local-agent-host/update` 作为后续自动升级的只读 metadata 前置接口。
 - Phase 6：建设 Remote SuperLeaf MCP Endpoint，使用 OAuth 或 capability token 支持团队/远程 Agent。
+
+暂缓事项：
+
+- Local Host 正式纳入版本控制、原生 installer、系统托盘、签名/公证和真正的自动替换升级先不进入当前执行队列。它们保留为桌面分发阶段任务，等 Local Host 协议层和远程 MCP 边界稳定后再启动。
 
 ## 批注训练数据
 

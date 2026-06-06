@@ -81,7 +81,30 @@ Prompts:
 
 ## 下载 Local Agent Host
 
-在 SuperLeaf 右侧 **团队管理 → Agent** 里点击 **下载 Local Host**。下载得到的包同时包含 macOS/Linux 和 Windows 启动脚本。
+在 SuperLeaf 右侧 **团队管理 → Agent** 里打开 **Codex / Claude 本地安装** 卡片，然后点击 **下载**。卡片会显示当前安装包文件名、大小、SHA-256 checksum、默认 endpoint、MCP URL，以及 macOS/Windows 的启动和停止脚本。
+
+后端也提供只读 metadata：
+
+```text
+GET /api/native-agent/local-agent-host/package
+```
+
+返回内容包括 `filename`、`size_bytes`、`checksum_algorithm`、`sha256`、`endpoint`、`mcp_url`、`manifest_filename`、`manifest`、`macos`、`windows`、`codex_env`、`claude_env` 和 `included_files`。下载得到的包同时包含 macOS/Linux 和 Windows 启动脚本。
+
+后续自动升级会复用这个 metadata，并先从只读 update check 开始：
+
+```text
+GET /api/native-agent/local-agent-host/update?current_version=0.1.0
+```
+
+当前返回 `update_strategy=manual-download`，只用于展示 latest version、checksum、manifest 和下载路径；不会自动替换用户本机文件。
+
+下载响应也会带上校验头：
+
+```text
+X-SuperLeaf-Package-Checksum-Algorithm: sha256
+X-SuperLeaf-Package-Sha256: <64-char checksum>
+```
 
 如果你在开发仓库中测试，也可以直接使用：
 
@@ -95,6 +118,7 @@ dist/superleaf-local-agent-host-0.1.0.zip
 server.mjs
 superleaf-tools.mjs
 superleaf-tools.json
+superleaf-local-agent-host.manifest.json
 start-local-agent-host.command
 start-local-agent-host-background.command
 stop-local-agent-host.command
@@ -104,7 +128,85 @@ stop-local-agent-host.cmd
 start-local-agent-host.ps1
 start-local-agent-host-background.ps1
 stop-local-agent-host.ps1
+install-local-agent-host-startup.command
+uninstall-local-agent-host-startup.command
+install-local-agent-host-startup.cmd
+uninstall-local-agent-host-startup.cmd
+install-local-agent-host-startup.ps1
+uninstall-local-agent-host-startup.ps1
+scripts/smoke-mcp.mjs
+scripts/mcp-sdk-migration-gate.mjs
+scripts/mcp-inspector.mjs
+scripts/local-agent-compat-matrix.mjs
+scripts/nanobot-tool-calls-matrix.mjs
 ```
+
+## 启动后验证
+
+解压并启动 Local Agent Host 后，回到 SuperLeaf 右侧 **团队管理 → Agent**，在 **Codex / Claude 本地安装** 卡片点击 **验证启动**。这个验证不要求你已经添加 Codex、Claude 或 Nanobot provider。
+
+SuperLeaf 会从浏览器直接探测默认 endpoint：
+
+```text
+GET http://127.0.0.1:8787/health
+GET http://127.0.0.1:8787/superleaf/mcp/status
+GET http://127.0.0.1:8787/superleaf/install/status
+```
+
+成功时卡片会显示：
+
+- `Host ok`
+- `MCP tools 6`
+- 当前 browser bridge contexts 数量
+- pending tool calls 数量
+- start-at-login 是否已安装
+- Local Host package version、data dir、pid 和 manifest 状态
+
+如果失败，通常说明 Host 没启动、端口不是 `8787`、浏览器无法访问 loopback，或被浏览器安全策略/CORS 拦截。此时先用终端检查：
+
+```bash
+curl http://127.0.0.1:8787/health
+```
+
+## 常驻运行
+
+Local Agent Host 的后台启动脚本只会启动当前这次进程；重启电脑后不会自动恢复。需要常驻运行时，用户可以主动安装 start-at-login：
+
+macOS:
+
+```text
+install-local-agent-host-startup.command
+```
+
+卸载：
+
+```text
+uninstall-local-agent-host-startup.command
+```
+
+它会在当前用户的 `~/Library/LaunchAgents/` 下写入 `com.superleaf.local-agent-host.plist`，通过 launchd 在登录时启动同目录下的 `start-local-agent-host.sh`。
+
+Windows:
+
+```bat
+install-local-agent-host-startup.cmd
+```
+
+卸载：
+
+```bat
+uninstall-local-agent-host-startup.cmd
+```
+
+它会给当前用户注册 `SuperLeafLocalAgentHost` Scheduled Task，在登录时调用 `start-local-agent-host-background.ps1`。这些脚本不需要管理员权限；如果企业策略禁用了 Scheduled Task 或 PowerShell 脚本执行，需要改用手动后台启动。
+
+运行中的 Host 会通过以下只读诊断接口报告常驻状态：
+
+```text
+GET http://127.0.0.1:8787/superleaf/install/status
+```
+
+SuperLeaf 安装卡的 **验证启动** 会同时读取这个接口并显示 `Startup configured` / `Startup manual` / `Startup configured_elsewhere`。
 
 ## 配置 `.env`
 
@@ -403,6 +505,91 @@ npm run smoke:mcp
 cd services/local-agent-host
 SL_LOCAL_AGENT_HOST_SMOKE_BASE_URL=http://127.0.0.1:8787 npm run smoke:mcp
 ```
+
+## MCP SDK 迁移 gate
+
+Local Host 当前保持零依赖的 Streamable HTTP 兼容层。真正替换为官方 MCP TypeScript SDK 前，必须先跑 SDK 迁移 gate：
+
+```bash
+cd services/local-agent-host
+npm run gate:mcp-sdk
+```
+
+如果要检查已经启动的 Host：
+
+```bash
+cd services/local-agent-host
+SL_LOCAL_AGENT_HOST_SDK_GATE_BASE_URL=http://127.0.0.1:8787 npm run gate:mcp-sdk
+```
+
+这个 gate 借鉴了两个已经工业验证过的实现方式：
+
+- `mcp-typescript-sdk`：stateful Streamable HTTP transport 通过 `initialize` 生成 session，并在后续请求中校验 session。
+- `mcp-inspector`：Streamable HTTP client/server 测试会显式检查连接、session transport、SSE 和错误状态。
+
+gate 会固定这些迁移前必须保持的行为：`initialize` 返回 `Mcp-Session-Id`，非 initialize POST 缺 session 返回 400，未知 session 返回 404，`tools/list` / `resources/list` / `prompts/list` 与 registry 一致，`GET /mcp` 需要 `text/event-stream`，`Last-Event-ID` 能 replay 同 session event，`DELETE /mcp` 会关闭 session。只有 smoke、gate 和 matrix 都通过时，才允许进入真正 SDK transport 替换。
+
+## MCP Inspector UI / CLI
+
+Local Host 下载包内也带有一个 MCP Inspector 辅助脚本。它不会把 Inspector 打包进 Local Host，也不会给普通启动增加依赖；只有用户显式运行时，才会通过 `npx @modelcontextprotocol/inspector` 启动官方 Inspector。
+
+先生成标准 Inspector 配置：
+
+```bash
+cd services/local-agent-host
+npm run inspector:config
+```
+
+默认会写入：
+
+```text
+~/.superleaf-local-agent-host/superleaf-mcp-inspector.json
+```
+
+配置内容使用官方 Inspector 支持的 Streamable HTTP 形状：
+
+```json
+{
+  "mcpServers": {
+    "superleaf-local-agent-host": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8787/mcp"
+    }
+  }
+}
+```
+
+打开 Inspector UI：
+
+```bash
+cd services/local-agent-host
+npm run inspector:ui
+```
+
+使用 Inspector CLI 列出工具：
+
+```bash
+cd services/local-agent-host
+npm run inspector:cli
+```
+
+传入其他 Inspector CLI 参数：
+
+```bash
+cd services/local-agent-host
+npm run inspector:cli -- --method resources/list
+npm run inspector:cli -- --method prompts/list
+```
+
+如果 Local Host 不在默认端口：
+
+```bash
+cd services/local-agent-host
+npm run inspector:config -- --base-url http://127.0.0.1:8877
+npm run inspector:ui -- --base-url http://127.0.0.1:8877
+```
+
+Inspector 0.22.x 声明需要 Node 22.7.5 或更高版本。如果 `npx` 启动失败，先升级本机 Node，或者只使用 `inspector:config` 生成的配置文件，在已有 Inspector 环境中手动加载。
 
 下面是等价的手动 curl 版本，适合定位具体 HTTP/SSE 细节。
 
@@ -750,6 +937,8 @@ node --check services/local-agent-host/server.mjs
 node --check services/local-agent-host/superleaf-tools.mjs
 node --check services/local-agent-host/scripts/package.mjs
 node --check services/local-agent-host/scripts/smoke-mcp.mjs
+node --check services/local-agent-host/scripts/mcp-sdk-migration-gate.mjs
+node --check services/local-agent-host/scripts/mcp-inspector.mjs
 node --check services/local-agent-host/scripts/local-agent-compat-matrix.mjs
 node --check services/local-agent-host/scripts/nanobot-tool-calls-matrix.mjs
 bash -n services/local-agent-host/start-local-agent-host.sh
@@ -757,6 +946,8 @@ bash -n services/local-agent-host/start-local-agent-host.command
 bash -n services/local-agent-host/start-local-agent-host-background.command
 bash -n services/local-agent-host/stop-local-agent-host.command
 (cd services/local-agent-host && npm run smoke:mcp)
+(cd services/local-agent-host && npm run gate:mcp-sdk)
+(cd services/local-agent-host && npm run inspector:config)
 (cd services/local-agent-host && npm run matrix:local-agents)
 (cd services/local-agent-host && npm run matrix:nanobot-tools)
 (cd services/local-agent-host && npm run package)

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import type {
   CachedWorkflow,
+  LocalAgentHostPackageInfo,
   McpExecutionPolicy,
   McpGoldenTestResult,
   McpPreset,
@@ -185,6 +186,9 @@ export function TeamTab({
   const [onlyTrainingCandidates, setOnlyTrainingCandidates] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [localHostPackage, setLocalHostPackage] = useState<LocalAgentHostPackageInfo | null>(null)
+  const [localHostPackageLoading, setLocalHostPackageLoading] = useState(false)
+  const [localHostPackageError, setLocalHostPackageError] = useState<string | null>(null)
   const [localHostDownloading, setLocalHostDownloading] = useState(false)
   const [localHostDownloadError, setLocalHostDownloadError] = useState<string | null>(null)
   const [officialBadgeStyle, setOfficialBadgeStyle] = useState<OfficialBadgeStyle>('metal')
@@ -225,6 +229,28 @@ export function TeamTab({
     if (subTab === 'skills' && !marketplace && !marketplaceLoading) void loadMarketplace()
   }, [subTab, marketplace, marketplaceLoading, loadMarketplace])
 
+  useEffect(() => {
+    if (subTab !== 'agents' || localHostPackage || localHostPackageLoading) return
+    let cancelled = false
+    setLocalHostPackageLoading(true)
+    setLocalHostPackageError(null)
+    nativeAgentApi.localAgentHost.info()
+      .then((info) => {
+        if (!cancelled) setLocalHostPackage(info)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setLocalHostPackageError(err instanceof Error ? err.message : '无法读取 Local Host 安装包信息')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLocalHostPackageLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [subTab, localHostPackage, localHostPackageLoading])
+
   // Group workflows by provider so each provider becomes one Agent block.
   const workflowsByProvider = workflows.reduce<Record<string, CachedWorkflow[]>>(
     (acc, w) => {
@@ -257,7 +283,7 @@ export function TeamTab({
     setLocalHostDownloading(true)
     setLocalHostDownloadError(null)
     try {
-      await nativeAgentApi.localAgentHost.download()
+      await nativeAgentApi.localAgentHost.download(localHostPackage?.filename)
     } catch (err) {
       setLocalHostDownloadError(err instanceof Error ? err.message : '下载 Local Agent Host 失败')
     } finally {
@@ -332,6 +358,13 @@ export function TeamTab({
           {mcpCatalogError && <div className="tab-error">MCP catalog: {mcpCatalogError}</div>}
           {mcpPolicyError && <div className="tab-error">MCP policy: {mcpPolicyError}</div>}
 
+          <LocalHostInstallPanel
+            packageInfo={localHostPackage}
+            loading={localHostPackageLoading}
+            error={localHostPackageError}
+            downloading={localHostDownloading}
+            onDownload={handleLocalHostDownload}
+          />
           <LocalHostDiagnosticsPanel providers={providers} />
 
           <section className="agent-export-panel">
@@ -487,6 +520,176 @@ type LocalHostEndpointDiagnostic = {
   claudeHealth?: DiagnosticProbe
   claudeSessions?: DiagnosticProbe
   nanobotTools?: DiagnosticProbe
+  installStatus?: DiagnosticProbe
+}
+
+function LocalHostInstallPanel({
+  packageInfo,
+  loading,
+  error,
+  downloading,
+  onDownload,
+}: {
+  packageInfo: LocalAgentHostPackageInfo | null
+  loading: boolean
+  error: string | null
+  downloading: boolean
+  onDownload: () => void | Promise<void>
+}) {
+  const [verifyBusy, setVerifyBusy] = useState(false)
+  const [verifyResult, setVerifyResult] = useState<LocalHostEndpointDiagnostic | null>(null)
+  const codexAutoMcp = packageInfo?.codex_env?.SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP ?? '1'
+  const endpoint = packageInfo?.endpoint ?? 'http://127.0.0.1:8787'
+  const packageLabel = packageInfo
+    ? `${packageInfo.filename} · ${formatBytes(packageInfo.size_bytes)}`
+    : 'superleaf-local-agent-host.zip'
+  const checksumLabel = packageInfo?.sha256
+    ? `${packageInfo.checksum_algorithm || 'sha256'}:${shortChecksum(packageInfo.sha256)}`
+    : '等待后端返回'
+  const runInstallProbe = async () => {
+    if (verifyBusy) return
+    setVerifyBusy(true)
+    setVerifyResult({ loading: true })
+    try {
+      const [host, mcpStatus, installStatus] = await Promise.all([
+        settleDiagnostic(() => fetchLocalHostJson(endpoint, '/health')),
+        settleDiagnostic(() => fetchLocalHostJson(endpoint, '/superleaf/mcp/status')),
+        settleDiagnostic(() => fetchLocalHostJson(endpoint, '/superleaf/install/status')),
+      ])
+      setVerifyResult({
+        loading: false,
+        updatedAt: new Date().toISOString(),
+        host,
+        mcpStatus,
+        installStatus,
+      })
+    } finally {
+      setVerifyBusy(false)
+    }
+  }
+  return (
+    <section className="local-host-install-panel">
+      <div className="local-host-install-head">
+        <div>
+          <h3>Codex / Claude 本地安装</h3>
+          <p>
+            下载 Local Agent Host，在用户电脑上启动后，SuperLeaf 才能通过浏览器连接本机 Codex、Claude 或 Nanobot。
+          </p>
+        </div>
+        <div className="local-host-install-actions">
+          <button
+            className="small-btn"
+            onClick={() => void onDownload()}
+            disabled={downloading}
+            title="下载 SuperLeaf Local Agent Host"
+          >
+            {downloading ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+            下载
+          </button>
+          <button
+            className="small-btn"
+            onClick={() => void runInstallProbe()}
+            disabled={verifyBusy}
+            title="验证默认 Local Host 是否已在本机启动"
+          >
+            {verifyBusy ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />}
+            验证启动
+          </button>
+        </div>
+      </div>
+      {loading && <div className="local-host-install-note">正在读取安装包信息...</div>}
+      {error && <div className="local-host-install-error">{error}</div>}
+      <div className="local-host-install-grid">
+        <div className="local-host-install-card">
+          <span>安装包</span>
+          <strong title={packageLabel}>{packageLabel}</strong>
+          <code>{packageInfo?.endpoint ?? 'http://127.0.0.1:8787'}</code>
+          <code>{packageInfo?.mcp_url ?? 'http://127.0.0.1:8787/mcp'}</code>
+        </div>
+        <div className="local-host-install-card">
+          <span>校验</span>
+          <strong title={packageInfo?.sha256 ?? checksumLabel}>{checksumLabel}</strong>
+          <code>{packageInfo?.manifest_filename ?? 'superleaf-local-agent-host.manifest.json'}</code>
+          <code>{packageInfo ? `${packageInfo.included_files.length} files` : 'manifest pending'}</code>
+        </div>
+        <div className="local-host-install-card">
+          <span>macOS</span>
+          <code>{packageInfo?.macos.background ?? 'start-local-agent-host-background.command'}</code>
+          <code>{packageInfo?.macos.stop ?? 'stop-local-agent-host.command'}</code>
+          <code>{packageInfo?.macos.install_start_at_login ?? 'install-local-agent-host-startup.command'}</code>
+        </div>
+        <div className="local-host-install-card">
+          <span>Windows</span>
+          <code>{packageInfo?.windows.background ?? 'start-local-agent-host-background.cmd'}</code>
+          <code>{packageInfo?.windows.stop ?? 'stop-local-agent-host.cmd'}</code>
+          <code>{packageInfo?.windows.install_start_at_login ?? 'install-local-agent-host-startup.cmd'}</code>
+        </div>
+        <div className="local-host-install-card">
+          <span>Agent 开关</span>
+          <code>CODEX_ENABLED={packageInfo?.codex_env?.SL_LOCAL_AGENT_HOST_CODEX_ENABLED ?? '1'}</code>
+          <code>CODEX_AUTO_MCP={codexAutoMcp}</code>
+          <code>CLAUDE_ENABLED={packageInfo?.claude_env?.SL_LOCAL_AGENT_HOST_CLAUDE_ENABLED ?? '1'}</code>
+        </div>
+      </div>
+      {packageInfo && (
+        <div className="local-host-install-foot">
+          包含 {packageInfo.included_files.length} 个文件，包括 Windows launcher、MCP 工具 manifest、安装 manifest 和 smoke/matrix 诊断脚本。
+        </div>
+      )}
+      <LocalHostInstallProbeResult result={verifyResult} endpoint={endpoint} />
+    </section>
+  )
+}
+
+function LocalHostInstallProbeResult({
+  result,
+  endpoint,
+}: {
+  result: LocalHostEndpointDiagnostic | null
+  endpoint: string
+}) {
+  if (!result) return null
+  const host = result.host?.value ?? {}
+  const mcpStatus = result.mcpStatus?.value ?? {}
+  const installStatus = result.installStatus?.value ?? {}
+  const startAtLogin = objectMeta(installStatus, 'start_at_login')
+  const hostStatus = stringRecordValue(host, 'status') || (result.loading ? '检测中' : '未连接')
+  const mcpTools = numberRecordValue(mcpStatus, 'tool_count') || numberRecordValue(host, 'superleaf_mcp_tool_count')
+  const contexts = arrayLength(mcpStatus.contexts) || numberRecordValue(host, 'mcp_contexts')
+  const pending = arrayLength(mcpStatus.pending_calls) || numberRecordValue(host, 'mcp_pending_calls')
+  const startupStatus = stringRecordValue(startAtLogin, 'status') || (result.installStatus ? 'unknown' : '未检测')
+  const startupConfigured = Boolean(startAtLogin.configured)
+  const packageVersion = stringRecordValue(installStatus, 'package_version')
+  const errors = diagnosticErrors(result)
+  const hostTone: 'ok' | 'warn' | 'neutral' = result.host?.ok && hostStatus === 'ok' ? 'ok' : result.host ? 'warn' : 'neutral'
+  const mcpTone: 'ok' | 'warn' | 'neutral' = result.mcpStatus?.ok && mcpTools > 0 ? 'ok' : result.mcpStatus ? 'warn' : 'neutral'
+  const startupTone: 'ok' | 'warn' | 'neutral' = startupConfigured ? 'ok' : result.installStatus?.ok ? 'neutral' : result.installStatus ? 'warn' : 'neutral'
+  return (
+    <div className={`local-host-install-probe ${result.loading ? 'loading' : ''}`}>
+      <div className="local-host-install-probe-top">
+        <strong title={endpoint}>{compactEndpointLabel(endpoint)}</strong>
+        {result.updatedAt && <time>{formatDiagnosticTime(result.updatedAt)}</time>}
+      </div>
+      <div className="local-host-diagnostic-pills">
+        <DiagnosticPill tone={hostTone}>Host {hostStatus}</DiagnosticPill>
+        <DiagnosticPill tone={mcpTone}>MCP tools {mcpTools || '-'}</DiagnosticPill>
+        <DiagnosticPill tone={startupTone}>Startup {startupStatus}</DiagnosticPill>
+        <DiagnosticPill tone={contexts > 0 ? 'ok' : 'neutral'}>contexts {contexts}</DiagnosticPill>
+        <DiagnosticPill tone={pending > 0 ? 'warn' : 'neutral'}>pending {pending}</DiagnosticPill>
+      </div>
+      <div className="local-host-install-probe-grid">
+        <span>version: {packageVersion || '-'}</span>
+        <span>data: {compactEndpointLabel(stringRecordValue(installStatus, 'data_dir') || '-')}</span>
+        <span>pid: {numberRecordValue(installStatus, 'pid') || '-'}</span>
+        <span>manifest: {installStatus.manifest_present ? 'present' : '-'}</span>
+      </div>
+      {errors.length > 0 && (
+        <div className="local-host-diagnostic-errors">
+          {errors.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function LocalHostDiagnosticsPanel({ providers }: { providers: Provider[] }) {
@@ -568,16 +771,22 @@ function LocalHostDiagnosticCard({
   const codexHealth = result?.codexHealth?.value ?? {}
   const claudeHealth = result?.claudeHealth?.value ?? {}
   const nanobotTools = result?.nanobotTools?.value ?? {}
+  const installStatus = result?.installStatus?.value ?? {}
+  const startAtLogin = objectMeta(installStatus, 'start_at_login')
   const hostStatus = stringRecordValue(host, 'status')
   const service = stringRecordValue(host, 'service') || 'Local Agent Host'
   const mcpTools = numberRecordValue(mcpStatus, 'tool_count') || numberRecordValue(host, 'superleaf_mcp_tool_count')
   const contexts = arrayLength(mcpStatus.contexts) || numberRecordValue(host, 'mcp_contexts')
   const pending = arrayLength(mcpStatus.pending_calls) || numberRecordValue(host, 'mcp_pending_calls')
+  const startupStatus = stringRecordValue(startAtLogin, 'status') || (result?.installStatus ? 'unknown' : '未检测')
+  const startupConfigured = Boolean(startAtLogin.configured)
+  const packageVersion = stringRecordValue(installStatus, 'package_version')
   const codexSessionCount = diagnosticSessionCount(result?.codexSessions)
   const claudeSessionCount = diagnosticSessionCount(result?.claudeSessions)
   const nanobotToolCount = numberRecordValue(nanobotTools, 'superleaf_mcp_tool_count') ||
     numberRecordValue(objectMeta(nanobotTools, 'adapter'), 'tool_count')
   const errors = diagnosticErrors(result)
+  const startupTone: 'ok' | 'warn' | 'neutral' = startupConfigured ? 'ok' : result?.installStatus?.ok ? 'neutral' : result?.installStatus ? 'warn' : 'neutral'
   return (
     <div className={`local-host-diagnostic-card ${result?.loading ? 'loading' : ''}`}>
       <div className="local-host-diagnostic-top">
@@ -594,6 +803,7 @@ function LocalHostDiagnosticCard({
         <DiagnosticPill tone={result?.mcpStatus?.ok ? 'ok' : result?.mcpStatus ? 'warn' : 'neutral'}>
           MCP tools {mcpTools || '-'}
         </DiagnosticPill>
+        <DiagnosticPill tone={startupTone}>Startup {startupStatus}</DiagnosticPill>
         {group.hasCodex && (
           <DiagnosticPill tone={result?.codexHealth?.ok && stringRecordValue(codexHealth, 'status') === 'ok' ? 'ok' : result?.codexHealth ? 'warn' : 'neutral'}>
             Codex {stringRecordValue(codexHealth, 'status') || '未检测'}
@@ -614,6 +824,8 @@ function LocalHostDiagnosticCard({
         <span>service: {service}</span>
         <span>contexts: {contexts}</span>
         <span>pending: {pending}</span>
+        <span>version: {packageVersion || '-'}</span>
+        <span>pid: {numberRecordValue(installStatus, 'pid') || '-'}</span>
         {group.hasCodex && <span>codex sessions: {codexSessionCount}</span>}
         {group.hasClaude && <span>claude sessions: {claudeSessionCount}</span>}
         {group.hasCodex && <span>codex thread: {shortDiagnosticId(latestSessionValue(result?.codexSessions, 'codex_thread_id')) || '-'}</span>}
@@ -664,9 +876,10 @@ function groupLocalHostEndpoints(providers: Provider[]): LocalHostEndpointGroup[
 }
 
 async function probeLocalHostEndpoint(group: LocalHostEndpointGroup): Promise<LocalHostEndpointDiagnostic> {
-  const [host, mcpStatus, codexHealth, codexSessions, claudeHealth, claudeSessions, nanobotTools] = await Promise.all([
+  const [host, mcpStatus, installStatus, codexHealth, codexSessions, claudeHealth, claudeSessions, nanobotTools] = await Promise.all([
     settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/health')),
     settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/superleaf/mcp/status')),
+    settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/superleaf/install/status')),
     group.hasCodex ? settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/codex/health')) : Promise.resolve(undefined),
     group.hasCodex ? settleDiagnostic(async () => listBrowserCodexSessions(group.endpoint, { limit: 5 }) as unknown as Record<string, unknown>) : Promise.resolve(undefined),
     group.hasClaude ? settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/claude/health')) : Promise.resolve(undefined),
@@ -683,6 +896,7 @@ async function probeLocalHostEndpoint(group: LocalHostEndpointGroup): Promise<Lo
     updatedAt: new Date().toISOString(),
     host,
     mcpStatus,
+    installStatus,
     codexHealth,
     codexSessions,
     claudeHealth,
@@ -743,6 +957,7 @@ function diagnosticErrors(result?: LocalHostEndpointDiagnostic): string[] {
     ['Claude', result.claudeHealth],
     ['Claude sessions', result.claudeSessions],
     ['Nanobot tools', result.nanobotTools],
+    ['Install status', result.installStatus],
   ]
   return entries
     .filter(([, probe]) => probe && !probe.ok)
@@ -762,6 +977,25 @@ function shortDiagnosticId(value: string): string {
   if (!raw) return ''
   if (raw.length <= 14) return raw
   return `${raw.slice(0, 7)}…${raw.slice(-5)}`
+}
+
+function shortChecksum(value: string): string {
+  const raw = String(value || '').trim()
+  if (!raw) return '-'
+  if (raw.length <= 16) return raw
+  return `${raw.slice(0, 12)}...${raw.slice(-8)}`
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = value
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`
 }
 
 function formatDiagnosticTime(value: string): string {

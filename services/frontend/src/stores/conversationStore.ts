@@ -19,6 +19,7 @@ import {
   type NanobotChatMessage,
   type NanobotToolCall,
   type Provider,
+  type BrowserNanobotToolResult,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
 import {
@@ -28,12 +29,18 @@ import {
 import {
   createBrowserCodexSession,
   codexToolMode,
-  pollBrowserCodexMcpToolRequests,
-  registerBrowserCodexMcpContext,
   runBrowserCodexTurn,
-  submitBrowserCodexMcpToolResult,
-  type BrowserCodexMcpToolRequest,
 } from '../services/codexBrowserClient'
+import {
+  createBrowserClaudeSession,
+  runBrowserClaudeTurn,
+} from '../services/claudeBrowserClient'
+import {
+  bridgeRequestFromToolCall,
+  startBrowserToolBridge,
+  toolCallFromBridgeRequest,
+  type BrowserToolBridgeRequest,
+} from '../services/browserToolBridge'
 import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
 import { useAnnotationStore } from './annotationStore'
 import { useCollaborationStore } from './collaborationStore'
@@ -66,6 +73,12 @@ export interface AgentRunStats {
   filesRead: number
   filesWritten: number
   stopped?: boolean
+  bridgeStatus?: 'connected' | 'recovering' | 'error'
+  bridgeError?: string
+  localSessionId?: string
+  externalSessionId?: string
+  sessionRuntime?: 'codex-local' | 'claude-local'
+  workspacePath?: string
 }
 
 const activeMessageControllers = new Map<string, AbortController>()
@@ -298,6 +311,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           conversationId,
           body,
           provider: browserCodex,
+          signal: abortCtl.signal,
+          markActivity,
+          set,
+        })
+        return
+      }
+      const browserClaude = findBrowserClaudeProvider(conversationId, get)
+      if (browserClaude) {
+        let gotFirstChunk = false
+        const markActivity = () => {
+          if (!gotFirstChunk) {
+            clearTimeout(firstByteTimer)
+            gotFirstChunk = true
+          }
+        }
+        await sendViaBrowserClaude({
+          conversationId,
+          body,
+          provider: browserClaude,
           signal: abortCtl.signal,
           markActivity,
           set,
@@ -578,6 +610,20 @@ function findBrowserCodexProvider(
   return provider?.kind === 'codex-local' ? provider : null
 }
 
+function findBrowserClaudeProvider(
+  conversationId: string,
+  get: () => ConversationState,
+): Provider | null {
+  const conv = get().conversations[conversationId]
+  if (!conv) return null
+  const workflows = useWorkflowStore.getState().workflows
+  const workflow = workflows.find((item) => item.id === conv.workflow_id)
+  const providerId = workflow?.provider_id ?? providerIdFromWorkflowId(conv.workflow_id)
+  if (!providerId) return null
+  const provider = useSettingsStore.getState().providers.find((item) => item.id === providerId)
+  return provider?.kind === 'claude-local' ? provider : null
+}
+
 function providerIdFromWorkflowId(workflowId: string): string {
   const idx = workflowId.indexOf(':')
   return idx > 0 ? workflowId.slice(0, idx) : ''
@@ -618,18 +664,15 @@ async function sendViaBrowserNanobot(args: {
       tool_calls: preflightToolCalls,
     })
     for (const toolCall of preflightToolCalls) {
-      const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
-        run_id: prepared.run_id,
-        document_id: prepared.document_id,
-        range_start: prepared.range_start,
-        range_end: prepared.range_end,
-        inputs: prepared.inputs,
-        tool_call: toolCall,
+      const result = await executeNanobotToolCall({
+        conversationId: args.conversationId,
+        runId: prepared.run_id,
+        prepared,
+        toolCall,
+        signal: args.signal,
+        markActivity: args.markActivity,
+        set: args.set,
       })
-      args.markActivity()
-      for (const evt of result.events) {
-        handleMessageEvent(args.set, args.conversationId, evt)
-      }
       messages.push({
         role: 'tool',
         tool_call_id: result.tool_call_id,
@@ -676,18 +719,15 @@ async function sendViaBrowserNanobot(args: {
     })
 
     for (const toolCall of turn.toolCalls) {
-      const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
-        run_id: prepared.run_id,
-        document_id: prepared.document_id,
-        range_start: prepared.range_start,
-        range_end: prepared.range_end,
-        inputs: prepared.inputs,
-        tool_call: toolCall,
+      const result = await executeNanobotToolCall({
+        conversationId: args.conversationId,
+        runId: prepared.run_id,
+        prepared,
+        toolCall,
+        signal: args.signal,
+        markActivity: args.markActivity,
+        set: args.set,
       })
-      args.markActivity()
-      for (const evt of result.events) {
-        handleMessageEvent(args.set, args.conversationId, evt)
-      }
       messages.push({
         role: 'tool',
         tool_call_id: result.tool_call_id,
@@ -724,6 +764,9 @@ async function sendViaBrowserCodex(args: {
       name: 'codex_local_session',
       tool_kind: 'codex_local',
       failed: false,
+      local_session_id: session.id,
+      external_session_id: session.codex_session_id || '',
+      workspace_path: session.workspace_path || prepared.workspace_path,
     },
   })
 
@@ -739,9 +782,60 @@ async function sendViaBrowserCodex(args: {
 
   if (toolMode !== 'marker-only') {
     try {
-      const mcpContext = await registerBrowserCodexMcpContext({
+      const bridge = await startBrowserToolBridge({
         endpoint: prepared.endpoint,
-        prepared,
+        context: {
+          projectId: String(prepared.superleaf_context.project_id ?? ''),
+          conversationId: String(prepared.superleaf_context.conversation_id ?? ''),
+          documentId: prepared.document_id,
+          rangeStart: prepared.range_start,
+          rangeEnd: prepared.range_end,
+          inputs: prepared.inputs,
+        },
+        parentSignal: args.signal,
+        onActivity: args.markActivity,
+        onPollError: (err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: 'superleaf_mcp_poll',
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        onRefreshError: (err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: 'superleaf_mcp_refresh',
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        onRequestError: (request, err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: request.name,
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        executeRequest: async (request, signal) =>
+          executeCodexBrowserToolRequest({
+            conversationId: args.conversationId,
+            runId: prepared.run_id,
+            request,
+            signal,
+            markActivity: args.markActivity,
+            set: args.set,
+          }),
       })
       args.markActivity()
       handleMessageEvent(args.set, args.conversationId, {
@@ -752,15 +846,7 @@ async function sendViaBrowserCodex(args: {
           failed: false,
         },
       })
-      stopMcpBridge = startBrowserCodexMcpBridge({
-        endpoint: prepared.endpoint,
-        contextId: mcpContext.context_id,
-        conversationId: args.conversationId,
-        runId: prepared.run_id,
-        parentSignal: args.signal,
-        markActivity: args.markActivity,
-        set: args.set,
-      })
+      stopMcpBridge = bridge.stop
     } catch {
       // Keep marker/preflight fallback if the downloaded Local Host is old or
       // the MCP context endpoint is temporarily absent.
@@ -768,18 +854,15 @@ async function sendViaBrowserCodex(args: {
   }
 
   for (const toolCall of preflightToolCalls) {
-    const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
-      run_id: prepared.run_id,
-      document_id: prepared.document_id,
-      range_start: prepared.range_start,
-      range_end: prepared.range_end,
-      inputs: prepared.inputs,
-      tool_call: toolCall,
+    const result = await executeCodexToolCall({
+      conversationId: args.conversationId,
+      runId: prepared.run_id,
+      prepared,
+      toolCall,
+      signal: args.signal,
+      markActivity: args.markActivity,
+      set: args.set,
     })
-    args.markActivity()
-    for (const evt of result.events) {
-      handleMessageEvent(args.set, args.conversationId, evt)
-    }
     toolResults.push(result)
   }
 
@@ -803,7 +886,19 @@ async function sendViaBrowserCodex(args: {
         },
       })
       lastError = result.error
-      lastCodexSessionId = result.codexSessionId || lastCodexSessionId
+      lastCodexSessionId = result.codexSessionId || result.session?.codex_session_id || lastCodexSessionId
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'native.agent.tool',
+        data: {
+          name: 'codex_cli_session',
+          tool_kind: 'codex_local',
+          failed: Boolean(lastError),
+          local_session_id: result.session?.id || session.id,
+          external_session_id: lastCodexSessionId,
+          workspace_path: result.session?.workspace_path || session.workspace_path || prepared.workspace_path,
+          error: lastError,
+        },
+      })
 
       if (result.toolCalls.length > 0) {
         args.set((s) => ({
@@ -836,18 +931,15 @@ async function sendViaBrowserCodex(args: {
         finalParts.push(result.output.trim())
       }
       for (const toolCall of result.toolCalls) {
-        const toolResult = await conversationApi.executeBrowserCodexTool(args.conversationId, {
-          run_id: prepared.run_id,
-          document_id: prepared.document_id,
-          range_start: prepared.range_start,
-          range_end: prepared.range_end,
-          inputs: prepared.inputs,
-          tool_call: toolCall,
+        const toolResult = await executeCodexToolCall({
+          conversationId: args.conversationId,
+          runId: prepared.run_id,
+          prepared,
+          toolCall,
+          signal: args.signal,
+          markActivity: args.markActivity,
+          set: args.set,
         })
-        args.markActivity()
-        for (const evt of toolResult.events) {
-          handleMessageEvent(args.set, args.conversationId, evt)
-        }
         toolResults.push(toolResult)
       }
     }
@@ -858,75 +950,263 @@ async function sendViaBrowserCodex(args: {
   }
 }
 
-function startBrowserCodexMcpBridge(args: {
-  endpoint: string
-  contextId: string
+async function sendViaBrowserClaude(args: {
   conversationId: string
-  runId: string
-  parentSignal: AbortSignal
-  markActivity: () => void
-  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
-}): () => void {
-  const ctl = new AbortController()
-  const stop = () => ctl.abort('stopped')
-  if (args.parentSignal.aborted) stop()
-  else args.parentSignal.addEventListener('abort', stop, { once: true })
-
-  void (async () => {
-    while (!ctl.signal.aborted) {
-      let requests: BrowserCodexMcpToolRequest[] = []
-      try {
-        requests = await pollBrowserCodexMcpToolRequests({
-          endpoint: args.endpoint,
-          contextId: args.contextId,
-          signal: ctl.signal,
-        })
-      } catch (err) {
-        if (ctl.signal.aborted) break
-        handleMessageEvent(args.set, args.conversationId, {
-          event: 'native.agent.tool',
-          data: {
-            name: 'superleaf_mcp_poll',
-            tool_kind: 'superleaf_mcp',
-            failed: true,
-          },
-        })
-        await sleep(800)
-        continue
-      }
-      for (const request of requests) {
-        await executeBrowserCodexMcpRequest({
-          ...args,
-          request,
-          signal: ctl.signal,
-        })
-      }
-    }
-  })()
-
-  return () => {
-    args.parentSignal.removeEventListener('abort', stop)
-    stop()
-  }
-}
-
-async function executeBrowserCodexMcpRequest(args: {
-  endpoint: string
-  conversationId: string
-  runId: string
-  request: BrowserCodexMcpToolRequest
+  body: MessageSend
+  provider: Provider
   signal: AbortSignal
   markActivity: () => void
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
-}) {
-  const toolCall: NanobotToolCall = {
-    id: args.request.id,
-    type: 'function',
-    function: {
-      name: args.request.name,
-      arguments: JSON.stringify(args.request.arguments ?? {}),
+}): Promise<void> {
+  const prepared = await conversationApi.prepareBrowserClaude(args.conversationId, args.body)
+  args.markActivity()
+  handleMessageEvent(args.set, args.conversationId, {
+    event: 'ylw.msg.user',
+    data: prepared.user_message,
+  })
+
+  const session = await createBrowserClaudeSession({
+    endpoint: prepared.endpoint,
+    prepared,
+    providerName: args.provider.name,
+  })
+  args.markActivity()
+  handleMessageEvent(args.set, args.conversationId, {
+    event: 'native.agent.tool',
+    data: {
+      name: 'claude_local_session',
+      tool_kind: 'claude_local',
+      failed: false,
+      local_session_id: session.id,
+      external_session_id: session.claude_session_id || '',
+      workspace_path: session.workspace_path || prepared.workspace_path,
     },
+  })
+
+  let stopMcpBridge = () => {}
+  const toolMode = claudeToolMode(prepared)
+  if (toolMode !== 'marker-only') {
+    try {
+      const bridge = await startBrowserToolBridge({
+        endpoint: prepared.endpoint,
+        context: {
+          projectId: String(prepared.superleaf_context.project_id ?? ''),
+          conversationId: String(prepared.superleaf_context.conversation_id ?? ''),
+          documentId: prepared.document_id,
+          rangeStart: prepared.range_start,
+          rangeEnd: prepared.range_end,
+          inputs: prepared.inputs,
+        },
+        parentSignal: args.signal,
+        onActivity: args.markActivity,
+        onPollError: (err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: 'superleaf_mcp_poll',
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        onRefreshError: (err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: 'superleaf_mcp_refresh',
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        onRequestError: (request, err) => {
+          handleMessageEvent(args.set, args.conversationId, {
+            event: 'native.agent.tool',
+            data: {
+              name: request.name,
+              tool_kind: 'superleaf_mcp',
+              failed: true,
+              error: formatEventError(err),
+            },
+          })
+        },
+        executeRequest: async (request, signal) =>
+          executeClaudeBrowserToolRequest({
+            conversationId: args.conversationId,
+            runId: prepared.run_id,
+            request,
+            signal,
+            markActivity: args.markActivity,
+            set: args.set,
+          }),
+      })
+      args.markActivity()
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'native.agent.tool',
+        data: {
+          name: 'superleaf_mcp_context',
+          tool_kind: 'superleaf_mcp',
+          failed: false,
+        },
+      })
+      stopMcpBridge = bridge.stop
+    } catch {
+      // Claude can still answer without tools; the status chip will surface
+      // MCP refresh/poll failures when the bridge itself is reachable later.
+    }
   }
+
+  let streamedContent = ''
+  let lastError = ''
+  let lastClaudeSessionId = session.claude_session_id || ''
+  try {
+    const result = await runBrowserClaudeTurn({
+      endpoint: prepared.endpoint,
+      sessionId: session.id,
+      prepared,
+      signal: args.signal,
+      onActivity: args.markActivity,
+      onDelta: (delta) => {
+        streamedContent += delta
+        handleMessageEvent(args.set, args.conversationId, {
+          event: 'ylw.msg.delta',
+          data: { delta },
+        })
+      },
+    })
+    lastError = result.error
+    lastClaudeSessionId = result.claudeSessionId || result.session?.claude_session_id || lastClaudeSessionId
+    handleMessageEvent(args.set, args.conversationId, {
+      event: 'native.agent.tool',
+      data: {
+        name: 'claude_cli_session',
+        tool_kind: 'claude_local',
+        failed: Boolean(lastError),
+        local_session_id: result.session?.id || session.id,
+        external_session_id: lastClaudeSessionId,
+        workspace_path: result.session?.workspace_path || session.workspace_path || prepared.workspace_path,
+        error: lastError,
+      },
+    })
+    const content = result.output.trim() || streamedContent.trim() || '(Claude 没有返回可见文本。)'
+    if (content && !streamedContent.trim()) {
+      handleMessageEvent(args.set, args.conversationId, {
+        event: 'ylw.msg.delta',
+        data: { delta: content },
+      })
+    }
+    const finished = await conversationApi.finishBrowserClaude(args.conversationId, {
+      run_id: prepared.run_id,
+      content,
+      error: lastError,
+      claude_session_id: lastClaudeSessionId,
+    })
+    handleMessageEvent(args.set, args.conversationId, {
+      event: 'ylw.msg.finished',
+      data: finished,
+    })
+  } finally {
+    stopMcpBridge()
+  }
+}
+
+async function executeNanobotToolCall(args: {
+  conversationId: string
+  runId: string
+  prepared: BrowserToolExecutionContext
+  toolCall: NanobotToolCall
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<BrowserNanobotToolResult> {
+  return executeNanobotBrowserToolRequest({
+    conversationId: args.conversationId,
+    runId: args.runId,
+    request: bridgeRequestFromPreparedToolCall(args.toolCall, args.conversationId, args.prepared),
+    signal: args.signal,
+    markActivity: args.markActivity,
+    set: args.set,
+  })
+}
+
+async function executeCodexToolCall(args: {
+  conversationId: string
+  runId: string
+  prepared: BrowserToolExecutionContext
+  toolCall: NanobotToolCall
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<BrowserNanobotToolResult> {
+  return executeCodexBrowserToolRequest({
+    conversationId: args.conversationId,
+    runId: args.runId,
+    request: bridgeRequestFromPreparedToolCall(args.toolCall, args.conversationId, args.prepared),
+    signal: args.signal,
+    markActivity: args.markActivity,
+    set: args.set,
+  })
+}
+
+function bridgeRequestFromPreparedToolCall(
+  toolCall: NanobotToolCall,
+  conversationId: string,
+  prepared: BrowserToolExecutionContext,
+): BrowserToolBridgeRequest {
+  return bridgeRequestFromToolCall(toolCall, {
+    projectId: prepared.superleaf_context
+      ? String(prepared.superleaf_context.project_id ?? '')
+      : '',
+    conversationId: prepared.superleaf_context
+      ? String(prepared.superleaf_context.conversation_id ?? conversationId)
+      : conversationId,
+    documentId: prepared.document_id,
+    rangeStart: prepared.range_start,
+    rangeEnd: prepared.range_end,
+    inputs: prepared.inputs,
+  })
+}
+
+async function executeNanobotBrowserToolRequest(args: {
+  conversationId: string
+  runId: string
+  request: BrowserToolBridgeRequest
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<BrowserNanobotToolResult> {
+  try {
+    const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
+      run_id: args.runId,
+      document_id: args.request.document_id,
+      range_start: args.request.range_start,
+      range_end: args.request.range_end,
+      inputs: args.request.inputs,
+      tool_call: toolCallFromBridgeRequest(args.request),
+    })
+    args.markActivity()
+    for (const evt of result.events) {
+      handleMessageEvent(args.set, args.conversationId, evt)
+    }
+    return result
+  } catch (err) {
+    if (args.signal.aborted) {
+      throw new DOMException('Browser tool request aborted', 'AbortError')
+    }
+    throw err
+  }
+}
+
+async function executeCodexBrowserToolRequest(args: {
+  conversationId: string
+  runId: string
+  request: BrowserToolBridgeRequest
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<BrowserNanobotToolResult> {
   try {
     const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
       run_id: args.runId,
@@ -934,39 +1214,54 @@ async function executeBrowserCodexMcpRequest(args: {
       range_start: args.request.range_start,
       range_end: args.request.range_end,
       inputs: args.request.inputs,
-      tool_call: toolCall,
+      tool_call: toolCallFromBridgeRequest(args.request),
     })
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)
     }
-    await submitBrowserCodexMcpToolResult({
-      endpoint: args.endpoint,
-      requestId: args.request.id,
-      content: result.content,
-      failed: result.failed,
-      name: result.name || args.request.name,
-      toolKind: result.tool_kind,
-      events: result.events,
-      signal: args.signal,
-    })
+    return result
   } catch (err) {
-    if (args.signal.aborted) return
-    await submitBrowserCodexMcpToolResult({
-      endpoint: args.endpoint,
-      requestId: args.request.id,
-      content: err instanceof Error ? err.message : String(err),
-      failed: true,
-      name: args.request.name,
-      toolKind: 'superleaf_mcp',
-      events: [],
-      signal: args.signal,
-    }).catch(() => undefined)
+    if (args.signal.aborted) {
+      throw new DOMException('Browser tool request aborted', 'AbortError')
+    }
+    throw err
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
+async function executeClaudeBrowserToolRequest(args: {
+  conversationId: string
+  runId: string
+  request: BrowserToolBridgeRequest
+  signal: AbortSignal
+  markActivity: () => void
+  set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
+}): Promise<BrowserNanobotToolResult> {
+  try {
+    const result = await conversationApi.executeBrowserClaudeTool(args.conversationId, {
+      run_id: args.runId,
+      document_id: args.request.document_id,
+      range_start: args.request.range_start,
+      range_end: args.request.range_end,
+      inputs: args.request.inputs,
+      tool_call: toolCallFromBridgeRequest(args.request),
+    })
+    args.markActivity()
+    for (const evt of result.events) {
+      handleMessageEvent(args.set, args.conversationId, evt)
+    }
+    return result
+  } catch (err) {
+    if (args.signal.aborted) {
+      throw new DOMException('Browser tool request aborted', 'AbortError')
+    }
+    throw err
+  }
+}
+
+function claudeToolMode(prepared: { claude_settings?: { tool_mode?: unknown } }): 'mcp-first' | 'browser-preflight' | 'marker-only' {
+  const value = String(prepared.claude_settings?.tool_mode || 'mcp-first')
+  return value === 'browser-preflight' || value === 'marker-only' ? value : 'mcp-first'
 }
 
 const PREFLIGHT_READ_TOOL_NAMES = new Set([
@@ -980,6 +1275,11 @@ interface BrowserToolPreparedContext {
   document_id: string
   range_start: number
   range_end: number
+}
+
+interface BrowserToolExecutionContext extends BrowserToolPreparedContext {
+  inputs: Record<string, unknown>
+  superleaf_context?: Record<string, unknown>
 }
 
 function inferBrowserNanobotPreflightToolCalls(
@@ -1159,6 +1459,35 @@ function parseSseMessage(chunk: string): { event: string; data: unknown } | null
   return { event: eventName, data }
 }
 
+function bridgeStatusFromToolEvent(
+  name: string,
+  failed: boolean,
+  data: { tool_kind?: string; error?: unknown },
+): { status: NonNullable<AgentRunStats['bridgeStatus']>; error?: string } | null {
+  if (name === 'superleaf_mcp_context' && !failed) {
+    return { status: 'connected' }
+  }
+  if (name === 'superleaf_mcp_poll' || name === 'superleaf_mcp_refresh') {
+    return {
+      status: 'recovering',
+      error: formatEventError(data.error) || 'SuperLeaf MCP 正在重连',
+    }
+  }
+  if (data.tool_kind === 'superleaf_mcp' && failed) {
+    return {
+      status: 'error',
+      error: formatEventError(data.error) || 'SuperLeaf MCP 工具调用失败',
+    }
+  }
+  return null
+}
+
+function formatEventError(value: unknown): string {
+  if (!value) return ''
+  if (value instanceof Error) return value.message
+  return String(value)
+}
+
 function handleMessageEvent(
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void,
   conversationId: string,
@@ -1191,9 +1520,22 @@ function handleMessageEvent(
       name?: string
       failed?: boolean
       tool_kind?: string
+      error?: unknown
+      local_session_id?: unknown
+      external_session_id?: unknown
+      workspace_path?: unknown
     }
     const name = String(data?.name ?? '')
     const failed = Boolean(data?.failed)
+    const localSessionId = String(data?.local_session_id ?? '').trim()
+    const externalSessionId = String(data?.external_session_id ?? '').trim()
+    const workspacePath = String(data?.workspace_path ?? '').trim()
+    const sessionRuntime =
+      data?.tool_kind === 'claude_local'
+        ? 'claude-local'
+        : data?.tool_kind === 'codex_local'
+          ? 'codex-local'
+          : undefined
     const isRead =
       name === 'read_agent_file' ||
       name === 'project_read_doc' ||
@@ -1204,7 +1546,8 @@ function handleMessageEvent(
       (data?.tool_kind === 'project_write' ||
         name === 'project_write_text_file' ||
         name === 'project_create_text_file')
-    if (isRead || isWrite) {
+    const bridgeUpdate = bridgeStatusFromToolEvent(name, failed, data)
+    if (isRead || isWrite || bridgeUpdate || localSessionId || externalSessionId || workspacePath) {
       set((s) => {
         const current = s.streamingStats[conversationId] ?? {
           filesRead: 0,
@@ -1217,6 +1560,14 @@ function handleMessageEvent(
               filesRead: current.filesRead + (isRead ? 1 : 0),
               filesWritten: current.filesWritten + (isWrite ? 1 : 0),
               stopped: current.stopped,
+              bridgeStatus: bridgeUpdate?.status ?? current.bridgeStatus,
+              bridgeError: bridgeUpdate
+                ? bridgeUpdate.error
+                : current.bridgeError,
+              localSessionId: localSessionId || current.localSessionId,
+              externalSessionId: externalSessionId || current.externalSessionId,
+              sessionRuntime: sessionRuntime ?? current.sessionRuntime,
+              workspacePath: workspacePath || current.workspacePath,
             },
           },
         }

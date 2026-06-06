@@ -8,13 +8,25 @@ nav_order: 98
 
 这份计划描述如何把 MCP 建成 SuperLeaf 的标准工具协议层，而不是某一个 Agent 的附属功能。目标是让本地 Codex、Claude、Nanobot、后端 Native Agent、未来远程 Agent 都通过同一套 SuperLeaf 工具契约访问项目树、文档、批注、会话、事件和版本。
 
+实际使用步骤见 [Local Agent Host 与 SuperLeaf MCP](./agents/local-agent-mcp.html)。本页只记录架构规划和迭代路线。
+
 ## 执行状态
 
-截至 2026-06-05，已经完成计划持久化和 Phase 1 的起步：
+截至 2026-06-06，已经完成计划持久化、Phase 1a、Phase 1b 的 Tool Kernel 初版、Phase 2 的前四段，以及 Phase 3/Phase 4 收尾：
 
-- Local Agent Host 的 MCP 工具定义已经从 `server.mjs` 抽到独立 registry。
-- 前端 Codex/Nanobot fallback 工具说明已经抽到共享 helper，减少“当前 API 通道没有挂载 SuperLeaf 工具”这类错误回答。
-- 后端 Native Agent 的 Python 工具注册仍在原执行器内，下一步需要从同一份 JSON schema 生成 Python、TypeScript 和 MJS registry。
+- `services/shared/superleaf-tools.json` 已成为第一批 SuperLeaf 工具的共享注册表。
+- Local Agent Host 的 MCP `tools/list` 从共享注册表派生，并且下载包会携带冻结的 registry JSON。
+- 前端 Codex/Nanobot tool guide 和 marker fallback 从同一份注册表派生，减少“当前 API 通道没有挂载 SuperLeaf 工具”这类错误回答。
+- 后端 browser Agent / Nanobot 暴露给浏览器通道的 OpenAI-compatible tool schema 已从共享注册表派生。
+- Local Agent Host `/mcp` 已补上 session metadata、session TTL、`DELETE /mcp` close、`GET /mcp` SSE、`Last-Event-ID` replay、内存 event store、`/superleaf/mcp/status` 诊断，以及 context/session 过期时的 pending call cleanup。
+- `services/local-agent-host/scripts/smoke-mcp.mjs` 已提供零依赖 MCP Inspector-style 自动烟测，覆盖 initialize、tools/list、GET SSE、Last-Event-ID replay、invalid replay guard、status 和 DELETE close。
+- Local Agent Host 已从共享 registry 暴露 `resources/list/read` 和 `prompts/list/get`，当前 resources/prompts 用于描述 Tool Kernel、Browser Bridge 和常见 SuperLeaf 工作流，不直接暴露项目文档内容。
+- `services/frontend/src/services/browserToolBridge.ts` 已抽出通用 BrowserToolBridge，Codex MCP bridge 已迁移到共享 context 注册、长轮询、结果回填、heartbeat/context refresh 和 poll 失败恢复逻辑。
+- Nanobot 的 browser preflight 与 OpenAI-compatible `tool_calls` 执行路径已复用 BrowserToolBridge 的 request/result 形状；Nanobot 仍是 OpenAI tool adapter，不是 MCP client。
+- 讨论区 Agent 气泡已显示 BrowserToolBridge 状态：MCP 已连接、重连中或错误，错误详情可通过状态 chip 查看。
+- Local Agent Host 已支持 `GET /codex/sessions` 与 `GET /claude/sessions`，可以按 SuperLeaf conversation/project/workspace 反查本机 Codex/Claude session 映射；讨论区 Agent 气泡也会显示 Local Host session 与 Codex/Claude 外部 session 的短 id。
+- 团队管理 Agent 页已加入 Local Host 诊断面板，按 endpoint 汇总 `/health`、`/superleaf/mcp/status`、Codex/Claude health/session list 和 Nanobot Tool Adapter 状态。
+- 后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `services/backend/app/services/native_agent_tool_kernel.py`；项目文档读写、搜索、outline、edit proposal 和 suggestion 等 DB-backed 执行 handler 也已迁入 Tool Kernel 执行层。`NativeAgentRunner` 现在保留编排、`.agents` 工作区文件读取、Skill 激活和外部 MCP 调度。
 
 ## 目标
 
@@ -43,9 +55,10 @@ SuperLeaf Tool Kernel
 
 本计划参考了 `/Volumes/DevLayer/Reference` 下的 MCP 项目：
 
-- `mcp-typescript-sdk`：提供标准 Streamable HTTP transport、session、capability、tools/list、tools/call、resources/prompts 支持。SuperLeaf Local Agent Host 后续应从手写 JSON-RPC 迁移到 SDK。
+- `mcp-typescript-sdk`：提供标准 Streamable HTTP transport、session、capability、tools/list、tools/call、resources/prompts 支持。当前已借鉴它的 `POST /mcp`、`GET /mcp`、`DELETE /mcp`、`Mcp-Session-Id`、`Last-Event-ID`、SSE `event: message` 和 `EventStore` 语义；后续再从手写兼容层迁移到 SDK 实现。
 - `supergateway`：提供 stdio 到 Streamable HTTP/SSE/WS 的桥接实现。它的 stateful session map、access counter、timeout cleanup 很适合 Local Agent Host。
-- `mcp-proxy`：展示了如何做协议代理、认证、event store 和 request timeout。SuperLeaf 的 Local Agent Host 也应定位为 bridge/proxy，不应把业务逻辑散落在协议层。
+- `mcp-proxy`：展示了如何做协议代理、认证、event store 和 request timeout。当前已借鉴它的 `InMemoryEventStore` 思路，给 Local Host 增加按 stream 的事件存储、TTL、容量上限和 replay-after。
+- `mcp-inspector`：展示了面向开发者的 session 初始化、工具枚举、Streamable HTTP 连接和诊断检查流。当前 `npm run smoke:mcp` 借鉴它的 inspector-style session 验证顺序，但保持零依赖。
 - `openai-agents-js`：把 MCP server 抽象成 `connect / listTools / callTool / close / cache / filter / invalidate`，适合借鉴为 SuperLeaf Agent Tool Runtime。
 - `fastmcp`：强调 request-scoped context、dependency injection、session visibility，适合 SuperLeaf 表达当前用户、项目、文档和选区。
 - `cloudflare-mcp-server` 与 `cloudflare-agents`：适合后续远程 MCP、OAuth、scope、观测和多租户授权设计。
@@ -162,10 +175,13 @@ services/local-agent-host/superleaf-tools.mjs
 
 MCP Gateway 负责把 Tool Kernel 暴露为 MCP server。
 
-当前 Local Agent Host 已有最小实现：
+当前 Local Agent Host 已有实现：
 
 ```text
 POST /mcp
+GET  /mcp
+DELETE /mcp
+GET  /superleaf/mcp/status
 POST /superleaf/mcp/context
 GET  /superleaf/mcp/tool-requests
 POST /superleaf/mcp/tool-results
@@ -173,14 +189,13 @@ POST /superleaf/mcp/tool-results
 
 升级目标：
 
-- 使用 `@modelcontextprotocol/sdk` 的 Streamable HTTP transport。
-- 支持 stateful session。
-- 区分缺失 session、未知 session、过期 session。
-- 添加 event store，支持 reconnect 后 replay 未完成事件。
-- 支持 `DELETE /mcp` 关闭 session。
-- 暴露 `resources/list` 和 `resources/read`。
-- 暴露 `prompts/list` 和 `prompts/get`。
-- 增加 MCP Inspector smoke test。
+- 在保持下载包零安装依赖的前提下，先实现 `@modelcontextprotocol/sdk` 的 Streamable HTTP 关键语义。
+- 已完成 SDK 风格 stateful session 行为，区分缺失 session、未知 session、过期 session。
+- 已添加 event store，支持 reconnect 后 replay 未完成事件。
+- 后续在打包器能可靠携带 npm 依赖后，再把协议层替换为官方 `@modelcontextprotocol/sdk` transport。
+- 已暴露 registry-backed `resources/list` 和 `resources/read`。
+- 已暴露 registry-backed `prompts/list` 和 `prompts/get`。
+- 已增加 MCP Inspector-style smoke test：`cd services/local-agent-host && npm run smoke:mcp`。
 
 Local Host 的 MCP Gateway 只服务本机 Agent。未来远程 Agent 要使用独立 Remote MCP Gateway，不复用无认证 loopback 入口。
 
@@ -232,6 +247,8 @@ Codex 已经适合直接使用 MCP。
 
 - SuperLeaf 仍然保留 marker fallback，用于旧 Host 或 MCP 不可用时。
 - 模型、reasoning effort、sandbox、approval policy 在 provider 设置中显式选择。
+- 已实现 Local Agent Host `GET /codex/sessions`，支持按 `superleaf_conversation_id`、`superleaf_project_id`、`workspace_path` 和 `limit` 过滤，返回 Local Host session id 与 Codex 返回的 `codex_session_id` / `codex_thread_id`。
+- 前端 Discussion 气泡显示 `本机会话` / `Codex 会话` 短 id，用于确认 SuperLeaf conversation 是否续到了同一条本地 Codex 会话。
 
 ### Claude
 
@@ -245,6 +262,8 @@ Claude 方向分两种：
 - Claude provider 的 local endpoint 配置。
 - Claude MCP config export。
 - Claude session opaque id 映射，不复制本地 session 内容。
+- 已实现 Local Agent Host `GET /claude/sessions`，支持按 `superleaf_conversation_id`、`superleaf_project_id`、`workspace_path` 和 `limit` 过滤，返回 Local Host session id 与 Claude Code 返回的 `claude_session_id`。
+- 前端 Discussion 气泡显示 `本机会话` / `Claude 会话` 短 id，用于确认 SuperLeaf conversation 是否续到了同一条本地 Agent 会话。
 
 ### Nanobot
 
@@ -349,18 +368,22 @@ Local Agent Host 保存：
 - Codex fallback prompt 仍显示同样工具。
 - 前端 build、Local Host syntax check 通过。
 
-### Phase 2：Local Host SDK 化
+### Phase 2：Local Host SDK 语义兼容
 
 目标：
 
-- 用 MCP TypeScript SDK 替换手写 JSON-RPC。
-- 增加 stateful session、session timeout、DELETE close。
-- 增加 event store 与 reconnect replay。
-- 增加 MCP Inspector 测试脚本。
+- 先实现 MCP TypeScript SDK 的 Streamable HTTP 关键语义，保持下载包无需 `npm install`。
+- 已增加 stateful session、session timeout、DELETE close。
+- 已增加 `GET /mcp` SSE、event store 与 reconnect replay。
+- 后续再用 MCP TypeScript SDK 替换手写 JSON-RPC。
+- 已增加 MCP Inspector-style 测试脚本。
 
 验收：
 
-- MCP Inspector 能 initialize/list/call。
+- `npm run smoke:mcp` 能自动完成 initialize/list/SSE/replay/status/delete。
+- `npm run smoke:mcp` 覆盖 `resources/list/read` 和 `prompts/list/get`。
+- 后续再接入真正的 MCP Inspector UI 或 CLI 做人工协议排查。
+- `GET /mcp` 能返回 SSE event id，`Last-Event-ID` 能回放断线期间的 SuperLeaf lifecycle event。
 - 模拟浏览器 bridge 能完成 tool call。
 - session 过期和缺失错误码符合 MCP 预期。
 
@@ -368,29 +391,39 @@ Local Agent Host 保存：
 
 目标：
 
-- 从 Codex 专用实现抽出通用 BrowserToolBridge。
-- Codex 和 Nanobot 共用 register/poll/execute/submit。
-- 添加 heartbeat 和 pending recovery。
+- 已从 Codex 专用实现抽出通用 BrowserToolBridge。
+- 已让 Codex 复用 register/poll/execute/submit。
+- 已添加 heartbeat、context refresh 和 poll 失败后的 context recovery。
+- 已让 Nanobot 的 OpenAI-compatible `tool_calls` 与 preflight 工具执行复用同一套 bridge request/result 形状。
+- 已在讨论区 Agent 运行状态中显示 MCP 已连接、重连中和错误。
+- 已新增 `claude-local` 第一版：Local Host 提供 `/claude/health`、`/claude/sessions`、`/claude/sessions/:id/turns`；后端提供 `browser-claude/prepare|tool|finish`；前端 Provider 表单、健康检查、会话分发和 MCP bridge 复用同一条 BrowserToolBridge。
+- 已补 Claude/Codex session 映射策略、CLI 兼容矩阵、Tool Mode 判定和只读 readiness 脚本 `npm run matrix:local-agents`。
 
 验收：
 
 - Codex MCP 工具调用正常。
-- Nanobot fallback 工具调用正常。
-- Host 重启或浏览器短断线时给出明确失败或恢复。
+- Nanobot fallback / OpenAI-compatible tool call 工具调用正常。
+- Claude Local 在 `MCP first` 下能通过本机 Claude Code 调用 `project_*`、`propose_doc_edit`、`create_suggestion`。
+- Host 重启或浏览器短断线时在讨论区给出明确失败或恢复状态。
 
 ### Phase 4：Nanobot Tool Adapter
 
 目标：
 
-- Nanobot 使用共享 Tool Kernel schema。
-- 优先 OpenAI-compatible `tool_calls`。
+- 已让 Nanobot 使用共享 Tool Kernel schema。
+- 已优先使用 OpenAI-compatible `tool_calls`。
 - marker 作为 fallback。
-- 可选：Local Host 增加 `/nanobot/tools` 或内部 adapter，把 MCP tools 转为 Nanobot 可执行工具。
+- 已增加 Local Host `/nanobot/health` 和 `/nanobot/tools`，用于暴露 Nanobot adapter 的 OpenAI-compatible tool schema、MCP URL、marker 示例和 browser bridge 状态。
+- 已让前端 browser Nanobot discovery 同步 adapter 元数据，并在团队管理中显示 SuperLeaf Tool Adapter 状态；旧 provider 若指向 Nanobot 本体，会自动 fallback 检测默认 Local Host，并可通过 UI 同步 `local_agent_host_endpoint`。
+- 已新增 `npm run matrix:nanobot-tools`：默认只读检查 adapter；显式 `SL_NANOBOT_TOOL_CALL_LIVE=1` 时通过 Local Host 调用 Nanobot 并分类 `native_tool_calls`、`marker_fallback`、`plain_text` 或 `error`，但不会执行返回的工具。
 
 验收：
 
 - Nanobot 不再回答“当前 API 通道没有 SuperLeaf 工具”。
 - 读文档、搜索、创建 suggestion 都能稳定执行。
+- `GET /nanobot/tools` 返回 6 个 registry-derived OpenAI function tools。
+- Provider 同步后显示 `SuperLeaf Tool Adapter` 状态；缺少元数据时显示 `needs Local Host` 和同步按钮，而不是误报工具不存在。
+- 原生 `tool_calls` 稳定性不靠猜测判断；用 live probe 输出 verdict。当前策略是支持原生 `tool_calls`，同时保留 marker fallback。
 
 ### Phase 5：Claude/Codex 本地安装体验
 
@@ -457,9 +490,10 @@ Local Agent Host 保存：
 
 ## 当前下一步
 
-从 Phase 1 开始：
+继续推进 Phase 5 和后续工具内核整理：
 
-1. 新增共享 SuperLeaf tool registry。
-2. 让 Local Host MCP tools/list 使用 registry。
-3. 让 Nanobot/Codex fallback prompt 使用 registry。
-4. 验证工具列表和现有 browser bridge 行为不变。
+1. 完善 Codex/Claude 本地安装、持久运行、MCP 注册和新机器首次启动体验。
+2. 在打包器能稳定携带依赖后，再评估是否用官方 MCP TypeScript SDK 替换当前零依赖兼容层。
+3. 后续再接入真正的 MCP Inspector UI/CLI，用于人工调试复杂 client 兼容问题。
+4. 根据 `matrix:nanobot-tools` 的 live probe 结果，长期观察是否可以弱化 marker 提示。
+5. 后续再评估是否把 `.agents` 工作区文件读取与 Skill 激活也纳入 Tool Kernel 的非 DB 执行层。

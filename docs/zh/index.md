@@ -53,6 +53,10 @@ permalink: /zh/
     <strong>MCP 工具</strong>
     <span>拥有的 MCP、自定义 MCP、市场 preset、连通性和功能性检查。</span>
   </a>
+  <a class="ylw-card" href="agents/local-agent-mcp.html">
+    <strong>本地 Agent MCP</strong>
+    <span>macOS / Windows 上启动 Local Agent Host，让 Codex、Claude、Nanobot 调用 SuperLeaf 工具。</span>
+  </a>
   <a class="ylw-card" href="workflows/README.html">
     <strong>工作流</strong>
     <span>Provider、Workflow Definition、Run History 和批注生命周期。</span>
@@ -76,6 +80,8 @@ permalink: /zh/
 - [Provider 配置](providers/README.html)：Nanobot、Dify 和 OpenAI-compatible provider 的接入方式。
 - [Skill 使用与市场](agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill、项目化 Skill 开发的差异。
 - [MCP 使用与市场](agents/mcps.html)：市场 preset、自定义 MCP、连通性和功能性检查。
+- [Local Agent Host 与 SuperLeaf MCP](agents/local-agent-mcp.html)：本地 Codex、Nanobot、Claude 通过 Local Host 访问当前 SuperLeaf 项目。
+- [Codex / Claude Local 兼容矩阵](agents/local-agent-compatibility-matrix.html)：Phase 3 的 MCP first、fallback、session 映射和故障恢复验收标准。
 - [版本历史与项目归档](versioning/README.html)：服务器端项目归档和指定大版本 ZIP 下载。
 - [交互数据收集](annotation-training-data.html)：交互数据保留、训练数据导出、CSV Skill。
 - [实时协作](collaboration/README.html)：Yjs CRDT、远程光标、协作者在线状态。

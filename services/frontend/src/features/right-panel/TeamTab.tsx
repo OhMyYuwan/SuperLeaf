@@ -61,8 +61,17 @@ import {
   nativeAgentApi,
   providerApi,
 } from '../../services/backendApi'
-import { discoverBrowserNanobotAgents, storeBrowserNanobotApiKey } from '../../services/nanobotBrowserClient'
-import { listBrowserCodexModels, probeBrowserCodex } from '../../services/codexBrowserClient'
+import {
+  DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT,
+  discoverBrowserNanobotAgents,
+  nanobotLocalAgentHostEndpointFromRaw,
+  probeBrowserNanobotTools,
+  readBrowserNanobotApiKey,
+  storeBrowserNanobotApiKey,
+} from '../../services/nanobotBrowserClient'
+import { listBrowserCodexModels, listBrowserCodexSessions, probeBrowserCodex } from '../../services/codexBrowserClient'
+import { listBrowserClaudeSessions, probeBrowserClaude } from '../../services/claudeBrowserClient'
+import { normalizeLocalAgentHostEndpoint } from '../../services/browserToolBridge'
 import { statsApi, type AgentStat } from '../../services/statsApi'
 import { computeAgentQuality } from '../../services/agentQuality'
 import type { Selection } from '../../types/editor'
@@ -323,6 +332,8 @@ export function TeamTab({
           {mcpCatalogError && <div className="tab-error">MCP catalog: {mcpCatalogError}</div>}
           {mcpPolicyError && <div className="tab-error">MCP policy: {mcpPolicyError}</div>}
 
+          <LocalHostDiagnosticsPanel providers={providers} />
+
           <section className="agent-export-panel">
             <div>
               <h3>批注训练数据</h3>
@@ -452,6 +463,313 @@ export function TeamTab({
   )
 }
 
+type LocalHostEndpointGroup = {
+  endpoint: string
+  providers: Provider[]
+  hasCodex: boolean
+  hasClaude: boolean
+  hasNanobot: boolean
+}
+
+type DiagnosticProbe<T extends Record<string, unknown> = Record<string, unknown>> = {
+  ok: boolean
+  value?: T
+  error?: string
+}
+
+type LocalHostEndpointDiagnostic = {
+  loading?: boolean
+  updatedAt?: string
+  host?: DiagnosticProbe
+  mcpStatus?: DiagnosticProbe
+  codexHealth?: DiagnosticProbe
+  codexSessions?: DiagnosticProbe
+  claudeHealth?: DiagnosticProbe
+  claudeSessions?: DiagnosticProbe
+  nanobotTools?: DiagnosticProbe
+}
+
+function LocalHostDiagnosticsPanel({ providers }: { providers: Provider[] }) {
+  const endpoints = useMemo(() => groupLocalHostEndpoints(providers), [providers])
+  const [expanded, setExpanded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [results, setResults] = useState<Record<string, LocalHostEndpointDiagnostic>>({})
+
+  const runDiagnostics = async () => {
+    if (busy) return
+    setExpanded(true)
+    setBusy(true)
+    setResults((prev) => {
+      const next = { ...prev }
+      for (const group of endpoints) {
+        next[group.endpoint] = { ...(next[group.endpoint] ?? {}), loading: true }
+      }
+      return next
+    })
+    try {
+      const entries = await Promise.all(
+        endpoints.map(async (group) => [group.endpoint, await probeLocalHostEndpoint(group)] as const),
+      )
+      setResults((prev) => ({ ...prev, ...Object.fromEntries(entries) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="local-host-diagnostics">
+      <div className="local-host-diagnostics-head">
+        <div>
+          <h3>Local Host 诊断</h3>
+          <p>{endpoints.length > 0 ? `${endpoints.length} 个本机 endpoint` : '尚未配置本机 Agent endpoint'}</p>
+        </div>
+        <div className="local-host-diagnostics-actions">
+          <button
+            className="small-btn"
+            onClick={() => setExpanded((value) => !value)}
+            disabled={endpoints.length === 0}
+          >
+            {expanded ? '收起' : '展开'}
+          </button>
+          <button
+            className="small-btn"
+            onClick={() => void runDiagnostics()}
+            disabled={busy || endpoints.length === 0}
+          >
+            {busy ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+            诊断
+          </button>
+        </div>
+      </div>
+      {expanded && endpoints.length > 0 && (
+        <div className="local-host-diagnostics-list">
+          {endpoints.map((group) => (
+            <LocalHostDiagnosticCard
+              key={group.endpoint}
+              group={group}
+              result={results[group.endpoint]}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function LocalHostDiagnosticCard({
+  group,
+  result,
+}: {
+  group: LocalHostEndpointGroup
+  result?: LocalHostEndpointDiagnostic
+}) {
+  const host = result?.host?.value ?? {}
+  const mcpStatus = result?.mcpStatus?.value ?? {}
+  const codexHealth = result?.codexHealth?.value ?? {}
+  const claudeHealth = result?.claudeHealth?.value ?? {}
+  const nanobotTools = result?.nanobotTools?.value ?? {}
+  const hostStatus = stringRecordValue(host, 'status')
+  const service = stringRecordValue(host, 'service') || 'Local Agent Host'
+  const mcpTools = numberRecordValue(mcpStatus, 'tool_count') || numberRecordValue(host, 'superleaf_mcp_tool_count')
+  const contexts = arrayLength(mcpStatus.contexts) || numberRecordValue(host, 'mcp_contexts')
+  const pending = arrayLength(mcpStatus.pending_calls) || numberRecordValue(host, 'mcp_pending_calls')
+  const codexSessionCount = diagnosticSessionCount(result?.codexSessions)
+  const claudeSessionCount = diagnosticSessionCount(result?.claudeSessions)
+  const nanobotToolCount = numberRecordValue(nanobotTools, 'superleaf_mcp_tool_count') ||
+    numberRecordValue(objectMeta(nanobotTools, 'adapter'), 'tool_count')
+  const errors = diagnosticErrors(result)
+  return (
+    <div className={`local-host-diagnostic-card ${result?.loading ? 'loading' : ''}`}>
+      <div className="local-host-diagnostic-top">
+        <div>
+          <strong title={group.endpoint}>{compactEndpointLabel(group.endpoint)}</strong>
+          <span>{group.providers.map((provider) => provider.name).join(' · ')}</span>
+        </div>
+        {result?.updatedAt && <time>{formatDiagnosticTime(result.updatedAt)}</time>}
+      </div>
+      <div className="local-host-diagnostic-pills">
+        <DiagnosticPill tone={result?.host?.ok && hostStatus === 'ok' ? 'ok' : result?.host ? 'warn' : 'neutral'}>
+          Host {hostStatus || '未检测'}
+        </DiagnosticPill>
+        <DiagnosticPill tone={result?.mcpStatus?.ok ? 'ok' : result?.mcpStatus ? 'warn' : 'neutral'}>
+          MCP tools {mcpTools || '-'}
+        </DiagnosticPill>
+        {group.hasCodex && (
+          <DiagnosticPill tone={result?.codexHealth?.ok && stringRecordValue(codexHealth, 'status') === 'ok' ? 'ok' : result?.codexHealth ? 'warn' : 'neutral'}>
+            Codex {stringRecordValue(codexHealth, 'status') || '未检测'}
+          </DiagnosticPill>
+        )}
+        {group.hasClaude && (
+          <DiagnosticPill tone={result?.claudeHealth?.ok && stringRecordValue(claudeHealth, 'status') === 'ok' ? 'ok' : result?.claudeHealth ? 'warn' : 'neutral'}>
+            Claude {stringRecordValue(claudeHealth, 'status') || '未检测'}
+          </DiagnosticPill>
+        )}
+        {group.hasNanobot && (
+          <DiagnosticPill tone={nanobotToolCount > 0 ? 'ok' : result?.nanobotTools ? 'warn' : 'neutral'}>
+            Nanobot tools {nanobotToolCount || '-'}
+          </DiagnosticPill>
+        )}
+      </div>
+      <div className="local-host-diagnostic-grid">
+        <span>service: {service}</span>
+        <span>contexts: {contexts}</span>
+        <span>pending: {pending}</span>
+        {group.hasCodex && <span>codex sessions: {codexSessionCount}</span>}
+        {group.hasClaude && <span>claude sessions: {claudeSessionCount}</span>}
+        {group.hasCodex && <span>codex thread: {shortDiagnosticId(latestSessionValue(result?.codexSessions, 'codex_thread_id')) || '-'}</span>}
+        {group.hasClaude && <span>claude id: {shortDiagnosticId(latestSessionValue(result?.claudeSessions, 'claude_session_id')) || '-'}</span>}
+      </div>
+      {errors.length > 0 && (
+        <div className="local-host-diagnostic-errors">
+          {errors.map((error) => <span key={error}>{error}</span>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DiagnosticPill({ tone, children }: { tone: 'ok' | 'warn' | 'neutral'; children: React.ReactNode }) {
+  return <span className={`native-pill ${tone === 'warn' ? 'neutral' : tone}`}>{children}</span>
+}
+
+function groupLocalHostEndpoints(providers: Provider[]): LocalHostEndpointGroup[] {
+  const map = new Map<string, LocalHostEndpointGroup>()
+  for (const provider of providers) {
+    const isCodex = provider.kind === 'codex-local'
+    const isClaude = provider.kind === 'claude-local'
+    const isNanobot = provider.kind === 'nanobot' && provider.meta?.transport === 'browser'
+    if (!isCodex && !isClaude && !isNanobot) continue
+    const endpoint = normalizeLocalAgentHostEndpoint(
+      isNanobot
+        ? stringRecordValue(provider.meta, 'local_agent_host_endpoint') ||
+          stringRecordValue(provider.meta, 'nanobot_adapter_endpoint') ||
+          provider.endpoint ||
+          DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+        : provider.endpoint,
+    )
+    const current = map.get(endpoint) ?? {
+      endpoint,
+      providers: [],
+      hasCodex: false,
+      hasClaude: false,
+      hasNanobot: false,
+    }
+    current.providers.push(provider)
+    current.hasCodex ||= isCodex
+    current.hasClaude ||= isClaude
+    current.hasNanobot ||= isNanobot
+    map.set(endpoint, current)
+  }
+  return [...map.values()]
+}
+
+async function probeLocalHostEndpoint(group: LocalHostEndpointGroup): Promise<LocalHostEndpointDiagnostic> {
+  const [host, mcpStatus, codexHealth, codexSessions, claudeHealth, claudeSessions, nanobotTools] = await Promise.all([
+    settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/health')),
+    settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/superleaf/mcp/status')),
+    group.hasCodex ? settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/codex/health')) : Promise.resolve(undefined),
+    group.hasCodex ? settleDiagnostic(async () => listBrowserCodexSessions(group.endpoint, { limit: 5 }) as unknown as Record<string, unknown>) : Promise.resolve(undefined),
+    group.hasClaude ? settleDiagnostic(() => fetchLocalHostJson(group.endpoint, '/claude/health')) : Promise.resolve(undefined),
+    group.hasClaude ? settleDiagnostic(async () => listBrowserClaudeSessions(group.endpoint, { limit: 5 }) as unknown as Record<string, unknown>) : Promise.resolve(undefined),
+    group.hasNanobot ? settleDiagnostic(async () => {
+      const diagnostics = await probeBrowserNanobotTools(group.endpoint)
+      return diagnostics
+        ? diagnostics as unknown as Record<string, unknown>
+        : { status: 'not_detected' }
+    }) : Promise.resolve(undefined),
+  ])
+  return {
+    loading: false,
+    updatedAt: new Date().toISOString(),
+    host,
+    mcpStatus,
+    codexHealth,
+    codexSessions,
+    claudeHealth,
+    claudeSessions,
+    nanobotTools,
+  }
+}
+
+async function fetchLocalHostJson(endpoint: string, path: string): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(endpoint)}${path}`, { method: 'GET' })
+  const text = await resp.text()
+  let payload: Record<string, unknown> = {}
+  if (text.trim()) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>
+    } catch {
+      payload = { text }
+    }
+  }
+  return {
+    ...payload,
+    http_status: resp.status,
+    http_ok: resp.ok,
+  }
+}
+
+async function settleDiagnostic<T extends Record<string, unknown>>(
+  fn: () => Promise<T>,
+): Promise<DiagnosticProbe<T>> {
+  try {
+    return { ok: true, value: await fn() }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+function diagnosticSessionCount(probe?: DiagnosticProbe): number {
+  const sessions = probe?.value?.sessions
+  return Array.isArray(sessions) ? sessions.length : 0
+}
+
+function latestSessionValue(probe: DiagnosticProbe | undefined, key: string): string {
+  const sessions = probe?.value?.sessions
+  const latest = Array.isArray(sessions) ? sessions[0] : null
+  return latest && typeof latest === 'object' && !Array.isArray(latest)
+    ? String((latest as Record<string, unknown>)[key] || '')
+    : ''
+}
+
+function diagnosticErrors(result?: LocalHostEndpointDiagnostic): string[] {
+  if (!result) return []
+  const entries: Array<[string, DiagnosticProbe | undefined]> = [
+    ['Host', result.host],
+    ['MCP', result.mcpStatus],
+    ['Codex', result.codexHealth],
+    ['Codex sessions', result.codexSessions],
+    ['Claude', result.claudeHealth],
+    ['Claude sessions', result.claudeSessions],
+    ['Nanobot tools', result.nanobotTools],
+  ]
+  return entries
+    .filter(([, probe]) => probe && !probe.ok)
+    .map(([label, probe]) => `${label}: ${probe?.error || 'failed'}`)
+}
+
+function compactEndpointLabel(endpoint: string): string {
+  return endpoint.replace(/^https?:\/\//u, '')
+}
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
+}
+
+function shortDiagnosticId(value: string): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (raw.length <= 14) return raw
+  return `${raw.slice(0, 7)}…${raw.slice(-5)}`
+}
+
+function formatDiagnosticTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 interface ProviderBlockProps {
   provider: Provider
   workflows: CachedWorkflow[]
@@ -487,8 +805,9 @@ function ProviderBlock({
     name: provider.name,
     endpoint: provider.endpoint,
     api_key: '',
-    workspace_path: codexWorkspacePath(provider),
+    workspace_path: localAgentWorkspacePath(provider),
     ...codexProviderSettings(provider),
+    ...claudeProviderSettings(provider),
   })
   const [providerError, setProviderError] = useState<string | null>(null)
   const [showNativeForm, setShowNativeForm] = useState(false)
@@ -502,8 +821,9 @@ function ProviderBlock({
       name: provider.name,
       endpoint: provider.endpoint,
       api_key: '',
-      workspace_path: codexWorkspacePath(provider),
+      workspace_path: localAgentWorkspacePath(provider),
       ...codexProviderSettings(provider),
+      ...claudeProviderSettings(provider),
     })
   }, [provider.id, provider.name, provider.endpoint, provider.meta])
 
@@ -583,6 +903,19 @@ function ProviderBlock({
       }
       return
     }
+    if (provider.kind === 'claude-local') {
+      try {
+        const health = await probeBrowserClaude(provider.endpoint)
+        await providerApi.syncBrowserClaudeAgent(provider.id, { health })
+        await loadProviders()
+      } catch (err) {
+        setProviderError(err instanceof Error ? err.message : '浏览器无法访问本机 Claude')
+      } finally {
+        setBusy(null)
+        onAfterMutate()
+      }
+      return
+    }
     const updated = await probe(provider.id)
     if (updated?.kind === 'native') {
       setModelOptions(modelsFromProviderMeta(updated.meta))
@@ -615,13 +948,18 @@ function ProviderBlock({
       setProviderError('名称和 endpoint 不能为空')
       return
     }
-    if (provider.kind === 'codex-local') {
+    if (provider.kind === 'codex-local' || provider.kind === 'claude-local') {
       patch.workspace_path = providerPatch.workspace_path?.trim() ?? ''
-      Object.assign(patch, codexSettingsPatch(providerPatch))
       if (!patch.workspace_path) {
-        setProviderError('Codex Local 需要填写代码项目 workspace path')
+        setProviderError(`${localAgentName(provider.kind)} 需要填写代码项目 workspace path`)
         return
       }
+    }
+    if (provider.kind === 'codex-local') {
+      Object.assign(patch, codexSettingsPatch(providerPatch))
+    }
+    if (provider.kind === 'claude-local') {
+      Object.assign(patch, claudeSettingsPatch(providerPatch))
     }
     const updated = await updateProvider(provider.id, patch)
     if (updated) {
@@ -641,6 +979,15 @@ function ProviderBlock({
           await loadProviders()
         } catch (err) {
           setProviderError(err instanceof Error ? err.message : '浏览器无法访问本机 Codex')
+          return
+        }
+      } else if (updated.kind === 'claude-local') {
+        try {
+          const health = await probeBrowserClaude(updated.endpoint)
+          await providerApi.syncBrowserClaudeAgent(updated.id, { health })
+          await loadProviders()
+        } catch (err) {
+          setProviderError(err instanceof Error ? err.message : '浏览器无法访问本机 Claude')
           return
         }
       } else {
@@ -692,7 +1039,8 @@ function ProviderBlock({
       {provider.status_detail && provider.status === 'error' && (
         <div className="detail error">{provider.status_detail}</div>
       )}
-      {provider.kind === 'codex-local' && <CodexMcpStatus provider={provider} />}
+      {(provider.kind === 'codex-local' || provider.kind === 'claude-local') && <LocalAgentMcpStatus provider={provider} />}
+      {provider.kind === 'nanobot' && provider.meta?.transport === 'browser' && <NanobotToolAdapterStatus provider={provider} />}
 
       {editingProvider && (
         <form className="provider-edit-form" onSubmit={handleProviderUpdate}>
@@ -721,7 +1069,7 @@ function ProviderBlock({
               placeholder={provider.has_api_key ? '留空表示不修改' : '请输入 API key'}
             />
           </label>
-          {provider.kind === 'codex-local' && (
+          {(provider.kind === 'codex-local' || provider.kind === 'claude-local') && (
             <>
               <label className="full">
                 <span>Workspace Path</span>
@@ -731,11 +1079,18 @@ function ProviderBlock({
                   placeholder="/Users/me/code/my-paper-project"
                 />
               </label>
-              <CodexSettingsFields
-                draft={providerPatch}
-                modelOptions={modelOptions}
-                onChange={(patch) => setProviderPatch((prev) => ({ ...prev, ...patch }))}
-              />
+              {provider.kind === 'codex-local' ? (
+                <CodexSettingsFields
+                  draft={providerPatch}
+                  modelOptions={modelOptions}
+                  onChange={(patch) => setProviderPatch((prev) => ({ ...prev, ...patch }))}
+                />
+              ) : (
+                <ClaudeSettingsFields
+                  draft={providerPatch}
+                  onChange={(patch) => setProviderPatch((prev) => ({ ...prev, ...patch }))}
+                />
+              )}
             </>
           )}
           {provider.kind === 'codex-local' && modelError && <div className="form-error">{modelError}</div>}
@@ -811,16 +1166,25 @@ function ProviderBlock({
   )
 }
 
-function CodexMcpStatus({ provider }: { provider: Provider }) {
-  const health = objectMeta(provider.meta, 'codex_health')
-  const toolMode = enumMeta(provider.meta, 'codex_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first')
-  const bound = booleanRecordValue(health, 'codex_mcp_bound') || booleanRecordValue(health, 'codex_auto_mcp')
-  const connected = booleanRecordValue(health, 'codex_app_server_connected')
+function LocalAgentMcpStatus({ provider }: { provider: Provider }) {
+  const isClaude = provider.kind === 'claude-local'
+  const health = objectMeta(provider.meta, isClaude ? 'claude_health' : 'codex_health')
+  const toolMode = enumMeta(
+    provider.meta,
+    isClaude ? 'claude_tool_mode' : 'codex_tool_mode',
+    ['mcp-first', 'browser-preflight', 'marker-only'],
+    'mcp-first',
+  )
   const mcpUrl = stringRecordValue(health, 'superleaf_mcp_url')
   const toolCount = numberRecordValue(health, 'superleaf_mcp_tool_count')
+  const bound = isClaude
+    ? Boolean(mcpUrl && toolCount > 0)
+    : booleanRecordValue(health, 'codex_mcp_bound') || booleanRecordValue(health, 'codex_auto_mcp')
+  const connected = booleanRecordValue(health, 'codex_app_server_connected')
   const contexts = numberRecordValue(health, 'mcp_contexts')
   const pending = numberRecordValue(health, 'mcp_pending_calls')
   const trust = stringRecordValue(health, 'codex_mcp_trust_level') || 'trusted'
+  const version = stringRecordValue(health, 'claude_version')
   const statusTone = bound ? 'ok' : 'warn'
   return (
     <div className={`codex-mcp-status ${statusTone}`}>
@@ -831,13 +1195,88 @@ function CodexMcpStatus({ provider }: { provider: Provider }) {
         <span className="native-pill neutral">{toolMode}</span>
       </div>
       <div className="codex-mcp-status-grid">
-        <span>app-server: {connected ? 'connected' : 'idle'}</span>
-        <span>trust: {trust}</span>
+        {isClaude ? (
+          <>
+            <span>runtime: {version || 'Claude Code'}</span>
+            <span>permission: {stringRecordValue(health, 'claude_permission_mode') || 'default'}</span>
+          </>
+        ) : (
+          <>
+            <span>app-server: {connected ? 'connected' : 'idle'}</span>
+            <span>trust: {trust}</span>
+          </>
+        )}
         <span>tools: {toolCount || '-'}</span>
         <span>contexts: {contexts}</span>
         <span>pending: {pending}</span>
       </div>
       {mcpUrl && <div className="codex-mcp-url" title={mcpUrl}>{mcpUrl}</div>}
+    </div>
+  )
+}
+
+function NanobotToolAdapterStatus({ provider }: { provider: Provider }) {
+  const reloadProviders = useSettingsStore((s) => s.load)
+  const toolCount = numberRecordValue(provider.meta, 'superleaf_tool_count')
+  const toolNames = stringArray(provider.meta.superleaf_tool_names)
+  const adapterEndpoint = stringRecordValue(provider.meta, 'local_agent_host_endpoint') ||
+    stringRecordValue(provider.meta, 'nanobot_adapter_endpoint')
+  const adapterMode = stringRecordValue(provider.meta, 'nanobot_adapter_mode') || 'OpenAI tools'
+  const adapterSource = stringRecordValue(provider.meta, 'nanobot_adapter_source')
+  const statusTone = toolCount > 0 ? 'ok' : 'warn'
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState('')
+
+  const syncAdapter = async () => {
+    if (syncing) return
+    setSyncing(true)
+    setSyncError('')
+    try {
+      const apiKey = readBrowserNanobotApiKey(provider.id)
+      const agents = await discoverBrowserNanobotAgents(provider.endpoint, apiKey)
+      const localAgentHostEndpoint = nanobotLocalAgentHostEndpointFromRaw(agents[0]?.raw)
+      await providerApi.syncBrowserNanobotModels(provider.id, {
+        provider_name: provider.name,
+        models: agents,
+        local_agent_host_endpoint: localAgentHostEndpoint,
+      })
+      await reloadProviders()
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div className={`codex-mcp-status ${statusTone}`}>
+      <div className="codex-mcp-status-title">
+        {toolCount > 0 ? <CheckCircle2 size={12} /> : <CircleAlert size={12} />}
+        <strong>SuperLeaf Tool Adapter</strong>
+        <span className={`native-pill ${toolCount > 0 ? 'ok' : 'neutral'}`}>
+          {toolCount > 0 ? 'bound' : 'needs Local Host'}
+        </span>
+        <span className="native-pill neutral">{adapterMode}</span>
+        {toolCount === 0 && (
+          <button className="small-btn" type="button" onClick={() => void syncAdapter()} disabled={syncing}>
+            {syncing ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+            同步
+          </button>
+        )}
+      </div>
+      <div className="codex-mcp-status-grid">
+        <span>tools: {toolCount || '-'}</span>
+        <span>fallback: marker</span>
+        <span>bridge: browser</span>
+        <span>host: {adapterEndpoint ? compactEndpointLabel(adapterEndpoint) : compactEndpointLabel(DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT)}</span>
+        {adapterSource && <span>source: {adapterSource}</span>}
+      </div>
+      {toolNames.length > 0 && (
+        <div className="codex-mcp-url" title={toolNames.join(', ')}>
+          {toolNames.join(', ')}
+        </div>
+      )}
+      {syncError && <div className="codex-mcp-url error" title={syncError}>{syncError}</div>}
     </div>
   )
 }
@@ -3567,6 +4006,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     transport: 'backend',
     workspace_path: '',
     ...DEFAULT_CODEX_SETTINGS,
+    ...DEFAULT_CLAUDE_SETTINGS,
   })
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -3607,7 +4047,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setDraft((d) => ({
       ...d,
       kind,
-      transport: kind === 'nanobot' || kind === 'codex-local' ? 'browser' : 'backend',
+      transport: kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local' ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
@@ -3619,9 +4059,12 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               ? getBrowserLocalServiceUrl(8787)
               : kind === 'codex-local'
                 ? getBrowserLocalServiceUrl(8787)
+                : kind === 'claude-local'
+                  ? getBrowserLocalServiceUrl(8787)
                 : 'http://localhost:8080/v1',
-      api_key: (kind === 'nanobot' || kind === 'codex-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
+      api_key: (kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
       ...(kind === 'codex-local' ? DEFAULT_CODEX_SETTINGS : {}),
+      ...(kind === 'claude-local' ? DEFAULT_CLAUDE_SETTINGS : {}),
     }))
   }
 
@@ -3630,19 +4073,20 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setFormError(null)
     const filledDraft: ProviderDraft = {
       ...draft,
-      api_key: (draft.kind === 'nanobot' || draft.kind === 'codex-local') && !draft.api_key.trim() ? 'dummy' : draft.api_key,
+      api_key: (draft.kind === 'nanobot' || draft.kind === 'codex-local' || draft.kind === 'claude-local') && !draft.api_key.trim() ? 'dummy' : draft.api_key,
     }
     if (!filledDraft.name.trim() || !filledDraft.endpoint.trim() || !filledDraft.api_key.trim()) {
       setFormError('名称 / endpoint / API key 都不能为空')
       return
     }
-    if (filledDraft.kind === 'codex-local' && !filledDraft.workspace_path?.trim()) {
-      setFormError('Codex Local 需要填写代码项目 workspace path')
+    if ((filledDraft.kind === 'codex-local' || filledDraft.kind === 'claude-local') && !filledDraft.workspace_path?.trim()) {
+      setFormError(`${localAgentName(filledDraft.kind)} 需要填写代码项目 workspace path`)
       return
     }
     setSubmitting(true)
     let browserAgents: Awaited<ReturnType<typeof discoverBrowserNanobotAgents>> | null = null
     let codexHealth: Record<string, unknown> | null = null
+    let claudeHealth: Record<string, unknown> | null = null
     let codexModelsForSync = codexModels
     if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser') {
       try {
@@ -3677,17 +4121,35 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         }
       }
     }
+    if (filledDraft.kind === 'claude-local') {
+      try {
+        claudeHealth = await probeBrowserClaude(filledDraft.endpoint)
+      } catch (err) {
+        setSubmitting(false)
+        setFormError(
+          err instanceof Error
+            ? `浏览器无法访问本机 Claude：${err.message}`
+            : '浏览器无法访问本机 Claude',
+        )
+        return
+      }
+    }
     const result = await create(filledDraft)
     if (result) {
       if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser' && browserAgents) {
         storeBrowserNanobotApiKey(result.id, filledDraft.api_key)
+        const localAgentHostEndpoint = nanobotLocalAgentHostEndpointFromRaw(browserAgents[0]?.raw)
         await providerApi.syncBrowserNanobotModels(result.id, {
           provider_name: result.name,
           models: browserAgents,
+          local_agent_host_endpoint: localAgentHostEndpoint,
         })
         await loadProviders()
       } else if (filledDraft.kind === 'codex-local' && codexHealth) {
         await providerApi.syncBrowserCodexAgent(result.id, { health: codexHealth, models: codexModelsForSync })
+        await loadProviders()
+      } else if (filledDraft.kind === 'claude-local' && claudeHealth) {
+        await providerApi.syncBrowserClaudeAgent(result.id, { health: claudeHealth })
         await loadProviders()
       } else {
         await probe(result.id)
@@ -3726,6 +4188,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             <option value="nanobot">Nanobot</option>
             <option value="native">原生 Agent</option>
             <option value="codex-local">Codex Local</option>
+            <option value="claude-local">Claude Local</option>
           </select>
         </label>
       </div>
@@ -3739,13 +4202,15 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               ? getBrowserLocalServiceUrl(8787)
               : draft.kind === 'codex-local'
                 ? getBrowserLocalServiceUrl(8787)
+              : draft.kind === 'claude-local'
+                ? getBrowserLocalServiceUrl(8787)
               : draft.kind === 'native'
                 ? 'https://api.openai.com/v1'
                 : 'http://localhost:8080/v1'
           }
         />
       </label>
-      {draft.kind === 'codex-local' && (
+      {(draft.kind === 'codex-local' || draft.kind === 'claude-local') && (
         <>
           <label className="full">
             <span>Workspace Path</span>
@@ -3755,12 +4220,19 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               placeholder="/Users/me/code/my-paper-project"
             />
           </label>
-          <CodexSettingsFields
-            draft={draft}
-            modelOptions={codexModels}
-            modelLoading={codexModelsLoading}
-            onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
-          />
+          {draft.kind === 'codex-local' ? (
+            <CodexSettingsFields
+              draft={draft}
+              modelOptions={codexModels}
+              modelLoading={codexModelsLoading}
+              onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            />
+          ) : (
+            <ClaudeSettingsFields
+              draft={draft}
+              onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            />
+          )}
         </>
       )}
       {draft.kind === 'nanobot' && (
@@ -3826,8 +4298,8 @@ function BackendStatusBar({
   )
 }
 
-function codexWorkspacePath(provider: Provider): string {
-  if (provider.kind !== 'codex-local') return ''
+function localAgentWorkspacePath(provider: Provider): string {
+  if (provider.kind !== 'codex-local' && provider.kind !== 'claude-local') return ''
   return typeof provider.meta?.workspace_path === 'string' ? provider.meta.workspace_path : ''
 }
 
@@ -3842,6 +4314,12 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_tool_mode: 'mcp-first',
 } satisfies Partial<ProviderDraft>
 
+const DEFAULT_CLAUDE_SETTINGS = {
+  claude_model: '',
+  claude_prompt_mode: 'fast-edit',
+  claude_tool_mode: 'mcp-first',
+} satisfies Partial<ProviderDraft>
+
 type CodexSettingsDraft = Pick<
   ProviderDraft,
   | 'codex_model'
@@ -3852,6 +4330,13 @@ type CodexSettingsDraft = Pick<
   | 'codex_approval_policy'
   | 'codex_prompt_mode'
   | 'codex_tool_mode'
+>
+
+type ClaudeSettingsDraft = Pick<
+  ProviderDraft,
+  | 'claude_model'
+  | 'claude_prompt_mode'
+  | 'claude_tool_mode'
 >
 
 function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
@@ -3868,6 +4353,15 @@ function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
   }
 }
 
+function claudeProviderSettings(provider: Provider): Partial<ProviderUpdate> {
+  if (provider.kind !== 'claude-local') return {}
+  return {
+    claude_model: stringMeta(provider.meta, 'claude_model'),
+    claude_prompt_mode: enumMeta(provider.meta, 'claude_prompt_mode', ['fast-edit', 'full-agent'], 'fast-edit') as ProviderDraft['claude_prompt_mode'],
+    claude_tool_mode: enumMeta(provider.meta, 'claude_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first') as ProviderDraft['claude_tool_mode'],
+  }
+}
+
 function codexSettingsPatch(source: Partial<CodexSettingsDraft>): Partial<ProviderUpdate> {
   return {
     codex_model: source.codex_model?.trim() ?? '',
@@ -3878,6 +4372,14 @@ function codexSettingsPatch(source: Partial<CodexSettingsDraft>): Partial<Provid
     codex_approval_policy: source.codex_approval_policy ?? 'never',
     codex_prompt_mode: source.codex_prompt_mode ?? 'fast-edit',
     codex_tool_mode: source.codex_tool_mode ?? 'mcp-first',
+  }
+}
+
+function claudeSettingsPatch(source: Partial<ClaudeSettingsDraft>): Partial<ProviderUpdate> {
+  return {
+    claude_model: source.claude_model?.trim() ?? '',
+    claude_prompt_mode: source.claude_prompt_mode ?? 'fast-edit',
+    claude_tool_mode: source.claude_tool_mode ?? 'mcp-first',
   }
 }
 
@@ -4007,6 +4509,56 @@ function CodexSettingsFields({
   )
 }
 
+function ClaudeSettingsFields({
+  draft,
+  onChange,
+}: {
+  draft: Partial<ClaudeSettingsDraft>
+  onChange: (patch: Partial<ClaudeSettingsDraft>) => void
+}) {
+  return (
+    <>
+      <div className="form-row">
+        <label>
+          <span>Claude Model</span>
+          <select
+            value={draft.claude_model ?? ''}
+            onChange={(event) => onChange({ claude_model: event.target.value })}
+          >
+            <option value="">使用本机默认</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="opus">Opus</option>
+          </select>
+        </label>
+        <label>
+          <span>Prompt Mode</span>
+          <select
+            value={draft.claude_prompt_mode ?? 'fast-edit'}
+            onChange={(event) => onChange({ claude_prompt_mode: event.target.value as ProviderDraft['claude_prompt_mode'] })}
+          >
+            <option value="fast-edit">快速编辑</option>
+            <option value="full-agent">完整 Agent</option>
+          </select>
+        </label>
+      </div>
+      <label className="full">
+        <span>Tool Mode</span>
+        <select
+          value={draft.claude_tool_mode ?? 'mcp-first'}
+          onChange={(event) => onChange({ claude_tool_mode: event.target.value as ProviderDraft['claude_tool_mode'] })}
+        >
+          <option value="mcp-first">MCP first</option>
+          <option value="browser-preflight">Browser preflight first</option>
+          <option value="marker-only">Marker fallback only</option>
+        </select>
+        <small>
+          MCP first 会把 SuperLeaf /mcp 通过 Local Host 绑定给本机 Claude Code。
+        </small>
+      </label>
+    </>
+  )
+}
+
 function stringMeta(meta: Record<string, unknown>, key: string): string {
   const value = meta[key]
   return typeof value === 'string' ? value : ''
@@ -4046,6 +4598,7 @@ function enumMeta(meta: Record<string, unknown>, key: string, allowed: string[],
 }
 
 function agentColor(kind: string): string {
+  if (kind === 'claude-local') return '#8b5cf6'
   if (kind === 'codex-local') return '#111827'
   if (kind === 'native') return '#059669'
   if (kind === 'nanobot') return '#0ea5e9'
@@ -4056,10 +4609,17 @@ function agentColor(kind: string): string {
 
 function providerConsoleLabel(kind: Provider['kind']): string {
   if (kind === 'claude-direct') return 'Claude 控制台'
+  if (kind === 'claude-local') return '本机 Claude'
   if (kind === 'nanobot') return 'Nanobot 服务'
   if (kind === 'codex-local') return '本机 Codex'
   if (kind === 'native') return '原生 Agent Provider'
   return 'Dify 控制台'
+}
+
+function localAgentName(kind: Provider['kind']): string {
+  if (kind === 'claude-local') return 'Claude Local'
+  if (kind === 'codex-local') return 'Codex Local'
+  return 'Local Agent'
 }
 
 function modelsFromProviderMeta(meta: Record<string, unknown>): ProviderModel[] {

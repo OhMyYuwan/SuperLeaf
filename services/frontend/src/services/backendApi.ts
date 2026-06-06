@@ -58,7 +58,7 @@ export function getBrowserLocalServiceUrl(port: number): string {
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native' | 'codex-local'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'claude-local' | 'nanobot' | 'native' | 'codex-local'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string
@@ -85,6 +85,9 @@ export interface ProviderDraft {
   codex_approval_policy?: 'never' | 'untrusted' | 'on-request' | 'on-failure'
   codex_prompt_mode?: 'fast-edit' | 'full-agent'
   codex_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
+  claude_model?: string
+  claude_prompt_mode?: 'fast-edit' | 'full-agent'
+  claude_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
 }
 
 export interface ProviderUpdate {
@@ -101,6 +104,9 @@ export interface ProviderUpdate {
   codex_approval_policy?: ProviderDraft['codex_approval_policy']
   codex_prompt_mode?: ProviderDraft['codex_prompt_mode']
   codex_tool_mode?: ProviderDraft['codex_tool_mode']
+  claude_model?: string
+  claude_prompt_mode?: ProviderDraft['claude_prompt_mode']
+  claude_tool_mode?: ProviderDraft['claude_tool_mode']
 }
 
 export interface ProviderModel {
@@ -112,9 +118,9 @@ export interface ProviderModel {
   is_default?: boolean
   default_reasoning_effort?: string
   supported_reasoning_efforts?: string[]
+  raw?: Record<string, unknown>
   service_tiers?: Array<{ id: string; name: string; description?: string }>
   default_service_tier?: string
-  raw?: Record<string, unknown>
 }
 
 export async function http<T>(path: string, init?: HttpInit): Promise<T> {
@@ -304,7 +310,7 @@ export const providerApi = {
     http<ProviderModel[]>(`/api/providers/${id}/models`),
   syncBrowserNanobotModels: (
     id: string,
-    body: { provider_name?: string; models: ProviderModel[] },
+    body: { provider_name?: string; models: ProviderModel[]; local_agent_host_endpoint?: string },
   ) =>
     http<Provider>(`/api/providers/${id}/browser-nanobot-models`, {
       method: 'POST',
@@ -315,6 +321,14 @@ export const providerApi = {
     body: { health?: Record<string, unknown>; models?: ProviderModel[] },
   ) =>
     http<Provider>(`/api/providers/${id}/browser-codex-agent`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  syncBrowserClaudeAgent: (
+    id: string,
+    body: { health?: Record<string, unknown> },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-claude-agent`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -1152,6 +1166,7 @@ export interface BrowserNanobotPrepare {
   run_id: string
   provider_id: string
   endpoint: string
+  bridge_endpoint?: string
   model: string
   messages: NanobotChatMessage[]
   tools: NanobotToolDefinition[]
@@ -1185,6 +1200,30 @@ export interface BrowserCodexPrepare {
     approval_policy?: ProviderDraft['codex_approval_policy']
     prompt_mode?: ProviderDraft['codex_prompt_mode']
     tool_mode?: ProviderDraft['codex_tool_mode']
+    [key: string]: unknown
+  }
+  superleaf_context: Record<string, unknown>
+  inputs: Record<string, unknown>
+}
+
+export interface BrowserClaudePrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  model: string
+  system_prompt: string
+  prompt: string
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  workspace_path: string
+  prompt_mode: 'fast-edit' | 'full-agent'
+  claude_settings: {
+    model?: string
+    prompt_mode?: ProviderDraft['claude_prompt_mode']
+    tool_mode?: ProviderDraft['claude_tool_mode']
     [key: string]: unknown
   }
   superleaf_context: Record<string, unknown>
@@ -1339,6 +1378,34 @@ export const conversationApi = {
   ) =>
     http<Message>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/finish`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserClaude: (conversationId: string, body: MessageSend) =>
+    http<BrowserClaudePrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserClaudeTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserClaude: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string; claude_session_id?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/finish`,
       { method: 'POST', body: JSON.stringify(body) },
     ),
 }

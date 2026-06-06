@@ -67,6 +67,9 @@ class ProviderService:
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
         codex_tool_mode: str | None = None,
+        claude_model: str | None = None,
+        claude_prompt_mode: str | None = None,
+        claude_tool_mode: str | None = None,
     ) -> Provider:
         meta: dict[str, Any] = {}
         if kind == "nanobot":
@@ -83,6 +86,15 @@ class ProviderService:
                     codex_approval_policy=codex_approval_policy,
                     codex_prompt_mode=codex_prompt_mode,
                     codex_tool_mode=codex_tool_mode,
+                )
+            )
+        if kind == "claude-local":
+            meta.update(
+                _claude_meta_patch(
+                    workspace_path=workspace_path,
+                    claude_model=claude_model,
+                    claude_prompt_mode=claude_prompt_mode,
+                    claude_tool_mode=claude_tool_mode,
                 )
             )
         p = Provider(
@@ -119,6 +131,9 @@ class ProviderService:
         codex_approval_policy: str | None = None,
         codex_prompt_mode: str | None = None,
         codex_tool_mode: str | None = None,
+        claude_model: str | None = None,
+        claude_prompt_mode: str | None = None,
+        claude_tool_mode: str | None = None,
     ) -> Provider | None:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
@@ -139,12 +154,12 @@ class ProviderService:
         if api_key:  # only rotate if non-empty
             p.api_key_enc = encrypt(api_key)
         if transport is not None:
-            if p.kind not in ("nanobot", "codex-local"):
+            if p.kind not in ("nanobot", "codex-local", "claude-local"):
                 raise ValueError("transport can only be set for browser-local providers")
             p.meta = {**(p.meta or {}), "transport": transport}
         if workspace_path is not None:
-            if p.kind != "codex-local":
-                raise ValueError("workspace_path can only be set for Codex Local providers")
+            if p.kind not in ("codex-local", "claude-local"):
+                raise ValueError("workspace_path can only be set for local browser Agent providers")
             p.meta = {**(p.meta or {}), "workspace_path": str(workspace_path or "").strip()}
         codex_patch = _codex_meta_patch(
             workspace_path=None,
@@ -162,6 +177,17 @@ class ProviderService:
             if p.kind != "codex-local":
                 raise ValueError("Codex settings can only be set for Codex Local providers")
             p.meta = {**(p.meta or {}), **codex_patch}
+        claude_patch = _claude_meta_patch(
+            workspace_path=None,
+            claude_model=claude_model,
+            claude_prompt_mode=claude_prompt_mode,
+            claude_tool_mode=claude_tool_mode,
+            include_workspace=False,
+        )
+        if claude_patch:
+            if p.kind != "claude-local":
+                raise ValueError("Claude settings can only be set for Claude Local providers")
+            p.meta = {**(p.meta or {}), **claude_patch}
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)
@@ -272,6 +298,33 @@ class ProviderService:
             self.db.refresh(p)
             return p
 
+        if p.kind == "claude-local":
+            has_workspace = bool(str((p.meta or {}).get("workspace_path") or "").strip())
+            self._sync_cached_workflows(
+                p,
+                [
+                    {
+                        "external_id": "claude",
+                        "name": p.name,
+                        "description": "Local Claude Code via SuperLeaf Local Agent Host.",
+                        "kind": "claude-local",
+                        "tags": ["local", "claude"],
+                        "raw": {"transport": "browser", "workspace_path_set": has_workspace},
+                    }
+                ],
+            )
+            p.status = "unknown"
+            p.status_detail = (
+                "浏览器本机 Claude · 请由前端 Local Agent Host 测连"
+                if has_workspace
+                else "浏览器本机 Claude · 请设置代码项目 workspace path"
+            )
+            p.meta = {**(p.meta or {}), "transport": "browser", "kind": "claude-local"}
+            p.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(p)
+            return p
+
         client = self._make_client(p)
         try:
             if p.kind == "nanobot":
@@ -352,7 +405,7 @@ class ProviderService:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
-        if p.kind not in ("native", "nanobot", "codex-local"):
+        if p.kind not in ("native", "nanobot", "codex-local", "claude-local"):
             return []
         if p.kind == "codex-local":
             return [
@@ -360,6 +413,14 @@ class ProviderService:
                     "id": "codex",
                     "name": p.name,
                     "description": "Local Codex Agent via SuperLeaf Local Agent Host.",
+                }
+            ]
+        if p.kind == "claude-local":
+            return [
+                {
+                    "id": "claude",
+                    "name": p.name,
+                    "description": "Local Claude Code via SuperLeaf Local Agent Host.",
                 }
             ]
         if p.kind == "nanobot" and _provider_transport(p) == "browser":
@@ -404,6 +465,7 @@ class ProviderService:
         user_id: str,
         provider_name: str = "",
         models: list[dict[str, Any]],
+        local_agent_host_endpoint: str = "",
     ) -> Provider | None:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
@@ -423,6 +485,14 @@ class ProviderService:
                     "raw": item.get("raw") if isinstance(item.get("raw"), dict) else {},
                 }
             )
+        tool_count = _nanobot_superleaf_tool_count(normalized)
+        tool_names = _nanobot_superleaf_tool_names(normalized)
+        adapter_endpoint = (
+            local_agent_host_endpoint.strip()
+            or _nanobot_local_agent_host_endpoint(normalized)
+        )
+        adapter_mode = _nanobot_adapter_mode(normalized)
+        adapter_source = _nanobot_adapter_source(normalized)
         self._sync_cached_workflows(
             p,
             [
@@ -440,6 +510,7 @@ class ProviderService:
         p.status = "ok" if normalized else "error"
         p.status_detail = (
             f"浏览器直连 Nanobot · 已同步 {len(normalized)} 个 Agent 条目"
+            + (f" · SuperLeaf tools: {tool_count}" if tool_count else "")
             if normalized
             else "浏览器直连 Nanobot 未返回可用 Agent"
         )
@@ -449,6 +520,13 @@ class ProviderService:
             "provider_name": provider_name or p.name,
             "model_count": len(normalized),
             "model_ids": [item["id"] for item in normalized],
+            "superleaf_tool_count": tool_count,
+            "superleaf_tool_names": tool_names,
+            "local_agent_host_endpoint": adapter_endpoint,
+            "nanobot_adapter_endpoint": adapter_endpoint,
+            "nanobot_adapter_status": "bound" if tool_count > 0 and adapter_endpoint else "not_detected",
+            "nanobot_adapter_mode": adapter_mode,
+            "nanobot_adapter_source": adapter_source,
             "models": [
                 {
                     "id": item["id"],
@@ -547,6 +625,55 @@ class ProviderService:
         self.db.refresh(p)
         return p
 
+    def sync_browser_claude_agent(
+        self,
+        provider_id: str,
+        *,
+        user_id: str,
+        health: dict[str, Any] | None = None,
+    ) -> Provider | None:
+        p = self.get(provider_id, user_id=user_id)
+        if p is None:
+            return None
+        if p.kind != "claude-local":
+            raise ValueError("provider is not Claude Local")
+        workspace_path = str((p.meta or {}).get("workspace_path") or "").strip()
+        version = str((health or {}).get("claude_version") or "").strip()
+        self._sync_cached_workflows(
+            p,
+            [
+                {
+                    "external_id": "claude",
+                    "name": p.name,
+                    "description": version or "Local Claude Code Agent.",
+                    "kind": "claude-local",
+                    "tags": ["local", "claude"],
+                    "raw": {
+                        "transport": "browser",
+                        "health": health or {},
+                        "workspace_path_set": bool(workspace_path),
+                    },
+                }
+            ],
+        )
+        p.status = "ok" if (health or {}).get("status") == "ok" else "unknown"
+        p.status_detail = (
+            f"浏览器本机 Claude · {version}"
+            if version
+            else "浏览器本机 Claude · 已同步 Agent"
+        )
+        p.meta = {
+            **(p.meta or {}),
+            "transport": "browser",
+            "kind": "claude-local",
+            "provider_name": p.name,
+            "claude_health": health or {},
+            "models_scanned_at": datetime.utcnow().isoformat(),
+        }
+        self.db.commit()
+        self.db.refresh(p)
+        return p
+
     # --- Helpers ------------------------------------------------------------
 
     async def _list_openai_models(self, provider: Provider) -> list:
@@ -565,6 +692,11 @@ class ProviderService:
             raise ValueError(
                 "Codex Local providers cannot be called by the backend; "
                 "use the browser Codex transport endpoints"
+            )
+        if provider.kind == "claude-local":
+            raise ValueError(
+                "Claude Local providers cannot be called by the backend; "
+                "use the browser Claude transport endpoints"
             )
         if provider.kind == "nanobot":
             if _provider_transport(provider) == "browser":
@@ -609,6 +741,88 @@ def _tags_from_raw(raw: dict[str, Any]) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return []
+
+
+def _nanobot_superleaf_tool_count(items: list[dict[str, Any]]) -> int:
+    for item in items:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        value = raw.get("superleaf_tool_count")
+        if isinstance(value, int) and value > 0:
+            return value
+        adapter = raw.get("tool_adapter")
+        if isinstance(adapter, dict):
+            nested = adapter.get("superleaf_mcp_tool_count")
+            if isinstance(nested, int) and nested > 0:
+                return nested
+            adapter_meta = adapter.get("adapter")
+            if isinstance(adapter_meta, dict):
+                count = adapter_meta.get("tool_count")
+                if isinstance(count, int) and count > 0:
+                    return count
+    return 0
+
+
+def _nanobot_superleaf_tool_names(items: list[dict[str, Any]]) -> list[str]:
+    for item in items:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        value = raw.get("superleaf_tool_names")
+        if isinstance(value, list):
+            names = [str(name).strip() for name in value if str(name).strip()]
+            if names:
+                return names
+        adapter = raw.get("tool_adapter")
+        if isinstance(adapter, dict):
+            adapter_meta = adapter.get("adapter")
+            if isinstance(adapter_meta, dict) and isinstance(adapter_meta.get("tool_names"), list):
+                names = [str(name).strip() for name in adapter_meta["tool_names"] if str(name).strip()]
+                if names:
+                    return names
+    return []
+
+
+def _nanobot_local_agent_host_endpoint(items: list[dict[str, Any]]) -> str:
+    for item in items:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        for key in ("local_agent_host_endpoint", "nanobot_adapter_endpoint", "adapter_endpoint"):
+            value = str(raw.get(key) or "").strip()
+            if value:
+                return value
+        adapter = raw.get("tool_adapter")
+        if isinstance(adapter, dict):
+            value = str(adapter.get("adapter_endpoint") or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _nanobot_adapter_mode(items: list[dict[str, Any]]) -> str:
+    for item in items:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        value = str(raw.get("nanobot_adapter_mode") or "").strip()
+        if value:
+            return value
+        adapter = raw.get("tool_adapter")
+        if isinstance(adapter, dict):
+            nested = adapter.get("adapter")
+            if isinstance(nested, dict):
+                value = str(nested.get("mode") or "").strip()
+                if value:
+                    return value
+    return ""
+
+
+def _nanobot_adapter_source(items: list[dict[str, Any]]) -> str:
+    for item in items:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        value = str(raw.get("nanobot_adapter_source") or "").strip()
+        if value:
+            return value
+        adapter = raw.get("tool_adapter")
+        if isinstance(adapter, dict):
+            value = str(adapter.get("adapter_source") or "").strip()
+            if value:
+                return value
+    return ""
 
 
 def _normalize_codex_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -707,6 +921,38 @@ def _codex_meta_patch(
     patch.setdefault("codex_approval_policy", "never")
     patch.setdefault("codex_prompt_mode", "fast-edit")
     patch.setdefault("codex_tool_mode", "mcp-first")
+    return patch
+
+
+def _claude_meta_patch(
+    *,
+    workspace_path: str | None = None,
+    claude_model: str | None = None,
+    claude_prompt_mode: str | None = None,
+    claude_tool_mode: str | None = None,
+    include_workspace: bool = True,
+) -> dict[str, Any]:
+    if (
+        not include_workspace
+        and claude_model is None
+        and claude_prompt_mode is None
+        and claude_tool_mode is None
+    ):
+        return {}
+    patch: dict[str, Any] = {
+        "transport": "browser",
+        "kind": "claude-local",
+    }
+    if include_workspace:
+        patch["workspace_path"] = str(workspace_path or "").strip()
+    if claude_model is not None:
+        patch["claude_model"] = str(claude_model or "").strip()
+    if claude_prompt_mode is not None:
+        patch["claude_prompt_mode"] = _choice(claude_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
+    if claude_tool_mode is not None:
+        patch["claude_tool_mode"] = _choice(claude_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
+    patch.setdefault("claude_prompt_mode", "fast-edit")
+    patch.setdefault("claude_tool_mode", "mcp-first")
     return patch
 
 

@@ -17,8 +17,13 @@ import {
   githubApi,
   providerApi,
 } from '../../services/backendApi'
-import { discoverBrowserNanobotAgents, storeBrowserNanobotApiKey } from '../../services/nanobotBrowserClient'
+import {
+  discoverBrowserNanobotAgents,
+  nanobotLocalAgentHostEndpointFromRaw,
+  storeBrowserNanobotApiKey,
+} from '../../services/nanobotBrowserClient'
 import { listBrowserCodexModels, probeBrowserCodex } from '../../services/codexBrowserClient'
+import { probeBrowserClaude } from '../../services/claudeBrowserClient'
 import { useSettingsStore } from '../../stores/settingsStore'
 import './settings.css'
 
@@ -451,6 +456,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     transport: 'backend',
     workspace_path: '',
     ...DEFAULT_CODEX_SETTINGS,
+    ...DEFAULT_CLAUDE_SETTINGS,
   })
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -491,7 +497,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     setDraft((d) => ({
       ...d,
       kind,
-      transport: kind === 'nanobot' || kind === 'codex-local' ? 'browser' : 'backend',
+      transport: kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local' ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
@@ -501,9 +507,12 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
               ? getBrowserLocalServiceUrl(8787)
               : kind === 'codex-local'
                 ? getBrowserLocalServiceUrl(8787)
+                : kind === 'claude-local'
+                  ? getBrowserLocalServiceUrl(8787)
                 : 'http://localhost:8080/v1',
-      api_key: (kind === 'nanobot' || kind === 'codex-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
+      api_key: (kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
       ...(kind === 'codex-local' ? DEFAULT_CODEX_SETTINGS : {}),
+      ...(kind === 'claude-local' ? DEFAULT_CLAUDE_SETTINGS : {}),
     }))
   }
 
@@ -512,19 +521,20 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     setFormError(null)
     const filledDraft: ProviderDraft = {
       ...draft,
-      api_key: (draft.kind === 'nanobot' || draft.kind === 'codex-local') && !draft.api_key.trim() ? 'dummy' : draft.api_key,
+      api_key: (draft.kind === 'nanobot' || draft.kind === 'codex-local' || draft.kind === 'claude-local') && !draft.api_key.trim() ? 'dummy' : draft.api_key,
     }
     if (!filledDraft.name.trim() || !filledDraft.endpoint.trim() || !filledDraft.api_key.trim()) {
       setFormError('name / endpoint / api_key 都不能为空')
       return
     }
-    if (filledDraft.kind === 'codex-local' && !filledDraft.workspace_path?.trim()) {
-      setFormError('Codex Local 需要填写代码项目 workspace path')
+    if ((filledDraft.kind === 'codex-local' || filledDraft.kind === 'claude-local') && !filledDraft.workspace_path?.trim()) {
+      setFormError(`${localAgentName(filledDraft.kind)} 需要填写代码项目 workspace path`)
       return
     }
     setSubmitting(true)
     let browserAgents: Awaited<ReturnType<typeof discoverBrowserNanobotAgents>> | null = null
     let codexHealth: Record<string, unknown> | null = null
+    let claudeHealth: Record<string, unknown> | null = null
     let codexModelsForSync = codexModels
     if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser') {
       try {
@@ -559,19 +569,38 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
         }
       }
     }
+    if (filledDraft.kind === 'claude-local') {
+      try {
+        claudeHealth = await probeBrowserClaude(filledDraft.endpoint)
+      } catch (err) {
+        setSubmitting(false)
+        setFormError(
+          err instanceof Error
+            ? `浏览器无法访问本机 Claude：${err.message}`
+            : '浏览器无法访问本机 Claude',
+        )
+        return
+      }
+    }
     const result = await create(filledDraft)
     setSubmitting(false)
     if (result) {
       if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser' && browserAgents) {
         storeBrowserNanobotApiKey(result.id, filledDraft.api_key)
+        const localAgentHostEndpoint = nanobotLocalAgentHostEndpointFromRaw(browserAgents[0]?.raw)
         await providerApi.syncBrowserNanobotModels(result.id, {
           provider_name: result.name,
           models: browserAgents,
+          local_agent_host_endpoint: localAgentHostEndpoint,
         })
         await loadProviders()
       }
       if (filledDraft.kind === 'codex-local' && codexHealth) {
         await providerApi.syncBrowserCodexAgent(result.id, { health: codexHealth, models: codexModelsForSync })
+        await loadProviders()
+      }
+      if (filledDraft.kind === 'claude-local' && claudeHealth) {
+        await providerApi.syncBrowserClaudeAgent(result.id, { health: claudeHealth })
         await loadProviders()
       }
       onClose()
@@ -600,6 +629,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
             <option value="claude-direct">Claude API 直连</option>
             <option value="nanobot">Nanobot</option>
             <option value="codex-local">Codex Local</option>
+            <option value="claude-local">Claude Local</option>
           </select>
         </label>
       </div>
@@ -608,10 +638,14 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
         <input
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-          placeholder={draft.kind === 'nanobot' || draft.kind === 'codex-local' ? getBrowserLocalServiceUrl(8787) : getLocalServiceUrl(8902)}
+          placeholder={
+            draft.kind === 'nanobot' || draft.kind === 'codex-local' || draft.kind === 'claude-local'
+              ? getBrowserLocalServiceUrl(8787)
+              : getLocalServiceUrl(8902)
+          }
         />
       </label>
-      {draft.kind === 'codex-local' && (
+      {(draft.kind === 'codex-local' || draft.kind === 'claude-local') && (
         <>
           <label className="full">
             <span>Workspace Path</span>
@@ -621,12 +655,19 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
               placeholder="/Users/me/code/my-paper-project"
             />
           </label>
-          <CodexSettingsFields
-            draft={draft}
-            modelOptions={codexModels}
-            modelLoading={codexModelsLoading}
-            onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
-          />
+          {draft.kind === 'codex-local' ? (
+            <CodexSettingsFields
+              draft={draft}
+              modelOptions={codexModels}
+              modelLoading={codexModelsLoading}
+              onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            />
+          ) : (
+            <ClaudeSettingsFields
+              draft={draft}
+              onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            />
+          )}
         </>
       )}
       {draft.kind === 'nanobot' && (
@@ -679,6 +720,12 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_sandbox: 'read-only',
   codex_approval_policy: 'never',
   codex_prompt_mode: 'fast-edit',
+} satisfies Partial<ProviderDraft>
+
+const DEFAULT_CLAUDE_SETTINGS = {
+  claude_model: '',
+  claude_prompt_mode: 'fast-edit',
+  claude_tool_mode: 'mcp-first',
 } satisfies Partial<ProviderDraft>
 
 function CodexSettingsFields({
@@ -793,13 +840,67 @@ function CodexSettingsFields({
   )
 }
 
+function ClaudeSettingsFields({
+  draft,
+  onChange,
+}: {
+  draft: ProviderDraft
+  onChange: (patch: Partial<ProviderDraft>) => void
+}) {
+  return (
+    <>
+      <div className="form-row">
+        <label>
+          <span>Claude Model</span>
+          <select
+            value={draft.claude_model ?? ''}
+            onChange={(e) => onChange({ claude_model: e.target.value })}
+          >
+            <option value="">使用本机默认</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="opus">Opus</option>
+          </select>
+        </label>
+        <label>
+          <span>Prompt Mode</span>
+          <select
+            value={draft.claude_prompt_mode ?? 'fast-edit'}
+            onChange={(e) => onChange({ claude_prompt_mode: e.target.value as ProviderDraft['claude_prompt_mode'] })}
+          >
+            <option value="fast-edit">快速编辑</option>
+            <option value="full-agent">完整 Agent</option>
+          </select>
+        </label>
+      </div>
+      <label className="full">
+        <span>Tool Mode</span>
+        <select
+          value={draft.claude_tool_mode ?? 'mcp-first'}
+          onChange={(e) => onChange({ claude_tool_mode: e.target.value as ProviderDraft['claude_tool_mode'] })}
+        >
+          <option value="mcp-first">MCP first</option>
+          <option value="browser-preflight">Browser preflight first</option>
+          <option value="marker-only">Marker fallback only</option>
+        </select>
+      </label>
+    </>
+  )
+}
+
 function kindLabel(kind: Provider['kind']) {
   if (kind === 'dify-local') return 'Dify (本地)'
   if (kind === 'dify-cloud') return 'Dify Cloud'
   if (kind === 'claude-direct') return 'Claude API 直连'
   if (kind === 'nanobot') return 'Nanobot'
   if (kind === 'codex-local') return 'Codex Local'
+  if (kind === 'claude-local') return 'Claude Local'
   return kind
+}
+
+function localAgentName(kind: Provider['kind']): string {
+  if (kind === 'claude-local') return 'Claude Local'
+  if (kind === 'codex-local') return 'Codex Local'
+  return 'Local Agent'
 }
 
 function codexModelOptionLabel(model: ProviderModel): string {

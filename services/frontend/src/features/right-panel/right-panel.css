@@ -744,6 +744,109 @@
   margin-top: 8px;
 }
 
+.local-host-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  background: rgba(20, 184, 166, 0.07);
+}
+
+.local-host-diagnostics-head,
+.local-host-diagnostic-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.local-host-diagnostics-head h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.local-host-diagnostics-head p {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(153, 246, 228, 0.82);
+}
+
+.local-host-diagnostics-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.local-host-diagnostics-list {
+  display: grid;
+  gap: 8px;
+}
+
+.local-host-diagnostic-card {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.local-host-diagnostic-card.loading {
+  opacity: 0.72;
+}
+
+.local-host-diagnostic-top strong,
+.local-host-diagnostic-top span {
+  display: block;
+}
+
+.local-host-diagnostic-top strong {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.local-host-diagnostic-top span,
+.local-host-diagnostic-top time {
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.local-host-diagnostic-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.local-host-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 5px 10px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: rgba(203, 213, 225, 0.84);
+}
+
+.local-host-diagnostic-grid span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-host-diagnostic-errors {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: #fca5a5;
+}
+
 .agent-export-panel {
   display: flex;
   align-items: flex-start;

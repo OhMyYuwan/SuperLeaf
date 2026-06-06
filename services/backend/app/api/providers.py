@@ -15,6 +15,7 @@ from ..models import Provider, User
 from ..schemas import (
     AgentStatOut,
     BrowserCodexAgentSyncIn,
+    BrowserClaudeAgentSyncIn,
     BrowserNanobotModelSyncIn,
     ProviderIn,
     ProviderModelOut,
@@ -77,6 +78,9 @@ def create_provider(
         codex_approval_policy=body.codex_approval_policy,
         codex_prompt_mode=body.codex_prompt_mode,
         codex_tool_mode=body.codex_tool_mode,
+        claude_model=body.claude_model,
+        claude_prompt_mode=body.claude_prompt_mode,
+        claude_tool_mode=body.claude_tool_mode,
     )
     return _to_out(p)
 
@@ -106,6 +110,9 @@ def update_provider(
             codex_approval_policy=body.codex_approval_policy,
             codex_prompt_mode=body.codex_prompt_mode,
             codex_tool_mode=body.codex_tool_mode,
+            claude_model=body.claude_model,
+            claude_prompt_mode=body.claude_prompt_mode,
+            claude_tool_mode=body.claude_tool_mode,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -176,6 +183,7 @@ def sync_browser_nanobot_models(
             user_id=user.id,
             provider_name=body.provider_name,
             models=[row.model_dump() for row in body.models],
+            local_agent_host_endpoint=body.local_agent_host_endpoint,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -197,6 +205,26 @@ def sync_browser_codex_agent(
             user_id=user.id,
             health=body.health,
             models=[row.model_dump() for row in body.models],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if p is None:
+        raise HTTPException(404, "Provider not found")
+    return _to_out(p)
+
+
+@router.post("/{provider_id}/browser-claude-agent", response_model=ProviderOut)
+def sync_browser_claude_agent(
+    provider_id: str,
+    body: BrowserClaudeAgentSyncIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_session),
+) -> ProviderOut:
+    try:
+        p = ProviderService(db).sync_browser_claude_agent(
+            provider_id,
+            user_id=user.id,
+            health=body.health,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

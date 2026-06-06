@@ -8,6 +8,7 @@ import { formatSuperleafToolDefinitions } from './superleafTools'
 
 const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
 const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
+export const DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT = 'http://127.0.0.1:8787'
 
 export interface BrowserNanobotTurnResult {
   content: string
@@ -24,6 +25,29 @@ export interface BrowserNanobotTurnArgs {
   signal?: AbortSignal
   onDelta?: (delta: string) => void
   onActivity?: () => void
+}
+
+export interface BrowserNanobotToolAdapter {
+  mode?: string
+  transport?: string
+  tool_count?: number
+  tool_names?: string[]
+  instructions?: string
+  [key: string]: unknown
+}
+
+export interface BrowserNanobotToolDiagnostics {
+  status?: string
+  kind?: string
+  adapter?: BrowserNanobotToolAdapter
+  tools?: NanobotToolDefinition[]
+  adapter_endpoint?: string
+  adapter_source?: 'configured-endpoint' | 'default-local-agent-host'
+  superleaf_mcp_url?: string
+  superleaf_mcp_tool_count?: number
+  mcp_contexts?: number
+  mcp_pending_calls?: number
+  [key: string]: unknown
 }
 
 export function storeBrowserNanobotApiKey(providerId: string, apiKey: string): void {
@@ -49,18 +73,69 @@ export async function probeBrowserNanobot(endpoint: string, apiKey = 'dummy'): P
 }
 
 export async function discoverBrowserNanobotAgents(endpoint: string, apiKey = 'dummy'): Promise<ProviderModel[]> {
-  const health = await probeBrowserNanobot(endpoint, apiKey)
+  let health: unknown = null
+  let healthError: unknown = null
+  try {
+    health = await probeBrowserNanobot(endpoint, apiKey)
+  } catch (err) {
+    healthError = err
+  }
+  const toolDiagnostics = await probeBrowserNanobotTools(endpoint, apiKey).catch(() => null)
+  if (!health && toolDiagnostics?.adapter_endpoint) {
+    health = await probeBrowserNanobot(toolDiagnostics.adapter_endpoint, apiKey).catch(() => null)
+  }
+  if (!health && healthError) throw healthError
+  const toolCount = toolDiagnostics?.adapter?.tool_count ?? toolDiagnostics?.superleaf_mcp_tool_count ?? 0
   const name = health && typeof health === 'object'
     ? String((health as Record<string, unknown>).name ?? (health as Record<string, unknown>).service ?? 'Nanobot')
     : 'Nanobot'
+  const adapterEndpoint = toolDiagnostics?.adapter_endpoint ?? ''
   return [
     {
       id: DEFAULT_NANOBOT_AGENT_ID,
       name,
-      description: 'Integrated local Nanobot Agent.',
-      raw: { id: DEFAULT_NANOBOT_AGENT_ID, source: 'health', health },
+      description: toolCount > 0
+        ? `Integrated local Nanobot Agent with ${toolCount} SuperLeaf tools.`
+        : 'Integrated local Nanobot Agent.',
+      raw: {
+        id: DEFAULT_NANOBOT_AGENT_ID,
+        source: toolDiagnostics ? 'local-host-tool-adapter' : 'health',
+        health,
+        tool_adapter: toolDiagnostics,
+        superleaf_tool_count: toolCount,
+        superleaf_tool_names: toolDiagnostics?.adapter?.tool_names ?? [],
+        local_agent_host_endpoint: adapterEndpoint,
+        nanobot_adapter_endpoint: adapterEndpoint,
+        nanobot_adapter_source: toolDiagnostics?.adapter_source ?? '',
+        nanobot_adapter_mode: toolDiagnostics?.adapter?.mode ?? '',
+      },
     },
   ]
+}
+
+export async function probeBrowserNanobotTools(
+  endpoint: string,
+  apiKey = 'dummy',
+): Promise<BrowserNanobotToolDiagnostics | null> {
+  const candidates = uniqueEndpoints([
+    endpoint,
+    DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT,
+  ])
+  let lastError: unknown = null
+  for (const candidate of candidates) {
+    try {
+      const diagnostics = await probeBrowserNanobotToolsAtEndpoint(
+        candidate,
+        apiKey,
+        candidate === normalizeNanobotEndpoint(endpoint) ? 'configured-endpoint' : 'default-local-agent-host',
+      )
+      if (diagnostics) return diagnostics
+    } catch (err) {
+      lastError = err
+    }
+  }
+  if (lastError) throw lastError
+  return null
 }
 
 export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Promise<BrowserNanobotTurnResult> {
@@ -202,10 +277,61 @@ function formatToolResults(messages: NanobotChatMessage[], names: Map<string, st
     .join('\n\n')
 }
 
-function normalizeNanobotEndpoint(endpoint: string): string {
+export function normalizeNanobotEndpoint(endpoint: string): string {
   let cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '')
   if (cleaned.endsWith('/v1')) cleaned = cleaned.slice(0, -3).replace(/\/+$/u, '')
   return cleaned
+}
+
+export function nanobotLocalAgentHostEndpointFromRaw(raw: Record<string, unknown> | undefined): string {
+  if (!raw) return ''
+  for (const key of ['local_agent_host_endpoint', 'nanobot_adapter_endpoint', 'adapter_endpoint']) {
+    const value = raw[key]
+    if (typeof value === 'string' && value.trim()) return normalizeNanobotEndpoint(value)
+  }
+  const toolAdapter = raw.tool_adapter
+  if (toolAdapter && typeof toolAdapter === 'object') {
+    const value = (toolAdapter as Record<string, unknown>).adapter_endpoint
+    if (typeof value === 'string' && value.trim()) return normalizeNanobotEndpoint(value)
+  }
+  return ''
+}
+
+async function probeBrowserNanobotToolsAtEndpoint(
+  endpoint: string,
+  apiKey: string,
+  source: BrowserNanobotToolDiagnostics['adapter_source'],
+): Promise<BrowserNanobotToolDiagnostics | null> {
+  const normalized = normalizeNanobotEndpoint(endpoint)
+  const resp = await fetch(`${normalized}/nanobot/tools`, {
+    method: 'GET',
+    headers: authHeaders(apiKey),
+  })
+  if (resp.status === 404 || resp.status === 405) return null
+  if (!resp.ok) {
+    throw new Error(`Nanobot tool adapter ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`)
+  }
+  if (!resp.headers.get('content-type')?.toLowerCase().includes('json')) return null
+  const payload = await resp.json().catch(() => null)
+  return payload && typeof payload === 'object'
+    ? {
+        ...(payload as BrowserNanobotToolDiagnostics),
+        adapter_endpoint: normalized,
+        adapter_source: source,
+      }
+    : null
+}
+
+function uniqueEndpoints(values: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const normalized = normalizeNanobotEndpoint(value || DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result
 }
 
 function authHeaders(apiKey: string): Record<string, string> {

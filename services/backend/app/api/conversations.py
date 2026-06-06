@@ -25,6 +25,10 @@ from ..schemas import (
     BrowserCodexPrepareOut,
     BrowserCodexToolIn,
     BrowserCodexToolOut,
+    BrowserClaudeFinishIn,
+    BrowserClaudePrepareOut,
+    BrowserClaudeToolIn,
+    BrowserClaudeToolOut,
     BrowserNanobotFinishIn,
     BrowserNanobotPrepareOut,
     BrowserNanobotToolIn,
@@ -167,6 +171,15 @@ def _agent_name(resolved: ResolvedAgent) -> str:
 
 def _provider_transport(provider: Any) -> str:
     return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"
+
+
+def _browser_nanobot_bridge_endpoint(provider: Any) -> str:
+    meta = provider.meta or {}
+    for key in ("local_agent_host_endpoint", "nanobot_adapter_endpoint"):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            return value
+    return provider.endpoint
 
 
 def _conversation_message_rows(db: Session, conversation_id: str) -> list[Message]:
@@ -356,6 +369,15 @@ def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
     }
 
 
+def _claude_settings_from_provider(provider: Any) -> dict[str, str]:
+    meta = provider.meta or {}
+    return {
+        "model": str(meta.get("claude_model") or "").strip(),
+        "prompt_mode": _settings_choice(meta.get("claude_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
+        "tool_mode": _settings_choice(meta.get("claude_tool_mode"), {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first"),
+    }
+
+
 def _settings_choice(value: Any, allowed: set[str], default: str) -> str:
     cleaned = str(value or "").strip()
     return cleaned if cleaned in allowed else default
@@ -424,6 +446,29 @@ def _browser_codex_runner(
     return NativeAgentRunner(
         NativeAgentRuntimeConfig(
             agent_id=f"browser-codex:{provider.id}",
+            agent_name=provider.name,
+            provider_endpoint=provider.endpoint,
+            api_key="",
+            model=model,
+            instructions="",
+            skills=[],
+            workspace_root="",
+            project_id=project.id,
+            user_id=user.id,
+        )
+    )
+
+
+def _browser_claude_runner(
+    *,
+    provider: Any,
+    project: Project,
+    user: User,
+    model: str,
+) -> NativeAgentRunner:
+    return NativeAgentRunner(
+        NativeAgentRuntimeConfig(
+            agent_id=f"browser-claude:{provider.id}",
             agent_name=provider.name,
             provider_endpoint=provider.endpoint,
             api_key="",
@@ -1000,6 +1045,153 @@ def finish_browser_codex_message(
     return MessageOut.model_validate(agent_msg)
 
 
+@router.post("/{conversation_id}/browser-claude/prepare", response_model=BrowserClaudePrepareOut)
+def prepare_browser_claude_message(
+    conversation_id: str,
+    body: MessageSendIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserClaudePrepareOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "claude-local":
+        raise HTTPException(400, "Conversation is not configured for browser Claude transport")
+
+    user_msg = _persist_user_message(db, conv, body)
+    _sync_conversation_session(db, conv)
+    claude_settings = _claude_settings_from_provider(provider)
+    prompt_payload = (
+        _build_agent_query(db, conv, body, current_message_id=user_msg.id)
+        if claude_settings["prompt_mode"] == "full-agent"
+        else _build_light_browser_codex_query(db, conv, body)
+    )
+    run_id = f"browser-claude-{uuid.uuid4().hex}"
+    workspace_path = str((provider.meta or {}).get("workspace_path") or "").strip()
+    doc = db.get(Doc, conv.document_id)
+    superleaf_context = {
+        "project_id": project.id,
+        "conversation_id": conversation_id,
+        "document_id": conv.document_id,
+        "document_name": doc.name if doc is not None else "",
+        "document_format": doc.format if doc is not None else "",
+        "range_start": body.range_start or 0,
+        "range_end": body.range_end or 0,
+        "provider_id": provider.id,
+        "provider_name": provider.name,
+    }
+    return BrowserClaudePrepareOut(
+        run_id=run_id,
+        provider_id=provider.id,
+        endpoint=provider.endpoint,
+        model=claude_settings["model"] or resolved.cached_workflow.external_id or "claude",
+        system_prompt="You are Claude Code running locally for SuperLeaf. Use SuperLeaf MCP tools when project context, document reads, search, or suggestions are needed.",
+        prompt=str(prompt_payload["agent_query"]),
+        tools=browser_nanobot_tools(),
+        user_message=MessageOut.model_validate(user_msg),
+        document_id=conv.document_id,
+        range_start=body.range_start or 0,
+        range_end=body.range_end or 0,
+        workspace_path=workspace_path,
+        prompt_mode=claude_settings["prompt_mode"],
+        claude_settings=claude_settings,
+        superleaf_context=superleaf_context,
+        inputs=dict(body.inputs or {}),
+    )
+
+
+@router.post("/{conversation_id}/browser-claude/tool", response_model=BrowserClaudeToolOut)
+async def execute_browser_claude_tool(
+    conversation_id: str,
+    body: BrowserClaudeToolIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> BrowserClaudeToolOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.cached_workflow is None:
+        raise HTTPException(404, "Agent (workflow) gone")
+    provider = resolved.provider
+    if provider.kind != "claude-local":
+        raise HTTPException(400, "Conversation is not configured for browser Claude transport")
+
+    payload = NativeRunPayload(
+        document_id=body.document_id or conv.document_id,
+        range_start=body.range_start,
+        range_end=body.range_end,
+        inputs=dict(body.inputs or {}),
+        query="",
+        conversation_id=body.run_id,
+    )
+    runner = _browser_claude_runner(
+        provider=provider,
+        project=project,
+        user=user,
+        model=resolved.cached_workflow.external_id or "claude",
+    )
+    result = await runner.execute_browser_superleaf_tool(
+        body.tool_call,
+        payload,
+        tool_kind="browser_claude",
+        surface_name="browser Claude",
+    )
+    call_id = str(body.tool_call.get("id") or "browser-tool-call")
+    name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    return BrowserClaudeToolOut(
+        tool_call_id=call_id,
+        content=result.content,
+        failed=result.failed,
+        name=name,
+        tool_kind=result.tool_kind,
+        events=_browser_tool_events(result, body.tool_call),
+    )
+
+
+@router.post("/{conversation_id}/browser-claude/finish", response_model=MessageOut, status_code=201)
+def finish_browser_claude_message(
+    conversation_id: str,
+    body: BrowserClaudeFinishIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+    user: User = Depends(get_current_user),
+) -> MessageOut:
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.project_id != project.id or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found")
+    resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
+    if resolved is None or resolved.provider.kind != "claude-local":
+        raise HTTPException(400, "Conversation is not configured for browser Claude transport")
+
+    content = body.content.strip()
+    error = body.error.strip()
+    if not content and error:
+        content = "Claude local run failed."
+    if not content:
+        content = "Claude returned no content."
+    agent_msg = Message(
+        conversation_id=conversation_id,
+        role="agent",
+        content=content,
+        error=error,
+        external_message_id=body.claude_session_id or body.run_id,
+    )
+    db.add(agent_msg)
+    conv.external_conversation_id = body.claude_session_id or body.run_id
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(agent_msg)
+    _sync_conversation_session(db, conv)
+    return MessageOut.model_validate(agent_msg)
+
+
 @router.post("/{conversation_id}/browser-nanobot/prepare", response_model=BrowserNanobotPrepareOut)
 def prepare_browser_nanobot_message(
     conversation_id: str,
@@ -1027,6 +1219,7 @@ def prepare_browser_nanobot_message(
         run_id=run_id,
         provider_id=provider.id,
         endpoint=provider.endpoint,
+        bridge_endpoint=_browser_nanobot_bridge_endpoint(provider),
         model=model,
         messages=[
             {"role": "system", "content": browser_nanobot_system_prompt()},

@@ -1,4 +1,3 @@
-import { BACKEND_BASE } from './backendApi'
 import type {
   BrowserCodexPrepare,
   BrowserNanobotToolResult,
@@ -6,6 +5,14 @@ import type {
   ProviderDraft,
   ProviderModel,
 } from './backendApi'
+import {
+  normalizeLocalAgentHostEndpoint,
+  pollBrowserToolBridgeRequests,
+  registerBrowserToolBridgeContext,
+  submitBrowserToolBridgeResult,
+  type BrowserToolBridgeContext,
+  type BrowserToolBridgeRequest,
+} from './browserToolBridge'
 import { formatCompactSuperleafToolGuide, formatSuperleafToolDefinitions } from './superleafTools'
 
 export interface BrowserCodexHealth {
@@ -39,27 +46,17 @@ export interface BrowserCodexTurnResult {
   toolCalls: NanobotToolCall[]
 }
 
-export interface BrowserCodexMcpContext {
+export interface BrowserCodexSessionList {
   status: string
-  context_id: string
-  mcp_url: string
-  tool_count: number
-  expires_at: number
+  kind: string
+  count: number
+  sessions: BrowserCodexSession[]
+  filters?: Record<string, unknown>
+  [key: string]: unknown
 }
 
-export interface BrowserCodexMcpToolRequest {
-  id: string
-  name: string
-  arguments: Record<string, unknown>
-  context_id: string
-  project_id: string
-  conversation_id: string
-  document_id: string
-  range_start: number
-  range_end: number
-  inputs: Record<string, unknown>
-  created_at: string
-}
+export type BrowserCodexMcpContext = BrowserToolBridgeContext
+export type BrowserCodexMcpToolRequest = BrowserToolBridgeRequest
 
 const SUPERLEAF_TOOL_MARKER = '<superleaf_tool_call'
 
@@ -128,30 +125,56 @@ export async function createBrowserCodexSession(args: {
   return payload as BrowserCodexSession
 }
 
+export async function listBrowserCodexSessions(
+  endpoint: string,
+  query: {
+    superleafConversationId?: string
+    superleafProjectId?: string
+    workspacePath?: string
+    limit?: number
+  } = {},
+): Promise<BrowserCodexSessionList> {
+  const params = new URLSearchParams()
+  if (query.superleafConversationId) {
+    params.set('superleaf_conversation_id', query.superleafConversationId)
+  }
+  if (query.superleafProjectId) {
+    params.set('superleaf_project_id', query.superleafProjectId)
+  }
+  if (query.workspacePath) {
+    params.set('workspace_path', query.workspacePath)
+  }
+  if (query.limit) {
+    params.set('limit', String(query.limit))
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/sessions${suffix}`, {
+    method: 'GET',
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`Codex sessions ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
+  return payload as unknown as BrowserCodexSessionList
+}
+
 export async function registerBrowserCodexMcpContext(args: {
   endpoint: string
   prepared: BrowserCodexPrepare
   superleafOrigin?: string
 }): Promise<BrowserCodexMcpContext> {
-  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/context`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      project_id: String(args.prepared.superleaf_context.project_id ?? ''),
-      conversation_id: String(args.prepared.superleaf_context.conversation_id ?? ''),
-      document_id: args.prepared.document_id,
-      range_start: args.prepared.range_start,
-      range_end: args.prepared.range_end,
+  return registerBrowserToolBridgeContext({
+    endpoint: args.endpoint,
+    context: {
+      projectId: String(args.prepared.superleaf_context.project_id ?? ''),
+      conversationId: String(args.prepared.superleaf_context.conversation_id ?? ''),
+      documentId: args.prepared.document_id,
+      rangeStart: args.prepared.range_start,
+      rangeEnd: args.prepared.range_end,
       inputs: args.prepared.inputs,
-      superleaf_origin: args.superleafOrigin ?? window.location.origin,
-      backend_url: BACKEND_BASE,
-    }),
+      superleafOrigin: args.superleafOrigin,
+    },
   })
-  const payload = await readJson(resp)
-  if (!resp.ok) {
-    throw new Error(`SuperLeaf MCP context ${resp.status}: ${stringError(payload) || resp.statusText}`)
-  }
-  return payload as unknown as BrowserCodexMcpContext
 }
 
 export async function pollBrowserCodexMcpToolRequests(args: {
@@ -160,20 +183,7 @@ export async function pollBrowserCodexMcpToolRequests(args: {
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserCodexMcpToolRequest[]> {
-  const url = new URL(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/tool-requests`)
-  url.searchParams.set('context_id', args.contextId)
-  url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
-  const resp = await fetch(url.toString(), {
-    method: 'GET',
-    signal: args.signal,
-  })
-  const payload = await readJson(resp)
-  if (!resp.ok) {
-    throw new Error(`SuperLeaf MCP poll ${resp.status}: ${stringError(payload) || resp.statusText}`)
-  }
-  return Array.isArray(payload.requests)
-    ? payload.requests.map(normalizeMcpToolRequest).filter((item): item is BrowserCodexMcpToolRequest => Boolean(item))
-    : []
+  return pollBrowserToolBridgeRequests(args)
 }
 
 export async function submitBrowserCodexMcpToolResult(args: {
@@ -186,23 +196,7 @@ export async function submitBrowserCodexMcpToolResult(args: {
   events?: Array<{ event: string; data: unknown }>
   signal?: AbortSignal
 }): Promise<void> {
-  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/superleaf/mcp/tool-results`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      request_id: args.requestId,
-      content: args.content,
-      failed: args.failed,
-      name: args.name,
-      tool_kind: args.toolKind ?? '',
-      events: args.events ?? [],
-    }),
-    signal: args.signal,
-  })
-  const payload = await readJson(resp)
-  if (!resp.ok) {
-    throw new Error(`SuperLeaf MCP result ${resp.status}: ${stringError(payload) || resp.statusText}`)
-  }
+  await submitBrowserToolBridgeResult(args)
 }
 
 export async function runBrowserCodexTurn(args: {
@@ -256,8 +250,7 @@ export async function runBrowserCodexTurn(args: {
 }
 
 export function normalizeCodexEndpoint(endpoint: string): string {
-  const cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '')
-  return cleaned || 'http://127.0.0.1:8787'
+  return normalizeLocalAgentHostEndpoint(endpoint)
 }
 
 async function readJson(resp: Response): Promise<Record<string, unknown>> {
@@ -374,29 +367,6 @@ function normalizeBrowserCodexModel(value: unknown): ProviderModel {
     service_tiers: normalizeBrowserCodexServiceTiers(raw.service_tiers || raw.serviceTiers),
     default_service_tier: stringValue(raw.default_service_tier || raw.defaultServiceTier),
     raw: raw.raw && typeof raw.raw === 'object' ? raw.raw as Record<string, unknown> : raw,
-  }
-}
-
-function normalizeMcpToolRequest(value: unknown): BrowserCodexMcpToolRequest | null {
-  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
-  const id = stringValue(raw.id)
-  const name = stringValue(raw.name)
-  const contextId = stringValue(raw.context_id)
-  if (!id || !name || !contextId) return null
-  return {
-    id,
-    name,
-    arguments: raw.arguments && typeof raw.arguments === 'object'
-      ? raw.arguments as Record<string, unknown>
-      : {},
-    context_id: contextId,
-    project_id: stringValue(raw.project_id),
-    conversation_id: stringValue(raw.conversation_id),
-    document_id: stringValue(raw.document_id),
-    range_start: Number(raw.range_start || 0),
-    range_end: Number(raw.range_end || 0),
-    inputs: raw.inputs && typeof raw.inputs === 'object' ? raw.inputs as Record<string, unknown> : {},
-    created_at: stringValue(raw.created_at),
   }
 }
 

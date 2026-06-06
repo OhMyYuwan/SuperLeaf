@@ -958,12 +958,63 @@ function AgentRoleLine({
   if (runStats?.filesRead) parts.push(`读文件 ${runStats.filesRead}`)
   if (runStats?.filesWritten) parts.push(`写文件 ${runStats.filesWritten}`)
   if (runStats?.stopped) parts.push('已停止')
+  const bridgeLabel = formatBridgeStatus(runStats?.bridgeStatus)
+  const localSession = formatShortSessionId(runStats?.localSessionId)
+  const externalSession = formatShortSessionId(runStats?.externalSessionId)
+  const runtimeLabel = formatSessionRuntime(runStats?.sessionRuntime)
   return (
     <div className="message-role">
       <span>{name}</span>
       {parts.length > 0 && <span className="agent-run-stats">{parts.join(' · ')}</span>}
+      {localSession && (
+        <span
+          className="agent-session-status local"
+          title={[
+            `Local Host session: ${runStats?.localSessionId}`,
+            runStats?.workspacePath ? `Workspace: ${runStats.workspacePath}` : '',
+          ].filter(Boolean).join('\n')}
+        >
+          本机会话 {localSession}
+        </span>
+      )}
+      {externalSession && (
+        <span
+          className="agent-session-status external"
+          title={`${runtimeLabel} session: ${runStats?.externalSessionId}`}
+        >
+          {runtimeLabel} {externalSession}
+        </span>
+      )}
+      {bridgeLabel && (
+        <span
+          className={`agent-bridge-status ${runStats?.bridgeStatus ?? ''}`}
+          title={runStats?.bridgeError || bridgeLabel}
+        >
+          {bridgeLabel}
+        </span>
+      )}
     </div>
   )
+}
+
+function formatShortSessionId(value?: string): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (raw.length <= 12) return raw
+  return `${raw.slice(0, 6)}…${raw.slice(-4)}`
+}
+
+function formatSessionRuntime(runtime?: AgentRunStats['sessionRuntime']): string {
+  if (runtime === 'claude-local') return 'Claude 会话'
+  if (runtime === 'codex-local') return 'Codex 会话'
+  return 'Agent 会话'
+}
+
+function formatBridgeStatus(status?: AgentRunStats['bridgeStatus']): string {
+  if (status === 'connected') return 'MCP 已连接'
+  if (status === 'recovering') return 'MCP 重连中'
+  if (status === 'error') return 'MCP 错误'
+  return ''
 }
 
 function UserMessageContent({

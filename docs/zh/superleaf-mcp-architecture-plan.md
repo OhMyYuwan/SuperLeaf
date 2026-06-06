@@ -30,7 +30,7 @@ nav_order: 98
 - 后端已提供 `/api/native-agent/local-agent-host/update` 只读 update metadata，用于后续自动升级前先统一 latest version、checksum、manifest 和下载路径；当前策略仍是 `manual-download`，不会自动替换用户本机文件。
 - Local Host 已新增 `npm run gate:mcp-sdk`，参考官方 MCP TypeScript SDK 的 stateful Streamable HTTP transport 与 MCP Inspector 的 Streamable HTTP client/server 测试形状，固定迁移前必须保持的 session header、missing/unknown session、SSE、Last-Event-ID replay 和 DELETE close 语义。当前只判定“可作为 SDK 迁移候选”，没有替换零依赖兼容层。
 - Local Host 已新增 `npm run inspector:config|ui|cli`，生成官方 MCP Inspector `streamable-http` 配置，并可按需通过 `npx @modelcontextprotocol/inspector` 打开 Inspector UI 或 CLI；Inspector 不作为下载包 runtime dependency。
-- 后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `services/backend/app/services/native_agent_tool_kernel.py`；项目文档读写、搜索、outline、edit proposal 和 suggestion 等 DB-backed 执行 handler 也已迁入 Tool Kernel 执行层。`NativeAgentRunner` 现在保留编排、`.agents` 工作区文件读取、Skill 激活和外部 MCP 调度。
+- 后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `services/backend/app/services/native_agent_tool_kernel.py`；项目文档读写、搜索、outline、edit proposal、suggestion、`.agents` 工作区文件读取和 Skill 激活等执行 handler 已迁入 Tool Kernel 执行层。`NativeAgentRunner` 现在保留模型 streaming、session/messages、tool-call loop、前端事件发射和外部 MCP 调度。
 
 ## 目标
 
@@ -174,6 +174,103 @@ services/local-agent-host/superleaf-tools.mjs
 ```
 
 短期可以用并行模块保持运行时兼容，长期用生成脚本从同一份 JSON 产出 TypeScript、Python、MJS。
+
+### Backend Native Agent 执行流
+
+`NativeAgentRunner` 位于 SuperLeaf 后端内部。它不是 Agent 本体，也不是工具执行器；它负责主持一次 Agent turn：组装消息、调用 provider、接收 `tool_calls`、把工具结果回填给 provider，并把流式事件发回前端。
+
+```mermaid
+sequenceDiagram
+    participant User as Human User
+    participant UI as SuperLeaf UI
+    participant API as Backend Native Agent API
+    participant Runner as NativeAgentRunner
+    participant Provider as Native Agent Provider<br/>Codex / Claude / Nanobot / OpenAI-compatible
+    participant Kernel as Tool Kernel
+    participant Store as SuperLeaf Backend Store<br/>DB / project tree / docs / comments / events
+
+    User->>UI: 输入指令 / 选中文档片段
+    UI->>API: 提交 conversation turn<br/>project_id / doc_id / selection / prior messages
+    API->>Runner: 创建 NativeRunPayload 和 RuntimeConfig
+    Runner->>Runner: 组装 system prompt / user prompt / tools
+    Runner->>Provider: streaming chat request + allowed tools
+    Provider-->>Runner: output delta
+    Runner-->>UI: native.agent.output.delta
+    Provider-->>Runner: tool_call(name, arguments)
+    Runner->>Kernel: execute_native_agent_local_tool 或 execute_native_agent_db_tool
+    Kernel->>Store: 授权检查 / 读取 / 创建提案 / 写入受控项目文件
+    Store-->>Kernel: result / side_event
+    Kernel-->>Runner: NativeAgentToolResult
+    Runner-->>UI: native.agent.tool / suggestion card / edit proposal / skill activated
+    Runner->>Provider: tool result message
+    Provider-->>Runner: final output delta
+    Runner-->>API: stream complete
+    API-->>UI: conversation output persisted / displayed
+```
+
+这个执行流里有三个关键边界：
+
+- Agent provider 只看见 Runner 允许暴露的工具 schema 和上下文，不直接拿数据库连接、项目文件系统或全部 Skill。
+- Tool Kernel 才执行工具。它统一处理 SuperLeaf project/document tools、`.agents` 工作区文件读取和 Skill 激活。
+- Runner 仍保留会话编排。它决定当前 turn 的 messages、session、tool loop、前端事件和外部 MCP 调度。
+
+### Local / External Agent 执行流
+
+本地 Codex、Claude、Nanobot 或其他外部 Agent 不应该直接访问服务器上的 `.agents` Skill，也不应该直接写 SuperLeaf 数据库。它们把 SuperLeaf 当成一个工具端口，通过 Local Agent Host、Browser Bridge、MCP/API/CLI 进入当前用户授权的 SuperLeaf context。
+
+```mermaid
+sequenceDiagram
+    participant User as Human User
+    participant UI as SuperLeaf UI<br/>browser login / editor / conversation
+    participant Host as Local Agent Host<br/>127.0.0.1
+    participant LocalAgent as Local Agent<br/>Codex / Claude / Nanobot
+    participant Bridge as BrowserToolBridge
+    participant API as SuperLeaf Backend API
+    participant Yjs as Frontend Yjs / editor state
+    participant Store as DB / project tree / docs / comments / events
+
+    User->>UI: 在 SuperLeaf 中对本地 Agent 发指令
+    UI->>Host: prepare turn / register context
+    Host->>LocalAgent: prompt + SuperLeaf MCP/OpenAI tools
+    LocalAgent-->>Host: output delta 或 tool_call
+    Host-->>UI: 显示本机 Agent 输出
+    Host-->>Bridge: pending tool request
+    Bridge->>API: 使用当前浏览器登录态执行授权 API
+    API->>Store: 读取项目 / 创建批注 / 创建提案 / 记录事件
+    API-->>Bridge: tool result
+    Bridge->>Yjs: 必要时更新前端协作状态或等待用户保存
+    Bridge-->>Host: tool result
+    Host-->>LocalAgent: tool result message
+    LocalAgent-->>Host: final output
+    Host-->>UI: final output / tool summary
+```
+
+这个路径和 Backend Native Agent 不同：本地 Agent 的授权来自浏览器当前用户，而不是服务器主动访问用户本机。Local Agent Host 默认只绑定 loopback，Browser Bridge 持有当前 SuperLeaf 页面 context，并负责把工具请求转成后端授权 API 调用。
+
+### 模块化边界
+
+当前模块职责如下：
+
+- `NativeAgentRunner`：模型回合编排器。负责 streaming、session/messages、tool-call loop、provider 参数、前端事件发射和外部 MCP 调度。
+- `Tool Kernel`：工具定义与执行层。负责工具 schema/grouping、DB-backed SuperLeaf tools、`.agents` 工作区文件工具、Skill 激活、返回格式和 side event。
+- `SuperLeaf Backend API / Store`：项目、文档、批注、会话、事件、版本和权限的事实来源。
+- `BrowserToolBridge`：浏览器授权执行边界。负责把本地 Agent 的 pending tool request 转成当前用户可执行的 SuperLeaf API 调用。
+- `Local Agent Host`：本机协议代理。负责把本机 Codex/Claude/Nanobot 接到 SuperLeaf tools，但不持有服务器数据库权限。
+
+这样拆分后，新增 provider 不需要重写 SuperLeaf 工具；新增工具也不需要改每个 provider 的执行逻辑。Runner 可以继续专注“怎么跑这一轮 Agent”，Tool Kernel 专注“这个工具能不能执行、怎么执行、返回什么”。
+
+### 安全性边界
+
+这个设计刻意避免让 Agent provider 成为数据库超级用户。
+
+- 工具 allowlist 按 surface 区分。Backend Native Agent、browser Nanobot、本地 Codex/Claude MCP、未来 Remote MCP 可以看到不同工具集合。
+- 项目工具必须带 `project_id`、`user_id`、active document/selection 等上下文，Tool Kernel 执行时再次校验项目归属和写权限。
+- `propose_doc_edit` 和 `create_suggestion` 默认创建提案或批注卡，不直接改正文；真正落盘由用户批准或显式 trusted 写入模式决定。
+- `.agents` 文件读取仍走 `agent_workspace_service` 的安全路径解析，只允许 `.agents` 范围内的安全文本文件，防止路径逃逸。
+- Skill 激活只读取当前 Agent 配置允许的 Skill，不把服务器 Skill 默认公开给本地或外部 Agent。
+- Local Agent Host 默认 loopback；远程 Agent 后续必须走 Remote MCP + OAuth 或 capability token。
+- SuperLeaf session 只保存 input/output/tool summary，不保存本地 Codex/Claude/Nanobot 的私有内部 session 或隐藏上下文。
+- 工具调用可以审计：tool name、actor、context、参数摘要、结果状态、side event 和失败原因都可以被记录。
 
 ## 第二层：MCP Gateway
 
@@ -506,7 +603,6 @@ Local Agent Host 保存：
 继续推进 Phase 5 和后续工具内核整理：
 
 1. 根据 `matrix:nanobot-tools` 的 live probe 结果，长期观察是否可以弱化 marker 提示。
-2. 后续再评估是否把 `.agents` 工作区文件读取与 Skill 激活也纳入 Tool Kernel 的非 DB 执行层。
-3. Phase 6：建设 Remote SuperLeaf MCP Endpoint，使用 OAuth 或 capability token 支持团队/远程 Agent。
-4. 后续如果要替换官方 MCP TypeScript SDK transport，必须先保持 `smoke:mcp`、`gate:mcp-sdk`、Inspector CLI 和 matrix 都通过。
-5. 暂缓：Local Host 纳入版本控制、原生 installer、自动替换升级、签名/公证、系统托盘和首次启动向导。
+2. Phase 6：建设 Remote SuperLeaf MCP Endpoint，使用 OAuth 或 capability token 支持团队/远程 Agent。
+3. 后续如果要替换官方 MCP TypeScript SDK transport，必须先保持 `smoke:mcp`、`gate:mcp-sdk`、Inspector CLI 和 matrix 都通过。
+4. 暂缓：Local Host 纳入版本控制、原生 installer、自动替换升级、签名/公证、系统托盘和首次启动向导。

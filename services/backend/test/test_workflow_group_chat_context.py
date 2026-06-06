@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base
 from app.models import Doc, FileBlob, Folder, Project, User
 from app.services import native_agent_runner as runner_module
+from app.services import native_agent_tool_kernel as kernel_module
 from app.services.agent_orchestrator import (
     NodeContext,
     WorkflowOrchestrator,
@@ -22,6 +23,7 @@ from app.services.native_agent_runner import (
     NativeAgentRuntimeConfig,
     NativeRunPayload,
 )
+from app.services.native_agent_tool_kernel import NativeAgentToolContext, execute_native_agent_db_tool
 
 
 def _project_db():
@@ -466,34 +468,25 @@ async def test_native_direct_stream_exposes_project_write_text_file_tool(monkeyp
 def test_project_write_text_file_writes_database_doc_and_publishes_tree_event(monkeypatch):
     db, _project, session_factory = _project_db()
     published: list[tuple[str, str, dict, str]] = []
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
     monkeypatch.setattr(
-        runner_module.bus,
+        kernel_module.bus,
         "publish",
         lambda project_id, event_type, payload, *, origin_client_id="": published.append(
             (project_id, event_type, payload, origin_client_id)
         ),
     )
-    runner = NativeAgentRunner(
-        NativeAgentRuntimeConfig(
-            agent_id="agent1",
-            agent_name="Skill Builder",
-            provider_endpoint="http://localhost",
-            api_key="test",
-            model="test-model",
-            instructions="",
-            project_id="proj1",
-            user_id="user1",
-        )
-    )
 
-    result = runner._tool_project_write_text_file(
+    result = execute_native_agent_db_tool(
+        "project_write_text_file",
         {
             "path": "references/style-rules.md",
             "content": "# Style rules\n\nKeep claims grounded.",
-        }
+        },
+        NativeAgentToolContext(project_id="proj1", user_id="user1"),
     )
 
+    assert result is not None
     assert result.failed is False
     payload = runner_module.json.loads(result.content)
     assert payload["status"] == "created"
@@ -522,25 +515,17 @@ def test_project_write_text_file_refuses_to_overwrite_existing_entities(monkeypa
         )
     )
     db.commit()
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
-    runner = NativeAgentRunner(
-        NativeAgentRuntimeConfig(
-            agent_id="agent1",
-            agent_name="Skill Builder",
-            provider_endpoint="http://localhost",
-            api_key="test",
-            model="test-model",
-            instructions="",
-            project_id="proj1",
-            user_id="user1",
-        )
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
+
+    result = execute_native_agent_db_tool(
+        "project_write_text_file",
+        {"path": "existing.md", "content": "new content"},
+        NativeAgentToolContext(project_id="proj1", user_id="user1"),
     )
 
-    result = runner._tool_project_write_text_file(
-        {"path": "existing.md", "content": "new content"}
-    )
-
+    assert result is not None
     assert result.failed is True
+    assert result.tool_kind == "project_write"
     assert "already exists" in result.content
     assert db.query(Doc).filter_by(project_id="proj1", name="existing.md").count() == 0
     assert db.query(FileBlob).filter_by(project_id="proj1", name="existing.md").one().blob == b"old"
@@ -548,34 +533,26 @@ def test_project_write_text_file_refuses_to_overwrite_existing_entities(monkeypa
 
 def test_project_write_text_file_requires_database_write_access(monkeypatch):
     _db, _project, session_factory = _project_db()
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
-    runner = NativeAgentRunner(
-        NativeAgentRuntimeConfig(
-            agent_id="agent1",
-            agent_name="Skill Builder",
-            provider_endpoint="http://localhost",
-            api_key="test",
-            model="test-model",
-            instructions="",
-            project_id="proj1",
-            user_id="other-user",
-        )
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
+
+    result = execute_native_agent_db_tool(
+        "project_write_text_file",
+        {"path": "references/a.md", "content": "text"},
+        NativeAgentToolContext(project_id="proj1", user_id="other-user"),
     )
 
-    result = runner._tool_project_write_text_file(
-        {"path": "references/a.md", "content": "text"}
-    )
-
+    assert result is not None
     assert result.failed is True
+    assert result.tool_kind == "project_write"
     assert "write access required" in result.content
 
 
 @pytest.mark.asyncio
 async def test_native_stream_finishes_after_project_write_text_file(monkeypatch, tmp_path):
     db, _project, session_factory = _project_db()
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
     monkeypatch.setattr(
-        runner_module.bus,
+        kernel_module.bus,
         "publish",
         lambda project_id, event_type, payload, *, origin_client_id="": None,
     )
@@ -655,7 +632,7 @@ async def test_native_stream_finishes_after_project_write_text_file(monkeypatch,
 @pytest.mark.asyncio
 async def test_native_stream_does_not_force_project_write_tool(monkeypatch, tmp_path):
     db, _project, session_factory = _project_db()
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
     captured_tool_choices: list[object] = []
 
     class FakeNanobotClient:
@@ -715,7 +692,7 @@ async def test_native_stream_surfaces_project_write_tool_failure(monkeypatch, tm
         )
     )
     db.commit()
-    monkeypatch.setattr(runner_module, "SessionLocal", session_factory)
+    monkeypatch.setattr(kernel_module, "SessionLocal", session_factory)
 
     class FakeNanobotClient:
         def __init__(self, *args, **kwargs):

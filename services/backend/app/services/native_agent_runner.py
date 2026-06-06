@@ -12,14 +12,8 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from hashlib import sha256
-from pathlib import Path
 from typing import Any
 
-from .agent_workspace_service import (
-    AgentWorkspaceError,
-    list_agent_workspace_files,
-    read_agent_workspace_file,
-)
 from .attached_files import render_attached_files_block
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
@@ -29,6 +23,7 @@ from .native_agent_tool_kernel import (
     NativeAgentToolResult as _ToolExecutionResult,
     browser_superleaf_tools,
     execute_native_agent_db_tool,
+    execute_native_agent_local_tool,
     native_agent_project_context_tools,
     native_agent_skill_tools,
     native_agent_workspace_tools,
@@ -637,27 +632,15 @@ class NativeAgentRunner:
             args = json.loads(args_raw) if isinstance(args_raw, str) else dict(args_raw)
         except (TypeError, ValueError):
             args = {}
-        root = Path(self.config.workspace_root)
         try:
-            if name == "list_agent_files":
-                prefix = str(args.get("prefix") or ".agents")
-                files = list_agent_workspace_files(root, prefix=prefix)
-                return _ToolExecutionResult(
-                    json.dumps(
-                        [{"path": file.path, "type": file.type, "size": file.size} for file in files],
-                        ensure_ascii=False,
-                    )
-                )
-            if name == "read_agent_file":
-                path = str(args.get("path") or "")
-                content = read_agent_workspace_file(root, path)
-                return _ToolExecutionResult(content)
-            if name == "use_skill":
-                return self._tool_use_skill(args)
+            tool_context = self._tool_context(payload)
+            local_tool_result = execute_native_agent_local_tool(name, args, tool_context)
+            if local_tool_result is not None:
+                return local_tool_result
             db_tool_result = execute_native_agent_db_tool(
                 name,
                 args,
-                self._tool_context(payload),
+                tool_context,
             )
             if db_tool_result is not None:
                 return db_tool_result
@@ -680,8 +663,6 @@ class NativeAgentRunner:
                         raw_result=result,
                     )
                 return _ToolExecutionResult(result, tool_kind="mcp")
-        except AgentWorkspaceError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}")
         except Exception as exc:  # noqa: BLE001
             return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
@@ -693,60 +674,9 @@ class NativeAgentRunner:
             active_document_id=(payload.document_id if payload else ""),
             active_range_start=(payload.range_start if payload else 0),
             active_range_end=(payload.range_end if payload else 0),
+            workspace_root=self.config.workspace_root,
+            skills=self.config.skills,
         )
-
-    def _tool_use_skill(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        skill_id = str(args.get("skill_id") or "").strip()
-        reason = str(args.get("reason") or "").strip()
-        if not skill_id:
-            return _ToolExecutionResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
-        skill = self._skill_by_ref(skill_id)
-        if skill is None:
-            available = ", ".join(s.name for s in self.config.skills)
-            return _ToolExecutionResult(
-                f"ERROR: skill not found. Available: {available}",
-                failed=True,
-                tool_kind="skill",
-            )
-        # Resolve the skill folder on disk
-        root = Path(self.config.workspace_root)
-        skill_path = root / ".agents" / skill.folder_path
-        # If pointing to a .skillref.json, resolve the target_path
-        if skill_path.is_file() and skill_path.suffix == ".json":
-            try:
-                ref = json.loads(skill_path.read_text(encoding="utf-8"))
-                target = ref.get("target_path", "")
-                folder = Path(target) if target else skill_path.parent
-            except (OSError, json.JSONDecodeError):
-                return _ToolExecutionResult("ERROR: cannot resolve skill reference", failed=True, tool_kind="skill")
-        else:
-            folder = skill_path
-        # Read only SKILL.md
-        skill_md = folder / "SKILL.md"
-        if not skill_md.is_file():
-            return _ToolExecutionResult("ERROR: SKILL.md not found", failed=True, tool_kind="skill")
-        try:
-            content = skill_md.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}", failed=True, tool_kind="skill")
-        if not content:
-            return _ToolExecutionResult("ERROR: SKILL.md is empty", failed=True, tool_kind="skill")
-        # Build file tree listing
-        tree = _skill_file_tree(folder)
-        payload = skill.activation_payload(reason=reason)
-        return _ToolExecutionResult(
-            content + "\n\n---\n\nFiles in this Skill:\n" + tree,
-            tool_kind="skill",
-            trace_payload=payload,
-        )
-
-    def _skill_by_ref(self, skill_id: str) -> NativeSkillBlock | None:
-        needle = _normalize_skill_ref(skill_id)
-        for skill in self.config.skills:
-            refs = [skill.id, skill.name, *skill.aliases]
-            if any(_normalize_skill_ref(ref) == needle for ref in refs):
-                return skill
-        return None
 
 def _mcp_failure_result(
     ref: McpToolRef,
@@ -1011,26 +941,6 @@ def _unique_non_empty(values: list[str]) -> list[str]:
         seen.add(item)
         out.append(item)
     return out
-
-
-def _normalize_skill_ref(value: str) -> str:
-    return str(value or "").strip().lower()
-
-
-def _skill_file_tree(folder: Path) -> str:
-    """Return a markdown-style file tree of a skill folder."""
-    lines: list[str] = []
-    _FORBIDDEN = {".git", "node_modules", "__pycache__", ".venv"}
-    for path in sorted(folder.rglob("*")):
-        if any(part in _FORBIDDEN for part in path.parts):
-            continue
-        rel = path.relative_to(folder).as_posix()
-        if path.is_dir():
-            lines.append(f"  {rel}/")
-        else:
-            size = path.stat().st_size
-            lines.append(f"  {rel}  ({size}B)")
-    return "\n".join(lines) if lines else "(empty)"
 
 
 class _ToolAccumulator:

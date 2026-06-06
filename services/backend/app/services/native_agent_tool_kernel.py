@@ -1,6 +1,6 @@
 """Native Agent Tool Kernel adapters.
 
-This module owns the tool schemas, grouping rules, and DB-backed execution
+This module owns the tool schemas, grouping rules, and backend-local execution
 adapters exposed to backend Native Agents.
 """
 
@@ -10,10 +10,16 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..database import SessionLocal
 from ..models import Doc, FileBlob, Folder, Project
+from .agent_workspace_service import (
+    AgentWorkspaceError,
+    list_agent_workspace_files,
+    read_agent_workspace_file,
+)
 from .event_bus import bus
 from .project_fs_service import ProjectFsService
 from .project_member_service import ProjectMemberService
@@ -93,6 +99,8 @@ class NativeAgentToolContext:
     active_document_id: str = ""
     active_range_start: int = 0
     active_range_end: int = 0
+    workspace_root: str = ""
+    skills: list[Any] | None = None
 
     def project_scope_ok(self) -> bool:
         return bool(self.project_id and self.user_id)
@@ -186,6 +194,26 @@ def execute_native_agent_db_tool(
     return None
 
 
+def execute_native_agent_local_tool(
+    name: str,
+    args: dict[str, Any],
+    context: NativeAgentToolContext,
+) -> NativeAgentToolResult | None:
+    """Execute backend-local non-DB tools owned by the Tool Kernel.
+
+    Returns ``None`` for tools outside this layer so the runner can continue
+    routing DB-backed SuperLeaf tools and external MCP tools through their
+    dedicated adapters.
+    """
+    if name == "list_agent_files":
+        return _tool_list_agent_files(args, context)
+    if name == "read_agent_file":
+        return _tool_read_agent_file(args, context)
+    if name == "use_skill":
+        return _tool_use_skill(args, context)
+    return None
+
+
 def _agent_workspace_file_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -225,6 +253,132 @@ def _agent_workspace_file_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+def _tool_list_agent_files(
+    args: dict[str, Any],
+    context: NativeAgentToolContext,
+) -> NativeAgentToolResult:
+    if not context.workspace_root:
+        return NativeAgentToolResult("ERROR: Agent workspace root not available", failed=True)
+    prefix = str(args.get("prefix") or ".agents")
+    try:
+        files = list_agent_workspace_files(Path(context.workspace_root), prefix=prefix)
+    except AgentWorkspaceError as exc:
+        return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+    return NativeAgentToolResult(
+        json.dumps(
+            [{"path": file.path, "type": file.type, "size": file.size} for file in files],
+            ensure_ascii=False,
+        )
+    )
+
+
+def _tool_read_agent_file(
+    args: dict[str, Any],
+    context: NativeAgentToolContext,
+) -> NativeAgentToolResult:
+    if not context.workspace_root:
+        return NativeAgentToolResult("ERROR: Agent workspace root not available", failed=True)
+    path = str(args.get("path") or "")
+    try:
+        content = read_agent_workspace_file(Path(context.workspace_root), path)
+    except AgentWorkspaceError as exc:
+        return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+    return NativeAgentToolResult(content)
+
+
+def _tool_use_skill(
+    args: dict[str, Any],
+    context: NativeAgentToolContext,
+) -> NativeAgentToolResult:
+    skill_id = str(args.get("skill_id") or "").strip()
+    reason = str(args.get("reason") or "").strip()
+    if not skill_id:
+        return NativeAgentToolResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
+    skill = _skill_by_ref(context.skills or [], skill_id)
+    if skill is None:
+        available = ", ".join(str(getattr(s, "name", "")) for s in context.skills or [])
+        return NativeAgentToolResult(
+            f"ERROR: skill not found. Available: {available}",
+            failed=True,
+            tool_kind="skill",
+        )
+    if not context.workspace_root:
+        return NativeAgentToolResult("ERROR: Agent workspace root not available", failed=True, tool_kind="skill")
+    root = Path(context.workspace_root)
+    skill_path = root / ".agents" / str(getattr(skill, "folder_path", ""))
+    if skill_path.is_file() and skill_path.suffix == ".json":
+        try:
+            ref = json.loads(skill_path.read_text(encoding="utf-8"))
+            target = ref.get("target_path", "")
+            folder = Path(target) if target else skill_path.parent
+        except (OSError, json.JSONDecodeError):
+            return NativeAgentToolResult("ERROR: cannot resolve skill reference", failed=True, tool_kind="skill")
+    else:
+        folder = skill_path
+    skill_md = folder / "SKILL.md"
+    if not skill_md.is_file():
+        return NativeAgentToolResult("ERROR: SKILL.md not found", failed=True, tool_kind="skill")
+    try:
+        content = skill_md.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as exc:
+        return NativeAgentToolResult(f"ERROR: {exc}", failed=True, tool_kind="skill")
+    if not content:
+        return NativeAgentToolResult("ERROR: SKILL.md is empty", failed=True, tool_kind="skill")
+    tree = _skill_file_tree(folder)
+    payload = _skill_activation_payload(skill, reason=reason)
+    return NativeAgentToolResult(
+        content + "\n\n---\n\nFiles in this Skill:\n" + tree,
+        tool_kind="skill",
+        trace_payload=payload,
+    )
+
+
+def _skill_by_ref(skills: list[Any], skill_id: str) -> Any | None:
+    needle = _normalize_skill_ref(skill_id)
+    for skill in skills:
+        refs = [
+            str(getattr(skill, "id", "")),
+            str(getattr(skill, "name", "")),
+            *list(getattr(skill, "aliases", []) or []),
+        ]
+        if any(_normalize_skill_ref(ref) == needle for ref in refs):
+            return skill
+    return None
+
+
+def _skill_activation_payload(skill: Any, *, reason: str = "") -> dict[str, Any]:
+    activation_payload = getattr(skill, "activation_payload", None)
+    if callable(activation_payload):
+        return activation_payload(reason=reason)
+    return {
+        "skill_id": str(getattr(skill, "id", "")),
+        "skill_name": str(getattr(skill, "name", "")),
+        "skill_version": getattr(skill, "version", 0),
+        "skill_source": str(getattr(skill, "source", "")),
+        "reason": reason.strip(),
+    }
+
+
+def _normalize_skill_ref(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _skill_file_tree(folder: Path) -> str:
+    """Return a markdown-style file tree of a skill folder."""
+    lines: list[str] = []
+    forbidden = {".git", "node_modules", "__pycache__", ".venv"}
+    for path in sorted(folder.rglob("*")):
+        if any(part in forbidden for part in path.parts):
+            continue
+        rel = path.relative_to(folder).as_posix()
+        if path.is_dir():
+            lines.append(f"  {rel}/")
+        else:
+            size = path.stat().st_size
+            lines.append(f"  {rel}  ({size}B)")
+    return "\n".join(lines) if lines else "(empty)"
 
 
 def _native_project_write_tools() -> list[dict[str, Any]]:
@@ -432,45 +586,41 @@ def _tool_project_write_text_file(
     context: NativeAgentToolContext,
 ) -> NativeAgentToolResult:
     if not context.project_scope_ok():
-        return NativeAgentToolResult("ERROR: project scope not available", failed=True)
+        return _project_write_error("ERROR: project scope not available")
     path_raw = str(args.get("path") or "")
     try:
         path_parts = _normalize_project_create_path(path_raw)
     except ValueError as exc:
-        return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+        return _project_write_error(f"ERROR: {exc}")
 
     content = args.get("content")
     if not isinstance(content, str):
-        return NativeAgentToolResult("ERROR: content must be a string", failed=True)
+        return _project_write_error("ERROR: content must be a string")
     content_bytes = len(content.encode("utf-8"))
     if content_bytes > _PROJECT_CREATE_CONTENT_LIMIT:
-        return NativeAgentToolResult(
-            f"ERROR: content exceeds {_PROJECT_CREATE_CONTENT_LIMIT} bytes",
-            failed=True,
-        )
+        return _project_write_error(f"ERROR: content exceeds {_PROJECT_CREATE_CONTENT_LIMIT} bytes")
 
     name = path_parts[-1]
     try:
         doc_format = _project_doc_format_for_name(name, args.get("format"))
     except ValueError as exc:
-        return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+        return _project_write_error(f"ERROR: {exc}")
 
     with SessionLocal() as db:
         project = db.get(Project, context.project_id)
         if project is None:
-            return NativeAgentToolResult("ERROR: project not found", failed=True)
+            return _project_write_error("ERROR: project not found")
         if not ProjectMemberService(db).can_write(project.id, context.user_id):
-            return NativeAgentToolResult("ERROR: project write access required", failed=True)
+            return _project_write_error("ERROR: project write access required")
 
         svc = ProjectFsService(db, project)
         parent_folder_id: str | None = None
         for folder_name in path_parts[:-1]:
             conflict = _project_sibling_kind(db, project.id, parent_folder_id, folder_name)
             if conflict in {"doc", "file"}:
-                return NativeAgentToolResult(
+                return _project_write_error(
                     f"ERROR: cannot create folder '{folder_name}' because a {conflict} "
-                    "with that name already exists",
-                    failed=True,
+                    "with that name already exists"
                 )
             folder = _project_find_folder(db, project.id, parent_folder_id, folder_name)
             if folder is None:
@@ -480,14 +630,13 @@ def _tool_project_write_text_file(
                         name=folder_name,
                     )
                 except ValueError as exc:
-                    return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+                    return _project_write_error(f"ERROR: {exc}")
             parent_folder_id = folder.id
 
         existing = _project_sibling_kind(db, project.id, parent_folder_id, name)
         if existing is not None:
-            return NativeAgentToolResult(
-                f"ERROR: cannot create '{name}' because a {existing} with that name already exists",
-                failed=True,
+            return _project_write_error(
+                f"ERROR: cannot create '{name}' because a {existing} with that name already exists"
             )
         try:
             doc = svc.create_doc(
@@ -497,7 +646,7 @@ def _tool_project_write_text_file(
                 content=content,
             )
         except ValueError as exc:
-            return NativeAgentToolResult(f"ERROR: {exc}", failed=True)
+            return _project_write_error(f"ERROR: {exc}")
 
         payload = {
             "action": "doc.created",
@@ -525,6 +674,10 @@ def _tool_project_write_text_file(
         tool_kind="project_write",
         side_event={"event": "native.agent.project_file_created", "data": payload},
     )
+
+
+def _project_write_error(content: str) -> NativeAgentToolResult:
+    return NativeAgentToolResult(content, failed=True, tool_kind="project_write")
 
 
 def _tool_propose_doc_edit(

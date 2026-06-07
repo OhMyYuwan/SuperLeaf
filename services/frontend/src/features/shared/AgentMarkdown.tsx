@@ -1,8 +1,6 @@
 import { useMemo, useRef } from 'react'
 import MarkdownIt from 'markdown-it'
-// markdown-it-katex 2.x ships CJS with no bundled types.
-// @ts-expect-error — no types
-import mdKatex from 'markdown-it-katex'
+import { mdKatex } from './markdownKatex'
 import 'katex/dist/katex.min.css'
 import './agent-markdown.css'
 
@@ -89,9 +87,104 @@ function renderMarkdown(source: string): RenderedMarkdown {
   md.renderer.rules.code_block = (tokens, idx) => renderCodeBlock(tokens[idx].content)
 
   return {
-    html: md.render(source),
+    html: md.render(normalizeAgentMath(source)),
     codeBlocks,
   }
+}
+
+function normalizeAgentMath(source: string): string {
+  return source
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g)
+    .map((part) => {
+      if (part.startsWith('```') || part.startsWith('~~~')) return part
+      return wrapBareMathBlocks(normalizeLatexDelimiters(part))
+    })
+    .join('')
+}
+
+function normalizeLatexDelimiters(source: string): string {
+  return normalizeLooseTextCommands(source)
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, math: string) => `\n$$\n${math.trim()}\n$$\n`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, math: string) => `$${math.trim()}$`)
+}
+
+function normalizeLooseTextCommands(source: string): string {
+  return source
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim()
+      if (/^\\text(?!\s*\{)[A-Za-z][A-Za-z0-9\s,.;:'-]*$/.test(trimmed)) {
+        return line.replace(trimmed, `\\text{${trimmed.slice('\\text'.length)}}`)
+      }
+      return line.replace(/\\text(?!\s*\{)([A-Za-z][A-Za-z0-9]*)/g, (match, text: string) => {
+        if (isKnownTextCommandSuffix(text)) return match
+        return `\\text{${text}}`
+      })
+    })
+    .join('\n')
+}
+
+function isKnownTextCommandSuffix(text: string): boolean {
+  return /^(bf|it|rm|sf|tt|normal|color|style|class|ord|bin|rel|open|close|punct|inner)$/.test(text)
+}
+
+function wrapBareMathBlocks(source: string): string {
+  const lines = source.split('\n')
+  const out: string[] = []
+  let block: string[] = []
+  let inDisplayMath = false
+
+  const flush = () => {
+    if (block.length === 0) return
+    out.push('$$')
+    out.push(...block)
+    out.push('$$')
+    block = []
+  }
+
+  for (const line of lines) {
+    if (line.trim() === '$$') {
+      flush()
+      inDisplayMath = !inDisplayMath
+      out.push(line)
+      continue
+    }
+
+    if (inDisplayMath) {
+      out.push(line)
+      continue
+    }
+
+    if (isBareMathLine(line) || (block.length > 0 && isMathContinuationLine(line))) {
+      block.push(line.trim())
+      continue
+    }
+
+    flush()
+    out.push(line)
+  }
+
+  flush()
+  return out.join('\n')
+}
+
+function isBareMathLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+  if (trimmed.includes('$')) return false
+  if (/^[-*_]{3,}$/.test(trimmed)) return false
+  if (/^([>#]|\d+\.|[-*+]\s)/.test(trimmed)) return false
+  if (/[\u3400-\u9fff]/.test(trimmed)) return false
+  if (!/\\[A-Za-z]+/.test(trimmed)) return false
+  return /^[A-Za-z0-9\\{}()[\][\]_^+\-*/=<>.,:;|&!'\s]+$/.test(trimmed)
+}
+
+function isMathContinuationLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+  if (trimmed.includes('$')) return false
+  if (/[\u3400-\u9fff]/.test(trimmed)) return false
+  return /^[A-Za-z0-9\\{}()[\][\]_^+\-*/=<>.,:;|&!'\s]+$/.test(trimmed)
 }
 
 async function writeClipboard(text: string) {

@@ -537,7 +537,11 @@ function AnnotationCard({
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
           <div className="ann-diff-row add">+ {item.proposed}</div>
-          {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {item.reason && (
+            <div className="ann-diff-reason">
+              <AgentMarkdown source={item.reason} />
+            </div>
+          )}
           {!isResolved && (
             <div className="ann-diff-actions">
               <button
@@ -716,7 +720,9 @@ function AgentSuggestionBlock({
       {suggestions.length > 0 && (
         <ul>
           {suggestions.map((suggestion, index) => (
-            <li key={`${row.id}-${index}`}>{suggestion}</li>
+            <li key={`${row.id}-${index}`}>
+              <AgentMarkdown source={suggestion} />
+            </li>
           ))}
         </ul>
       )}
@@ -917,7 +923,11 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
           <div className="ann-diff-row add">+ {item.proposed}</div>
-          {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {item.reason && (
+            <div className="ann-diff-reason">
+              <AgentMarkdown source={item.reason} />
+            </div>
+          )}
         </div>
       )}
 
@@ -994,7 +1004,11 @@ function ComparisonModal({
                 <div className="ann-diff">
                   <div className="ann-diff-row remove">- {it.original}</div>
                   <div className="ann-diff-row add">+ {it.proposed}</div>
-                  {it.reason && <div className="ann-diff-reason">{it.reason}</div>}
+                  {it.reason && (
+                    <div className="ann-diff-reason">
+                      <AgentMarkdown source={it.reason} />
+                    </div>
+                  )}
                 </div>
               )}
               {it.thread.length > 1 && (

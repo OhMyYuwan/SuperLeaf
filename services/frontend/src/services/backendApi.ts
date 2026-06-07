@@ -51,10 +51,14 @@ export function getLocalServiceUrl(port: number): string {
   return `http://127.0.0.1:${port}`
 }
 
+export function getBrowserLocalServiceUrl(port: number): string {
+  return `http://127.0.0.1:${port}`
+}
+
 export interface Provider {
   id: string
   name: string
-  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'nanobot' | 'native'
+  kind: 'dify-local' | 'dify-cloud' | 'claude-direct' | 'claude-local' | 'nanobot' | 'native' | 'codex-local'
   endpoint: string
   status: 'unknown' | 'ok' | 'error'
   status_detail: string
@@ -71,18 +75,54 @@ export interface ProviderDraft {
   endpoint: string
   api_key: string
   activate?: boolean
+  transport?: 'backend' | 'browser'
+  workspace_path?: string
+  codex_model?: string
+  codex_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  codex_summary?: 'none' | 'auto' | 'concise' | 'detailed'
+  codex_service_tier?: string
+  codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'
+  codex_approval_policy?: 'never' | 'untrusted' | 'on-request' | 'on-failure'
+  codex_prompt_mode?: 'fast-edit' | 'full-agent'
+  codex_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
+  codex_context_mode?: 'legacy-blocks' | 'lease'
+  claude_model?: string
+  claude_prompt_mode?: 'fast-edit' | 'full-agent'
+  claude_tool_mode?: 'mcp-first' | 'browser-preflight' | 'marker-only'
 }
 
 export interface ProviderUpdate {
   name?: string
   endpoint?: string
   api_key?: string
+  transport?: 'backend' | 'browser'
+  workspace_path?: string
+  codex_model?: string
+  codex_effort?: ProviderDraft['codex_effort']
+  codex_summary?: ProviderDraft['codex_summary']
+  codex_service_tier?: string
+  codex_sandbox?: ProviderDraft['codex_sandbox']
+  codex_approval_policy?: ProviderDraft['codex_approval_policy']
+  codex_prompt_mode?: ProviderDraft['codex_prompt_mode']
+  codex_tool_mode?: ProviderDraft['codex_tool_mode']
+  codex_context_mode?: ProviderDraft['codex_context_mode']
+  claude_model?: string
+  claude_prompt_mode?: ProviderDraft['claude_prompt_mode']
+  claude_tool_mode?: ProviderDraft['claude_tool_mode']
 }
 
 export interface ProviderModel {
   id: string
   name: string
   description: string
+  model?: string
+  hidden?: boolean
+  is_default?: boolean
+  default_reasoning_effort?: string
+  supported_reasoning_efforts?: string[]
+  raw?: Record<string, unknown>
+  service_tiers?: Array<{ id: string; name: string; description?: string }>
+  default_service_tier?: string
 }
 
 export async function http<T>(path: string, init?: HttpInit): Promise<T> {
@@ -270,6 +310,30 @@ export const providerApi = {
     http<Provider>(`/api/providers/${id}/probe`, { method: 'POST' }),
   listModels: (id: string) =>
     http<ProviderModel[]>(`/api/providers/${id}/models`),
+  syncBrowserNanobotModels: (
+    id: string,
+    body: { provider_name?: string; models: ProviderModel[]; local_agent_host_endpoint?: string },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-nanobot-models`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  syncBrowserCodexAgent: (
+    id: string,
+    body: { health?: Record<string, unknown>; models?: ProviderModel[] },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-codex-agent`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  syncBrowserClaudeAgent: (
+    id: string,
+    body: { health?: Record<string, unknown> },
+  ) =>
+    http<Provider>(`/api/providers/${id}/browser-claude-agent`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 }
 
 export interface NativeAgentCredential {
@@ -608,6 +672,39 @@ export interface OfficialBadgeUiSettings {
   source: 'env' | 'runtime_override' | string
 }
 
+export interface LocalAgentHostPackageInfo {
+  version: string
+  filename: string
+  size_bytes: number
+  checksum_algorithm: string
+  sha256: string
+  download_path: string
+  endpoint: string
+  mcp_url: string
+  manifest_filename: string
+  manifest: Record<string, unknown>
+  included_files: string[]
+  macos: Record<string, string>
+  windows: Record<string, string>
+  codex_env: Record<string, string>
+  claude_env: Record<string, string>
+}
+
+export interface LocalAgentHostUpdateInfo {
+  status: string
+  channel: string
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  update_strategy: string
+  download_path: string
+  checksum_algorithm: string
+  sha256: string
+  manifest_filename: string
+  manifest: Record<string, unknown>
+  package: LocalAgentHostPackageInfo
+}
+
 export interface AgentWorkspaceFile {
   path: string
   type: 'file' | 'directory' | string
@@ -645,6 +742,16 @@ export interface NativeAgentPatch {
 export const nativeAgentApi = {
   ui: {
     officialBadge: () => http<OfficialBadgeUiSettings>('/api/native-agent/ui/official-badge'),
+  },
+  localAgentHost: {
+    info: () => http<LocalAgentHostPackageInfo>('/api/native-agent/local-agent-host/package'),
+    update: (currentVersion = '') =>
+      http<LocalAgentHostUpdateInfo>(
+        `/api/native-agent/local-agent-host/update${currentVersion ? `?current_version=${encodeURIComponent(currentVersion)}` : ''}`,
+      ),
+    downloadUrl: () => `${BASE}/api/native-agent/local-agent-host/download`,
+    download: (fallbackFilename = 'superleaf-local-agent-host.zip') =>
+      downloadBackendFile('/api/native-agent/local-agent-host/download', fallbackFilename),
   },
   credentials: {
     list: () => http<NativeAgentCredential[]>('/api/native-agent/credentials'),
@@ -1016,6 +1123,21 @@ export interface CompileResult {
   pdf_bytes: number
 }
 
+export interface CompileSyncToPdfRequest {
+  document_id: string
+  offset: number
+}
+
+export interface CompileSyncToPdfResult {
+  page: number
+  x: number
+  y: number
+  width: number | null
+  height: number | null
+  line: number
+  column: number
+}
+
 export interface CompileSettings {
   main_doc_id: string
   compiler: string
@@ -1029,6 +1151,11 @@ export const compileApi = {
     http<CompileResult>('/api/compile', {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
+    }),
+  syncToPdf: (body: CompileSyncToPdfRequest) =>
+    http<CompileSyncToPdfResult>('/api/compile/sync-to-pdf', {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
   pdfUrl: (projectId: string) => `${BASE}/api/projects/${projectId}/compile.pdf`,
   getLog: async () => {
@@ -1095,6 +1222,116 @@ export interface MessageSend {
   inputs?: Record<string, unknown>
 }
 
+export interface BrowserNanobotPrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  bridge_endpoint?: string
+  model: string
+  messages: NanobotChatMessage[]
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  inputs: Record<string, unknown>
+}
+
+export interface BrowserCodexPrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  model: string
+  system_prompt: string
+  prompt: string
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  workspace_path: string
+  prompt_mode: 'fast-edit' | 'full-agent'
+  codex_settings: {
+    model?: string
+    effort?: ProviderDraft['codex_effort']
+    summary?: ProviderDraft['codex_summary']
+    service_tier?: string
+    sandbox?: ProviderDraft['codex_sandbox']
+    approval_policy?: ProviderDraft['codex_approval_policy']
+    prompt_mode?: ProviderDraft['codex_prompt_mode']
+    tool_mode?: ProviderDraft['codex_tool_mode']
+    context_mode?: ProviderDraft['codex_context_mode']
+    codex_context_mode?: ProviderDraft['codex_context_mode']
+    [key: string]: unknown
+  }
+  superleaf_context: Record<string, unknown>
+  inputs: Record<string, unknown>
+}
+
+export interface BrowserClaudePrepare {
+  run_id: string
+  provider_id: string
+  endpoint: string
+  model: string
+  system_prompt: string
+  prompt: string
+  tools: NanobotToolDefinition[]
+  user_message: Message
+  document_id: string
+  range_start: number
+  range_end: number
+  workspace_path: string
+  prompt_mode: 'fast-edit' | 'full-agent'
+  claude_settings: {
+    model?: string
+    prompt_mode?: ProviderDraft['claude_prompt_mode']
+    tool_mode?: ProviderDraft['claude_tool_mode']
+    [key: string]: unknown
+  }
+  superleaf_context: Record<string, unknown>
+  inputs: Record<string, unknown>
+}
+
+export interface NanobotToolFunction {
+  name: string
+  description?: string
+  parameters?: Record<string, unknown>
+}
+
+export interface NanobotToolDefinition {
+  type: 'function'
+  function: NanobotToolFunction
+}
+
+export interface NanobotToolCall {
+  id: string
+  type: 'function'
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+export interface NanobotChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content?: string | null
+  tool_calls?: NanobotToolCall[]
+  tool_call_id?: string
+}
+
+export interface BrowserNanobotToolResult {
+  role: 'tool'
+  tool_call_id: string
+  content: string
+  failed: boolean
+  name: string
+  tool_kind: string
+  events: Array<{ event: string; data: unknown }>
+  model_visible?: Record<string, unknown>
+  ui_meta?: Record<string, unknown>
+  audit?: Record<string, unknown>
+}
+
 export interface MessageInject {
   role: 'agent' | 'user' | 'system'
   content: string
@@ -1150,6 +1387,90 @@ export const conversationApi = {
   injectMessage: (conversationId: string, body: MessageInject) =>
     http<Message>(
       `/api/conversations/${encodeURIComponent(conversationId)}/messages/inject`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserNanobot: (conversationId: string, body: MessageSend) =>
+    http<BrowserNanobotPrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserNanobotTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserNanobot: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/finish`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserCodex: (conversationId: string, body: MessageSend) =>
+    http<BrowserCodexPrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserCodexTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserCodex: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string; codex_session_id?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/finish`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  prepareBrowserClaude: (conversationId: string, body: MessageSend) =>
+    http<BrowserClaudePrepare>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/prepare`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  executeBrowserClaudeTool: (
+    conversationId: string,
+    body: {
+      run_id: string
+      document_id: string
+      range_start: number
+      range_end: number
+      inputs: Record<string, unknown>
+      tool_call: NanobotToolCall
+    },
+  ) =>
+    http<BrowserNanobotToolResult>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/tool`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  finishBrowserClaude: (
+    conversationId: string,
+    body: { run_id: string; content: string; error?: string; claude_session_id?: string },
+  ) =>
+    http<Message>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/finish`,
       { method: 'POST', body: JSON.stringify(body) },
     ),
 }

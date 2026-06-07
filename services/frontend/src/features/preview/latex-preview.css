@@ -147,6 +147,16 @@
   background: #f1f5f9;
 }
 
+.latex-page-indicator {
+  min-width: 62px;
+  padding: 0 6px;
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .latex-preview-download {
   display: inline-flex;
   align-items: center;
@@ -270,18 +280,97 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  position: relative;
+}
+
+.latex-preview-pdf .react-pdf__Document {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 12px;
+  min-width: 100%;
+  width: max-content;
+  margin: 0 auto;
 }
 
 .latex-preview-empty {
+  align-self: center;
   color: #64748b;
   font-style: italic;
   padding: 40px;
   text-align: center;
 }
 
+.latex-pdf-page-shell {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .latex-pdf-page {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
   background: white;
+}
+
+.pdf-source-sync-message {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  align-self: center;
+  max-width: min(420px, calc(100% - 24px));
+  padding: 7px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  border-radius: 7px;
+  background: rgba(255, 251, 235, 0.96);
+  color: #92400e;
+  font-size: 12px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.react-pdf__Page__textContent span.pdf-source-sync-flash {
+  border-radius: 3px;
+  background: rgba(250, 204, 21, 0.42);
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.28);
+  animation: pdf-source-sync-pulse 1.35s ease-out;
+}
+
+.pdf-source-sync-target {
+  position: absolute;
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(14, 165, 233, 0.95);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 4px rgba(14, 165, 233, 0.2),
+    0 10px 22px rgba(15, 23, 42, 0.22);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: pdf-source-sync-target 1.65s ease-out;
+}
+
+@keyframes pdf-source-sync-pulse {
+  0% {
+    background: rgba(34, 211, 238, 0.5);
+    box-shadow: 0 0 0 5px rgba(34, 211, 238, 0.32);
+  }
+  100% {
+    background: rgba(250, 204, 21, 0.42);
+    box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.28);
+  }
+}
+
+@keyframes pdf-source-sync-target {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.65);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+  100% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }

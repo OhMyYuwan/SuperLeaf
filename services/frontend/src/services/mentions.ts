@@ -198,6 +198,14 @@ export function segmentText(
   return out
 }
 
+export function buildMentionMirrorSegments(
+  text: string,
+  candidates: readonly MentionCandidate[],
+): MentionSegment[] {
+  if (!text.includes('@')) return text ? [{ type: 'text', content: text }] : []
+  return segmentText(text, parseMentions(text, candidates))
+}
+
 /**
  * Strip all @mentions from a string. Used before sending to an Agent so the
  * raw routing tokens don't show up in the prompt.

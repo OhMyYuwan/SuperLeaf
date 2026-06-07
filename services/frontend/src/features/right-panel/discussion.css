@@ -169,6 +169,50 @@
   font-weight: 500;
 }
 
+.agent-session-status {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.44);
+  color: rgba(203, 213, 225, 0.86);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.agent-session-status.external {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(20, 184, 166, 0.08);
+  color: #99f6e4;
+}
+
+.agent-bridge-status {
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.agent-bridge-status.recovering {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+}
+
+.agent-bridge-status.error {
+  border-color: rgba(248, 113, 113, 0.28);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+}
+
 .message-content {
   font-size: 13px;
   color: #e5e7eb;
@@ -271,6 +315,15 @@
   min-width: 0;
   width: auto;
 }
+
+.message-input-row .discussion-mention-input .mention-input-textarea.auto-resize {
+  scrollbar-width: none;
+}
+
+.message-input-row .discussion-mention-input .mention-input-textarea.auto-resize::-webkit-scrollbar {
+  display: none;
+}
+
 .message-input-row input {
   flex: 1;
   padding: 8px 10px;

@@ -95,10 +95,13 @@ Agent 创建项目文件时写入的是 SuperLeaf 项目数据库里的 `Doc` / 
 - 共享项目中的协作者不会自动看到你的私有 Agent、对话、批注和工作流运行。
 - Skill 的可见性与 Agent 独立，详见 [Skill 使用与市场](skills.html)。例外是项目型 Skill：如果源 Skill 项目被共享，协作者会按项目权限看到并使用最近一次 cache。
 - MCP 的市场添加与 Agent 取用是两步：MCP 管理面板负责添加、配置和检查，Agent 定义负责选择要使用的 MCP。详见 [MCP 使用与市场](mcps.html)。
+- 本地 Codex、Nanobot、Claude 通过 SuperLeaf 自己的 MCP 工具访问当前项目时，需要先启动 Local Agent Host。详见 [Local Agent Host 与 SuperLeaf MCP](local-agent-mcp.html)；Codex / Claude 的验收标准见 [Codex / Claude Local 兼容矩阵](local-agent-compatibility-matrix.html)。
 
 ## 下一步
 
 - [Skill 使用与市场](skills.html)
 - [MCP 使用与市场](mcps.html)
+- [Local Agent Host 与 SuperLeaf MCP](local-agent-mcp.html)
+- [Codex / Claude Local 兼容矩阵](local-agent-compatibility-matrix.html)
 - [Provider 配置](../providers/README.html)
 - [工作流](../workflows/README.html)

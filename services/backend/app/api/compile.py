@@ -22,6 +22,8 @@ from ..schemas import (
     CompileIn,
     CompileOut,
     CompilerInfoOut,
+    CompileSyncToPdfIn,
+    CompileSyncToPdfOut,
     ProjectCompileSettingsIn,
     ProjectCompileSettingsOut,
 )
@@ -79,6 +81,27 @@ async def compile_project(
         log_tail=result.log[-4000:],
         pdf_bytes=len(result.pdf or b""),
     )
+
+
+@router.post("/sync-to-pdf", response_model=CompileSyncToPdfOut)
+def sync_to_pdf(
+    body: CompileSyncToPdfIn,
+    db: Session = Depends(get_session),
+    project: Project = Depends(get_current_project),
+) -> CompileSyncToPdfOut:
+    svc = get_compiler_service()
+    result = svc.sync_to_pdf(
+        db,
+        project.id,
+        document_id=body.document_id,
+        offset=body.offset,
+    )
+    if result is None:
+        raise HTTPException(
+            404,
+            "No SyncTeX position found. Compile the latest PDF first.",
+        )
+    return CompileSyncToPdfOut(**result)
 
 
 @router.get("/log", response_class=Response)

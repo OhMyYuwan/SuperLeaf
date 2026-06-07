@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowRightToLine, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import {
   Panel,
@@ -51,6 +51,7 @@ import { filesystemApi, type TreeDoc, type TreeFolder } from '../services/filesy
 import { projectEventStream } from '../services/projectEventStream'
 import type { SourceJump } from '../services/previewSourceMap'
 import type { DecorationSpec, DocChangeInfo, EditorRestoreState } from '../features/latex-editor'
+import type { PdfSourceSyncRequest } from '../features/preview/LatexPreview'
 import {
   collectLatexCitationCompletions,
   collectLatexCommandCompletions,
@@ -160,6 +161,7 @@ export function WorkspacePage() {
     to?: number
     seq: number
   } | null>(null)
+  const [pdfSyncRequest, setPdfSyncRequest] = useState<PdfSourceSyncRequest | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
   const [pendingComment, setPendingComment] = useState<{
     range: { from: number; to: number }
@@ -728,6 +730,25 @@ export function WorkspacePage() {
     setEditorScrollTo({ documentId: activeDocumentId, pos: jump.pos, to, seq: Date.now() })
   }
 
+  const handleSyncCodeToPdf = () => {
+    if (!activeDocumentId || activeDoc?.format !== 'tex') return
+    const state = useEditorStore.getState().states[activeDocumentId]
+    const pos = state?.selectionRange.from ?? activeSelection?.from ?? state?.cursor ?? 0
+    setPdfSyncRequest({
+      documentId: activeDocumentId,
+      pos,
+      seq: Date.now(),
+    })
+  }
+
+  const canSyncCodeToPdf = !!(
+    activeDocumentId &&
+    activeDoc?.format === 'tex' &&
+    editorColumnVisible &&
+    previewColumnVisible &&
+    !activePreviewFile
+  )
+
   return (
     <div className="app-shell">
       <ProjectEventBridge />
@@ -907,7 +928,18 @@ export function WorkspacePage() {
                       </ErrorBoundary>
                     </Panel>
                     {previewColumnVisible && (
-                      <PanelResizeHandle className="resize-handle" />
+                      <PanelResizeHandle className="resize-handle editor-preview-sync-handle">
+                        <button
+                          type="button"
+                          className="code-to-pdf-sync-btn"
+                          onClick={handleSyncCodeToPdf}
+                          disabled={!canSyncCodeToPdf}
+                          title="在 PDF 中显示当前位置"
+                          aria-label="在 PDF 中显示当前位置"
+                        >
+                          <ArrowRightToLine size={15} />
+                        </button>
+                      </PanelResizeHandle>
                     )}
                   </>
                 )}
@@ -921,6 +953,7 @@ export function WorkspacePage() {
                         doc={activeDoc}
                         previewFile={activePreviewFile}
                         onSourceJump={handlePreviewSourceJump}
+                        syncToPdfRequest={pdfSyncRequest}
                       />
                     </ErrorBoundary>
                   </Panel>

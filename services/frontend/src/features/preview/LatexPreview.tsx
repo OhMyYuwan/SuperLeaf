@@ -35,9 +35,10 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useCompileStore } from '../../stores/compileStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
-import { compileApi } from '../../services/backendApi'
+import { compileApi, type CompileSyncToPdfResult } from '../../services/backendApi'
 import {
   sourceJumpFromPreviewText,
+  previewTextCandidatesNearOffset,
   type SourceJump,
 } from '../../services/previewSourceMap'
 import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
@@ -49,9 +50,21 @@ interface LatexPreviewProps {
   documentId: string
   source: string
   onSourceJump?: (jump: SourceJump) => void
+  syncToPdfRequest?: PdfSourceSyncRequest | null
 }
 
-export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewProps) {
+export interface PdfSourceSyncRequest {
+  documentId: string
+  pos: number
+  seq: number
+}
+
+export function LatexPreview({
+  documentId,
+  source,
+  onSourceJump,
+  syncToPdfRequest,
+}: LatexPreviewProps) {
   const compilers = useCompileStore((s) => s.compilers)
   const settings = useCompileStore((s) => s.settings)
   const lastResult = useCompileStore((s) => s.lastResult)
@@ -76,6 +89,7 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   )
 
   const [numPages, setNumPages] = useState<number>(0)
+  const [currentPage, setCurrentPage] = useState<number>(1)
   const [showLog, setShowLog] = useState(false)
   const [showCompileSettings, setShowCompileSettings] = useState(false)
   const [pageWidth, setPageWidth] = useState(700)
@@ -87,6 +101,16 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
   const lastPdfVersionRef = useRef(pdfVersion)
   const pdfScrollTopRef = useRef(0)
   const pendingPdfScrollRestoreRef = useRef<number | null>(null)
+  const pdfSyncFlashRef = useRef<HTMLElement | null>(null)
+  const pdfSyncTimerRef = useRef<number | null>(null)
+  const pdfSyncMarkerTimerRef = useRef<number | null>(null)
+  const pdfPageSizesRef = useRef<Record<number, { width: number; height: number }>>({})
+  const [pdfSyncMessage, setPdfSyncMessage] = useState<string | null>(null)
+  const [pdfSyncMarker, setPdfSyncMarker] = useState<{
+    page: number
+    xRatio: number
+    yRatio: number
+  } | null>(null)
 
   usePdfWheelZoom({
     scrollRef: pdfScrollRef,
@@ -168,6 +192,196 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
     const jump = sourceJumpFromPreviewText(source, textElement?.textContent)
     if (jump) onSourceJump?.(jump)
   }
+
+  function showPdfSyncMessage(message: string) {
+    setPdfSyncMessage(message)
+    if (pdfSyncTimerRef.current != null) {
+      window.clearTimeout(pdfSyncTimerRef.current)
+    }
+    pdfSyncTimerRef.current = window.setTimeout(() => {
+      setPdfSyncMessage(null)
+      pdfSyncTimerRef.current = null
+    }, 2800)
+  }
+
+  function flashPdfTextMatch(target: HTMLElement) {
+    if (pdfSyncFlashRef.current) {
+      pdfSyncFlashRef.current.classList.remove('pdf-source-sync-flash')
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+    target.classList.add('pdf-source-sync-flash')
+    pdfSyncFlashRef.current = target
+    if (pdfSyncTimerRef.current != null) {
+      window.clearTimeout(pdfSyncTimerRef.current)
+    }
+    pdfSyncTimerRef.current = window.setTimeout(() => {
+      target.classList.remove('pdf-source-sync-flash')
+      if (pdfSyncFlashRef.current === target) {
+        pdfSyncFlashRef.current = null
+      }
+      pdfSyncTimerRef.current = null
+    }, 1400)
+  }
+
+  function recordPdfPageSize(
+    pageNumber: number,
+    page: { getViewport: (options: { scale: number }) => { width: number; height: number } },
+  ) {
+    const viewport = page.getViewport({ scale: 1 })
+    pdfPageSizesRef.current[pageNumber] = {
+      width: viewport.width,
+      height: viewport.height,
+    }
+  }
+
+  function showPdfSyncMarker(page: number, xRatio: number, yRatio: number) {
+    setPdfSyncMarker({ page, xRatio, yRatio })
+    if (pdfSyncMarkerTimerRef.current != null) {
+      window.clearTimeout(pdfSyncMarkerTimerRef.current)
+    }
+    pdfSyncMarkerTimerRef.current = window.setTimeout(() => {
+      setPdfSyncMarker(null)
+      pdfSyncMarkerTimerRef.current = null
+    }, 1800)
+  }
+
+  function scrollToSynctexLocation(location: CompileSyncToPdfResult): boolean {
+    const scroller = pdfScrollRef.current
+    if (!scroller) return false
+
+    const page = scroller.querySelector<HTMLElement>(
+      `.latex-pdf-page-shell[data-page-number="${location.page}"]`,
+    )
+    const naturalSize = pdfPageSizesRef.current[location.page]
+    if (!page || !naturalSize) return false
+
+    const xRatio = clampRatio(location.x / naturalSize.width)
+    const yRatio = clampRatio(location.y / naturalSize.height)
+    const targetLeft = page.offsetLeft + xRatio * page.offsetWidth
+    const targetTop = page.offsetTop + yRatio * page.offsetHeight
+
+    scroller.scrollTo({
+      left: Math.max(0, targetLeft - scroller.clientWidth / 2),
+      top: Math.max(0, targetTop - scroller.clientHeight * 0.32),
+      behavior: 'smooth',
+    })
+    showPdfSyncMarker(location.page, xRatio, yRatio)
+    setPdfSyncMessage(null)
+    return true
+  }
+
+  function updateCurrentPdfPage(scroller: HTMLElement) {
+    const pages = Array.from(scroller.querySelectorAll<HTMLElement>('.latex-pdf-page-shell'))
+    if (pages.length === 0) return
+
+    const viewportTop = scroller.getBoundingClientRect().top
+    const anchorY = viewportTop + Math.min(96, scroller.clientHeight * 0.3)
+    let bestPage = 1
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (const page of pages) {
+      const rect = page.getBoundingClientRect()
+      const distance = Math.abs(rect.top - anchorY)
+      const pageNumber = Number.parseInt(page.dataset.pageNumber ?? '', 10)
+      if (Number.isFinite(pageNumber) && distance < bestDistance) {
+        bestDistance = distance
+        bestPage = pageNumber
+      }
+    }
+
+    setCurrentPage((page) => (page === bestPage ? page : bestPage))
+  }
+
+  useEffect(() => {
+    if (!syncToPdfRequest || syncToPdfRequest.documentId !== documentId) return
+
+    const candidates = previewTextCandidatesNearOffset(source, syncToPdfRequest.pos)
+    let cancelled = false
+
+    const runTextFallback = () => {
+      if (candidates.length === 0) {
+        showPdfSyncMessage('未找到可用于定位的源码文本')
+        return
+      }
+
+      let attempts = 0
+      const run = () => {
+        if (cancelled) return
+        const scroller = pdfScrollRef.current
+        if (!scroller) return
+        const target = findPdfTextMatch(scroller, candidates)
+        if (target) {
+          flashPdfTextMatch(target)
+          setPdfSyncMessage(null)
+          return
+        }
+
+        attempts += 1
+        if (attempts < 8) {
+          window.setTimeout(run, 120)
+          return
+        }
+        showPdfSyncMessage('未在当前 PDF 中找到对应文本，请先确认已编译最新内容')
+      }
+
+      window.requestAnimationFrame(run)
+    }
+
+    const runSynctex = async () => {
+      try {
+        const location = await compileApi.syncToPdf({
+          document_id: syncToPdfRequest.documentId,
+          offset: syncToPdfRequest.pos,
+        })
+        if (!cancelled && scrollToSynctexLocation(location)) {
+          return
+        }
+      } catch {
+        // Fall back to text-layer matching when SyncTeX is unavailable or stale.
+      }
+      if (!cancelled) {
+        runTextFallback()
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      void runSynctex()
+    })
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncToPdfRequest?.seq])
+
+  useEffect(() => () => {
+    if (pdfSyncTimerRef.current != null) {
+      window.clearTimeout(pdfSyncTimerRef.current)
+    }
+    if (pdfSyncMarkerTimerRef.current != null) {
+      window.clearTimeout(pdfSyncMarkerTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pdfSyncMarker) return
+    const scroller = pdfScrollRef.current
+    if (!scroller) return
+    const page = scroller.querySelector<HTMLElement>(
+      `.latex-pdf-page-shell[data-page-number="${pdfSyncMarker.page}"]`,
+    )
+    if (!page) return
+    const targetLeft = page.offsetLeft + pdfSyncMarker.xRatio * page.offsetWidth
+    const targetTop = page.offsetTop + pdfSyncMarker.yRatio * page.offsetHeight
+    const maxLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+    const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    if (targetLeft < scroller.scrollLeft || targetLeft > scroller.scrollLeft + scroller.clientWidth) {
+      scroller.scrollLeft = Math.max(0, Math.min(maxLeft, targetLeft - scroller.clientWidth / 2))
+    }
+    if (targetTop < scroller.scrollTop || targetTop > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = Math.max(0, Math.min(maxTop, targetTop - scroller.clientHeight * 0.32))
+    }
+  }, [pageWidth, pdfSyncMarker, zoom])
 
   const pdfUrl = useMemo(() => {
     if (pdfVersion <= 0 || !currentProjectId) return ''
@@ -313,6 +527,9 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
         </div>
 
         <div className="latex-preview-zoom">
+          <span className="latex-page-indicator" title="当前页 / 总页数">
+            {numPages > 0 ? `${currentPage} / ${numPages} 页` : '— / — 页'}
+          </span>
           <button
             className="small-btn"
             onClick={() => setToolbarZoom((z) => z - 0.1)}
@@ -381,9 +598,15 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
         ref={pdfScrollRef}
         onScroll={(event) => {
           pdfScrollTopRef.current = event.currentTarget.scrollTop
+          updateCurrentPdfPage(event.currentTarget)
         }}
         onDoubleClick={handlePdfDoubleClick}
       >
+        {pdfSyncMessage && (
+          <div className="pdf-source-sync-message" role="status">
+            {pdfSyncMessage}
+          </div>
+        )}
         {!pdfUrl && !compiling && (
           <div className="latex-preview-empty">
             <p>尚未编译。点击"编译"按钮生成 PDF。</p>
@@ -395,25 +618,90 @@ export function LatexPreview({ documentId, source, onSourceJump }: LatexPreviewP
             file={pdfFile}
             onLoadSuccess={({ numPages }) => {
               setNumPages(numPages)
+              setCurrentPage(numPages > 0 ? 1 : 0)
               restorePdfScrollSoon()
+              window.requestAnimationFrame(() => {
+                if (pdfScrollRef.current) {
+                  updateCurrentPdfPage(pdfScrollRef.current)
+                }
+              })
             }}
             onLoadError={(err) => console.error('PDF load error', err)}
             loading={<div className="latex-preview-empty">加载 PDF…</div>}
           >
             {Array.from({ length: numPages }, (_, i) => (
-              <Page
+              <div
                 key={i}
-                pageNumber={i + 1}
-                width={pageWidth * clampPdfZoom(zoom)}
-                renderTextLayer
-                renderAnnotationLayer={false}
-                className="latex-pdf-page"
-                onRenderSuccess={restorePdfScrollSoon}
-              />
+                className="latex-pdf-page-shell"
+                data-page-number={i + 1}
+              >
+                <Page
+                  pageNumber={i + 1}
+                  width={pageWidth * clampPdfZoom(zoom)}
+                  renderTextLayer
+                  renderAnnotationLayer={false}
+                  className="latex-pdf-page"
+                  onLoadSuccess={(page) => recordPdfPageSize(i + 1, page)}
+                  onRenderSuccess={restorePdfScrollSoon}
+                />
+                {pdfSyncMarker?.page === i + 1 && (
+                  <span
+                    className="pdf-source-sync-target"
+                    style={{
+                      left: `${pdfSyncMarker.xRatio * 100}%`,
+                      top: `${pdfSyncMarker.yRatio * 100}%`,
+                    }}
+                    aria-hidden="true"
+                  />
+                )}
+              </div>
             ))}
           </Document>
         )}
       </div>
     </div>
   )
+}
+
+function findPdfTextMatch(container: HTMLElement, candidates: string[]): HTMLElement | null {
+  const spans = Array.from(
+    container.querySelectorAll<HTMLElement>('.react-pdf__Page__textContent span'),
+  )
+  const normalizedCandidates = candidates
+    .map((candidate) => normalizePdfLookup(candidate))
+    .filter((candidate) => candidate.length >= 3)
+
+  for (const candidate of normalizedCandidates) {
+    for (const span of spans) {
+      const normalizedSpan = normalizePdfLookup(span.textContent ?? '')
+      if (normalizedSpan.length >= candidate.length && normalizedSpan.includes(candidate)) {
+        return span
+      }
+    }
+  }
+
+  for (const candidate of normalizedCandidates) {
+    const words = candidate.match(/[\p{L}\p{N}]{3,}/gu) ?? []
+    if (words.length === 0) continue
+    for (const span of spans) {
+      const normalizedSpan = normalizePdfLookup(span.textContent ?? '')
+      if (words.some((word) => normalizedSpan.includes(word))) {
+        return span
+      }
+    }
+  }
+
+  return null
+}
+
+function normalizePdfLookup(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
 }

@@ -3,7 +3,6 @@ import type { Document } from '../types/document'
 import {
   buildParagraphChunks as _buildParagraphChunks,
   countChunkableParagraphs,
-  AUTO_MARKER_RE,
   type ParagraphChunk,
 } from '../services/paragraphChunking'
 import {
@@ -520,4 +519,3 @@ function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text
   return `${text.slice(0, maxLength).trimEnd()}...`
 }
-

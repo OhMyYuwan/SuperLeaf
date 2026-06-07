@@ -9,16 +9,44 @@ from pydantic import BaseModel, Field
 
 class ProviderIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct|nanobot|native)$")
+    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct|claude-local|nanobot|native|codex-local)$")
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1, max_length=1024)
     activate: bool = False
+    transport: str | None = Field(default=None, pattern="^(backend|browser)$")
+    workspace_path: str | None = Field(default=None, max_length=2048)
+    codex_model: str | None = Field(default=None, max_length=128)
+    codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
+    codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
+    codex_service_tier: str | None = Field(default=None, max_length=64)
+    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
+    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
+    codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
+    claude_model: str | None = Field(default=None, max_length=128)
+    claude_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    claude_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
 
 
 class ProviderUpdate(BaseModel):
     name: str | None = None
     endpoint: str | None = None
     api_key: str | None = None  # empty/None means "don't rotate"
+    transport: str | None = Field(default=None, pattern="^(backend|browser)$")
+    workspace_path: str | None = Field(default=None, max_length=2048)
+    codex_model: str | None = Field(default=None, max_length=128)
+    codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
+    codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
+    codex_service_tier: str | None = Field(default=None, max_length=64)
+    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
+    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
+    codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
+    claude_model: str | None = Field(default=None, max_length=128)
+    claude_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
+    claude_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
 
 
 class ProviderOut(BaseModel):
@@ -43,6 +71,42 @@ class ProviderModelOut(BaseModel):
     id: str
     name: str
     description: str = ""
+
+
+class BrowserNanobotModelIn(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    name: str = Field(default="", max_length=512)
+    description: str = Field(default="", max_length=2048)
+    raw: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotModelSyncIn(BaseModel):
+    provider_name: str = ""
+    models: list[BrowserNanobotModelIn]
+    local_agent_host_endpoint: str = Field(default="", max_length=1024)
+
+
+class BrowserCodexModelIn(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    model: str = Field(default="", max_length=512)
+    name: str = Field(default="", max_length=512)
+    description: str = Field(default="", max_length=2048)
+    hidden: bool = False
+    is_default: bool = False
+    default_reasoning_effort: str = Field(default="", max_length=64)
+    supported_reasoning_efforts: list[str] = Field(default_factory=list)
+    service_tiers: list[dict] = Field(default_factory=list)
+    default_service_tier: str = Field(default="", max_length=128)
+    raw: dict = Field(default_factory=dict)
+
+
+class BrowserCodexAgentSyncIn(BaseModel):
+    health: dict = Field(default_factory=dict)
+    models: list[BrowserCodexModelIn] = Field(default_factory=list)
+
+
+class BrowserClaudeAgentSyncIn(BaseModel):
+    health: dict = Field(default_factory=dict)
 
 
 class CachedWorkflowOut(BaseModel):
@@ -963,6 +1027,21 @@ class CompileOut(BaseModel):
     pdf_bytes: int
 
 
+class CompileSyncToPdfIn(BaseModel):
+    document_id: str
+    offset: int
+
+
+class CompileSyncToPdfOut(BaseModel):
+    page: int
+    x: float
+    y: float
+    width: float | None = None
+    height: float | None = None
+    line: int
+    column: int
+
+
 class ProjectCompileSettingsIn(BaseModel):
     main_doc_id: str | None = None
     compiler: str | None = None
@@ -1035,6 +1114,145 @@ class MessageSendIn(BaseModel):
     # When provided, anchored selection text + neighbouring context to send to
     # Dify's `inputs` map. Otherwise we send only the message text.
     inputs: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotPrepareOut(BaseModel):
+    run_id: str
+    provider_id: str
+    endpoint: str
+    bridge_endpoint: str = ""
+    model: str
+    messages: list[dict]
+    tools: list[dict]
+    user_message: MessageOut
+    document_id: str
+    range_start: int
+    range_end: int
+    inputs: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotToolIn(BaseModel):
+    run_id: str
+    document_id: str
+    range_start: int = 0
+    range_end: int = 0
+    inputs: dict = Field(default_factory=dict)
+    tool_call: dict
+
+
+class BrowserNanobotToolOut(BaseModel):
+    role: str = "tool"
+    tool_call_id: str
+    content: str
+    failed: bool = False
+    name: str = ""
+    tool_kind: str = ""
+    events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
+
+
+class BrowserNanobotFinishIn(BaseModel):
+    run_id: str
+    content: str = ""
+    error: str = ""
+
+
+class BrowserCodexPrepareOut(BaseModel):
+    run_id: str
+    provider_id: str
+    endpoint: str
+    model: str = "codex"
+    system_prompt: str = ""
+    prompt: str
+    tools: list[dict] = Field(default_factory=list)
+    user_message: MessageOut
+    document_id: str
+    range_start: int
+    range_end: int
+    workspace_path: str = ""
+    prompt_mode: str = "fast-edit"
+    codex_settings: dict = Field(default_factory=dict)
+    superleaf_context: dict = Field(default_factory=dict)
+    inputs: dict = Field(default_factory=dict)
+
+
+class BrowserCodexToolIn(BaseModel):
+    run_id: str
+    document_id: str
+    range_start: int = 0
+    range_end: int = 0
+    inputs: dict = Field(default_factory=dict)
+    tool_call: dict
+
+
+class BrowserCodexToolOut(BaseModel):
+    role: str = "tool"
+    tool_call_id: str
+    content: str
+    failed: bool = False
+    name: str = ""
+    tool_kind: str = ""
+    events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
+
+
+class BrowserCodexFinishIn(BaseModel):
+    run_id: str
+    content: str = ""
+    error: str = ""
+    codex_session_id: str = ""
+
+
+class BrowserClaudePrepareOut(BaseModel):
+    run_id: str
+    provider_id: str
+    endpoint: str
+    model: str = "claude"
+    system_prompt: str = ""
+    prompt: str
+    tools: list[dict] = Field(default_factory=list)
+    user_message: MessageOut
+    document_id: str
+    range_start: int
+    range_end: int
+    workspace_path: str = ""
+    prompt_mode: str = "fast-edit"
+    claude_settings: dict = Field(default_factory=dict)
+    superleaf_context: dict = Field(default_factory=dict)
+    inputs: dict = Field(default_factory=dict)
+
+
+class BrowserClaudeToolIn(BaseModel):
+    run_id: str
+    document_id: str
+    range_start: int = 0
+    range_end: int = 0
+    inputs: dict = Field(default_factory=dict)
+    tool_call: dict
+
+
+class BrowserClaudeToolOut(BaseModel):
+    role: str = "tool"
+    tool_call_id: str
+    content: str
+    failed: bool = False
+    name: str = ""
+    tool_kind: str = ""
+    events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
+
+
+class BrowserClaudeFinishIn(BaseModel):
+    run_id: str
+    content: str = ""
+    error: str = ""
+    claude_session_id: str = ""
 
 
 class MessageInjectIn(BaseModel):

@@ -233,6 +233,7 @@ export async function runBrowserCodexTurn(args: {
   signal?: AbortSignal
   onActivity?: () => void
   onDelta?: (delta: string) => void
+  onEvent?: (event: Record<string, unknown>) => void
 }): Promise<BrowserCodexTurnResult> {
   const includeSessionBoot = args.includeSessionBoot ??
     shouldIncludeCodexSessionBoot(args.prepared, args.session)
@@ -262,7 +263,7 @@ export async function runBrowserCodexTurn(args: {
   })
   args.onActivity?.()
   const payload = resp.headers.get('content-type')?.includes('text/event-stream')
-    ? await readCodexSse(resp, args.onDelta, args.onActivity)
+    ? await readCodexSse(resp, args.onDelta, args.onActivity, args.onEvent)
     : await readJson(resp)
   if (!resp.ok) {
     throw new Error(`Codex turn ${resp.status}: ${stringError(payload) || resp.statusText}`)
@@ -333,6 +334,7 @@ async function readCodexSse(
   resp: Response,
   onDelta?: (delta: string) => void,
   onActivity?: () => void,
+  onEvent?: (event: Record<string, unknown>) => void,
 ): Promise<Record<string, unknown>> {
   if (!resp.body) return {}
   const reader = resp.body.getReader()
@@ -358,8 +360,9 @@ async function readCodexSse(
     } catch {
       data = { text: dataText }
     }
+    const eventName = currentEvent
     onActivity?.()
-    if (currentEvent === 'delta') {
+    if (eventName === 'delta') {
       const delta = stringValue(data.delta)
       rawOutput += delta
       const trimmed = rawOutput.trimStart()
@@ -371,10 +374,12 @@ async function readCodexSse(
         suppressToolMarkerOutput = true
       }
       if (!suppressToolMarkerOutput && delta) onDelta?.(delta)
-    } else if (currentEvent === 'done') {
+    } else if (eventName === 'done') {
       donePayload = data
-    } else if (currentEvent === 'error') {
+    } else if (eventName === 'error') {
       errorPayload = data
+    } else if (eventName !== 'message') {
+      onEvent?.(data)
     }
     currentEvent = 'message'
   }

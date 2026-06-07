@@ -48,6 +48,21 @@ export interface BrowserToolBridgeRequest {
   created_at: string
 }
 
+export interface BrowserToolBridgeApprovalRequest {
+  id: string
+  method: string
+  title: string
+  summary: string
+  detail: string
+  tool_name: string
+  context_id: string
+  project_id: string
+  conversation_id: string
+  document_id: string
+  created_at: string
+  expires_at: number
+}
+
 export interface BrowserToolCallContext {
   contextId?: string
   projectId?: string
@@ -88,6 +103,8 @@ export interface StartBrowserToolBridgeArgs {
   onPollError?: (err: unknown) => void
   onRequestError?: (request: BrowserToolBridgeRequest, err: unknown) => void
   onRefreshError?: (err: unknown) => void
+  onApprovalRequest?: (request: BrowserToolBridgeApprovalRequest) => void
+  onApprovalPollError?: (err: unknown) => void
 }
 
 export async function startBrowserToolBridge(
@@ -125,6 +142,13 @@ export async function startBrowserToolBridge(
     contextId: context.context_id,
     signal: ctl.signal,
   })
+  if (args.onApprovalRequest) {
+    void runBrowserApprovalBridgeLoop({
+      ...args,
+      contextId: context.context_id,
+      signal: ctl.signal,
+    })
+  }
 
   return {
     context,
@@ -233,6 +257,49 @@ export async function submitBrowserToolBridgeResult(args: {
   }
 }
 
+export async function pollBrowserToolBridgeApprovalRequests(args: {
+  endpoint: string
+  contextId: string
+  signal?: AbortSignal
+  waitMs?: number
+}): Promise<BrowserToolBridgeApprovalRequest[]> {
+  const url = new URL(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/approval-requests`)
+  url.searchParams.set('context_id', args.contextId)
+  url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
+  const resp = await fetch(url.toString(), {
+    method: 'GET',
+    signal: args.signal,
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`SuperLeaf approval poll ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
+  return Array.isArray(payload.requests)
+    ? payload.requests.map(normalizeBridgeApprovalRequest).filter((item): item is BrowserToolBridgeApprovalRequest => Boolean(item))
+    : []
+}
+
+export async function submitBrowserToolBridgeApprovalResult(args: {
+  endpoint: string
+  requestId: string
+  decision: 'accept' | 'reject'
+  signal?: AbortSignal
+}): Promise<void> {
+  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/approval-results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      request_id: args.requestId,
+      decision: args.decision,
+    }),
+    signal: args.signal,
+  })
+  const payload = await readJson(resp)
+  if (!resp.ok) {
+    throw new Error(`SuperLeaf approval result ${resp.status}: ${stringError(payload) || resp.statusText}`)
+  }
+}
+
 export function normalizeLocalAgentHostEndpoint(endpoint: string): string {
   const cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '')
   return cleaned || 'http://127.0.0.1:8787'
@@ -308,6 +375,46 @@ async function runBrowserToolBridgeLoop(
   }
 }
 
+async function runBrowserApprovalBridgeLoop(
+  args: StartBrowserToolBridgeArgs & { contextId: string; signal: AbortSignal },
+): Promise<void> {
+  let contextId = args.contextId
+  while (!args.signal.aborted) {
+    let requests: BrowserToolBridgeApprovalRequest[] = []
+    try {
+      requests = await pollBrowserToolBridgeApprovalRequests({
+        endpoint: args.endpoint,
+        contextId,
+        signal: args.signal,
+        waitMs: args.waitMs,
+      })
+    } catch (err) {
+      if (args.signal.aborted) break
+      args.onApprovalPollError?.(err)
+      try {
+        const refreshed = await registerBrowserToolBridgeContext({
+          endpoint: args.endpoint,
+          context: args.context,
+          signal: args.signal,
+        })
+        contextId = refreshed.context_id
+        args.onActivity?.()
+      } catch (refreshErr) {
+        if (!args.signal.aborted) args.onRefreshError?.(refreshErr)
+      }
+      await sleep(800)
+      continue
+    }
+
+    if (requests.length > 0) args.onActivity?.()
+    for (const request of requests) {
+      if (args.signal.aborted) break
+      args.onApprovalRequest?.(request)
+    }
+    if (requests.length > 0) await sleep(1000)
+  }
+}
+
 async function executeAndSubmitBridgeRequest(
   args: StartBrowserToolBridgeArgs & { signal: AbortSignal },
   request: BrowserToolBridgeRequest,
@@ -375,6 +482,27 @@ function normalizeBridgeToolRequest(value: unknown): BrowserToolBridgeRequest | 
     range_end: Number(raw.range_end || 0),
     inputs: raw.inputs && typeof raw.inputs === 'object' ? raw.inputs as Record<string, unknown> : {},
     created_at: stringValue(raw.created_at),
+  }
+}
+
+function normalizeBridgeApprovalRequest(value: unknown): BrowserToolBridgeApprovalRequest | null {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const id = stringValue(raw.id)
+  const contextId = stringValue(raw.context_id)
+  if (!id || !contextId) return null
+  return {
+    id,
+    method: stringValue(raw.method),
+    title: stringValue(raw.title) || 'Codex 请求确认',
+    summary: stringValue(raw.summary),
+    detail: stringValue(raw.detail),
+    tool_name: stringValue(raw.tool_name),
+    context_id: contextId,
+    project_id: stringValue(raw.project_id),
+    conversation_id: stringValue(raw.conversation_id),
+    document_id: stringValue(raw.document_id),
+    created_at: stringValue(raw.created_at),
+    expires_at: Number(raw.expires_at || 0),
   }
 }
 

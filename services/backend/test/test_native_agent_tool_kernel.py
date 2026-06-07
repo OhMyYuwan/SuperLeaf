@@ -13,7 +13,11 @@ from app.services.native_agent_tool_kernel import (
     execute_native_agent_db_tool,
     execute_native_agent_local_tool,
 )
-from app.services.native_agent_runner import NativeSkillBlock
+from app.services.native_agent_runner import (
+    NativeSkillBlock,
+    browser_codex_system_prompt,
+    browser_nanobot_system_prompt,
+)
 
 
 def _session_factory():
@@ -144,6 +148,23 @@ def test_browser_superleaf_tools_expose_full_project_surface():
         "project_create_text_file",
     } <= tool_names
     assert "read_agent_file" not in tool_names
+
+
+def test_browser_nanobot_prompt_advertises_project_file_creation():
+    prompt = browser_nanobot_system_prompt()
+
+    assert "project_write_text_file" in prompt
+    assert "project_create_text_file" in prompt
+    assert "create, write, add, or generate a new SuperLeaf project file" in prompt
+    assert "refuse to overwrite existing files" in prompt
+
+
+def test_browser_codex_prompt_advertises_project_file_creation():
+    prompt = browser_codex_system_prompt()
+
+    assert "project_write_text_file" in prompt
+    assert "project_create_text_file" in prompt
+    assert "create, write, add, or generate a new SuperLeaf project file" in prompt
 
 
 def test_tool_kernel_creates_project_file_and_side_event(monkeypatch):

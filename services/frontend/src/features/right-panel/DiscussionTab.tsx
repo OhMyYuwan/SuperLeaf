@@ -48,7 +48,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { useConversationStore } from '../../stores/conversationStore'
-import type { AgentRunStats, ProposalEntry } from '../../stores/conversationStore'
+import type { AgentRunStats, LocalAgentApprovalEntry, ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
@@ -92,8 +92,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const messageRunStats = useConversationStore((s) => s.messageRunStats)
   const error = useConversationStore((s) => s.error)
   const proposalsByConv = useConversationStore((s) => s.proposals)
+  const localApprovalsByConv = useConversationStore((s) => s.localApprovals)
   const acceptProposal = useConversationStore((s) => s.acceptProposal)
   const rejectProposal = useConversationStore((s) => s.rejectProposal)
+  const submitLocalApproval = useConversationStore((s) => s.submitLocalApproval)
   const loadConversations = useConversationStore((s) => s.loadConversations)
   const createConversation = useConversationStore((s) => s.createConversation)
   const renameConversation = useConversationStore((s) => s.renameConversation)
@@ -351,6 +353,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeProposals = effectiveConversationId
     ? proposalsByConv[effectiveConversationId] ?? []
     : []
+  const activeLocalApprovals = effectiveConversationId
+    ? localApprovalsByConv[effectiveConversationId] ?? []
+    : []
   // Group proposals by their parent agent message. Proposals that arrived
   // mid-stream have message_id === '' and live under the streaming bubble
   // until ylw.msg.finished promotes them to the new message id.
@@ -380,6 +385,13 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       rejectProposal(effectiveConversationId, proposalId)
     },
     [effectiveConversationId, rejectProposal],
+  )
+  const handleSubmitLocalApproval = useCallback(
+    (requestId: string, decision: 'accept' | 'reject') => {
+      if (!effectiveConversationId) return
+      void submitLocalApproval(effectiveConversationId, requestId, decision)
+    },
+    [effectiveConversationId, submitLocalApproval],
   )
   const handleStopMessage = useCallback(() => {
     if (!effectiveConversationId) return
@@ -590,7 +602,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   <div className="message-bubble agent streaming">
                     <AgentRoleLine name={activeAgentName} runStats={activeStreamingStats} />
                     <div className="message-content">
-                      <Loader2 size={14} className="spin" /> 思考中…
+                      <Loader2 size={14} className="spin" /> {activeStreamingStats?.waitingReminder || '思考中…'}
                     </div>
                   </div>
                 )}
@@ -608,6 +620,13 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   />
                 ))}
               </div>
+              {activeLocalApprovals.length > 0 && (
+                <LocalApprovalPanel
+                  approvals={activeLocalApprovals}
+                  onAccept={(id) => handleSubmitLocalApproval(id, 'accept')}
+                  onReject={(id) => handleSubmitLocalApproval(id, 'reject')}
+                />
+              )}
               <DiscussionComposer
                 allCandidates={allCandidates}
                 agentCandidates={agentCandidates}
@@ -652,6 +671,58 @@ interface DiscussionComposerProps {
    * composing the next message.
    */
   onUserActivity?: () => void
+}
+
+interface LocalApprovalPanelProps {
+  approvals: LocalAgentApprovalEntry[]
+  onAccept: (requestId: string) => void
+  onReject: (requestId: string) => void
+}
+
+function LocalApprovalPanel({
+  approvals,
+  onAccept,
+  onReject,
+}: LocalApprovalPanelProps) {
+  return (
+    <div className="local-approval-panel" aria-live="polite">
+      {approvals.map((approval) => {
+        const decided = approval.status !== 'pending'
+        return (
+          <div key={approval.id} className={`local-approval-card status-${approval.status}`}>
+            <div className="local-approval-main">
+              <div className="local-approval-title-row">
+                <span className="local-approval-title">{approval.title || 'Codex 请求确认'}</span>
+                <span className="local-approval-method">{formatApprovalMethod(approval)}</span>
+              </div>
+              <div className="local-approval-summary">
+                {approval.summary || approval.detail || 'Codex 正在等待你的确认。'}
+              </div>
+              {approval.error && (
+                <div className="local-approval-error">{approval.error}</div>
+              )}
+            </div>
+            <div className="local-approval-actions">
+              {approval.status === 'pending' ? (
+                <>
+                  <button className="local-approval-accept" onClick={() => onAccept(approval.id)}>
+                    <Check size={12} /> Accept
+                  </button>
+                  <button className="local-approval-reject" onClick={() => onReject(approval.id)}>
+                    <X size={12} /> Reject
+                  </button>
+                </>
+              ) : (
+                <span className="local-approval-status">
+                  {decided ? localApprovalStatusLabel(approval.status) : ''}
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 const DiscussionComposer = memo(function DiscussionComposer({
@@ -958,6 +1029,7 @@ function AgentRoleLine({
   if (runStats?.filesRead) parts.push(`读文件 ${runStats.filesRead}`)
   if (runStats?.filesWritten) parts.push(`写文件 ${runStats.filesWritten}`)
   if (runStats?.stopped) parts.push('已停止')
+  if (runStats?.waitingReminder) parts.push(runStats.waitingReminder)
   const bridgeLabel = formatBridgeStatus(runStats?.bridgeStatus)
   const localSession = formatShortSessionId(runStats?.localSessionId)
   const externalSession = formatShortSessionId(runStats?.externalSessionId)
@@ -1015,6 +1087,22 @@ function formatBridgeStatus(status?: AgentRunStats['bridgeStatus']): string {
   if (status === 'recovering') return 'MCP 重连中'
   if (status === 'error') return 'MCP 错误'
   return ''
+}
+
+function formatApprovalMethod(approval: LocalAgentApprovalEntry): string {
+  if (approval.tool_name) return approval.tool_name
+  if (approval.method.includes('elicitation')) return 'mcp'
+  if (approval.method.includes('permissions')) return 'permissions'
+  if (approval.method.includes('fileChange')) return 'file'
+  if (approval.method.includes('commandExecution')) return 'command'
+  return approval.method || 'approval'
+}
+
+function localApprovalStatusLabel(status: LocalAgentApprovalEntry['status']): string {
+  if (status === 'accepted') return '已允许'
+  if (status === 'rejected') return '已拒绝'
+  if (status === 'error') return '提交失败'
+  return '等待确认'
 }
 
 function UserMessageContent({

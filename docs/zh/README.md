@@ -26,6 +26,7 @@ nav_order: 2
 - [交互数据收集](./annotation-training-data.html)：交互数据保留、训练数据导出、CSV Skill。
 - [故障排查](./troubleshooting/README.html)：端口、代理、Provider、智能体技能市场、LaTeX 编译。
 - [架构总览](./architecture/overview.html)：三服务架构和数据模型。
+- [自动回复批注执行计划](./architecture/annotation-auto-reply-plan.html)：手动触发的私有 Agent 批注建议功能规划。
 - [开发导航与 Project Map](./development/README.html)：ACP 支持层、路由文件和支撑仓库边界。
 
 ## 文档约定

@@ -1532,6 +1532,46 @@ class AnnotationOut(BaseModel):
     archived_at: datetime | None = None
 
 
+class AnnotationAgentSuggestionRunIn(BaseModel):
+    doc_id: str = Field(min_length=1, max_length=64)
+    agent_id: str = Field(min_length=1, max_length=128)
+    include_stale: bool = True
+    scope: str = Field(default="current_doc", pattern="^current_doc$")
+
+
+class AnnotationAgentSuggestionPatchIn(BaseModel):
+    status: str | None = Field(
+        default=None, pattern="^(drafted|stale|ready|published|failed)$"
+    )
+    suggestions: list[str] | None = None
+
+
+class AnnotationAgentSuggestionOut(BaseModel):
+    id: str
+    project_id: str
+    doc_id: str
+    annotation_id: str
+    user_id: str
+    agent_id: str
+    source_hash: str
+    status: str
+    suggestions: list
+    internal_meta: dict
+    error: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AnnotationAgentSuggestionRunOut(BaseModel):
+    processed: int
+    skipped: int
+    failed: int
+    suggestions: list[AnnotationAgentSuggestionOut]
+
+
 # ---------------------------------------------------------------------------
 # Notifications (multi-user collaboration)
 # ---------------------------------------------------------------------------

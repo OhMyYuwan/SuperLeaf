@@ -20,6 +20,7 @@ import {
   type CardStatus,
   type ReviewStatus,
 } from '../../stores/annotationStore'
+import { useAnnotationAgentSuggestionStore } from '../../stores/annotationAgentSuggestionStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useCollaborationStore } from '../../stores/collaborationStore'
 import {
@@ -126,12 +127,15 @@ function dispatch(evt: ProjectEvent, currentUserId: string): void {
       const raw = p.annotation as AnnotationDto | undefined
       if (!raw || !raw.id) return
       useAnnotationStore.getState().applyRemoteAnnotationUpsert(annotationFromDto(raw))
+      if (raw.doc_id) void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(raw.doc_id)
       return
     }
     case 'annotation.deleted': {
       const aid = String(p.annotation_id ?? '')
       if (!aid) return
       useAnnotationStore.getState().applyRemoteAnnotationDelete(aid)
+      const docId = String(p.doc_id ?? '')
+      if (docId) void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(docId)
       return
     }
     case 'doc.updated': {

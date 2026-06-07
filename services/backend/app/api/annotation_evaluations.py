@@ -8,6 +8,8 @@ the current project) so evaluations from another user/project never leak.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -16,6 +18,10 @@ from sqlalchemy.orm import Session
 from ..database import get_session
 from ..models import Annotation, Doc, Project, User
 from ..schemas import (
+    AnnotationAgentSuggestionOut,
+    AnnotationAgentSuggestionPatchIn,
+    AnnotationAgentSuggestionRunIn,
+    AnnotationAgentSuggestionRunOut,
     AnnotationIn,
     AnnotationOut,
     AnnotationPatchIn,
@@ -25,8 +31,11 @@ from ..schemas import (
     ReviewStateOut,
     ReviewStatusIn,
 )
-from ..services import annotation_service, evaluation_service
+from ..secrets_vault import decrypt
+from ..services import annotation_agent_suggestion_service, annotation_service, evaluation_service
+from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
 from ..services.event_bus import bus
+from ..services.nanobot_client import NanobotClient
 from ..services.project_member_service import ProjectMemberService
 from .deps import get_current_project, get_current_user, require_write_access
 
@@ -278,6 +287,20 @@ def _ann_to_out(row: Annotation) -> AnnotationOut:
     return AnnotationOut.model_validate(row, from_attributes=True)
 
 
+def _suggestion_to_out(row) -> AnnotationAgentSuggestionOut:
+    return AnnotationAgentSuggestionOut.model_validate(row, from_attributes=True)
+
+
+def _annotation_patch_touches_source(body: AnnotationPatchIn) -> bool:
+    touched = body.model_fields_set
+    if not touched:
+        return False
+    # Visibility-only publishing is not a semantic annotation change. Range-only
+    # drift is also ignored so collaborators can keep highlights aligned without
+    # invalidating private Agent suggestions.
+    return bool(touched & {"status", "content", "thread"})
+
+
 def _json_ready(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -333,6 +356,12 @@ def create_annotation(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> AnnotationOut:
     _ensure_doc(db, project, body.doc_id)
+    existing = annotation_service.get(db, body.id)
+    old_source_hash = (
+        annotation_agent_suggestion_service.compute_annotation_source_hash(existing)
+        if existing is not None
+        else ""
+    )
     # No agent involved → global annotation (visible to all collaborators).
     # Has workflow_id or agent_name → private to the requesting user.
     is_global = not body.workflow_id and not body.agent_name
@@ -362,6 +391,10 @@ def create_annotation(
         attached_files=[_json_ready(f) for f in body.attached_files],
         created_at=body.created_at,
     )
+    if not created and old_source_hash:
+        new_source_hash = annotation_agent_suggestion_service.compute_annotation_source_hash(row)
+        if old_source_hash != new_source_hash:
+            annotation_agent_suggestion_service.mark_stale_for_annotation(db, row)
     db.commit()
     bus.publish(
         project.id,
@@ -386,6 +419,7 @@ def patch_annotation(
         raise HTTPException(404, "annotation not found")
     _ensure_doc(db, project, row.doc_id)
     _ensure_annotation_patch_allowed(db, project, row, user, body)
+    old_source_hash = annotation_agent_suggestion_service.compute_annotation_source_hash(row)
     annotation_service.patch(
         db,
         row,
@@ -397,6 +431,10 @@ def patch_annotation(
         publish=body.publish,
         acting_user_id=user.id,
     )
+    if _annotation_patch_touches_source(body):
+        new_source_hash = annotation_agent_suggestion_service.compute_annotation_source_hash(row)
+        if old_source_hash != new_source_hash:
+            annotation_agent_suggestion_service.mark_stale_for_annotation(db, row)
     db.commit()
     bus.publish(
         project.id,
@@ -430,3 +468,336 @@ def delete_annotation(
         {"annotation_id": annotation_id, "doc_id": doc_id},
         origin_client_id=x_client_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Private Agent suggestions for annotation auto-reply
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/agent-suggestions/by-doc/{doc_id}",
+    response_model=list[AnnotationAgentSuggestionOut],
+)
+def list_agent_suggestions(
+    doc_id: str,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[AnnotationAgentSuggestionOut]:
+    _ensure_doc(db, project, doc_id)
+    rows = annotation_agent_suggestion_service.list_by_doc(db, doc_id, user_id=user.id)
+    return [_suggestion_to_out(row) for row in rows]
+
+
+@router.post(
+    "/agent-suggestions/run",
+    response_model=AnnotationAgentSuggestionRunOut,
+)
+async def run_agent_suggestions(
+    body: AnnotationAgentSuggestionRunIn,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> AnnotationAgentSuggestionRunOut:
+    doc = _ensure_doc(db, project, body.doc_id)
+    workflow_id = _canonical_native_agent_id(body.agent_id)
+    resolved = AgentRegistryService(db).resolve(
+        workflow_id,
+        project_id=project.id,
+        user_id=user.id,
+        require_enabled=True,
+    )
+    if resolved is None or resolved.native_agent is None:
+        raise HTTPException(404, "native agent not found")
+    provider = resolved.provider
+    if provider.kind != "native":
+        raise HTTPException(400, "auto-reply currently supports native agents only")
+
+    annotations = [
+        row
+        for row in annotation_service.list_by_doc(db, doc.id, user_id=user.id)
+        if row.status not in annotation_agent_suggestion_service.TERMINAL_ANNOTATION_STATUSES
+    ]
+    existing = annotation_agent_suggestion_service.existing_for_annotations(
+        db,
+        annotation_ids=[row.id for row in annotations],
+        user_id=user.id,
+        agent_id=workflow_id,
+    )
+
+    processed = 0
+    skipped = 0
+    failed = 0
+    out_rows = []
+    for annotation in annotations:
+        source_hash = annotation_agent_suggestion_service.compute_annotation_source_hash(annotation)
+        current = existing.get(annotation.id)
+        if not annotation_agent_suggestion_service.should_process_annotation(
+            annotation,
+            current,
+            source_hash=source_hash,
+            include_stale=body.include_stale,
+        ):
+            skipped += 1
+            continue
+        try:
+            suggestions, meta = await _generate_annotation_auto_reply(
+                provider_endpoint=provider.endpoint,
+                api_key=decrypt(provider.api_key_enc) if provider.api_key_enc else "",
+                model=resolved.native_agent.model,
+                agent_name=resolved.native_agent.name,
+                agent_instructions=resolved.native_agent.instructions,
+                doc=doc,
+                annotation=annotation,
+            )
+            row = annotation_agent_suggestion_service.upsert_generated(
+                db,
+                project_id=project.id,
+                doc_id=doc.id,
+                annotation_id=annotation.id,
+                user_id=user.id,
+                agent_id=workflow_id,
+                source_hash=source_hash,
+                suggestions=suggestions,
+                internal_meta=meta,
+                status="drafted",
+            )
+            processed += 1
+        except Exception as exc:  # noqa: BLE001
+            row = annotation_agent_suggestion_service.upsert_generated(
+                db,
+                project_id=project.id,
+                doc_id=doc.id,
+                annotation_id=annotation.id,
+                user_id=user.id,
+                agent_id=workflow_id,
+                source_hash=source_hash,
+                suggestions=[],
+                internal_meta={"error_type": type(exc).__name__},
+                error=f"{type(exc).__name__}: {exc}"[:1000],
+                status="failed",
+            )
+            failed += 1
+        db.commit()
+        db.refresh(row)
+        out_rows.append(row)
+
+    return AnnotationAgentSuggestionRunOut(
+        processed=processed,
+        skipped=skipped,
+        failed=failed,
+        suggestions=[_suggestion_to_out(row) for row in out_rows],
+    )
+
+
+@router.patch(
+    "/agent-suggestions/{suggestion_id}",
+    response_model=AnnotationAgentSuggestionOut,
+)
+def patch_agent_suggestion(
+    suggestion_id: str,
+    body: AnnotationAgentSuggestionPatchIn,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> AnnotationAgentSuggestionOut:
+    row = annotation_agent_suggestion_service.get_for_user(db, suggestion_id, user_id=user.id)
+    if row is None or row.project_id != project.id:
+        raise HTTPException(404, "agent suggestion not found")
+    annotation_agent_suggestion_service.patch_for_user(
+        db,
+        row,
+        status=body.status,
+        suggestions=body.suggestions,
+    )
+    db.commit()
+    db.refresh(row)
+    return _suggestion_to_out(row)
+
+
+@router.delete("/agent-suggestions/{suggestion_id}", status_code=204)
+def delete_agent_suggestion(
+    suggestion_id: str,
+    project: Project = Depends(get_current_project),
+    db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> None:
+    row = annotation_agent_suggestion_service.get_for_user(db, suggestion_id, user_id=user.id)
+    if row is None or row.project_id != project.id:
+        return
+    annotation_agent_suggestion_service.delete(db, row)
+    db.commit()
+
+
+def _canonical_native_agent_id(value: str) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith(NATIVE_WORKFLOW_PREFIX):
+        return raw
+    return f"{NATIVE_WORKFLOW_PREFIX}{raw}"
+
+
+async def _generate_annotation_auto_reply(
+    *,
+    provider_endpoint: str,
+    api_key: str,
+    model: str,
+    agent_name: str,
+    agent_instructions: str,
+    doc: Doc,
+    annotation: Annotation,
+) -> tuple[list[str], dict]:
+    client = NanobotClient(endpoint=provider_endpoint, api_key=api_key, timeout=30.0)
+    system_prompt = _annotation_auto_reply_system_prompt(
+        agent_name=agent_name,
+        agent_instructions=agent_instructions,
+    )
+    user_prompt = _annotation_auto_reply_user_prompt(doc, annotation)
+    parts: list[str] = []
+    async for evt in client.run_streaming(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=800,
+    ):
+        delta = _nanobot_delta_text(evt)
+        if delta:
+            parts.append(delta)
+    raw = "".join(parts).strip()
+    suggestions = _parse_auto_reply_suggestions(raw)
+    if not suggestions:
+        raise ValueError("agent returned no suggestions")
+    return suggestions, {
+        "mode": "annotation_auto_reply",
+        "agent_name": agent_name,
+        "raw_preview": raw[:1000],
+        "prompt_version": 1,
+    }
+
+
+def _annotation_auto_reply_system_prompt(*, agent_name: str, agent_instructions: str) -> str:
+    parts = [
+        "You are a SuperLeaf annotation auto-reply assistant.",
+        "Your task is to help the current user pre-process visible document annotations.",
+        "Do not modify documents.",
+        "Do not create annotation cards.",
+        "Do not send a reply to collaborators.",
+        "Do not reveal analysis, classification, confidence, source hashes, or context notes.",
+        "Return only compact JSON with a suggestions array of 2-3 concise, actionable strings.",
+        "Each suggestion should be one or two sentences and directly useful to the user.",
+        'Required schema: {"suggestions":["...","..."]}',
+    ]
+    if agent_name:
+        parts.append(f"Agent name: {agent_name}")
+    if agent_instructions.strip():
+        parts.extend(["Agent instructions:", agent_instructions.strip()])
+    return "\n".join(parts)
+
+
+def _annotation_auto_reply_user_prompt(doc: Doc, annotation: Annotation) -> str:
+    before, target, after = _annotation_surrounding_context(doc.content or "", annotation)
+    thread_text = _annotation_thread_text(annotation.thread or [])
+    return "\n\n".join(
+        part
+        for part in [
+            f"Document: {doc.name} ({doc.format})",
+            f"Annotation kind: {annotation.kind}",
+            f"Annotation content:\n{annotation.content or ''}",
+            f"Annotated text:\n{annotation.target_text or target}",
+            f"Thread:\n{thread_text}" if thread_text else "",
+            f"Before context:\n{before}" if before else "",
+            f"After context:\n{after}" if after else "",
+            (
+                "Return JSON only. Generate 2-3 private suggestions for how the "
+                "current user can handle this annotation."
+            ),
+        ]
+        if part
+    )
+
+
+def _annotation_surrounding_context(doc_content: str, annotation: Annotation) -> tuple[str, str, str]:
+    total = len(doc_content)
+    start = max(0, min(int(annotation.range_from or 0), total))
+    end = max(start, min(int(annotation.range_to or 0), total))
+    before = doc_content[max(0, start - 800):start].strip()
+    target = doc_content[start:end].strip()
+    after = doc_content[end:min(total, end + 800)].strip()
+    return before, target, after
+
+
+def _annotation_thread_text(thread: list) -> str:
+    lines: list[str] = []
+    for item in thread:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "user")
+        name = str(item.get("agent_name") or ("Agent" if role == "agent" else "User"))
+        content = str(item.get("content") or "").strip()
+        if content:
+            lines.append(f"{name}: {content}")
+    return "\n".join(lines)
+
+
+def _nanobot_delta_text(evt: dict[str, Any]) -> str:
+    choices = evt.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+        return delta["content"]
+    message = first.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return message["content"]
+    return ""
+
+
+def _parse_auto_reply_suggestions(raw: str) -> list[str]:
+    text = _strip_code_fence(raw.strip())
+    candidates = [text]
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        candidates.append(match.group(0))
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        values = data.get("suggestions") if isinstance(data, dict) else None
+        if isinstance(values, list):
+            cleaned = _clean_suggestion_strings(values)
+            if cleaned:
+                return cleaned
+    return _clean_suggestion_strings(_fallback_suggestion_lines(text))
+
+
+def _strip_code_fence(text: str) -> str:
+    match = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text.strip(), re.I)
+    return match.group(1).strip() if match else text
+
+
+def _fallback_suggestion_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for line in text.splitlines():
+        item = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        if item:
+            lines.append(item)
+    return lines
+
+
+def _clean_suggestion_strings(values: list[Any]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if not item:
+            continue
+        out.append(item[:1000])
+        if len(out) >= 3:
+            break
+    return out

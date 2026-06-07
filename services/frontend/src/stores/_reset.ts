@@ -13,6 +13,7 @@
 
 import { useDocumentStore } from './documentStore'
 import { useAnnotationStore } from './annotationStore'
+import { useAnnotationAgentSuggestionStore } from './annotationAgentSuggestionStore'
 import { useFilesystemStore } from './filesystemStore'
 import { useCompileStore } from './compileStore'
 import { useCollaborationStore } from './collaborationStore'
@@ -35,6 +36,13 @@ export function resetProjectScopedStores(): void {
     byRun: {},
     reviewStatusByAnnotation: {},
     evaluationsByAnnotation: {},
+  })
+
+  useAnnotationAgentSuggestionStore.setState({
+    suggestionsByAnnotation: {},
+    runningByDoc: {},
+    lastRunByDoc: {},
+    error: null,
   })
 
   useFilesystemStore.setState({

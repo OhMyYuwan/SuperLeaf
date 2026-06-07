@@ -4,7 +4,11 @@ import type {
   NanobotToolDefinition,
   ProviderModel,
 } from './backendApi'
-import { formatSuperleafToolDefinitions } from './superleafTools'
+import {
+  buildSuperleafFallbackToolGuide,
+  shouldIncludeSuperleafToolGuide,
+  type SuperLeafToolGuideMode,
+} from './agentToolGuidePolicy'
 
 const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
 const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
@@ -22,6 +26,7 @@ export interface BrowserNanobotTurnArgs {
   sessionId?: string
   messages: NanobotChatMessage[]
   tools?: NanobotToolDefinition[]
+  toolGuideMode?: SuperLeafToolGuideMode
   signal?: AbortSignal
   onDelta?: (delta: string) => void
   onActivity?: () => void
@@ -140,7 +145,7 @@ export async function probeBrowserNanobotTools(
 
 export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Promise<BrowserNanobotTurnResult> {
   const body: Record<string, unknown> = {
-    messages: compactNanobotMessages(args.messages, args.tools),
+    messages: compactNanobotMessages(args.messages, args.tools, args.toolGuideMode),
     stream: false,
     temperature: 0.2,
     max_tokens: 4000,
@@ -215,9 +220,10 @@ export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Pr
   return { content: contentParts.join(''), toolCalls: toolAccumulator.calls() }
 }
 
-function compactNanobotMessages(
+export function compactNanobotMessages(
   messages: NanobotChatMessage[],
   tools: NanobotToolDefinition[] = [],
+  toolGuideMode: SuperLeafToolGuideMode = tools.length > 0 ? 'schema-only' : 'marker-fallback',
 ): NanobotChatMessage[] {
   const system = messages
     .filter((message) => message.role === 'system' && message.content)
@@ -229,8 +235,8 @@ function compactNanobotMessages(
   if (system.length > 0) {
     sections.push(`[SUPERLEAF INSTRUCTIONS]\n${system.join('\n\n')}`)
   }
-  if (tools.length > 0) {
-    sections.push(`[AVAILABLE SUPERLEAF TOOLS]\n${formatSuperleafToolDefinitions(tools)}`)
+  if (shouldIncludeSuperleafToolGuide(toolGuideMode)) {
+    sections.push(`[SUPERLEAF TOOL GUIDE]\n${buildSuperleafFallbackToolGuide(tools)}`)
   }
   if (lastUser?.content) {
     sections.push(`[CURRENT USER MESSAGE]\n${lastUser.content}`)

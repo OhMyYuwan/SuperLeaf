@@ -20,6 +20,7 @@ import {
   type NanobotToolCall,
   type Provider,
   type BrowserNanobotToolResult,
+  type BrowserCodexPrepare,
 } from '../services/backendApi'
 import { operationApi } from '../services/operationApi'
 import {
@@ -30,11 +31,20 @@ import {
   createBrowserCodexSession,
   codexToolMode,
   runBrowserCodexTurn,
+  type BrowserCodexSession,
 } from '../services/codexBrowserClient'
 import {
   createBrowserClaudeSession,
   runBrowserClaudeTurn,
 } from '../services/claudeBrowserClient'
+import { shouldIncludeCodexSessionBoot } from '../services/agentPromptPolicy'
+import { toolGuideModeForTransport } from '../services/agentToolGuidePolicy'
+import {
+  applyCodexDeltaContext,
+  forceCodexDeltaContextUnchanged,
+  type CodexDeltaContextSnapshot,
+} from '../services/superleafDeltaContextPolicy'
+import { normalizeBrowserToolResultForAgent } from '../services/superleafToolResultEnvelope'
 import {
   bridgeRequestFromToolCall,
   startBrowserToolBridge,
@@ -83,6 +93,7 @@ export interface AgentRunStats {
 
 const activeMessageControllers = new Map<string, AbortController>()
 const stoppedMessageConversations = new Set<string>()
+const codexDeltaContextSnapshots = new Map<string, CodexDeltaContextSnapshot>()
 
 interface ConversationState {
   conversations: Record<string, Conversation>
@@ -596,6 +607,19 @@ function findBrowserNanobotProvider(
   return provider.meta?.transport === 'browser' ? provider : null
 }
 
+function codexDeltaContextKey(
+  session: BrowserCodexSession,
+  prepared: BrowserCodexPrepare,
+): string {
+  const conversationId = String(prepared.superleaf_context.conversation_id ?? '')
+  return [
+    'codex-local',
+    session.id || session.codex_session_id || conversationId,
+    prepared.provider_id,
+    conversationId,
+  ].filter(Boolean).join(':')
+}
+
 function findBrowserCodexProvider(
   conversationId: string,
   get: () => ConversationState,
@@ -689,6 +713,7 @@ async function sendViaBrowserNanobot(args: {
       sessionId: prepared.run_id,
       messages,
       tools: prepared.tools,
+      toolGuideMode: toolGuideModeForTransport('native-tool-calls', prepared.tools.length > 0),
       signal: args.signal,
       onActivity: args.markActivity,
       onDelta: (delta) => {
@@ -745,7 +770,7 @@ async function sendViaBrowserCodex(args: {
   markActivity: () => void
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
 }): Promise<void> {
-  const prepared = await conversationApi.prepareBrowserCodex(args.conversationId, args.body)
+  let prepared = await conversationApi.prepareBrowserCodex(args.conversationId, args.body)
   args.markActivity()
   handleMessageEvent(args.set, args.conversationId, {
     event: 'ylw.msg.user',
@@ -770,6 +795,13 @@ async function sendViaBrowserCodex(args: {
     },
   })
 
+  const deltaContextKey = codexDeltaContextKey(session, prepared)
+  const deltaContext = applyCodexDeltaContext(
+    prepared,
+    codexDeltaContextSnapshots.get(deltaContextKey),
+  )
+  prepared = deltaContext.prepared
+
   const toolResults: Awaited<ReturnType<typeof conversationApi.executeBrowserCodexTool>>[] = []
   const finalParts: string[] = []
   let lastError = ''
@@ -777,6 +809,7 @@ async function sendViaBrowserCodex(args: {
   let stopMcpBridge = () => {}
   let mcpContextId = ''
   const toolMode = codexToolMode(prepared)
+  const includeSessionBoot = shouldIncludeCodexSessionBoot(prepared, session)
   const preflightToolCalls = toolMode === 'browser-preflight'
     ? inferBrowserNanobotPreflightToolCalls(args.body.content, prepared)
     : []
@@ -886,12 +919,17 @@ async function sendViaBrowserCodex(args: {
   try {
     for (let round = 0; round < maxToolRounds; round += 1) {
       let streamedRoundContent = ''
+      const roundPrepared = round === 0
+        ? prepared
+        : forceCodexDeltaContextUnchanged(prepared)
       const result = await runBrowserCodexTurn({
-        endpoint: prepared.endpoint,
+        endpoint: roundPrepared.endpoint,
         sessionId: session.id,
-        prepared,
+        session,
+        prepared: roundPrepared,
         contextId: mcpContextId,
         toolResults,
+        includeSessionBoot: round === 0 && includeSessionBoot,
         signal: args.signal,
         onActivity: args.markActivity,
         onDelta: (delta) => {
@@ -902,6 +940,9 @@ async function sendViaBrowserCodex(args: {
           })
         },
       })
+      if (round === 0) {
+        codexDeltaContextSnapshots.set(deltaContextKey, deltaContext.snapshot)
+      }
       lastError = result.error
       lastCodexSessionId = result.codexSessionId || result.session?.codex_session_id || lastCodexSessionId
       handleMessageEvent(args.set, args.conversationId, {
@@ -1195,14 +1236,14 @@ async function executeNanobotBrowserToolRequest(args: {
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
 }): Promise<BrowserNanobotToolResult> {
   try {
-    const result = await conversationApi.executeBrowserNanobotTool(args.conversationId, {
+    const result = normalizeBrowserToolResultForAgent(await conversationApi.executeBrowserNanobotTool(args.conversationId, {
       run_id: args.runId,
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    })
+    }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)
@@ -1225,14 +1266,14 @@ async function executeCodexBrowserToolRequest(args: {
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
 }): Promise<BrowserNanobotToolResult> {
   try {
-    const result = await conversationApi.executeBrowserCodexTool(args.conversationId, {
+    const result = normalizeBrowserToolResultForAgent(await conversationApi.executeBrowserCodexTool(args.conversationId, {
       run_id: args.runId,
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    })
+    }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)
@@ -1255,14 +1296,14 @@ async function executeClaudeBrowserToolRequest(args: {
   set: (fn: (s: ConversationState) => Partial<ConversationState>) => void
 }): Promise<BrowserNanobotToolResult> {
   try {
-    const result = await conversationApi.executeBrowserClaudeTool(args.conversationId, {
+    const result = normalizeBrowserToolResultForAgent(await conversationApi.executeBrowserClaudeTool(args.conversationId, {
       run_id: args.runId,
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    })
+    }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)

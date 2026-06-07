@@ -16,6 +16,8 @@ import {
 import {
   buildCodexPromptWithPolicy,
   codexEffectiveApprovalPolicy,
+  shouldIncludeCodexSessionBoot,
+  SUPERLEAF_SESSION_BOOT_VERSION,
   codexToolMode,
 } from './agentPromptPolicy'
 
@@ -37,6 +39,8 @@ export interface BrowserCodexSession {
   superleaf_conversation_id?: string
   workspace_path?: string
   codex_session_id?: string
+  superleaf_boot_sent?: boolean
+  superleaf_boot_version?: string
   turn_count?: number
   [key: string]: unknown
 }
@@ -221,13 +225,17 @@ export async function submitBrowserCodexMcpToolResult(args: {
 export async function runBrowserCodexTurn(args: {
   endpoint: string
   sessionId: string
+  session?: BrowserCodexSession
   prepared: BrowserCodexPrepare
   contextId?: string
   toolResults?: BrowserNanobotToolResult[]
+  includeSessionBoot?: boolean
   signal?: AbortSignal
   onActivity?: () => void
   onDelta?: (delta: string) => void
 }): Promise<BrowserCodexTurnResult> {
+  const includeSessionBoot = args.includeSessionBoot ??
+    shouldIncludeCodexSessionBoot(args.prepared, args.session)
   const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/codex/sessions/${encodeURIComponent(args.sessionId)}/turns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -237,8 +245,11 @@ export async function runBrowserCodexTurn(args: {
         prepared: args.prepared,
         toolResults: args.toolResults ?? [],
         contextId: args.contextId,
+        includeSessionBoot,
       }),
       superleaf_context: codexSuperleafContextForTurn(args.prepared, args.contextId),
+      superleaf_boot_included: includeSessionBoot,
+      superleaf_boot_version: includeSessionBoot ? SUPERLEAF_SESSION_BOOT_VERSION : '',
       model: codexModel(args.prepared),
       service_tier: codexServiceTier(args.prepared),
       effort: codexEffort(args.prepared),
@@ -282,7 +293,7 @@ function codexSuperleafContextForTurn(
   contextId?: string,
 ): Record<string, unknown> {
   const mode =
-    String(prepared.codex_settings?.context_mode || prepared.codex_settings?.codex_context_mode || '').trim()
+    String(prepared.codex_settings?.context_mode || prepared.codex_settings?.codex_context_mode || 'lease').trim()
   const leaseContextId = String(contextId || prepared.superleaf_context.context_id || '').trim()
   if (mode !== 'lease' || !leaseContextId) {
     if (mode !== 'lease') return prepared.superleaf_context

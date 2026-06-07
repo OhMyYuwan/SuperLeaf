@@ -64,6 +64,9 @@ export interface BrowserToolBridgeResult {
   name: string
   toolKind?: string
   events?: Array<{ event: string; data: unknown }>
+  model_visible?: Record<string, unknown>
+  ui_meta?: Record<string, unknown>
+  audit?: Record<string, unknown>
 }
 
 export interface BrowserToolBridgeHandle {
@@ -203,6 +206,9 @@ export async function submitBrowserToolBridgeResult(args: {
   name: string
   toolKind?: string
   events?: Array<{ event: string; data: unknown }>
+  modelVisible?: Record<string, unknown>
+  uiMeta?: Record<string, unknown>
+  audit?: Record<string, unknown>
   signal?: AbortSignal
 }): Promise<void> {
   const resp = await fetch(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/tool-results`, {
@@ -215,6 +221,9 @@ export async function submitBrowserToolBridgeResult(args: {
       name: args.name,
       tool_kind: args.toolKind ?? '',
       events: args.events ?? [],
+      model_visible: args.modelVisible ?? {},
+      ui_meta: args.uiMeta ?? {},
+      audit: args.audit ?? {},
     }),
     signal: args.signal,
   })
@@ -315,6 +324,9 @@ async function executeAndSubmitBridgeRequest(
       name: result.name || request.name,
       toolKind,
       events: result.events ?? [],
+      modelVisible: result.model_visible ?? {},
+      uiMeta: result.ui_meta ?? {},
+      audit: result.audit ?? {},
       signal: args.signal,
     })
   } catch (err) {

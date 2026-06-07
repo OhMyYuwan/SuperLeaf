@@ -35,6 +35,13 @@
       "description": "How Local Agent Host queues tool calls for the active SuperLeaf browser context.",
       "mimeType": "text/plain",
       "text": "The browser bridge registers project_id, conversation_id, document_id, selection offsets, backend_url, and SuperLeaf origin with Local Agent Host. When an MCP client calls a SuperLeaf tool, Local Agent Host queues the request for the active browser context. The browser executes the existing backend-authorized route using the user's current login state and submits the result back to Local Agent Host. If no browser context is active, tool calls fail or time out with an explicit error."
+    },
+    {
+      "uri": "superleaf://context/current",
+      "name": "Current SuperLeaf Context",
+      "description": "Dynamic summary of the active SuperLeaf browser bridge context. Includes document id, range, hashes, and clipped selection preview, but not full document content.",
+      "mimeType": "application/json",
+      "kind": "current_context"
     }
   ],
   "prompts": [

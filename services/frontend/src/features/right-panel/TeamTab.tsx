@@ -4546,7 +4546,7 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_approval_policy: 'on-request',
   codex_prompt_mode: 'fast-edit',
   codex_tool_mode: 'mcp-first',
-  codex_context_mode: 'legacy-blocks',
+  codex_context_mode: 'lease',
 } satisfies Partial<ProviderDraft>
 
 const DEFAULT_CLAUDE_SETTINGS = {
@@ -4586,7 +4586,7 @@ function codexProviderSettings(provider: Provider): Partial<ProviderUpdate> {
     codex_approval_policy: enumMeta(provider.meta, 'codex_approval_policy', ['never', 'untrusted', 'on-request', 'on-failure'], 'on-request') as ProviderDraft['codex_approval_policy'],
     codex_prompt_mode: enumMeta(provider.meta, 'codex_prompt_mode', ['fast-edit', 'full-agent'], 'fast-edit') as ProviderDraft['codex_prompt_mode'],
     codex_tool_mode: enumMeta(provider.meta, 'codex_tool_mode', ['mcp-first', 'browser-preflight', 'marker-only'], 'mcp-first') as ProviderDraft['codex_tool_mode'],
-    codex_context_mode: enumMeta(provider.meta, 'codex_context_mode', ['legacy-blocks', 'lease'], 'legacy-blocks') as ProviderDraft['codex_context_mode'],
+    codex_context_mode: enumMeta(provider.meta, 'codex_context_mode', ['legacy-blocks', 'lease'], 'lease') as ProviderDraft['codex_context_mode'],
   }
 }
 
@@ -4609,7 +4609,7 @@ function codexSettingsPatch(source: Partial<CodexSettingsDraft>): Partial<Provid
     codex_approval_policy: source.codex_approval_policy ?? 'on-request',
     codex_prompt_mode: source.codex_prompt_mode ?? 'fast-edit',
     codex_tool_mode: source.codex_tool_mode ?? 'mcp-first',
-    codex_context_mode: source.codex_context_mode ?? 'legacy-blocks',
+    codex_context_mode: source.codex_context_mode ?? 'lease',
   }
 }
 
@@ -4689,10 +4689,10 @@ function CodexSettingsFields({
       />
       <CodexSegmentedControl
         label="Context"
-        value={draft.codex_context_mode ?? 'legacy-blocks'}
+        value={draft.codex_context_mode ?? 'lease'}
         options={[
-          { value: 'legacy-blocks', label: '完整提示' },
           { value: 'lease', label: '轻量缓存' },
+          { value: 'legacy-blocks', label: '兼容完整提示' },
         ]}
         onChange={(value) => onChange({ codex_context_mode: value as ProviderDraft['codex_context_mode'] })}
       />

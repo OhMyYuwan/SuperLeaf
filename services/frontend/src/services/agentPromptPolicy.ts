@@ -3,23 +3,34 @@ import type {
   BrowserNanobotToolResult,
   ProviderDraft,
 } from './backendApi'
-import { formatCompactSuperleafToolGuide, formatSuperleafToolDefinitions } from './superleafTools'
+import {
+  buildSuperleafFallbackToolGuide,
+  shouldIncludeSuperleafToolGuide,
+  toolGuideModeForTransport,
+} from './agentToolGuidePolicy'
+import { formatSuperleafToolDefinitions } from './superleafTools'
 
 export type SuperLeafContextMode = 'legacy-blocks' | 'lease'
+export const SUPERLEAF_SESSION_BOOT_VERSION = 'superleaf-boot@1'
 
 export interface CodexPromptPolicyArgs {
   prepared: BrowserCodexPrepare
   toolResults: BrowserNanobotToolResult[]
   contextId?: string
+  includeSessionBoot?: boolean
+}
+
+export interface CodexSessionBootState {
+  superleaf_boot_version?: string
 }
 
 export function buildCodexPromptWithPolicy(args: CodexPromptPolicyArgs): string {
-  const { prepared, toolResults, contextId } = args
+  const { prepared, toolResults, contextId, includeSessionBoot = false } = args
   if (prepared.prompt_mode === 'full-agent') {
     return buildFullCodexPrompt(prepared, toolResults)
   }
   if (shouldUseCodexLeasePrompt(prepared, contextId)) {
-    return buildLeaseCodexPrompt(prepared, toolResults, contextId || '')
+    return buildLeaseCodexPrompt(prepared, toolResults, contextId || '', includeSessionBoot)
   }
   return buildLegacyFastCodexPrompt(prepared, toolResults)
 }
@@ -41,7 +52,7 @@ export function codexContextMode(prepared: BrowserCodexPrepare): SuperLeafContex
     stringSetting(prepared.codex_settings?.context_mode) ||
     stringSetting(prepared.codex_settings?.codex_context_mode) ||
     stringSetting(prepared.superleaf_context.context_mode)
-  return value === 'lease' ? 'lease' : 'legacy-blocks'
+  return value === 'legacy-blocks' ? 'legacy-blocks' : 'lease'
 }
 
 export function codexToolMode(prepared: BrowserCodexPrepare): NonNullable<ProviderDraft['codex_tool_mode']> {
@@ -64,6 +75,18 @@ export function codexEffectiveApprovalPolicy(
   return configured
 }
 
+export function shouldIncludeCodexSessionBoot(
+  prepared: BrowserCodexPrepare,
+  session: CodexSessionBootState | null | undefined,
+): boolean {
+  return (
+    prepared.prompt_mode === 'fast-edit' &&
+    codexContextMode(prepared) === 'lease' &&
+    codexToolMode(prepared) !== 'marker-only' &&
+    stringValue(session?.superleaf_boot_version) !== SUPERLEAF_SESSION_BOOT_VERSION
+  )
+}
+
 export function buildLegacyFastCodexPrompt(
   prepared: BrowserCodexPrepare,
   toolResults: BrowserNanobotToolResult[],
@@ -79,8 +102,9 @@ export function buildLegacyFastCodexPrompt(
       '[END SUPERLEAF FAST MODE]',
     ].join('\n'),
   ]
-  if (prepared.tools.length > 0) {
-    sections.push(`[SUPERLEAF TOOL GUIDE]\n${formatCompactSuperleafToolGuide(prepared.tools)}`)
+  const guideMode = toolGuideModeForTransport(codexToolMode(prepared))
+  if (prepared.tools.length > 0 && shouldIncludeSuperleafToolGuide(guideMode)) {
+    sections.push(`[SUPERLEAF TOOL GUIDE]\n${buildSuperleafFallbackToolGuide(prepared.tools)}`)
   }
   appendToolResults(sections, toolResults, 'Use the tool results above. If more project reads are necessary, request additional tool markers as needed.')
   sections.push(prepared.prompt)
@@ -91,18 +115,26 @@ export function buildLeaseCodexPrompt(
   prepared: BrowserCodexPrepare,
   toolResults: BrowserNanobotToolResult[],
   contextId: string,
+  includeSessionBoot = false,
 ): string {
-  const sections: string[] = [
-    buildSuperLeafTurnHeader(prepared, contextId),
-    [
-      'You are local Codex inside the SuperLeaf editor. Keep this turn concise.',
-      'Use SuperLeaf MCP tools for project reads, document search, suggestions, and edit proposals.',
-      'For selected-text rewrites, call propose_doc_edit; do not claim text was applied unless a tool result confirms it.',
-    ].join(' '),
-  ]
+  const sections: string[] = [buildSuperLeafTurnHeader(prepared, contextId)]
+  if (includeSessionBoot) sections.push(buildCodexSessionBootBlock(prepared))
   appendToolResults(sections, toolResults, 'Use the tool results above. If more SuperLeaf context is needed, request another MCP tool call using this context_id.')
   sections.push(prepared.prompt)
   return sections.join('\n\n')
+}
+
+export function buildCodexSessionBootBlock(prepared: BrowserCodexPrepare): string {
+  return [
+    '[SUPERLEAF SESSION BOOT]',
+    `version: ${SUPERLEAF_SESSION_BOOT_VERSION}`,
+    'You are local Codex inside the SuperLeaf editor.',
+    'Keep turns concise and preserve SuperLeaf as the editing and collaboration UI.',
+    codexToolModePrompt(prepared),
+    'Use SuperLeaf MCP tools for project reads, document search, suggestions, edit proposals, annotations, and safe project file creation.',
+    'For selected-text rewrites, call propose_doc_edit; do not claim text was applied unless a tool result confirms it.',
+    '[END SUPERLEAF SESSION BOOT]',
+  ].join('\n')
 }
 
 export function buildSuperLeafTurnHeader(
@@ -125,11 +157,19 @@ export function buildSuperLeafTurnHeader(
   const selectionHash = stringValue(ctx.selection_hash)
   const contextChanged = stringValue(ctx.context_changed) || 'unknown'
   const manifestVersion = stringValue(ctx.tool_manifest_version)
+  const docVersion = stringValue(ctx.doc_version)
+  const contextHash = stringValue(ctx.context_hash)
+  const selectionPreview = headerValue(ctx.selection_preview, 240)
   if (docName) lines.push(`doc_name: ${docName}`)
   if (docFormat) lines.push(`doc_format: ${docFormat}`)
+  if (docVersion) lines.push(`doc_version: ${headerValue(docVersion, 120)}`)
+  if (contextHash) lines.push(`context_hash: ${contextHash}`)
   if (selectionHash) lines.push(`selection_hash: ${selectionHash}`)
   if (manifestVersion) lines.push(`tool_manifest_version: ${manifestVersion}`)
   lines.push(`changed: ${contextChanged}`)
+  if (selectionPreview && contextChanged !== 'none') {
+    lines.push(`selection_preview: ${selectionPreview}`)
+  }
   lines.push('[/SUPERLEAF TURN]')
   return lines.join('\n')
 }
@@ -198,6 +238,12 @@ function stringSetting(value: unknown): string {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function headerValue(value: unknown, limit: number): string {
+  const text = stringValue(value).replace(/\s+/gu, ' ')
+  if (text.length <= limit) return text
+  return `${text.slice(0, Math.max(0, limit - 3))}...`
 }
 
 function isOneOf(value: string, allowed: string[]): boolean {

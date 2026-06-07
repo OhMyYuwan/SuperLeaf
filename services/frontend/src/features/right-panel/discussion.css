@@ -315,6 +315,15 @@
   min-width: 0;
   width: auto;
 }
+
+.message-input-row .discussion-mention-input .mention-input-textarea.auto-resize {
+  scrollbar-width: none;
+}
+
+.message-input-row .discussion-mention-input .mention-input-textarea.auto-resize::-webkit-scrollbar {
+  display: none;
+}
+
 .message-input-row input {
   flex: 1;
   padding: 8px 10px;

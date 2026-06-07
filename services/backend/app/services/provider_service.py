@@ -922,14 +922,14 @@ def _codex_meta_patch(
     if codex_tool_mode is not None:
         patch["codex_tool_mode"] = _choice(codex_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
     if codex_context_mode is not None:
-        patch["codex_context_mode"] = _choice(codex_context_mode, {"legacy-blocks", "lease"}, "legacy-blocks")
+        patch["codex_context_mode"] = _choice(codex_context_mode, {"legacy-blocks", "lease"}, "lease")
     patch.setdefault("codex_effort", "low")
     patch.setdefault("codex_summary", "none")
     patch.setdefault("codex_sandbox", "danger-full-access")
     patch.setdefault("codex_approval_policy", "on-request")
     patch.setdefault("codex_prompt_mode", "fast-edit")
     patch.setdefault("codex_tool_mode", "mcp-first")
-    patch.setdefault("codex_context_mode", "legacy-blocks")
+    patch.setdefault("codex_context_mode", "lease")
     return patch
 
 

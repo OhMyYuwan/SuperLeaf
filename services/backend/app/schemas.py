@@ -1148,6 +1148,9 @@ class BrowserNanobotToolOut(BaseModel):
     name: str = ""
     tool_kind: str = ""
     events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
 
 
 class BrowserNanobotFinishIn(BaseModel):
@@ -1192,6 +1195,9 @@ class BrowserCodexToolOut(BaseModel):
     name: str = ""
     tool_kind: str = ""
     events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
 
 
 class BrowserCodexFinishIn(BaseModel):
@@ -1237,6 +1243,9 @@ class BrowserClaudeToolOut(BaseModel):
     name: str = ""
     tool_kind: str = ""
     events: list[dict] = Field(default_factory=list)
+    model_visible: dict = Field(default_factory=dict)
+    ui_meta: dict = Field(default_factory=dict)
+    audit: dict = Field(default_factory=dict)
 
 
 class BrowserClaudeFinishIn(BaseModel):

@@ -721,7 +721,7 @@ const DEFAULT_CODEX_SETTINGS = {
   codex_approval_policy: 'on-request',
   codex_prompt_mode: 'fast-edit',
   codex_tool_mode: 'mcp-first',
-  codex_context_mode: 'legacy-blocks',
+  codex_context_mode: 'lease',
 } satisfies Partial<ProviderDraft>
 
 const DEFAULT_CLAUDE_SETTINGS = {
@@ -798,10 +798,10 @@ function CodexSettingsFields({
       />
       <CodexSegmentedControl
         label="Context"
-        value={draft.codex_context_mode ?? 'legacy-blocks'}
+        value={draft.codex_context_mode ?? 'lease'}
         options={[
-          { value: 'legacy-blocks', label: '完整提示' },
           { value: 'lease', label: '轻量缓存' },
+          { value: 'legacy-blocks', label: '兼容完整提示' },
         ]}
         onChange={(value) => onChange({ codex_context_mode: value as ProviderDraft['codex_context_mode'] })}
       />

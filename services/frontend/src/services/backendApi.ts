@@ -1327,6 +1327,9 @@ export interface BrowserNanobotToolResult {
   name: string
   tool_kind: string
   events: Array<{ event: string; data: unknown }>
+  model_visible?: Record<string, unknown>
+  ui_meta?: Record<string, unknown>
+  audit?: Record<string, unknown>
 }
 
 export interface MessageInject {

@@ -349,6 +349,36 @@ def _build_light_browser_codex_query(
     }
 
 
+def _build_lease_browser_codex_query(
+    db: Session,
+    conv: Conversation,
+    body: MessageSendIn,
+) -> dict[str, Any]:
+    document = db.get(Doc, conv.document_id)
+    target_text = str(body.inputs.get("target_text") or "").strip()
+    doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
+    attached_files = normalize_attached_files(body.inputs.get("attached_files"))
+    image_attachments = collect_image_attachments(attached_files)
+
+    parts = [
+        _panel_reply_contract(
+            doc_format=doc_format,
+            target_text=target_text,
+            user_message=body.content,
+        ),
+        f"[CURRENT USER MESSAGE]\n{body.content}",
+    ]
+    attached_block = render_attached_files_block(attached_files)
+    if attached_block:
+        parts.insert(1, _clip_prompt_text(attached_block, 6000))
+    return {
+        "agent_query": "\n\n".join(parts),
+        "doc_format": doc_format,
+        "attached_files": attached_files,
+        "image_attachments": image_attachments,
+    }
+
+
 def _clip_prompt_text(value: str, limit: int) -> str:
     text = str(value or "")
     if len(text) <= limit:
@@ -365,7 +395,7 @@ def _superleaf_text_hash(value: str) -> str:
 
 def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
     meta = provider.meta or {}
-    context_mode = _settings_choice(meta.get("codex_context_mode"), {"legacy-blocks", "lease"}, "legacy-blocks")
+    context_mode = _settings_choice(meta.get("codex_context_mode"), {"legacy-blocks", "lease"}, "lease")
     return {
         "model": str(meta.get("codex_model") or "").strip(),
         "effort": _codex_effort_choice(meta.get("codex_effort")),
@@ -516,6 +546,112 @@ def _browser_tool_events(result: Any, call: dict[str, Any]) -> list[dict[str, An
         else:
             events.append({"event": event, "data": data})
     return events
+
+
+def _browser_tool_visibility_envelope(result: Any, call: dict[str, Any]) -> dict[str, Any]:
+    name = str((call.get("function") or {}).get("name") or result.failed_function_name or "")
+    call_id = str(call.get("id") or "browser-tool-call")
+    side_event = result.side_event if isinstance(result.side_event, dict) else None
+    side_event_name = str((side_event or {}).get("event") or "")
+    side_event_data = (side_event or {}).get("data") if side_event else None
+    model_visible = _browser_tool_model_visible(
+        name=name,
+        result=result,
+        side_event_name=side_event_name,
+        side_event_data=side_event_data,
+    )
+    return {
+        "model_visible": model_visible,
+        "ui_meta": _browser_tool_ui_meta(
+            name=name,
+            result=result,
+            side_event_name=side_event_name,
+            side_event_data=side_event_data,
+        ),
+        "audit": {
+            "tool_call_id": call_id,
+            "tool_name": name,
+            "tool_kind": result.tool_kind,
+            "failed": bool(result.failed),
+            "has_side_event": side_event is not None,
+        },
+        "content": _browser_tool_model_content(result, model_visible),
+    }
+
+
+def _browser_tool_model_visible(
+    *,
+    name: str,
+    result: Any,
+    side_event_name: str,
+    side_event_data: Any,
+) -> dict[str, Any]:
+    if result.failed:
+        return {
+            "status": "error",
+            "tool_name": name,
+            "summary": str(result.content),
+        }
+    if side_event_name == "native.agent.edit_proposal" and isinstance(side_event_data, dict):
+        return {
+            "status": "ok",
+            "tool_name": name,
+            "summary": "Edit proposal created in SuperLeaf and is waiting for user approval.",
+            "next_instruction": "Briefly explain the proposed change and do not claim it was applied.",
+            "proposal_id": str(side_event_data.get("proposal_id") or ""),
+            "document_id": str(side_event_data.get("document_id") or ""),
+        }
+    if side_event_name == "native.agent.suggestion_created" and isinstance(side_event_data, dict):
+        return {
+            "status": "ok",
+            "tool_name": name,
+            "summary": "Suggestion annotation created in SuperLeaf.",
+            "next_instruction": "Briefly mention that the annotation card is available in SuperLeaf.",
+            "suggestion_id": str(side_event_data.get("suggestion_id") or ""),
+            "document_id": str(side_event_data.get("document_id") or ""),
+        }
+    if side_event_name == "native.agent.project_file_created" and isinstance(side_event_data, dict):
+        return {
+            "status": "ok",
+            "tool_name": name,
+            "summary": "Project document created in SuperLeaf.",
+            "next_instruction": "Briefly tell the user which file was created.",
+            "doc_id": str(side_event_data.get("doc_id") or ""),
+            "path": str(side_event_data.get("path") or ""),
+        }
+    return {
+        "status": "ok",
+        "tool_name": name,
+        "content": str(result.content),
+    }
+
+
+def _browser_tool_ui_meta(
+    *,
+    name: str,
+    result: Any,
+    side_event_name: str,
+    side_event_data: Any,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "tool_name": name,
+        "tool_kind": result.tool_kind,
+        "failed": bool(result.failed),
+    }
+    if side_event_name:
+        meta["side_event"] = {
+            "event": side_event_name,
+            "data": side_event_data if isinstance(side_event_data, dict) else {},
+        }
+    return meta
+
+
+def _browser_tool_model_content(result: Any, model_visible: dict[str, Any]) -> str:
+    if result.failed:
+        return str(result.content)
+    if "content" in model_visible:
+        return str(model_visible.get("content") or "")
+    return json.dumps(model_visible, ensure_ascii=False)
 
 
 @router.get("", response_model=list[ConversationOut])
@@ -930,11 +1066,12 @@ def prepare_browser_codex_message(
     user_msg = _persist_user_message(db, conv, body)
     _sync_conversation_session(db, conv)
     codex_settings = _codex_settings_from_provider(provider)
-    prompt_payload = (
-        _build_agent_query(db, conv, body, current_message_id=user_msg.id)
-        if codex_settings["prompt_mode"] == "full-agent"
-        else _build_light_browser_codex_query(db, conv, body)
-    )
+    if codex_settings["prompt_mode"] == "full-agent":
+        prompt_payload = _build_agent_query(db, conv, body, current_message_id=user_msg.id)
+    elif codex_settings["context_mode"] == "lease":
+        prompt_payload = _build_lease_browser_codex_query(db, conv, body)
+    else:
+        prompt_payload = _build_light_browser_codex_query(db, conv, body)
     run_id = f"browser-codex-{uuid.uuid4().hex}"
     workspace_path = str((provider.meta or {}).get("workspace_path") or "").strip()
     doc = db.get(Doc, conv.document_id)
@@ -1025,13 +1162,17 @@ async def execute_browser_codex_tool(
     )
     call_id = str(body.tool_call.get("id") or "browser-tool-call")
     name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    envelope = _browser_tool_visibility_envelope(result, body.tool_call)
     return BrowserCodexToolOut(
         tool_call_id=call_id,
-        content=result.content,
+        content=envelope["content"],
         failed=result.failed,
         name=name,
         tool_kind=result.tool_kind,
         events=_browser_tool_events(result, body.tool_call),
+        model_visible=envelope["model_visible"],
+        ui_meta=envelope["ui_meta"],
+        audit=envelope["audit"],
     )
 
 
@@ -1172,13 +1313,17 @@ async def execute_browser_claude_tool(
     )
     call_id = str(body.tool_call.get("id") or "browser-tool-call")
     name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    envelope = _browser_tool_visibility_envelope(result, body.tool_call)
     return BrowserClaudeToolOut(
         tool_call_id=call_id,
-        content=result.content,
+        content=envelope["content"],
         failed=result.failed,
         name=name,
         tool_kind=result.tool_kind,
         events=_browser_tool_events(result, body.tool_call),
+        model_visible=envelope["model_visible"],
+        ui_meta=envelope["ui_meta"],
+        audit=envelope["audit"],
     )
 
 
@@ -1296,13 +1441,17 @@ async def execute_browser_nanobot_tool(
     result = await runner.execute_browser_nanobot_tool(body.tool_call, payload)
     call_id = str(body.tool_call.get("id") or "browser-tool-call")
     name = str((body.tool_call.get("function") or {}).get("name") or result.failed_function_name)
+    envelope = _browser_tool_visibility_envelope(result, body.tool_call)
     return BrowserNanobotToolOut(
         tool_call_id=call_id,
-        content=result.content,
+        content=envelope["content"],
         failed=result.failed,
         name=name,
         tool_kind=result.tool_kind,
         events=_browser_tool_events(result, body.tool_call),
+        model_visible=envelope["model_visible"],
+        ui_meta=envelope["ui_meta"],
+        audit=envelope["audit"],
     )
 
 

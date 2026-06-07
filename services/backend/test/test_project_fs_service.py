@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.models import Doc, FileBlob, Project, User
-from app.services.project_fs_service import ProjectFsService
+from app.services.project_fs_service import DocVersionConflictError, ProjectFsService
 
 
 def _service():
@@ -66,3 +66,27 @@ def test_create_doc_replaces_same_name_file_in_same_folder():
     assert [row.id for row in docs] == [doc.id]
     assert files == []
     assert docs[0].content == "new"
+
+
+def test_update_doc_content_rejects_stale_expected_version():
+    db, _project, service = _service()
+    doc = service.create_doc(folder_id=None, name="main.tex", format="tex", content="v1")
+
+    first = service.update_doc_content(doc.id, "v2", origin="manual", expected_version=doc.version)
+
+    assert first is not None
+    assert first.content == "v2"
+    assert first.version == 2
+
+    try:
+        service.update_doc_content(doc.id, "stale overwrite", origin="manual", expected_version=1)
+    except DocVersionConflictError as exc:
+        assert exc.current.id == doc.id
+        assert exc.current.version == 2
+    else:
+        raise AssertionError("expected stale expected_version to be rejected")
+
+    current = db.get(Doc, doc.id)
+    assert current is not None
+    assert current.content == "v2"
+    assert current.version == 2

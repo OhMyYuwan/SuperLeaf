@@ -12,6 +12,10 @@ const INTERNAL_TOKEN_HEADER = 'x-superleaf-internal-token'
 
 let persistence: LeveldbPersistence
 
+export interface HttpIntegration {
+  getActiveDocIds: () => string[]
+}
+
 export function initPersistence() {
   persistence = new LeveldbPersistence(DATA_DIR)
   console.log(`[collab-server] persistence: ${DATA_DIR}`)
@@ -69,12 +73,28 @@ export async function storeUpdate(docId: string, update: Uint8Array): Promise<vo
  *   GET  /docs/:docId/text   — returns current plain text of the document
  *   GET  /health             — health check
  */
-export function handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+export function handleHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  integration: HttpIntegration,
+): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
 
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ status: 'ok' }))
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/docs/active') {
+    if (!isAuthorizedInternalRequest(req)) {
+      res.writeHead(401)
+      res.end('Unauthorized')
+      return
+    }
+    const docIds = integration.getActiveDocIds()
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ doc_ids: docIds, count: docIds.length }))
     return
   }
 

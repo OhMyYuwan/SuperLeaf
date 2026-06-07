@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { WebSocket, WebSocketServer } from 'ws'
-import { setupWSConnection } from './ws-handler.js'
+import { getActiveDocIds, setupWSConnection } from './ws-handler.js'
 import { initPersistence, handleHttpRequest } from './persistence.js'
 
 const PORT = parseInt(process.env.COLLAB_PORT ?? '4444', 10)
@@ -11,7 +11,7 @@ const COLLAB_TOKEN_PROTOCOL_PREFIX = 'superleaf-collab-token.'
 
 const server = http.createServer((req, res) => {
   // HTTP API for FastAPI to read document text / push initial content.
-  handleHttpRequest(req, res)
+  handleHttpRequest(req, res, { getActiveDocIds })
 })
 
 const wss = new WebSocketServer({ noServer: true })

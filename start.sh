@@ -16,6 +16,7 @@ PID_FILE="$LOG_DIR/pids"
 FRONTEND_PORT="${YLW_FRONTEND_PORT:-${YLW_PORT:-5173}}"
 BACKEND_PORT="${YLW_BACKEND_PORT:-8000}"
 COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
+COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-superleaf-local-collab-internal-token}}"
 LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
 LOCAL_AGENT_HOST_PORT="${SL_LOCAL_AGENT_HOST_PORT:-8787}"
 LOCAL_AGENT_HOST_ORIGINS="${SL_LOCAL_AGENT_HOST_ORIGINS:-*}"
@@ -205,7 +206,7 @@ start_backend() {
   log "Starting backend on :$BACKEND_PORT → $logfile"
   (
     cd "$BACKEND_DIR"
-    exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
+    YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "backend" "$pid"
@@ -234,7 +235,7 @@ start_collab() {
   log "Starting collab-server on :$COLLAB_PORT → $logfile"
   (
     cd "$COLLAB_DIR"
-    COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" exec npx tsx src/index.ts
+    COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec npx tsx src/index.ts
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "collab" "$pid"

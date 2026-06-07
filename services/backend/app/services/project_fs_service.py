@@ -41,6 +41,12 @@ _DOC_SUFFIX_FORMATS = {
 SKILL_DATA_FOLDER_NAME = "_skill_data"
 
 
+class DocVersionConflictError(Exception):
+    def __init__(self, current: Doc) -> None:
+        self.current = current
+        super().__init__("document version conflict")
+
+
 class ProjectFsService:
     def __init__(self, db: Session, project: Project) -> None:
         self.db = db
@@ -222,10 +228,13 @@ class ProjectFsService:
         *,
         origin: str = "auto_save",
         actor: str | None = None,
+        expected_version: int | None = None,
     ) -> Doc | None:
         doc = self.db.get(Doc, doc_id)
         if doc is None:
             return None
+        if expected_version is not None and doc.version != expected_version:
+            raise DocVersionConflictError(doc)
         doc.content = content
         doc.version += 1
         doc.updated_at = datetime.utcnow()

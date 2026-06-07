@@ -36,6 +36,7 @@ interface DocumentState {
   lastSavedAt: Record<string, number>
   saveError: Record<string, string | null>
   collaborating: Record<string, boolean>
+  backendVersions: Record<string, number>
 
   setActive: (id: string) => void
   clearActive: () => void
@@ -67,6 +68,7 @@ export const useDocumentStore = create<DocumentState>()(
       lastSavedAt: {},
       saveError: {},
       collaborating: {},
+      backendVersions: {},
 
       setActive: (id) => {
         if (get().documents[id]) {
@@ -90,17 +92,20 @@ export const useDocumentStore = create<DocumentState>()(
           const lastSavedAt = { ...state.lastSavedAt }
           const saveError = { ...state.saveError }
           const collaborating = { ...state.collaborating }
+          const backendVersions = { ...state.backendVersions }
           delete documents[id]
           delete saveStatus[id]
           delete lastSavedAt[id]
           delete saveError[id]
           delete collaborating[id]
+          delete backendVersions[id]
           return {
             documents,
             saveStatus,
             lastSavedAt,
             saveError,
             collaborating,
+            backendVersions,
             activeDocumentId: state.activeDocumentId === id ? null : state.activeDocumentId,
           }
         })
@@ -176,6 +181,7 @@ export const useDocumentStore = create<DocumentState>()(
             saveStatus: { ...state.saveStatus, [normalized.id]: 'saved' },
             lastSavedAt: { ...state.lastSavedAt, [normalized.id]: savedAt },
             saveError: { ...state.saveError, [normalized.id]: null },
+            backendVersions: { ...state.backendVersions, [normalized.id]: doc.version },
           }
         })
       },
@@ -222,7 +228,13 @@ export const useDocumentStore = create<DocumentState>()(
           saveError: { ...state.saveError, [id]: null },
         }))
         try {
-          const saved = await filesystemApi.updateDoc(id, existing.content)
+          if (get().collaborating[id]) {
+            const saved = await filesystemApi.flushCollabDoc(id)
+            get().upsertFromBackendDoc(saved)
+            return
+          }
+          const baseVersion = get().backendVersions[id] ?? existing.version
+          const saved = await filesystemApi.updateDoc(id, existing.content, baseVersion)
           // Don't call upsertFromBackendDoc — it would replace the local
           // document and clobber any edits the user made while the request
           // was in flight. Just bump the bookkeeping state.
@@ -234,6 +246,7 @@ export const useDocumentStore = create<DocumentState>()(
             },
             lastSavedAt: { ...state.lastSavedAt, [id]: savedAt },
             saveError: { ...state.saveError, [id]: null },
+            backendVersions: { ...state.backendVersions, [id]: saved.version },
             documents: state.documents[id]
               ? {
                   ...state.documents,
@@ -257,9 +270,19 @@ export const useDocumentStore = create<DocumentState>()(
           clearTimeout(pending)
           debounceTimers[id] = undefined
         }
+        if (get().collaborating[id]) {
+          await get().saveBackendDoc(id)
+          if (get().saveStatus[id] === 'error') {
+            throw new Error('document save failed')
+          }
+          return
+        }
         const status = get().saveStatus[id]
         if (status === 'dirty' || status === 'error') {
           await get().saveBackendDoc(id)
+          if (get().saveStatus[id] === 'error') {
+            throw new Error('document save failed')
+          }
         }
       },
     }),

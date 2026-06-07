@@ -947,6 +947,7 @@ class DocCreateIn(BaseModel):
 
 class DocUpdateIn(BaseModel):
     content: str
+    base_version: int | None = Field(default=None, ge=1)
     # Optional origin tag for the V3 history snapshot. Defaults to auto_save.
     origin: str | None = Field(
         default=None,

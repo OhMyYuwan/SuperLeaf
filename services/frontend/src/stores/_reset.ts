@@ -29,6 +29,8 @@ export function resetProjectScopedStores(): void {
     saveStatus: {},
     lastSavedAt: {},
     saveError: {},
+    collaborating: {},
+    backendVersions: {},
   })
 
   useAnnotationStore.setState({

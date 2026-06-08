@@ -218,6 +218,8 @@ export COLLAB_INTERNAL_TOKEN="your-shared-token"
 - collab-server 是否能访问 `/docs/{doc_id}/text`。
 - 浏览器 Network 面板中 `collab-flush` 是否返回 `401`、`404` 或 `500`。
 
+如果导入 zip、导入 GitHub、导出 zip、创建/推送归档快照、创建/恢复项目大版本时返回 `503` 且响应里有 `collab_flush_failed`，说明后端为了避免读取旧 SQLite 副本，先尝试 flush 当前项目内活跃的 Yjs 文档但失败了。按同样顺序检查 collab-server `/health`、内部 token、`/docs/active` 和 `/docs/{doc_id}/text`。
+
 如果协作文档出现旧内容，先不要让其他用户手动保存旧页面。刷新页面后等待状态变成「已同步」，再手动保存一次；如果仍然异常，重启 collab-server 后打开项目，让后端用最近一次 SQLite 内容重新 seed 文档。
 
 ## 项目大版本下载失败

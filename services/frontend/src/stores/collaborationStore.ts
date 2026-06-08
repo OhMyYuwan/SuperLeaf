@@ -28,6 +28,7 @@ interface CollaborationState {
 
   connect: (projectId: string, docId: string, user: { id: string; name: string }) => Promise<void>
   disconnect: () => void
+  waitUntilSynced: (docId: string, timeoutMs?: number) => Promise<void>
 }
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -123,5 +124,40 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
       provider.destroy()
     }
     set({ provider: null, status: 'disconnected', peers: [], currentProjectId: null, currentDocId: null })
+  },
+
+  waitUntilSynced: (docId, timeoutMs = 5000) => {
+    const state = get()
+    if (!state.provider || state.currentDocId !== docId) {
+      return Promise.resolve()
+    }
+    if (state.status === 'synced') {
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let unsubscribe: (() => void) | null = null
+      const finish = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (unsubscribe) unsubscribe()
+        clearTimeout(timer)
+        if (err) reject(err)
+        else resolve()
+      }
+      const timer = setTimeout(() => {
+        finish(new Error('协作连接尚未同步，请稍后再保存'))
+      }, timeoutMs)
+      unsubscribe = state.provider!.onStatusChange((status) => {
+        const latest = get()
+        if (latest.provider !== state.provider || latest.currentDocId !== docId) {
+          finish()
+          return
+        }
+        if (status === 'synced') {
+          finish()
+        }
+      })
+    })
   },
 }))

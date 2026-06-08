@@ -92,7 +92,8 @@ y-codemirror.next              y-protocols                    y-codemirror.next
 1. 非协作文档使用 `PUT /api/docs/{doc_id}` 保存，并携带最后一次确认的后端 `base_version`。如果版本已经落后，后端返回 `409 Conflict`，避免旧内容覆盖新内容。
 2. 协作文档使用 `POST /api/docs/{doc_id}/collab-flush` 保存。后端从 collab-server 读取当前 Yjs 文本，再写入 SQLite 和版本历史。
 3. 切换到其他文件、手动保存和编译前保存都会先触发协作 flush。flush 失败时不会继续假装保存成功。
-4. 后台快照服务每 30 秒读取 collab-server 的 active document 列表，只 snapshot 当前真正打开的 Yjs 房间。空文本也是合法内容，会被写入后端。
+4. 导入 zip、导入 GitHub、导出 zip、创建/推送归档快照、创建/恢复项目大版本前，后端会先 flush 当前项目内的活跃协作文档。flush 失败时这些 DB-only 操作会返回错误，而不是用旧的 SQLite 副本继续执行。
+5. 后台快照服务每 30 秒读取 collab-server 的 active document 列表，只 snapshot 当前真正打开的 Yjs 房间。空文本也是合法内容，会被写入后端。
 
 即使 collab-server 重启，后端也可以用最近一次 SQLite 内容重新 seed 文档。正常退出或切文件前的 flush 会尽量缩小 Yjs 与 SQLite 之间的窗口。
 

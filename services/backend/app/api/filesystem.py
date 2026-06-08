@@ -24,11 +24,12 @@ from ..schemas import (
     FolderOut,
     ProjectTreeOut,
 )
-from ..services.auth_service import AuthService
 from ..services import collab_snapshot_service
+from ..services.auth_service import AuthService
 from ..services.event_bus import bus
 from ..services.project_fs_service import DocVersionConflictError, ProjectFsService
 from ..services.project_member_service import ProjectMemberService
+from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
 from .deps import (
     get_current_project,
     get_current_user,
@@ -232,9 +233,24 @@ async def flush_collab_doc(
     if existing is None or existing.project_id != project.id:
         raise HTTPException(404, "doc not found")
 
-    doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
+    try:
+        doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
+    except collab_snapshot_service.CollabSnapshotError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Unable to read the current collaboration state",
+            },
+        ) from exc
     if doc is None:
-        raise HTTPException(404, "collab doc not active")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Collaboration state is not ready yet",
+            },
+        )
     if doc.project_id != project.id:
         raise HTTPException(404, "doc not found")
 
@@ -383,6 +399,7 @@ async def import_project_zip(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
+    await flush_project_collab_or_503(project)
     try:
         doc_count, file_count, byte_count = ProjectFsService(db, project).replace_from_zip(
             blob
@@ -607,6 +624,7 @@ def export_zip(
     db: Session = Depends(get_session),
     project: Project = Depends(get_project_from_path),
 ) -> Response:
+    flush_project_collab_or_503_sync(project)
     data = ProjectFsService(db, project).export_zip()
     safe_name = (project.name or "project").replace('"', "").strip() or "project"
     return Response(

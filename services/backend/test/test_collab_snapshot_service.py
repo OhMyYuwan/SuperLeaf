@@ -1,3 +1,5 @@
+import io
+import zipfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -118,6 +120,47 @@ async def test_snapshot_active_docs_uses_collab_active_list(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_project_from_collab_filters_active_docs_by_project(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="project one")
+    db = session_factory()
+    user2 = User(id="owner2", email="owner2@example.com", password_hash="hash")
+    project2 = Project(id="project2", user_id=user2.id, name="Other Project")
+    doc2 = Doc(
+        id="doc2",
+        project_id=project2.id,
+        folder_id=None,
+        name="main.tex",
+        format="tex",
+        content="project two",
+        version=1,
+    )
+    db.add_all([user2, project2, doc2])
+    db.commit()
+    db.close()
+    monkeypatch.setattr(collab_snapshot_service, "SessionLocal", session_factory)
+    calls = []
+
+    async def fake_fetch_active_doc_ids(base_url):
+        return ["doc1", "doc2"]
+
+    async def fake_snapshot_doc_from_collab(doc_id, *, base_url=None):
+        calls.append((doc_id, base_url))
+        return object()
+
+    monkeypatch.setattr(collab_snapshot_service, "_fetch_active_doc_ids", fake_fetch_active_doc_ids)
+    monkeypatch.setattr(collab_snapshot_service, "snapshot_doc_from_collab", fake_snapshot_doc_from_collab)
+
+    flushed = await collab_snapshot_service.snapshot_project_from_collab(
+        "project1",
+        base_url="http://collab",
+    )
+
+    assert flushed == ["doc1"]
+    assert calls == [("doc1", "http://collab")]
+
+
+@pytest.mark.asyncio
 async def test_snapshot_doc_from_collab_accepts_empty_text(monkeypatch):
     session_factory = _session_factory()
     _seed_doc(session_factory, content="not empty")
@@ -152,6 +195,40 @@ async def test_snapshot_doc_from_collab_accepts_empty_text(monkeypatch):
     db.close()
 
 
+@pytest.mark.asyncio
+async def test_snapshot_doc_from_collab_rejects_uninitialized_text(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="do not erase")
+    monkeypatch.setattr(collab_snapshot_service, "SessionLocal", session_factory)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, headers=None):
+            return _FakeResponse(
+                {"doc_id": "doc1", "text": "", "length": 0, "initialized": False},
+            )
+
+    monkeypatch.setattr(collab_snapshot_service.httpx, "AsyncClient", FakeClient)
+
+    updated = await collab_snapshot_service.snapshot_doc_from_collab("doc1", base_url="http://collab")
+
+    assert updated is None
+    db = session_factory()
+    persisted = db.get(Doc, "doc1")
+    assert persisted is not None
+    assert persisted.content == "do not erase"
+    assert persisted.version == 1
+    db.close()
+
+
 def test_collab_flush_endpoint_returns_snapshotted_doc(monkeypatch):
     session_factory = _session_factory()
     _seed_doc(session_factory, content="old")
@@ -183,4 +260,96 @@ def test_collab_flush_endpoint_returns_snapshotted_doc(monkeypatch):
     payload = response.json()
     assert payload["content"] == "from yjs"
     assert payload["version"] == 2
+    db.close()
+
+
+def test_collab_flush_endpoint_reports_snapshot_failure(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="old")
+    db = session_factory()
+    client = _client(db)
+
+    async def fake_snapshot_doc_from_collab(doc_id, *, base_url=None):
+        raise collab_snapshot_service.CollabSnapshotError("internal collab API unavailable")
+
+    monkeypatch.setattr(
+        collab_snapshot_service,
+        "snapshot_doc_from_collab",
+        fake_snapshot_doc_from_collab,
+    )
+
+    response = client.post(
+        "/api/docs/doc1/collab-flush",
+        cookies={SESSION_COOKIE_NAME: "owner-session"},
+        headers={"X-Project-Id": "project1", "X-Client-Id": "client-a"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "collab_flush_failed"
+    db.close()
+
+
+def test_update_doc_endpoint_rejects_stale_base_version():
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="v1")
+    db = session_factory()
+    client = _client(db)
+
+    headers = {"X-Project-Id": "project1", "X-Client-Id": "client-a"}
+    cookies = {SESSION_COOKIE_NAME: "owner-session"}
+
+    first = client.put(
+        "/api/docs/doc1",
+        json={"content": "v2", "base_version": 1, "origin": "manual"},
+        headers=headers,
+        cookies=cookies,
+    )
+    assert first.status_code == 200
+    assert first.json()["version"] == 2
+
+    stale = client.put(
+        "/api/docs/doc1",
+        json={"content": "stale overwrite", "base_version": 1, "origin": "manual"},
+        headers=headers,
+        cookies=cookies,
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "doc_version_conflict"
+
+    current = client.get("/api/docs/doc1", headers=headers, cookies=cookies)
+    assert current.status_code == 200
+    assert current.json()["content"] == "v2"
+    db.close()
+
+
+def test_import_zip_flushes_active_collab_docs_before_replacing_tree(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="unsnapshotted")
+    db = session_factory()
+    client = _client(db)
+    calls = []
+
+    async def fake_snapshot_project_from_collab(project_id):
+        calls.append(project_id)
+        return ["doc1"]
+
+    monkeypatch.setattr(
+        collab_snapshot_service,
+        "snapshot_project_from_collab",
+        fake_snapshot_project_from_collab,
+    )
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("main.tex", "imported")
+
+    response = client.post(
+        "/api/project/import.zip",
+        files={"file": ("project.zip", archive.getvalue(), "application/zip")},
+        cookies={SESSION_COOKIE_NAME: "owner-session"},
+        headers={"X-Project-Id": "project1", "X-Client-Id": "client-a"},
+    )
+
+    assert response.status_code == 200
+    assert calls == ["project1"]
     db.close()

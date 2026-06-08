@@ -233,9 +233,24 @@ async def flush_collab_doc(
     if existing is None or existing.project_id != project.id:
         raise HTTPException(404, "doc not found")
 
-    doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
+    try:
+        doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
+    except collab_snapshot_service.CollabSnapshotError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Unable to read the current collaboration state",
+            },
+        ) from exc
     if doc is None:
-        raise HTTPException(404, "collab doc not active")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Collaboration state is not ready yet",
+            },
+        )
     if doc.project_id != project.id:
         raise HTTPException(404, "doc not found")
 

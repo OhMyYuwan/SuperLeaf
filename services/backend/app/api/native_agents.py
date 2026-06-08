@@ -259,7 +259,11 @@ def _project_skill_export_archive(row: Skill) -> tuple[str, bytes]:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "services" / "local-agent-host").is_dir():
+            return parent
+    return current.parents[4]
 
 
 def _local_agent_host_version(host_root: Path) -> str:

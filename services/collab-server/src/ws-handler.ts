@@ -25,6 +25,12 @@ export function getActiveDocIds(): string[] {
     .map(([id]) => id)
 }
 
+export function getLoadedDocText(docId: string): string | null {
+  const room = rooms.get(docId)
+  if (!room) return null
+  return room.doc.getText('content').toString()
+}
+
 async function getOrCreateRoom(docId: string, token?: string): Promise<DocRoom> {
   let room = rooms.get(docId)
   if (room) return room

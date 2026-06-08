@@ -16,6 +16,7 @@ import { createDocument, parseDocument } from '../services/documentParser'
 import { filesystemApi, type BackendDoc } from '../services/filesystemApi'
 import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
+import { useCollaborationStore } from './collaborationStore'
 
 const AUTO_SAVE_DEBOUNCE_MS = 1500
 
@@ -229,6 +230,7 @@ export const useDocumentStore = create<DocumentState>()(
         }))
         try {
           if (get().collaborating[id]) {
+            await useCollaborationStore.getState().waitUntilSynced(id)
             const saved = await filesystemApi.flushCollabDoc(id)
             get().upsertFromBackendDoc(saved)
             return

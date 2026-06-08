@@ -123,13 +123,18 @@ async def snapshot_doc_from_collab(doc_id: str, *, base_url: str | None = None) 
                 f"{resolved_base_url}/docs/{doc_id}/text",
                 headers=_collab_internal_headers(),
             )
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         logger.debug("[collab-snapshot] failed to fetch doc %s", doc_id)
-        return None
+        raise CollabSnapshotError(f"failed to fetch collab doc {doc_id}") from exc
 
     if resp.status_code != 200:
-        return None
+        raise CollabSnapshotError(
+            f"collab doc {doc_id} text endpoint returned HTTP {resp.status_code}"
+        )
     data = resp.json()
+    if data.get("initialized") is False:
+        logger.debug("[collab-snapshot] skipped uninitialized collab doc %s", doc_id)
+        return None
     new_text = data.get("text")
     if new_text is None:
         return None

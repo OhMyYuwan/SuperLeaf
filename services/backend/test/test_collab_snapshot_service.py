@@ -195,6 +195,40 @@ async def test_snapshot_doc_from_collab_accepts_empty_text(monkeypatch):
     db.close()
 
 
+@pytest.mark.asyncio
+async def test_snapshot_doc_from_collab_rejects_uninitialized_text(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="do not erase")
+    monkeypatch.setattr(collab_snapshot_service, "SessionLocal", session_factory)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, headers=None):
+            return _FakeResponse(
+                {"doc_id": "doc1", "text": "", "length": 0, "initialized": False},
+            )
+
+    monkeypatch.setattr(collab_snapshot_service.httpx, "AsyncClient", FakeClient)
+
+    updated = await collab_snapshot_service.snapshot_doc_from_collab("doc1", base_url="http://collab")
+
+    assert updated is None
+    db = session_factory()
+    persisted = db.get(Doc, "doc1")
+    assert persisted is not None
+    assert persisted.content == "do not erase"
+    assert persisted.version == 1
+    db.close()
+
+
 def test_collab_flush_endpoint_returns_snapshotted_doc(monkeypatch):
     session_factory = _session_factory()
     _seed_doc(session_factory, content="old")
@@ -226,6 +260,32 @@ def test_collab_flush_endpoint_returns_snapshotted_doc(monkeypatch):
     payload = response.json()
     assert payload["content"] == "from yjs"
     assert payload["version"] == 2
+    db.close()
+
+
+def test_collab_flush_endpoint_reports_snapshot_failure(monkeypatch):
+    session_factory = _session_factory()
+    _seed_doc(session_factory, content="old")
+    db = session_factory()
+    client = _client(db)
+
+    async def fake_snapshot_doc_from_collab(doc_id, *, base_url=None):
+        raise collab_snapshot_service.CollabSnapshotError("internal collab API unavailable")
+
+    monkeypatch.setattr(
+        collab_snapshot_service,
+        "snapshot_doc_from_collab",
+        fake_snapshot_doc_from_collab,
+    )
+
+    response = client.post(
+        "/api/docs/doc1/collab-flush",
+        cookies={SESSION_COOKIE_NAME: "owner-session"},
+        headers={"X-Project-Id": "project1", "X-Client-Id": "client-a"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "collab_flush_failed"
     db.close()
 
 

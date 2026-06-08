@@ -187,6 +187,11 @@ function parseErrorDetail(text: string): string {
   try {
     const payload = JSON.parse(text) as { detail?: unknown }
     if (typeof payload.detail === 'string') return payload.detail
+    if (payload.detail && typeof payload.detail === 'object' && !Array.isArray(payload.detail)) {
+      const detail = payload.detail as { message?: unknown; code?: unknown }
+      if (typeof detail.message === 'string') return detail.message
+      if (typeof detail.code === 'string') return detail.code
+    }
     if (Array.isArray(payload.detail)) {
       return payload.detail
         .map((item) => {

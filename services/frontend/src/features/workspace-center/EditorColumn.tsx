@@ -16,6 +16,7 @@ import {
   type DecorationSpec,
   type DocChangeInfo,
   type EditorRestoreState,
+  type LatexEditorThemeId,
   type SelectionInfo,
 } from '../latex-editor'
 import type {
@@ -42,6 +43,7 @@ interface EditorColumnProps {
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
+  themeId: LatexEditorThemeId
   onAddComment?: (params: {
     range: { from: number; to: number }
     targetText: string
@@ -64,6 +66,7 @@ export function EditorColumn({
   filePathCompletions,
   labelCompletions,
   commandCompletions,
+  themeId,
   onAddComment,
 }: EditorColumnProps) {
   const [toolbar, setToolbar] = useState<{
@@ -117,6 +120,7 @@ export function EditorColumn({
             filePathCompletions={filePathCompletions}
             labelCompletions={labelCompletions}
             commandCompletions={commandCompletions}
+            themeId={themeId}
             toolbar={toolbar}
             onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
@@ -144,6 +148,7 @@ function EditorWithCollab({
   filePathCompletions,
   labelCompletions,
   commandCompletions,
+  themeId,
   toolbar,
   onAddComment,
 }: {
@@ -162,6 +167,7 @@ function EditorWithCollab({
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
+  themeId: LatexEditorThemeId
   toolbar: { x: number; y: number } | null
   onAddComment?: () => void
 }) {
@@ -190,6 +196,7 @@ function EditorWithCollab({
       filePathCompletions={filePathCompletions}
       labelCompletions={labelCompletions}
       commandCompletions={commandCompletions}
+      themeId={themeId}
       scrollTo={scrollTo}
       yText={isCollab ? provider!.yText : undefined}
       awareness={isCollab ? provider!.awareness : undefined}

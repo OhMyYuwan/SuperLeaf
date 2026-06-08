@@ -6,7 +6,7 @@
  *  - history, line numbers, fold gutter, indentation, search
  *  - syntax language (LaTeX / Markdown / plain text)
  *  - bracket matching and auto-close
- *  - dark theme matching the rest of the workspace shell
+ *  - personal editor theme preset
  */
 
 import { EditorSelection, Prec, type Extension, type SelectionRange } from '@codemirror/state'
@@ -33,7 +33,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { latex } from './latex-language'
 import type { LatexCompletionData } from './latex-completion-data'
 import { overleafLikeSearch } from './search-panel'
-import { overleafDark } from './theme'
+import { latexEditorTheme, type LatexEditorThemeId } from './theme'
 
 export type EditorFormat = 'tex' | 'md' | 'txt'
 
@@ -120,8 +120,13 @@ export function shortcutKeymapFor(format: EditorFormat): Extension {
   return []
 }
 
-export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[] {
+export function baseExtensions(opts?: {
+  includeHistory?: boolean
+  themeExtension?: Extension
+  themeId?: LatexEditorThemeId
+}): Extension[] {
   const includeHistory = opts?.includeHistory ?? true
+  const themeExtension = opts?.themeExtension ?? latexEditorTheme(opts?.themeId)
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -152,7 +157,7 @@ export function baseExtensions(opts?: { includeHistory?: boolean }): Extension[]
       ...completionKeymap,
       ...lintKeymap,
     ]),
-    overleafDark(),
+    themeExtension,
   ]
 }
 

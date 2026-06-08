@@ -463,9 +463,11 @@ export function LatexPreview({
         <a
           className={`small-btn latex-preview-download${pdfUrl ? '' : ' is-disabled'}`}
           href={pdfUrl || undefined}
-          download={downloadName}
+          target={pdfUrl ? '_blank' : undefined}
+          rel={pdfUrl ? 'noopener noreferrer' : undefined}
           aria-disabled={!pdfUrl}
-          title={pdfUrl ? `下载 ${downloadName}` : '尚未编译'}
+          aria-label={pdfUrl ? `在新标签页打开 ${downloadName}` : '尚未编译'}
+          title={pdfUrl ? `在新标签页打开 ${downloadName}` : '尚未编译'}
           onClick={(e) => {
             if (!pdfUrl) e.preventDefault()
           }}

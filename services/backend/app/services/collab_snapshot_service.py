@@ -23,6 +23,10 @@ _task: asyncio.Task | None = None
 _COLLAB_INTERNAL_TOKEN_HEADER = "X-SuperLeaf-Internal-Token"
 
 
+class CollabSnapshotError(RuntimeError):
+    pass
+
+
 def start_snapshot_loop() -> None:
     global _task
     if _task is not None:
@@ -61,6 +65,42 @@ async def _snapshot_active_docs(base_url: str) -> None:
     doc_ids = await _fetch_active_doc_ids(base_url)
     for doc_id in doc_ids:
         await snapshot_doc_from_collab(doc_id, base_url=base_url)
+
+
+async def snapshot_project_from_collab(
+    project_id: str,
+    *,
+    base_url: str | None = None,
+) -> list[str]:
+    """Flush active Yjs docs for a project into the database before DB-only work."""
+    resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
+    try:
+        active_doc_ids = await _fetch_active_doc_ids(resolved_base_url)
+    except httpx.HTTPError as exc:
+        raise CollabSnapshotError("failed to list active collaboration docs") from exc
+
+    if not active_doc_ids:
+        return []
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Doc.id)
+            .filter(Doc.project_id == project_id)
+            .filter(Doc.id.in_(active_doc_ids))
+            .all()
+        )
+        project_doc_ids = [str(row[0]) for row in rows]
+    finally:
+        db.close()
+
+    flushed: list[str] = []
+    for doc_id in project_doc_ids:
+        doc = await snapshot_doc_from_collab(doc_id, base_url=resolved_base_url)
+        if doc is None:
+            raise CollabSnapshotError(f"failed to snapshot active doc {doc_id}")
+        flushed.append(doc_id)
+    return flushed
 
 
 async def _fetch_active_doc_ids(base_url: str) -> list[str]:

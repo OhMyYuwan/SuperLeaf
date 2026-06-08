@@ -20,6 +20,7 @@ from ..schemas import (
 )
 from ..services.github_service import GitHubError, GitHubService
 from ..services.project_archive_service import ArchiveError, ProjectArchiveService
+from .collab_consistency import flush_project_collab_or_503_sync
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects/{project_id}/archive", tags=["archive"])
@@ -81,6 +82,7 @@ def import_github_repository(
     db: Session = Depends(get_session),
 ) -> GitHubImportOut:
     _require_owner(project, user)
+    flush_project_collab_or_503_sync(project)
     try:
         result = GitHubService(db, user).import_repo_into_project(
             project,
@@ -107,6 +109,7 @@ def push_github_archive(
     db: Session = Depends(get_session),
 ) -> GitHubPushOut:
     _require_owner(project, user)
+    flush_project_collab_or_503_sync(project)
     svc = ProjectArchiveService(db, project, user)
     try:
         binding, _snapshot, sha = svc.push_to_github(body.message)
@@ -130,6 +133,7 @@ def create_archive_snapshot(
     db: Session = Depends(get_session),
 ) -> ProjectArchiveSnapshotOut:
     _require_owner(project, user)
+    flush_project_collab_or_503_sync(project)
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.create_snapshot(body.message)

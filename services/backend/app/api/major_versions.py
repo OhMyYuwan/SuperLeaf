@@ -15,13 +15,14 @@ from ..models import Project, User
 from ..schemas import (
     CommitDiffOut,
     CommitMetaOut,
-    FileEntryOut,
     FileDiffOut,
+    FileEntryOut,
     MajorVersionCreateIn,
     MajorVersionRestoreIn,
     ProjectArchiveSnapshotOut,
 )
 from ..services.project_archive_service import ArchiveError, ProjectArchiveService
+from .collab_consistency import flush_project_collab_or_503_sync
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects/{project_id}/major-versions", tags=["major-versions"])
@@ -70,6 +71,7 @@ def create_major_version(
 ) -> ProjectArchiveSnapshotOut:
     """Create a new major version (git commit) of the entire project."""
     _require_owner(project, user)
+    flush_project_collab_or_503_sync(project)
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.create_snapshot(body.message)
@@ -192,6 +194,7 @@ def restore_major_version(
 ) -> ProjectArchiveSnapshotOut:
     """Safely restore project to a specific commit (creates a new commit, no history rewrite)."""
     _require_owner(project, user)
+    flush_project_collab_or_503_sync(project)
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.restore_to_commit(sha, message=body.message)

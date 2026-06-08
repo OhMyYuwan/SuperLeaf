@@ -77,8 +77,28 @@ async function getOrCreateRoom(docId: string, token?: string): Promise<DocRoom> 
 }
 
 export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, token: string): void {
+  let room: DocRoom | null = null
+  let closed = false
+  const pendingMessages: Uint8Array[] = []
+
+  ws.on('message', (data: ArrayBuffer | Buffer) => {
+    const buf = data instanceof Buffer ? new Uint8Array(data) : new Uint8Array(data)
+    if (!room) {
+      pendingMessages.push(buf)
+      return
+    }
+    handleMessage(room, ws, buf)
+  })
+
+  ws.on('close', () => {
+    closed = true
+    if (room) handleClose(room, ws, docId)
+  })
+
   void (async () => {
-    const room = await getOrCreateRoom(docId, token)
+    const loadedRoom = await getOrCreateRoom(docId, token)
+    if (closed) return
+    room = loadedRoom
     const { doc, awareness } = room
 
     room.conns.set(ws, new Set())
@@ -104,60 +124,66 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
       ws.send(encoding.toUint8Array(awarenessEncoder))
     }
 
-    ws.on('message', (data: ArrayBuffer | Buffer) => {
-      const buf = data instanceof Buffer ? new Uint8Array(data) : new Uint8Array(data)
-      const decoder = decoding.createDecoder(buf)
-      const msgType = decoding.readVarUint(decoder)
-
-      switch (msgType) {
-        case MSG_SYNC: {
-          const encoder = encoding.createEncoder()
-          encoding.writeVarUint(encoder, MSG_SYNC)
-          syncProtocol.readSyncMessage(decoder, encoder, doc, ws)
-          const reply = encoding.toUint8Array(encoder)
-          if (encoding.length(encoder) > 1) {
-            ws.send(reply)
-          }
-          break
-        }
-        case MSG_AWARENESS: {
-          const update = decoding.readVarUint8Array(decoder)
-          const connClients = room.conns.get(ws)
-          if (connClients) {
-            for (const changedClient of readAwarenessClientIds(update)) {
-              connClients.add(changedClient)
-            }
-          }
-          awarenessProtocol.applyAwarenessUpdate(
-            awareness,
-            update,
-            ws,
-          )
-          break
-        }
-      }
-    })
-
-    ws.on('close', () => {
-      const connClients = room.conns.get(ws)
-      room.conns.delete(ws)
-      const removeClientIds = connClients ? Array.from(connClients) : []
-      if (removeClientIds.length > 0) {
-        awarenessProtocol.removeAwarenessStates(awareness, removeClientIds, null)
-      }
-
-      // If no more connections, clean up after a delay.
-      if (room.conns.size === 0) {
-        setTimeout(() => {
-          const current = rooms.get(docId)
-          if (current && current.conns.size === 0) {
-            current.doc.destroy()
-            rooms.delete(docId)
-          }
-        }, 30_000)
-      }
-    })
+    for (const pending of pendingMessages.splice(0)) {
+      handleMessage(room, ws, pending)
+    }
   })()
+}
+
+function handleMessage(room: DocRoom, ws: WebSocket, buf: Uint8Array): void {
+  const { doc, awareness } = room
+  const decoder = decoding.createDecoder(buf)
+  const msgType = decoding.readVarUint(decoder)
+
+  switch (msgType) {
+    case MSG_SYNC: {
+      const encoder = encoding.createEncoder()
+      encoding.writeVarUint(encoder, MSG_SYNC)
+      syncProtocol.readSyncMessage(decoder, encoder, doc, ws)
+      const reply = encoding.toUint8Array(encoder)
+      if (encoding.length(encoder) > 1) {
+        ws.send(reply)
+      }
+      break
+    }
+    case MSG_AWARENESS: {
+      const update = decoding.readVarUint8Array(decoder)
+      const connClients = room.conns.get(ws)
+      if (connClients) {
+        for (const changedClient of readAwarenessClientIds(update)) {
+          connClients.add(changedClient)
+        }
+      }
+      awarenessProtocol.applyAwarenessUpdate(
+        awareness,
+        update,
+        ws,
+      )
+      break
+    }
+  }
+}
+
+function handleClose(room: DocRoom, ws: WebSocket, docId: string): void {
+  const { awareness } = room
+  const connClients = room.conns.get(ws)
+  room.conns.delete(ws)
+  const removeClientIds = connClients ? Array.from(connClients) : []
+  if (removeClientIds.length > 0) {
+    awarenessProtocol.removeAwarenessStates(awareness, removeClientIds, null)
+  }
+
+  // If no more connections, clean up after a delay.
+  if (room.conns.size === 0) {
+    const cleanupTimer = setTimeout(() => {
+      const current = rooms.get(docId)
+      if (current && current.conns.size === 0) {
+        current.doc.destroy()
+        rooms.delete(docId)
+      }
+    }, 30_000)
+    cleanupTimer.unref()
+  }
 }
 
 function readAwarenessClientIds(update: Uint8Array): number[] {

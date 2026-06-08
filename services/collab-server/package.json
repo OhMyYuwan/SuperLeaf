@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "test": "node --import tsx --test --test-force-exit \"src/**/*.test.ts\"",
     "start": "node dist/index.js",
     "build": "tsc"
   },

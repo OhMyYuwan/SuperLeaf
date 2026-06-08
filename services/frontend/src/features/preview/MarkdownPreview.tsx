@@ -2,7 +2,7 @@
  * MarkdownPreview — lightweight Markdown renderer.
  *
  *  - Uses `markdown-it` with html disabled and linkify enabled (safe default).
- *  - Math via `markdown-it-katex`: inline `$...$`, block `$$...$$`.
+ *  - Math via KaTeX: inline `$...$`, block `$$...$$`.
  *  - Mermaid fenced blocks are rendered client-side with a lazy import.
  *  - Renderer is cached at module scope — markdown-it is not cheap to init.
  *
@@ -13,15 +13,13 @@
 
 import { forwardRef, useEffect, useMemo, useRef, type Ref } from 'react'
 import MarkdownIt from 'markdown-it'
-// markdown-it-katex 2.x ships CJS with no bundled types.
-// @ts-expect-error — no types
-import mdKatex from 'markdown-it-katex'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import {
   sourceJumpFromMarkdownElement,
   stampMarkdownSourceLines,
   type SourceJump,
 } from '../../services/previewSourceMap'
+import { mdKatex } from '../shared/markdownKatex'
 import { buildMarkdownAssetUrlMap, rewriteMarkdownImageSources } from './markdownAssets'
 import 'katex/dist/katex.min.css'
 import './markdown-preview.css'

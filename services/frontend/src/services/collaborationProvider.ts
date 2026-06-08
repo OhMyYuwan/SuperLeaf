@@ -111,6 +111,13 @@ export class CollaborationProvider {
     return Array.from(peersByUserId.values())
   }
 
+  refreshToken(token: string): void {
+    this.provider.protocols = [`${COLLAB_TOKEN_PROTOCOL_PREFIX}${token}`]
+    this.provider.disconnect()
+    this.provider.connect()
+    this._setStatus('connecting')
+  }
+
   destroy(): void {
     this.provider.disconnect()
     this.provider.destroy()

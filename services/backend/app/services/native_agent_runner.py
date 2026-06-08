@@ -847,6 +847,13 @@ def browser_nanobot_system_prompt() -> str:
                 "range_start/range_end as hints, replacement new_text, and a short reason."
             ),
             (
+                "When the user asks you to create, write, add, or generate a new "
+                "SuperLeaf project file, call project_write_text_file or "
+                "project_create_text_file with a relative path and the complete file "
+                "content. These tools create database-backed SuperLeaf project "
+                "documents and refuse to overwrite existing files."
+            ),
+            (
                 "Do not claim that an edit has been applied. propose_doc_edit only creates "
                 "a proposal card; the user must accept it before the document changes."
             ),
@@ -874,6 +881,13 @@ def browser_codex_system_prompt() -> str:
                 "When the user asks you to modify a SuperLeaf document, first read the relevant text if needed, "
                 "then call propose_doc_edit with original_text copied verbatim from project_read_doc, "
                 "range_start/range_end as hints, replacement new_text, and a short reason."
+            ),
+            (
+                "When the user asks you to create, write, add, or generate a new "
+                "SuperLeaf project file, call project_write_text_file or "
+                "project_create_text_file with a relative path and the complete file "
+                "content. These tools create database-backed SuperLeaf project "
+                "documents and refuse to overwrite existing files."
             ),
             (
                 "Do not claim that a SuperLeaf edit has been applied. propose_doc_edit only creates "

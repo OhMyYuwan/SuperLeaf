@@ -6,7 +6,7 @@
       "Use these tools to access the active SuperLeaf project/document context.",
       "Read SuperLeaf documents through project_read_doc/project_grep instead of local files.",
       "Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content.",
-      "Full access additionally allows propose_doc_edit and project_write_text_file; these are controlled SuperLeaf operations with history/proposal records.",
+      "Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection.",
       "Use propose_doc_edit for paper edits and create_suggestion only when the user asks for an annotation/suggestion card."
     ]
   },
@@ -20,7 +20,7 @@
       "name": "SuperLeaf MCP Instructions",
       "description": "Operational guidance for local agents using SuperLeaf tools safely.",
       "mimeType": "text/plain",
-      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content. Full access additionally allows propose_doc_edit and project_write_text_file; these are controlled SuperLeaf operations with history/proposal records. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
+      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content. Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
     },
     {
       "uri": "superleaf://tool-kernel/tools",

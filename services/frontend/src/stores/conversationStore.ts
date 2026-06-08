@@ -38,7 +38,7 @@ import {
   runBrowserClaudeTurn,
 } from '../services/claudeBrowserClient'
 import { shouldIncludeCodexSessionBoot } from '../services/agentPromptPolicy'
-import { toolGuideModeForTransport } from '../services/agentToolGuidePolicy'
+import { toolGuideModeForNanobot } from '../services/agentToolGuidePolicy'
 import {
   applyCodexDeltaContext,
   forceCodexDeltaContextUnchanged,
@@ -48,7 +48,9 @@ import { normalizeBrowserToolResultForAgent } from '../services/superleafToolRes
 import {
   bridgeRequestFromToolCall,
   startBrowserToolBridge,
+  submitBrowserToolBridgeApprovalResult,
   toolCallFromBridgeRequest,
+  type BrowserToolBridgeApprovalRequest,
   type BrowserToolBridgeRequest,
 } from '../services/browserToolBridge'
 import { applyWriteOutput, readCurrentText } from '../services/documentWriter'
@@ -83,12 +85,19 @@ export interface AgentRunStats {
   filesRead: number
   filesWritten: number
   stopped?: boolean
+  waitingReminder?: string
   bridgeStatus?: 'connected' | 'recovering' | 'error'
   bridgeError?: string
   localSessionId?: string
   externalSessionId?: string
   sessionRuntime?: 'codex-local' | 'claude-local'
   workspacePath?: string
+}
+
+export interface LocalAgentApprovalEntry extends BrowserToolBridgeApprovalRequest {
+  endpoint: string
+  status: 'pending' | 'accepted' | 'rejected' | 'error'
+  error?: string
 }
 
 const activeMessageControllers = new Map<string, AbortController>()
@@ -111,6 +120,7 @@ interface ConversationState {
   // memory only — refreshing the page drops them. Persisting them would
   // require a new table since they sit between SSE events and user action.
   proposals: Record<string, ProposalEntry[]>
+  localApprovals: Record<string, LocalAgentApprovalEntry[]>
 
   loadConversations: (filter?: { documentId?: string; workflowId?: string }) => Promise<void>
   createConversation: (body: ConversationCreate) => Promise<Conversation | null>
@@ -127,6 +137,7 @@ interface ConversationState {
   clearStreamingDelta: (conversationId: string) => void
   acceptProposal: (conversationId: string, proposalId: string) => Promise<{ ok: boolean; stale?: boolean }>
   rejectProposal: (conversationId: string, proposalId: string) => void
+  submitLocalApproval: (conversationId: string, requestId: string, decision: 'accept' | 'reject') => Promise<void>
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
@@ -139,6 +150,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   streamingStats: {},
   messageRunStats: {},
   proposals: {},
+  localApprovals: {},
 
   loadConversations: async (filter) => {
     set({ loading: true, error: null })
@@ -238,7 +250,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set((s) => {
         const { [id]: _, ...rest } = s.conversations
         const { [id]: __, ...restMsgs } = s.messages
-        return { conversations: rest, messages: restMsgs }
+        const { [id]: ___, ...restApprovals } = s.localApprovals
+        return { conversations: rest, messages: restMsgs, localApprovals: restApprovals }
       })
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
@@ -281,13 +294,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       error: null,
     }))
 
-    // Abort the request if the server hasn't produced any bytes within
-    // FIRST_BYTE_TIMEOUT_MS. Clears on first chunk so a long-running
-    // agent reply isn't cut off. User-configurable via env.
+    // Show a waiting reminder if the server has not produced bytes within this
+    // window, but keep the request alive. Long-running local agents should be
+    // stopped only by the user.
     const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
     const abortCtl = new AbortController()
     activeMessageControllers.set(conversationId, abortCtl)
-    const firstByteTimer = setTimeout(() => abortCtl.abort('timeout'), timeoutMs)
+    const firstByteTimer = window.setTimeout(() => {
+      set((s) => {
+        const current = s.streamingStats[conversationId] ?? { filesRead: 0, filesWritten: 0 }
+        return {
+          streamingStats: {
+            ...s.streamingStats,
+            [conversationId]: {
+              ...current,
+              waitingReminder: `已等待 ${Math.round(timeoutMs / 1000)} 秒，Agent 仍在运行，可手动停止。`,
+            },
+          },
+        }
+      })
+    }, Math.max(1000, timeoutMs))
 
     try {
       const browserNanobot = findBrowserNanobotProvider(conversationId, get)
@@ -395,7 +421,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         error: stoppedByUser
           ? null
           : aborted
-          ? `Agent 响应超时（${timeoutMs / 1000}s 内无数据），请重试或检查 Provider`
+          ? 'Agent 请求已中止'
           : e instanceof Error ? e.message : String(e),
       }))
       if (stoppedByUser) {
@@ -575,6 +601,47 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       .catch(() => undefined)
   },
 
+  submitLocalApproval: async (conversationId, requestId, decision) => {
+    const request = (get().localApprovals[conversationId] ?? []).find((item) => item.id === requestId)
+    if (!request) return
+    set((s) => ({
+      localApprovals: {
+        ...s.localApprovals,
+        [conversationId]: (s.localApprovals[conversationId] ?? []).map((item) =>
+          item.id === requestId
+            ? { ...item, status: decision === 'accept' ? 'accepted' : 'rejected', error: '' }
+            : item,
+        ),
+      },
+    }))
+    try {
+      await submitBrowserToolBridgeApprovalResult({
+        endpoint: request.endpoint,
+        requestId,
+        decision,
+      })
+      window.setTimeout(() => {
+        set((s) => ({
+          localApprovals: {
+            ...s.localApprovals,
+            [conversationId]: (s.localApprovals[conversationId] ?? []).filter((item) => item.id !== requestId),
+          },
+        }))
+      }, 1200)
+    } catch (err) {
+      set((s) => ({
+        localApprovals: {
+          ...s.localApprovals,
+          [conversationId]: (s.localApprovals[conversationId] ?? []).map((item) =>
+            item.id === requestId
+              ? { ...item, status: 'error', error: err instanceof Error ? err.message : String(err) }
+              : item,
+          ),
+        },
+      }))
+    }
+  },
+
   injectMessage: async (conversationId, body) => {
     try {
       const msg = await conversationApi.injectMessage(conversationId, body)
@@ -713,7 +780,7 @@ async function sendViaBrowserNanobot(args: {
       sessionId: prepared.run_id,
       messages,
       tools: prepared.tools,
-      toolGuideMode: toolGuideModeForTransport('native-tool-calls', prepared.tools.length > 0),
+      toolGuideMode: toolGuideModeForNanobot(),
       signal: args.signal,
       onActivity: args.markActivity,
       onDelta: (delta) => {
@@ -937,6 +1004,25 @@ async function sendViaBrowserCodex(args: {
           handleMessageEvent(args.set, args.conversationId, {
             event: 'ylw.msg.delta',
             data: { delta },
+          })
+        },
+        onEvent: (event) => {
+          if (String(event.method || '') !== 'superleaf/codex_long_running_reminder') return
+          const message = String(event.message || 'Codex 仍在长时间推理，可手动停止。')
+          args.set((s) => {
+            const current = s.streamingStats[args.conversationId] ?? {
+              filesRead: 0,
+              filesWritten: 0,
+            }
+            return {
+              streamingStats: {
+                ...s.streamingStats,
+                [args.conversationId]: {
+                  ...current,
+                  waitingReminder: message,
+                },
+              },
+            }
           })
         },
       })
@@ -1622,6 +1708,7 @@ function handleMessageEvent(
               filesRead: current.filesRead + (isRead ? 1 : 0),
               filesWritten: current.filesWritten + (isWrite ? 1 : 0),
               stopped: current.stopped,
+              waitingReminder: current.waitingReminder,
               bridgeStatus: bridgeUpdate?.status ?? current.bridgeStatus,
               bridgeError: bridgeUpdate
                 ? bridgeUpdate.error

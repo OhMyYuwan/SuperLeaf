@@ -40,6 +40,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useWorkflowStore } from '../stores/workflowStore'
 import { useCollaborationStore } from '../stores/collaborationStore'
 import { useAnnotationStore } from '../stores/annotationStore'
+import { useAnnotationAgentSuggestionStore } from '../stores/annotationAgentSuggestionStore'
 import { useFilesystemStore } from '../stores/filesystemStore'
 import { useViewStore } from '../stores/viewStore'
 import { useProjectStore } from '../stores/projectStore'
@@ -371,6 +372,7 @@ export function WorkspacePage() {
     if (!projectReady) return
     if (!activeDocumentId) return
     void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+    void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(activeDocumentId)
   }, [activeDocumentId, projectReady])
 
   // Overleaf keeps bibliography keys in project metadata. Our project tree is
@@ -484,6 +486,7 @@ export function WorkspacePage() {
     const hydrateIfNeeded = () => {
       if (activeDocumentId && projectEventStream.needsHydrate()) {
         void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+        void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(activeDocumentId)
       }
     }
     const refresh = () => {
@@ -498,6 +501,7 @@ export function WorkspacePage() {
     const unsubReconnect = projectEventStream.onReconnect(() => {
       if (activeDocumentId) {
         void useAnnotationStore.getState().hydrateForDoc(activeDocumentId)
+        void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(activeDocumentId)
       }
     })
     window.addEventListener('focus', refresh)

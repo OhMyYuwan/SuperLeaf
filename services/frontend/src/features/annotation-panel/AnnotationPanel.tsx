@@ -17,6 +17,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Check, Columns3, Globe, MessageSquarePlus, RotateCcw, Trash2, Wand2, AlertTriangle, Send, X, MessageCircle, Power } from 'lucide-react'
 import { useAnnotationStore, type AnnotationItem } from '../../stores/annotationStore'
+import {
+  latestSuggestion,
+  useAnnotationAgentSuggestionStore,
+  type AnnotationAgentSuggestion,
+} from '../../stores/annotationAgentSuggestionStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useUserStore } from '../../stores/userStore'
@@ -342,6 +347,9 @@ function AnnotationCard({
   const remove = useAnnotationStore((s) => s.remove)
   const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
+  const autoReplyRows = useAnnotationAgentSuggestionStore((s) => s.suggestionsByAnnotation[item.id] ?? [])
+  const runAutoReply = useAnnotationAgentSuggestionStore((s) => s.runAutoReply)
+  const autoReplyRunning = useAnnotationAgentSuggestionStore((s) => Boolean(s.runningByDoc[item.documentId]))
   const runWorkflow = useWorkflowStore((s) => s.run)
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -474,6 +482,12 @@ function AnnotationCard({
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
   const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!item.workflowId && agentActive))
+  const autoReplySuggestion = latestSuggestion(autoReplyRows)
+
+  const handleRegenerateAutoReply = async () => {
+    if (!autoReplySuggestion?.agent_id) return
+    await runAutoReply(item.documentId, autoReplySuggestion.agent_id, { includeStale: true })
+  }
 
   return (
     <div
@@ -523,7 +537,11 @@ function AnnotationCard({
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
           <div className="ann-diff-row add">+ {item.proposed}</div>
-          {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {item.reason && (
+            <div className="ann-diff-reason">
+              <AgentMarkdown source={item.reason} />
+            </div>
+          )}
           {!isResolved && (
             <div className="ann-diff-actions">
               <button
@@ -562,6 +580,14 @@ function AnnotationCard({
         files={fileCandidatesForCard}
         workflows={workflowCandidatesForCard}
       />
+
+      {autoReplySuggestion && (
+        <AgentSuggestionBlock
+          row={autoReplySuggestion}
+          running={autoReplyRunning}
+          onRegenerate={handleRegenerateAutoReply}
+        />
+      )}
 
       {isOwner && hasAgentOutput(item) && (
         <EvaluationPanel annotationId={item.id} active={isActive} />
@@ -663,6 +689,43 @@ function AnnotationCard({
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+function AgentSuggestionBlock({
+  row,
+  running,
+  onRegenerate,
+}: {
+  row: AnnotationAgentSuggestion
+  running: boolean
+  onRegenerate: () => void
+}) {
+  const suggestions = (row.suggestions ?? []).map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+  if (row.status !== 'failed' && suggestions.length === 0) return null
+  const isStale = row.status === 'stale'
+  const isFailed = row.status === 'failed'
+  return (
+    <div className={`ann-agent-suggestions ${isStale ? 'stale' : ''} ${isFailed ? 'failed' : ''}`}>
+      <div className="ann-agent-suggestions-head">
+        <span>{isStale ? 'Agent 建议已过期' : isFailed ? '生成失败' : 'Agent 建议'}</span>
+        {(isStale || isFailed) && (
+          <button className="ghost-mini" onClick={onRegenerate} disabled={running}>
+            {running ? '处理中…' : '重新生成'}
+          </button>
+        )}
+      </div>
+      {isFailed && row.error && <div className="ann-agent-suggestions-error">{row.error}</div>}
+      {suggestions.length > 0 && (
+        <ul>
+          {suggestions.map((suggestion, index) => (
+            <li key={`${row.id}-${index}`}>
+              <AgentMarkdown source={suggestion} />
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -860,7 +923,11 @@ function ArchivedCard({ item, agents }: { item: AnnotationItem; agents: CachedWo
         <div className="ann-diff">
           <div className="ann-diff-row remove">- {item.original}</div>
           <div className="ann-diff-row add">+ {item.proposed}</div>
-          {item.reason && <div className="ann-diff-reason">{item.reason}</div>}
+          {item.reason && (
+            <div className="ann-diff-reason">
+              <AgentMarkdown source={item.reason} />
+            </div>
+          )}
         </div>
       )}
 
@@ -937,7 +1004,11 @@ function ComparisonModal({
                 <div className="ann-diff">
                   <div className="ann-diff-row remove">- {it.original}</div>
                   <div className="ann-diff-row add">+ {it.proposed}</div>
-                  {it.reason && <div className="ann-diff-reason">{it.reason}</div>}
+                  {it.reason && (
+                    <div className="ann-diff-reason">
+                      <AgentMarkdown source={it.reason} />
+                    </div>
+                  )}
                 </div>
               )}
               {it.thread.length > 1 && (

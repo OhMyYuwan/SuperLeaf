@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   shouldIncludeSuperleafToolGuide,
+  toolGuideModeForNanobot,
   toolGuideModeForTransport,
 } from '../services/agentToolGuidePolicy'
 
@@ -16,5 +17,9 @@ describe('agentToolGuidePolicy', () => {
     expect(toolGuideModeForTransport('marker-only')).toBe('marker-fallback')
     expect(toolGuideModeForTransport('native-tool-calls', false)).toBe('marker-fallback')
     expect(shouldIncludeSuperleafToolGuide('marker-fallback')).toBe(true)
+  })
+
+  it('keeps Nanobot on marker fallback guidance even when OpenAI tools are sent', () => {
+    expect(toolGuideModeForNanobot()).toBe('marker-fallback')
   })
 })

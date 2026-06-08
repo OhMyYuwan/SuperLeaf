@@ -1547,6 +1547,20 @@
   line-height: 1.45;
 }
 
+.automation-checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.automation-checkbox-row input {
+  width: 14px;
+  height: 14px;
+  accent-color: #38bdf8;
+}
+
 .automation-intent-input {
   --mention-cm-min-height: 112px;
   --mention-cm-text: #ffffff;

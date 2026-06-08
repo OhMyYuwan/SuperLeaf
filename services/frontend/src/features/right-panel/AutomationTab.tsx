@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Bot, Pen } from 'lucide-react'
+import { Bot, MessageCircle, Pen } from 'lucide-react'
+import { AnnotationAutoReplyPanel } from './AnnotationAutoReplyPanel'
 import { AnnotationAutomationPanel } from './AnnotationAutomationPanel'
 import { WritingAutomationPanel } from './WritingAutomationPanel'
 
-type AutomationMode = 'annotate' | 'write'
+type AutomationMode = 'annotate' | 'write' | 'reply'
 
 export function AutomationTab() {
   const [mode, setMode] = useState<AutomationMode>('annotate')
@@ -25,9 +26,18 @@ export function AutomationTab() {
         >
           <Pen size={14} /> 自动写入
         </button>
+        <button
+          type="button"
+          className={mode === 'reply' ? 'active' : ''}
+          onClick={() => setMode('reply')}
+        >
+          <MessageCircle size={14} /> 自动回复
+        </button>
       </div>
 
-      {mode === 'annotate' ? <AnnotationAutomationPanel /> : <WritingAutomationPanel />}
+      {mode === 'annotate' && <AnnotationAutomationPanel />}
+      {mode === 'write' && <WritingAutomationPanel />}
+      {mode === 'reply' && <AnnotationAutoReplyPanel />}
     </div>
   )
 }

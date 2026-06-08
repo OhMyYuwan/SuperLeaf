@@ -302,6 +302,11 @@ export function LatexEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collaborating, yText, awareness])
 
+  useEffect(() => {
+    if (!collaborating || !yText) return
+    onChangeRef.current(yText.toString())
+  }, [collaborating, yText])
+
   // Apply external value changes without rebuilding the editor.
   // In collaboration mode, Yjs owns the document — skip external value sync.
   useEffect(() => {

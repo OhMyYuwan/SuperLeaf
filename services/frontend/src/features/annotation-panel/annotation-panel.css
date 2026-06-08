@@ -508,6 +508,62 @@
   white-space: normal;
 }
 
+.ann-agent-suggestions {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  color: rgba(226, 232, 240, 0.94);
+}
+
+.ann-agent-suggestions.stale {
+  background: rgba(234, 179, 8, 0.08);
+  border-color: rgba(234, 179, 8, 0.22);
+}
+
+.ann-agent-suggestions.failed {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.22);
+}
+
+.ann-agent-suggestions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(186, 230, 253, 0.95);
+}
+
+.ann-agent-suggestions.stale .ann-agent-suggestions-head {
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.ann-agent-suggestions.failed .ann-agent-suggestions-head {
+  color: rgba(252, 165, 165, 0.95);
+}
+
+.ann-agent-suggestions ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.ann-agent-suggestions li {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ann-agent-suggestions-error {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(252, 165, 165, 0.95);
+  word-break: break-word;
+}
+
 .ann-actions {
   display: flex;
   gap: 6px;

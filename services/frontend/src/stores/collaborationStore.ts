@@ -30,6 +30,15 @@ interface CollaborationState {
   disconnect: () => void
 }
 
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+async function issueCollabToken(docId: string): Promise<string> {
+  const res = await http<{ token: string; expires_in: number }>(
+    `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
+  )
+  return res.token
+}
+
 export const useCollaborationStore = create<CollaborationState>()((set, get) => ({
   provider: null,
   status: 'disconnected',
@@ -38,6 +47,10 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   currentDocId: null,
 
   connect: async (projectId, docId, user) => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
     const prev = get().provider
     if (prev) {
       prev.destroy()
@@ -47,10 +60,7 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     // Fetch a short-lived, document-scoped collab token from the backend.
     let token: string
     try {
-      const res = await http<{ token: string; expires_in: number }>(
-        `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
-      )
-      token = res.token
+      token = await issueCollabToken(docId)
     } catch {
       console.warn('[collaborationStore] failed to get collab token')
       set({ status: 'disconnected', provider: null, peers: [], currentProjectId: null, currentDocId: null })
@@ -68,6 +78,25 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     provider.onStatusChange((status) => {
       if (get().provider !== provider) return
       set({ status })
+      if (status === 'disconnected') {
+        if (reconnectTimer) clearTimeout(reconnectTimer)
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          const state = get()
+          if (state.provider !== provider || state.currentProjectId !== projectId || state.currentDocId !== docId) {
+            return
+          }
+          void (async () => {
+            try {
+              const token = await issueCollabToken(docId)
+              if (get().provider !== provider || get().currentDocId !== docId) return
+              provider.refreshToken(token)
+            } catch {
+              console.warn('[collaborationStore] failed to refresh collab token')
+            }
+          })()
+        }, 1000)
+      }
     })
 
     provider.awareness.on('change', () => {
@@ -85,6 +114,10 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   },
 
   disconnect: () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
     const { provider } = get()
     if (provider) {
       provider.destroy()

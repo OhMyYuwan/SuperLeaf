@@ -197,8 +197,28 @@ latexmk -version
 - 浏览器是否能建立 WebSocket。
 - 当前用户是否仍然登录。
 - 后端 `/api/auth/collab-token` 是否可访问。
+- `./start.sh` 启动时是否同时给 backend 和 collab-server 设置了同一个内部 token。
 
-如果协作文档出现旧内容，重启 collab-server 后再打开项目，让后端重新 seed 文档内容。
+内部保存链路可以这样检查：
+
+```bash
+curl http://localhost:4444/health
+```
+
+如果 `logs/latest/collab.log` 出现 `COLLAB_INTERNAL_TOKEN is not set`，说明 collab-server 的内部文档文本 API 被禁用，后端无法执行协作 snapshot / flush。使用 `./start.sh up` 会自动给本地开发设置同一个 token；自定义启动时需要同时设置：
+
+```bash
+export YLW_COLLAB_INTERNAL_TOKEN="your-shared-token"
+export COLLAB_INTERNAL_TOKEN="your-shared-token"
+```
+
+如果文件切换或编译前提示保存失败，优先查看：
+
+- 后端日志里 `/api/docs/{doc_id}/collab-flush` 的错误。
+- collab-server 是否能访问 `/docs/{doc_id}/text`。
+- 浏览器 Network 面板中 `collab-flush` 是否返回 `401`、`404` 或 `500`。
+
+如果协作文档出现旧内容，先不要让其他用户手动保存旧页面。刷新页面后等待状态变成「已同步」，再手动保存一次；如果仍然异常，重启 collab-server 后打开项目，让后端用最近一次 SQLite 内容重新 seed 文档。
 
 ## 项目大版本下载失败
 

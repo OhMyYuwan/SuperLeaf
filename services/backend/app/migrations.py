@@ -71,6 +71,7 @@ def run_migrations(engine: Engine) -> None:
         _encrypt_plaintext_skill_content(conn)
         _add_conversation_user_renamed(conn)
         _add_archived_at_to_annotations(conn)
+        _create_annotation_agent_suggestion_table(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -845,3 +846,49 @@ def _add_archived_at_to_annotations(conn) -> None:
             "WHERE status = 'archived' AND archived_at IS NULL"
         )
     )
+
+
+def _create_annotation_agent_suggestion_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS annotation_agent_suggestions (
+                id VARCHAR(32) NOT NULL,
+                project_id VARCHAR(32) NOT NULL,
+                doc_id VARCHAR(32) NOT NULL,
+                annotation_id VARCHAR(64) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                agent_id VARCHAR(128) NOT NULL DEFAULT '',
+                source_hash VARCHAR(64) NOT NULL DEFAULT '',
+                status VARCHAR(24) NOT NULL DEFAULT 'drafted',
+                suggestions JSON NOT NULL,
+                internal_meta JSON NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                CONSTRAINT uq_annotation_agent_suggestions_annotation_user_agent
+                    UNIQUE (annotation_id, user_id, agent_id),
+                FOREIGN KEY(project_id) REFERENCES projects (id),
+                FOREIGN KEY(doc_id) REFERENCES docs (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_project_id "
+        "ON annotation_agent_suggestions(project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_doc_id "
+        "ON annotation_agent_suggestions(doc_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_annotation_id "
+        "ON annotation_agent_suggestions(annotation_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_user_id "
+        "ON annotation_agent_suggestions(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_agent_id "
+        "ON annotation_agent_suggestions(agent_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_created_at "
+        "ON annotation_agent_suggestions(created_at)",
+    )
+    for stmt in indexes:
+        conn.execute(text(stmt))

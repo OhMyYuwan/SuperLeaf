@@ -12,6 +12,10 @@ export function toolGuideModeForTransport(
   return 'schema-only'
 }
 
+export function toolGuideModeForNanobot(): SuperLeafToolGuideMode {
+  return 'marker-fallback'
+}
+
 export function shouldIncludeSuperleafToolGuide(mode: SuperLeafToolGuideMode): boolean {
   return mode === 'marker-fallback'
 }

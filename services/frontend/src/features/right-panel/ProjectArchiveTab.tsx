@@ -18,7 +18,6 @@ import {
 import { projectsApi, type ProjectSkillDataStatus } from '../../services/projectsApi'
 import { useProjectStore } from '../../stores/projectStore'
 import { useMajorVersionStore } from '../../stores/majorVersionStore'
-import { useNativeAgentStore } from '../../stores/nativeAgentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { MajorVersionList } from '../history/MajorVersionList'
 import { MajorVersionDiffModal } from '../history/MajorVersionDiffModal'
@@ -29,7 +28,7 @@ export function ProjectArchiveTab() {
   const projects = useProjectStore((s) => s.projects)
   const role = useProjectStore((s) => s.currentProjectRole)
   const loadProjects = useProjectStore((s) => s.load)
-  const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
+  const updateProjectSkillCache = useProjectStore((s) => s.updateSkillCache)
   const tree = useFilesystemStore((s) => s.tree)
   const loadTree = useFilesystemStore((s) => s.loadTree)
   const loadCommits = useMajorVersionStore((s) => s.loadCommits)
@@ -144,9 +143,8 @@ export function ProjectArchiveTab() {
     setSkillSaving(true)
     setError(null)
     try {
-      const result = await projectsApi.updateSkillCache(projectId)
+      const result = await updateProjectSkillCache(projectId)
       setFeedback(`Skill 缓存已更新到 v${result.skill.cache_version || result.project.skill_cache_version}。`)
-      await Promise.all([loadProjects(), loadNativeAgents(), load()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新 Skill 缓存失败')
     } finally {

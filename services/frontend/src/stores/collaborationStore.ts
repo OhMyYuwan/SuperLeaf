@@ -128,10 +128,14 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
 
   waitUntilSynced: (docId, timeoutMs = 5000) => {
     const state = get()
-    if (!state.provider || state.currentDocId !== docId) {
+    const provider = state.provider
+    if (!provider || state.currentDocId !== docId) {
       return Promise.resolve()
     }
-    if (state.status === 'synced') {
+    if (state.status === 'synced' || provider.isSynced()) {
+      if (state.status !== 'synced') {
+        set({ status: 'synced' })
+      }
       return Promise.resolve()
     }
     return new Promise((resolve, reject) => {
@@ -148,16 +152,20 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
       const timer = setTimeout(() => {
         finish(new Error('协作连接尚未同步，请稍后再保存'))
       }, timeoutMs)
-      unsubscribe = state.provider!.onStatusChange((status) => {
+      unsubscribe = provider.onStatusChange((status) => {
         const latest = get()
-        if (latest.provider !== state.provider || latest.currentDocId !== docId) {
+        const latestProvider = latest.provider
+        if (latestProvider !== provider || latest.currentDocId !== docId) {
           finish()
           return
         }
-        if (status === 'synced') {
+        if (status === 'synced' || latestProvider.isSynced()) {
           finish()
         }
       })
+      if (provider.isSynced()) {
+        finish()
+      }
     })
   },
 }))

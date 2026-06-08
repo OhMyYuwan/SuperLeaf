@@ -76,7 +76,7 @@ export class CollaborationProvider {
 
     this.provider.on('status', ({ status }: { status: string }) => {
       if (status === 'connected') {
-        this._setStatus('connected')
+        this._setStatus(this.isSynced() ? 'synced' : 'connected')
       } else if (status === 'disconnected') {
         this._setStatus('disconnected')
       } else {
@@ -91,6 +91,10 @@ export class CollaborationProvider {
 
   get status(): ConnectionStatus {
     return this._status
+  }
+
+  isSynced(): boolean {
+    return this._status === 'synced' || this.provider.synced
   }
 
   onStatusChange(fn: (status: ConnectionStatus) => void): () => void {

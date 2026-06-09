@@ -12,7 +12,7 @@ Design notes:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -118,13 +118,81 @@ def get_compile_log(
 
 @projects_router.get("/{project_id}/compile.pdf")
 def get_compiled_pdf(
+    request: Request,
     project: Project = Depends(get_project_from_path),
 ) -> Response:
     svc = get_compiler_service()
     cached = svc.get_cached(project.id)
     if cached is None or cached.pdf is None:
         raise HTTPException(404, "No compiled PDF yet. Call POST /api/compile first.")
-    return Response(content=cached.pdf, media_type="application/pdf")
+    pdf = cached.pdf
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": 'inline; filename="compile.pdf"',
+    }
+    byte_range = _parse_single_byte_range(request.headers.get("range"), len(pdf))
+    if byte_range is None:
+        headers["Content-Length"] = str(len(pdf))
+        return Response(content=pdf, media_type="application/pdf", headers=headers)
+
+    start, end = byte_range
+    chunk = pdf[start : end + 1]
+    headers.update(
+        {
+            "Content-Range": f"bytes {start}-{end}/{len(pdf)}",
+            "Content-Length": str(len(chunk)),
+        }
+    )
+    return Response(
+        content=chunk,
+        status_code=206,
+        media_type="application/pdf",
+        headers=headers,
+    )
+
+
+def _parse_single_byte_range(range_header: str | None, content_length: int) -> tuple[int, int] | None:
+    if not range_header:
+        return None
+    if not range_header.startswith("bytes=") or "," in range_header:
+        raise HTTPException(
+            416,
+            "Unsupported Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    raw_start, sep, raw_end = range_header.removeprefix("bytes=").partition("-")
+    if sep != "-":
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    try:
+        if raw_start == "":
+            suffix_length = int(raw_end)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(content_length - suffix_length, 0)
+            end = content_length - 1
+        else:
+            start = int(raw_start)
+            end = int(raw_end) if raw_end else content_length - 1
+    except ValueError as exc:
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        ) from exc
+
+    if content_length <= 0 or start < 0 or end < start or start >= content_length:
+        raise HTTPException(
+            416,
+            "Requested range is not satisfiable.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+    return start, min(end, content_length - 1)
 
 
 @router.get("/settings", response_model=ProjectCompileSettingsOut)

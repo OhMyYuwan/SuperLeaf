@@ -11,15 +11,92 @@ GENERATED_BOOTSTRAP_TOKEN=""
 GENERATED_COLLAB_INTERNAL_TOKEN=0
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  run_compose -f "$COMPOSE_FILE" "$@"
 }
 
 compose_tls() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
+  run_compose -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
 }
 
 compose_multi() {
-  docker compose --env-file "$ENV_FILE" -f "$MULTI_COMPOSE_FILE" "$@"
+  run_compose -f "$MULTI_COMPOSE_FILE" "$@"
+}
+
+detect_compose_provider() {
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "docker-compose" ]; then
+    command -v docker-compose >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER=docker-compose but docker-compose was not found" >&2
+      exit 1
+    }
+    echo "docker-compose"
+    return
+  fi
+
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "podman-compose" ]; then
+    command -v podman-compose >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER=podman-compose but podman-compose was not found" >&2
+      exit 1
+    }
+    echo "podman-compose"
+    return
+  fi
+
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "docker compose" ]; then
+    command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER='docker compose' but Docker Compose v2 was not found" >&2
+      exit 1
+    }
+    echo "docker compose"
+    return
+  fi
+
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+    return
+  fi
+  if command -v podman-compose >/dev/null 2>&1; then
+    echo "podman-compose"
+    return
+  fi
+
+  echo "No Compose provider found. Install Docker Compose v2, docker-compose, or podman-compose." >&2
+  exit 1
+}
+
+run_compose() {
+  local provider
+  provider="$(detect_compose_provider)"
+  case "$provider" in
+    "docker compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        docker compose "$@"
+      else
+        docker compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    "docker-compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        docker-compose "$@"
+      else
+        docker-compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    "podman-compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        podman-compose "$@"
+      else
+        podman-compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    *)
+      echo "Unsupported Compose provider: $provider" >&2
+      exit 1
+      ;;
+  esac
 }
 
 stop_multi_stack_for_single() {

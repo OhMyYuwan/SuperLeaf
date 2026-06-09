@@ -12,7 +12,7 @@
  *   - Full-log toggle
  */
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import {
   Loader2,
@@ -45,6 +45,25 @@ import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWh
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+
+const DEFAULT_PDF_PAGE_ASPECT_RATIO = 792 / 612
+const PDF_INTERSECTION_ROOT_MARGIN = '1200px 0px'
+const PDF_RANGE_CHUNK_SIZE = 128 * 1024
+const PDF_RENDER_RADIUS = 2
+const PDF_MAX_DEVICE_PIXEL_RATIO = 2
+const PDF_LOAD_OPTIONS = {
+  disableAutoFetch: true,
+  disableStream: true,
+  isEvalSupported: false,
+  rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
+} as const
+
+type PdfViewerPreference = 'auto' | 'pdfjs' | 'native'
+
+interface PdfPageSize {
+  width: number
+  height: number
+}
 
 interface LatexPreviewProps {
   documentId: string
@@ -92,6 +111,10 @@ export function LatexPreview({
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [showLog, setShowLog] = useState(false)
   const [showCompileSettings, setShowCompileSettings] = useState(false)
+  const [pdfViewerPreference, setPdfViewerPreference] = useState<PdfViewerPreference>('auto')
+  const [pdfLoadError, setPdfLoadError] = useState<Error | null>(null)
+  const [visiblePdfPages, setVisiblePdfPages] = useState<Set<number>>(() => new Set([1]))
+  const [pdfPageSizes, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -104,7 +127,8 @@ export function LatexPreview({
   const pdfSyncFlashRef = useRef<HTMLElement | null>(null)
   const pdfSyncTimerRef = useRef<number | null>(null)
   const pdfSyncMarkerTimerRef = useRef<number | null>(null)
-  const pdfPageSizesRef = useRef<Record<number, { width: number; height: number }>>({})
+  const pdfPageSizesRef = useRef<Record<number, PdfPageSize>>({})
+  const pdfPageShellRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const [pdfSyncMessage, setPdfSyncMessage] = useState<string | null>(null)
   const [pdfSyncMarker, setPdfSyncMarker] = useState<{
     page: number
@@ -228,10 +252,37 @@ export function LatexPreview({
     page: { getViewport: (options: { scale: number }) => { width: number; height: number } },
   ) {
     const viewport = page.getViewport({ scale: 1 })
-    pdfPageSizesRef.current[pageNumber] = {
+    const nextSize = {
       width: viewport.width,
       height: viewport.height,
     }
+    pdfPageSizesRef.current[pageNumber] = nextSize
+    setPdfPageSizes((sizes) => {
+      const existing = sizes[pageNumber]
+      if (existing?.width === nextSize.width && existing.height === nextSize.height) return sizes
+      return { ...sizes, [pageNumber]: nextSize }
+    })
+  }
+
+  function getPdfPageShellStyle(pageNumber: number): CSSProperties {
+    const width = pageWidth * clampPdfZoom(zoom)
+    const naturalSize = pdfPageSizes[pageNumber]
+    const aspectRatio = naturalSize
+      ? naturalSize.height / Math.max(1, naturalSize.width)
+      : DEFAULT_PDF_PAGE_ASPECT_RATIO
+
+    return {
+      width,
+      minHeight: width * aspectRatio,
+    }
+  }
+
+  function shouldKeepPdfPageRendered(pageNumber: number): boolean {
+    return (
+      visiblePdfPages.has(pageNumber) ||
+      Math.abs(pageNumber - currentPage) <= PDF_RENDER_RADIUS ||
+      pdfSyncMarker?.page === pageNumber
+    )
   }
 
   function showPdfSyncMarker(page: number, xRatio: number, yRatio: number) {
@@ -397,6 +448,20 @@ export function LatexPreview({
   }, [pdfUrl])
 
   useEffect(() => {
+    // The PDF URL is the document identity here; reset viewer state together so
+    // a previous load error or page count cannot leak into the next compile.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setPdfLoadError(null)
+    setNumPages(0)
+    setCurrentPage(1)
+    setVisiblePdfPages(new Set([1]))
+    setPdfPageSizes({})
+    /* eslint-enable react-hooks/set-state-in-effect */
+    pdfPageSizesRef.current = {}
+    pdfPageShellRefs.current = {}
+  }, [pdfUrl])
+
+  useEffect(() => {
     if (pdfVersion > 0 && lastPdfVersionRef.current > 0 && pdfVersion !== lastPdfVersionRef.current) {
       pendingPdfScrollRestoreRef.current = pdfScrollTopRef.current
     }
@@ -429,6 +494,63 @@ export function LatexPreview({
 
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
+  const activePdfViewer =
+    pdfViewerPreference === 'auto'
+      ? pdfLoadError
+        ? 'native'
+        : 'pdfjs'
+      : pdfViewerPreference
+  const nativePdfUrl = useMemo(() => {
+    if (!pdfUrl) return ''
+    return `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`
+  }, [pdfUrl])
+
+  useEffect(() => {
+    if (activePdfViewer !== 'pdfjs' || numPages <= 0) return
+    const scroller = pdfScrollRef.current
+    if (!scroller || !('IntersectionObserver' in window)) {
+      setVisiblePdfPages(new Set([1]))
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisiblePdfPages((pages) => {
+          const next = new Set(pages)
+          for (const entry of entries) {
+            const pageNumber = Number.parseInt(
+              (entry.target as HTMLElement).dataset.pageNumber ?? '',
+              10,
+            )
+            if (!Number.isFinite(pageNumber)) continue
+            if (entry.isIntersecting) {
+              next.add(pageNumber)
+            } else if (
+              next.size > 1 &&
+              Math.abs(pageNumber - currentPage) > PDF_RENDER_RADIUS &&
+              pdfSyncMarker?.page !== pageNumber
+            ) {
+              next.delete(pageNumber)
+            }
+          }
+          if (next.size === 0) next.add(Math.max(1, Math.min(currentPage, numPages)))
+          return setsAreEqual(pages, next) ? pages : next
+        })
+      },
+      {
+        root: scroller,
+        rootMargin: PDF_INTERSECTION_ROOT_MARGIN,
+        threshold: 0.01,
+      },
+    )
+
+    for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
+      const shell = pdfPageShellRefs.current[pageNumber]
+      if (shell) observer.observe(shell)
+    }
+
+    return () => observer.disconnect()
+  }, [activePdfViewer, currentPage, numPages, pdfSyncMarker?.page, pdfVersion])
 
   const setToolbarZoom = (updater: (current: number) => number) => {
     setZoom((current) => clampPdfZoom(updater(current)))
@@ -524,6 +646,20 @@ export function LatexPreview({
                   onChange={(e) => setAutoCompile(e.target.checked)}
                 />
               </label>
+
+              <label className="latex-settings-field">
+                <span>预览器</span>
+                <select
+                  className="compiler-picker"
+                  value={pdfViewerPreference}
+                  onChange={(e) => setPdfViewerPreference(e.target.value as PdfViewerPreference)}
+                  title="PDF 预览器"
+                >
+                  <option value="auto">自动</option>
+                  <option value="native">浏览器</option>
+                  <option value="pdfjs">PDF.js</option>
+                </select>
+              </label>
             </div>
           )}
         </div>
@@ -614,13 +750,24 @@ export function LatexPreview({
             <p>尚未编译。点击"编译"按钮生成 PDF。</p>
           </div>
         )}
-        {pdfFile && (
+        {pdfUrl && activePdfViewer === 'native' && (
+          <iframe
+            key={`native-${pdfUrl}`}
+            className="latex-preview-native-pdf"
+            title={downloadName}
+            src={nativePdfUrl}
+          />
+        )}
+        {pdfFile && activePdfViewer === 'pdfjs' && (
           <Document
             key={pdfVersion}
             file={pdfFile}
+            options={PDF_LOAD_OPTIONS}
             onLoadSuccess={({ numPages }) => {
+              setPdfLoadError(null)
               setNumPages(numPages)
               setCurrentPage(numPages > 0 ? 1 : 0)
+              setVisiblePdfPages(new Set([1]))
               restorePdfScrollSoon()
               window.requestAnimationFrame(() => {
                 if (pdfScrollRef.current) {
@@ -628,36 +775,55 @@ export function LatexPreview({
                 }
               })
             }}
-            onLoadError={(err) => console.error('PDF load error', err)}
+            onLoadError={(err) => {
+              console.error('PDF load error', err)
+              setPdfLoadError(err instanceof Error ? err : new Error(String(err)))
+            }}
             loading={<div className="latex-preview-empty">加载 PDF…</div>}
           >
-            {Array.from({ length: numPages }, (_, i) => (
-              <div
-                key={i}
-                className="latex-pdf-page-shell"
-                data-page-number={i + 1}
-              >
-                <Page
-                  pageNumber={i + 1}
-                  width={pageWidth * clampPdfZoom(zoom)}
-                  renderTextLayer
-                  renderAnnotationLayer={false}
-                  className="latex-pdf-page"
-                  onLoadSuccess={(page) => recordPdfPageSize(i + 1, page)}
-                  onRenderSuccess={restorePdfScrollSoon}
-                />
-                {pdfSyncMarker?.page === i + 1 && (
-                  <span
-                    className="pdf-source-sync-target"
-                    style={{
-                      left: `${pdfSyncMarker.xRatio * 100}%`,
-                      top: `${pdfSyncMarker.yRatio * 100}%`,
-                    }}
-                    aria-hidden="true"
-                  />
-                )}
-              </div>
-            ))}
+            {Array.from({ length: numPages }, (_, i) => {
+              const pageNumber = i + 1
+              const shouldRenderPage = shouldKeepPdfPageRendered(pageNumber)
+
+              return (
+                <div
+                  key={pageNumber}
+                  ref={(node) => {
+                    pdfPageShellRefs.current[pageNumber] = node
+                  }}
+                  className="latex-pdf-page-shell"
+                  data-page-number={pageNumber}
+                  style={getPdfPageShellStyle(pageNumber)}
+                >
+                  {shouldRenderPage ? (
+                    <Page
+                      pageNumber={pageNumber}
+                      width={pageWidth * clampPdfZoom(zoom)}
+                      renderTextLayer
+                      renderAnnotationLayer={false}
+                      canvasBackground="white"
+                      className="latex-pdf-page"
+                      devicePixelRatio={getPdfDevicePixelRatio()}
+                      loading={<div className="latex-pdf-page-placeholder" />}
+                      onLoadSuccess={(page) => recordPdfPageSize(pageNumber, page)}
+                      onRenderSuccess={restorePdfScrollSoon}
+                    />
+                  ) : (
+                    <div className="latex-pdf-page-placeholder" aria-hidden="true" />
+                  )}
+                  {pdfSyncMarker?.page === pageNumber && (
+                    <span
+                      className="pdf-source-sync-target"
+                      style={{
+                        left: `${pdfSyncMarker.xRatio * 100}%`,
+                        top: `${pdfSyncMarker.yRatio * 100}%`,
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              )
+            })}
           </Document>
         )}
       </div>
@@ -706,4 +872,18 @@ function normalizePdfLookup(value: string): string {
 function clampRatio(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
+}
+
+function getPdfDevicePixelRatio(): number {
+  if (typeof window === 'undefined') return 1
+  const ratio = window.devicePixelRatio || 1
+  return Math.max(1, Math.min(PDF_MAX_DEVICE_PIXEL_RATIO, ratio))
+}
+
+function setsAreEqual(a: Set<number>, b: Set<number>): boolean {
+  if (a.size !== b.size) return false
+  for (const value of a) {
+    if (!b.has(value)) return false
+  }
+  return true
 }

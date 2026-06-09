@@ -12,12 +12,11 @@ import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Palet
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft, ProviderModel } from '../../services/backendApi'
 import {
   BACKEND_BASE,
-  getBrowserLocalServiceUrl,
-  getLocalServiceUrl,
   githubApi,
   providerApi,
 } from '../../services/backendApi'
 import {
+  DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT,
   discoverBrowserNanobotAgents,
   nanobotLocalAgentHostEndpointFromRaw,
   storeBrowserNanobotApiKey,
@@ -37,6 +36,9 @@ interface SettingsDialogProps {
 }
 
 type SettingsTab = 'account' | 'editor' | 'providers'
+
+const DEFAULT_DIFY_LOCAL_ENDPOINT = 'http://localhost:8080/v1'
+const LOCAL_AGENT_PROVIDER_KINDS = new Set<ProviderDraft['kind']>(['nanobot', 'codex-local', 'claude-local'])
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const load = useSettingsStore((s) => s.load)
@@ -500,7 +502,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
-    endpoint: 'http://localhost:8080/v1',
+    endpoint: DEFAULT_DIFY_LOCAL_ENDPOINT,
     api_key: '',
     activate: true,
     transport: 'backend',
@@ -549,20 +551,16 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     setDraft((d) => ({
       ...d,
       kind,
-      transport: kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local' ? 'browser' : 'backend',
+      transport: LOCAL_AGENT_PROVIDER_KINDS.has(kind) ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
-            : kind === 'nanobot'
-              ? getBrowserLocalServiceUrl(8787)
-              : kind === 'codex-local'
-                ? getBrowserLocalServiceUrl(8787)
-                : kind === 'claude-local'
-                  ? getBrowserLocalServiceUrl(8787)
-                : 'http://localhost:8080/v1',
-      api_key: (kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
+            : LOCAL_AGENT_PROVIDER_KINDS.has(kind)
+              ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+              : DEFAULT_DIFY_LOCAL_ENDPOINT,
+      api_key: LOCAL_AGENT_PROVIDER_KINDS.has(kind) && !d.api_key.trim() ? 'dummy' : d.api_key,
       ...(kind === 'codex-local' ? DEFAULT_CODEX_SETTINGS : {}),
       ...(kind === 'claude-local' ? DEFAULT_CLAUDE_SETTINGS : {}),
     }))
@@ -691,9 +689,9 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
           placeholder={
-            draft.kind === 'nanobot' || draft.kind === 'codex-local' || draft.kind === 'claude-local'
-              ? getBrowserLocalServiceUrl(8787)
-              : getLocalServiceUrl(8902)
+            LOCAL_AGENT_PROVIDER_KINDS.has(draft.kind)
+              ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+              : DEFAULT_DIFY_LOCAL_ENDPOINT
           }
         />
       </label>

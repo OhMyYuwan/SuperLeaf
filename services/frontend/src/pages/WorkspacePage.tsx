@@ -126,6 +126,7 @@ export function WorkspacePage() {
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
   const activeProvider = useSettingsStore((s) => s.providers.find((p) => p.is_active) ?? null)
+  const latexEditorTheme = useSettingsStore((s) => s.latexEditorTheme)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const workflowError = useWorkflowStore((s) => s.error)
@@ -917,6 +918,7 @@ export function WorkspacePage() {
                           filePathCompletions={filePathCompletions}
                           labelCompletions={labelCompletions}
                           commandCompletions={commandCompletions}
+                          themeId={latexEditorTheme}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}

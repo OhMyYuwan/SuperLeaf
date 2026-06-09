@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22-bookworm-slim AS build
 
 ARG VITE_BACKEND_URL=
 ARG VITE_COLLAB_WS_URL=
@@ -18,6 +18,7 @@ COPY services/frontend/tsconfig*.json ./
 COPY services/frontend/vite.config.ts ./
 COPY services/frontend/public ./public
 COPY services/frontend/src ./src
+COPY services/shared /shared
 
 RUN npm run build
 

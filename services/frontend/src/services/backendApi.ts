@@ -187,6 +187,11 @@ function parseErrorDetail(text: string): string {
   try {
     const payload = JSON.parse(text) as { detail?: unknown }
     if (typeof payload.detail === 'string') return payload.detail
+    if (payload.detail && typeof payload.detail === 'object' && !Array.isArray(payload.detail)) {
+      const detail = payload.detail as { message?: unknown; code?: unknown }
+      if (typeof detail.message === 'string') return detail.message
+      if (typeof detail.code === 'string') return detail.code
+    }
     if (Array.isArray(payload.detail)) {
       return payload.detail
         .map((item) => {
@@ -1404,10 +1409,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserNanobot: (
     conversationId: string,
@@ -1432,10 +1438,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserCodex: (
     conversationId: string,
@@ -1460,10 +1467,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserClaude: (
     conversationId: string,

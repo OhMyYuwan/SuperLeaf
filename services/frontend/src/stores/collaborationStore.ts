@@ -28,6 +28,8 @@ interface CollaborationState {
 
   connect: (projectId: string, docId: string, user: { id: string; name: string }) => Promise<void>
   disconnect: () => void
+  waitUntilSynced: (docId: string, timeoutMs?: number) => Promise<void>
+  getCurrentText: (docId: string) => string | null
 }
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -123,5 +125,56 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
       provider.destroy()
     }
     set({ provider: null, status: 'disconnected', peers: [], currentProjectId: null, currentDocId: null })
+  },
+
+  waitUntilSynced: (docId, timeoutMs = 5000) => {
+    const state = get()
+    const provider = state.provider
+    if (!provider || state.currentDocId !== docId) {
+      return Promise.resolve()
+    }
+    if (state.status === 'synced' || provider.isSynced()) {
+      if (state.status !== 'synced') {
+        set({ status: 'synced' })
+      }
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let unsubscribe: (() => void) | null = null
+      const finish = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (unsubscribe) unsubscribe()
+        clearTimeout(timer)
+        if (err) reject(err)
+        else resolve()
+      }
+      const timer = setTimeout(() => {
+        finish(new Error('协作连接尚未同步，请稍后再保存'))
+      }, timeoutMs)
+      unsubscribe = provider.onStatusChange((status) => {
+        const latest = get()
+        const latestProvider = latest.provider
+        if (latestProvider !== provider || latest.currentDocId !== docId) {
+          finish()
+          return
+        }
+        if (status === 'synced' || latestProvider.isSynced()) {
+          finish()
+        }
+      })
+      if (provider.isSynced()) {
+        finish()
+      }
+    })
+  },
+
+  getCurrentText: (docId) => {
+    const state = get()
+    if (!state.provider || state.currentDocId !== docId) {
+      return null
+    }
+    return state.provider.yText.toString()
   },
 }))

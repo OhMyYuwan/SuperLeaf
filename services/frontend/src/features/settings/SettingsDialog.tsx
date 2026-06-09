@@ -8,16 +8,15 @@
 
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Palette, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft, ProviderModel } from '../../services/backendApi'
 import {
   BACKEND_BASE,
-  getBrowserLocalServiceUrl,
-  getLocalServiceUrl,
   githubApi,
   providerApi,
 } from '../../services/backendApi'
 import {
+  DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT,
   discoverBrowserNanobotAgents,
   nanobotLocalAgentHostEndpointFromRaw,
   storeBrowserNanobotApiKey,
@@ -25,6 +24,10 @@ import {
 import { listBrowserCodexModels, probeBrowserCodex } from '../../services/codexBrowserClient'
 import { probeBrowserClaude } from '../../services/claudeBrowserClient'
 import { useSettingsStore } from '../../stores/settingsStore'
+import {
+  LATEX_EDITOR_THEME_PRESETS,
+  type LatexEditorThemeId,
+} from '../latex-editor/theme'
 import './settings.css'
 
 interface SettingsDialogProps {
@@ -32,7 +35,10 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type SettingsTab = 'account' | 'providers'
+type SettingsTab = 'account' | 'editor' | 'providers'
+
+const DEFAULT_DIFY_LOCAL_ENDPOINT = 'http://localhost:8080/v1'
+const LOCAL_AGENT_PROVIDER_KINDS = new Set<ProviderDraft['kind']>(['nanobot', 'codex-local', 'claude-local'])
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const load = useSettingsStore((s) => s.load)
@@ -81,6 +87,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               GitHub 账户
             </button>
             <button
+              className={activeTab === 'editor' ? 'active' : ''}
+              onClick={() => setActiveTab('editor')}
+              role="tab"
+              aria-selected={activeTab === 'editor'}
+            >
+              编辑器
+            </button>
+            <button
               className={activeTab === 'providers' ? 'active' : ''}
               onClick={() => setActiveTab('providers')}
               role="tab"
@@ -96,6 +110,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <GitHubAccountSettings />
                 <ProjectListSettings />
               </>
+            )}
+
+            {activeTab === 'editor' && (
+              <EditorAppearanceSettings />
             )}
 
             {activeTab === 'providers' && (
@@ -128,6 +146,37 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function EditorAppearanceSettings() {
+  const latexEditorTheme = useSettingsStore((s) => s.latexEditorTheme)
+  const setLatexEditorTheme = useSettingsStore((s) => s.setLatexEditorTheme)
+  const presets = Object.values(LATEX_EDITOR_THEME_PRESETS)
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <div>
+          <h3><Palette size={14} /> 编辑器样板</h3>
+          <p>控制 LaTeX 编辑区使用白底样板还是 Overleaf 暗色样板。</p>
+        </div>
+      </div>
+      <div className="settings-segmented" role="radiogroup" aria-label="编辑器样板">
+        {presets.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            role="radio"
+            aria-checked={latexEditorTheme === preset.id}
+            className={latexEditorTheme === preset.id ? 'active' : ''}
+            onClick={() => setLatexEditorTheme(preset.id as LatexEditorThemeId)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -178,17 +227,20 @@ function GitHubAccountSettings() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const loadAccount = async () => {
-    setError(null)
-    try {
-      setAccount(await githubApi.account())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载 GitHub 账户失败')
-    }
-  }
-
   useEffect(() => {
-    void loadAccount()
+    let cancelled = false
+    githubApi.account()
+      .then((next) => {
+        if (cancelled) return
+        setError(null)
+        setAccount(next)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : '加载 GitHub 账户失败')
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -450,7 +502,7 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
-    endpoint: 'http://localhost:8080/v1',
+    endpoint: DEFAULT_DIFY_LOCAL_ENDPOINT,
     api_key: '',
     activate: true,
     transport: 'backend',
@@ -465,9 +517,11 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     if (draft.kind !== 'codex-local') {
-      setCodexModels([])
-      setCodexModelsLoading(false)
-      return
+      const resetTimer = window.setTimeout(() => {
+        setCodexModels([])
+        setCodexModelsLoading(false)
+      }, 0)
+      return () => window.clearTimeout(resetTimer)
     }
     const endpoint = draft.endpoint.trim()
     if (!endpoint) return
@@ -497,20 +551,16 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
     setDraft((d) => ({
       ...d,
       kind,
-      transport: kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local' ? 'browser' : 'backend',
+      transport: LOCAL_AGENT_PROVIDER_KINDS.has(kind) ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
           : kind === 'claude-direct'
             ? 'https://api.anthropic.com'
-            : kind === 'nanobot'
-              ? getBrowserLocalServiceUrl(8787)
-              : kind === 'codex-local'
-                ? getBrowserLocalServiceUrl(8787)
-                : kind === 'claude-local'
-                  ? getBrowserLocalServiceUrl(8787)
-                : 'http://localhost:8080/v1',
-      api_key: (kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
+            : LOCAL_AGENT_PROVIDER_KINDS.has(kind)
+              ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+              : DEFAULT_DIFY_LOCAL_ENDPOINT,
+      api_key: LOCAL_AGENT_PROVIDER_KINDS.has(kind) && !d.api_key.trim() ? 'dummy' : d.api_key,
       ...(kind === 'codex-local' ? DEFAULT_CODEX_SETTINGS : {}),
       ...(kind === 'claude-local' ? DEFAULT_CLAUDE_SETTINGS : {}),
     }))
@@ -639,9 +689,9 @@ function ProviderForm({ onClose }: { onClose: () => void }) {
           value={draft.endpoint}
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
           placeholder={
-            draft.kind === 'nanobot' || draft.kind === 'codex-local' || draft.kind === 'claude-local'
-              ? getBrowserLocalServiceUrl(8787)
-              : getLocalServiceUrl(8902)
+            LOCAL_AGENT_PROVIDER_KINDS.has(draft.kind)
+              ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+              : DEFAULT_DIFY_LOCAL_ENDPOINT
           }
         />
       </label>

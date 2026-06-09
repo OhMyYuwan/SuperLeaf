@@ -11,7 +11,12 @@
  */
 
 import { create } from 'zustand'
-import { projectsApi, type GitHubProjectImport, type ProjectSummary } from '../services/projectsApi'
+import {
+  projectsApi,
+  type GitHubProjectImport,
+  type ProjectSkillCacheResult,
+  type ProjectSummary,
+} from '../services/projectsApi'
 import { registerProjectIdReader } from '../services/backendApi'
 import { useNativeAgentStore } from './nativeAgentStore'
 import { useSettingsStore } from './settingsStore'
@@ -38,6 +43,7 @@ interface ProjectState {
   setCurrent: (id: string | null) => void
   create: (name: string, projectType?: ProjectType) => Promise<ProjectSummary>
   importGithub: (body: GitHubProjectImport) => Promise<ProjectSummary>
+  updateSkillCache: (id: string) => Promise<ProjectSkillCacheResult>
   rename: (id: string, name: string) => Promise<void>
   remove: (id: string) => Promise<void>
   setViewMode: (mode: 'table' | 'grid') => void
@@ -95,6 +101,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return created
   },
 
+  updateSkillCache: async (id) => {
+    const result = await projectsApi.updateSkillCache(id)
+    set((s) => ({
+      projects: mergeById(s.projects, result.project),
+      currentProjectRole: s.currentProjectId === result.project.id
+        ? result.project.my_role
+        : s.currentProjectRole,
+      error: null,
+    }))
+    useNativeAgentStore.getState().upsertSkill(result.skill)
+    return result
+  },
+
   rename: async (id, name) => {
     const updated = await projectsApi.update(id, { name })
     set((s) => ({
@@ -119,3 +138,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 }))
 
 registerProjectIdReader(() => useProjectStore.getState().currentProjectId)
+
+function mergeById<T extends { id: string }>(items: T[], next: T): T[] {
+  const found = items.some((item) => item.id === next.id)
+  if (!found) return [next, ...items]
+  return items.map((item) => (item.id === next.id ? next : item))
+}

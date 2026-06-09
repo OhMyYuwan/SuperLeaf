@@ -1329,7 +1329,7 @@ async function executeNanobotBrowserToolRequest(args: {
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    }))
+    }, { signal: args.signal }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)
@@ -1359,7 +1359,7 @@ async function executeCodexBrowserToolRequest(args: {
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    }))
+    }, { signal: args.signal }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)
@@ -1389,7 +1389,7 @@ async function executeClaudeBrowserToolRequest(args: {
       range_end: args.request.range_end,
       inputs: args.request.inputs,
       tool_call: toolCallFromBridgeRequest(args.request),
-    }))
+    }, { signal: args.signal }))
     args.markActivity()
     for (const evt of result.events) {
       handleMessageEvent(args.set, args.conversationId, evt)

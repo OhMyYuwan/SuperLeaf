@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from ..models import Doc, FileBlob, Folder, Project
 
@@ -247,7 +247,18 @@ class LatexCompilerService:
             path.mkdir(parents=True, exist_ok=True)
 
         docs = db.query(Doc).filter(Doc.project_id == project_id).all()
-        files = db.query(FileBlob).filter(FileBlob.project_id == project_id).all()
+        file_metadata = (
+            db.query(FileBlob)
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                )
+            )
+            .filter(FileBlob.project_id == project_id)
+            .all()
+        )
         existing_paths: set[str] = set()
 
         def add_existing(path: Path) -> None:
@@ -255,7 +266,7 @@ class LatexCompilerService:
 
         for d in docs:
             add_existing((resolve_folder_path(d.folder_id) / d.name).relative_to(tmpdir))
-        for f in files:
+        for f in file_metadata:
             add_existing((resolve_folder_path(f.folder_id) / f.name).relative_to(tmpdir))
 
         placeholder_warnings: list[str] = []
@@ -282,11 +293,25 @@ class LatexCompilerService:
                 main_rel_path = file_path.relative_to(tmpdir)
 
         # Write all file blobs (binary — images, bib, cls, etc.).
-        for f in files:
+        file_rows = (
+            db.query(FileBlob)
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                    FileBlob.blob,
+                )
+            )
+            .filter(FileBlob.project_id == project_id)
+            .yield_per(1)
+        )
+        for f in file_rows:
             folder_path = resolve_folder_path(f.folder_id)
             file_path = folder_path / f.name
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(f.blob or b"")
+            db.expunge(f)
 
         main_parent = main_rel_path.parent
         source_paths = {

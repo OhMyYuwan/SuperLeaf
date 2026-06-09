@@ -55,6 +55,7 @@ interface NativeAgentState {
   publishSkill: (id: string) => Promise<Skill | null>
   unpublishSkill: (id: string) => Promise<Skill | null>
   removeSkill: (id: string) => Promise<boolean>
+  upsertSkill: (skill: Skill) => void
   loadMarketplace: () => Promise<SkillMarketplace | null>
   loadMcpPolicy: () => Promise<McpExecutionPolicy | null>
   loadMcpCatalog: () => Promise<McpCatalog | null>
@@ -218,6 +219,10 @@ export const useNativeAgentStore = create<NativeAgentState>((set, get) => ({
       set({ error: toErrorMessage(err) })
       return false
     }
+  },
+
+  upsertSkill: (skill) => {
+    set({ skills: mergeById(get().skills, skill), error: null })
   },
 
   loadMarketplace: async () => {

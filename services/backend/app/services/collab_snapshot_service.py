@@ -23,6 +23,10 @@ _task: asyncio.Task | None = None
 _COLLAB_INTERNAL_TOKEN_HEADER = "X-SuperLeaf-Internal-Token"
 
 
+class CollabSnapshotError(RuntimeError):
+    pass
+
+
 def start_snapshot_loop() -> None:
     global _task
     if _task is not None:
@@ -63,6 +67,42 @@ async def _snapshot_active_docs(base_url: str) -> None:
         await snapshot_doc_from_collab(doc_id, base_url=base_url)
 
 
+async def snapshot_project_from_collab(
+    project_id: str,
+    *,
+    base_url: str | None = None,
+) -> list[str]:
+    """Flush active Yjs docs for a project into the database before DB-only work."""
+    resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
+    try:
+        active_doc_ids = await _fetch_active_doc_ids(resolved_base_url)
+    except httpx.HTTPError as exc:
+        raise CollabSnapshotError("failed to list active collaboration docs") from exc
+
+    if not active_doc_ids:
+        return []
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Doc.id)
+            .filter(Doc.project_id == project_id)
+            .filter(Doc.id.in_(active_doc_ids))
+            .all()
+        )
+        project_doc_ids = [str(row[0]) for row in rows]
+    finally:
+        db.close()
+
+    flushed: list[str] = []
+    for doc_id in project_doc_ids:
+        doc = await snapshot_doc_from_collab(doc_id, base_url=resolved_base_url)
+        if doc is None:
+            raise CollabSnapshotError(f"failed to snapshot active doc {doc_id}")
+        flushed.append(doc_id)
+    return flushed
+
+
 async def _fetch_active_doc_ids(base_url: str) -> list[str]:
     url = f"{base_url.rstrip('/')}/docs/active"
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -83,13 +123,18 @@ async def snapshot_doc_from_collab(doc_id: str, *, base_url: str | None = None) 
                 f"{resolved_base_url}/docs/{doc_id}/text",
                 headers=_collab_internal_headers(),
             )
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         logger.debug("[collab-snapshot] failed to fetch doc %s", doc_id)
-        return None
+        raise CollabSnapshotError(f"failed to fetch collab doc {doc_id}") from exc
 
     if resp.status_code != 200:
-        return None
+        raise CollabSnapshotError(
+            f"collab doc {doc_id} text endpoint returned HTTP {resp.status_code}"
+        )
     data = resp.json()
+    if data.get("initialized") is False:
+        logger.debug("[collab-snapshot] skipped uninitialized collab doc %s", doc_id)
+        return None
     new_text = data.get("text")
     if new_text is None:
         return None

@@ -66,6 +66,32 @@ class Session(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
 
 
+class RegistrationInvite(Base):
+    """One-time admin-issued registration invitation.
+
+    The plaintext token is only returned to the admin at creation/rotation time.
+    Persisting the SHA-256 hash keeps leaked database backups from becoming
+    usable registration links.
+    """
+
+    __tablename__ = "registration_invites"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(255), default="", index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hint: Mapped[str] = mapped_column(String(16), default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    send_status: Mapped[str] = mapped_column(String(32), default="not_requested")
+    send_error: Mapped[str] = mapped_column(Text, default="")
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+
+
 class GitHubAccount(Base):
     """User-scoped GitHub authorization.
 

@@ -87,6 +87,7 @@ def register(
             display_name=body.display_name,
             ip=_client_ip(request),
             bootstrap_token=body.bootstrap_token,
+            invite_token=body.invite_token,
         )
     except RegistrationClosedError as e:
         raise HTTPException(403, str(e)) from e

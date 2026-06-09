@@ -58,7 +58,6 @@ import type {
 } from '../../services/backendApi'
 import {
   BACKEND_BASE,
-  getBrowserLocalServiceUrl,
   nativeAgentApi,
   providerApi,
 } from '../../services/backendApi'
@@ -115,6 +114,9 @@ const DEFAULT_MCP_POLICY: McpExecutionPolicy = {
   remote_private_networks_enabled: false,
   allowed_transports: ['remote'],
 }
+
+const DEFAULT_DIFY_LOCAL_ENDPOINT = 'http://localhost:8080/v1'
+const LOCAL_AGENT_PROVIDER_KINDS = new Set<ProviderDraft['kind']>(['nanobot', 'codex-local', 'claude-local'])
 
 const OfficialBadgeStyleContext = createContext<OfficialBadgeStyle>('metal')
 
@@ -4234,7 +4236,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '',
     kind: 'dify-local',
-    endpoint: 'http://localhost:8080/v1',
+    endpoint: DEFAULT_DIFY_LOCAL_ENDPOINT,
     api_key: '',
     activate: true,
     transport: 'backend',
@@ -4281,7 +4283,7 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setDraft((d) => ({
       ...d,
       kind,
-      transport: kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local' ? 'browser' : 'backend',
+      transport: LOCAL_AGENT_PROVIDER_KINDS.has(kind) ? 'browser' : 'backend',
       endpoint:
         kind === 'dify-cloud'
           ? 'https://api.dify.ai/v1'
@@ -4289,14 +4291,10 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             ? 'https://api.anthropic.com'
             : kind === 'native'
               ? 'https://api.openai.com/v1'
-            : kind === 'nanobot'
-              ? getBrowserLocalServiceUrl(8787)
-              : kind === 'codex-local'
-                ? getBrowserLocalServiceUrl(8787)
-                : kind === 'claude-local'
-                  ? getBrowserLocalServiceUrl(8787)
-                : 'http://localhost:8080/v1',
-      api_key: (kind === 'nanobot' || kind === 'codex-local' || kind === 'claude-local') && !d.api_key.trim() ? 'dummy' : d.api_key,
+              : LOCAL_AGENT_PROVIDER_KINDS.has(kind)
+                ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
+                : DEFAULT_DIFY_LOCAL_ENDPOINT,
+      api_key: LOCAL_AGENT_PROVIDER_KINDS.has(kind) && !d.api_key.trim() ? 'dummy' : d.api_key,
       ...(kind === 'codex-local' ? DEFAULT_CODEX_SETTINGS : {}),
       ...(kind === 'claude-local' ? DEFAULT_CLAUDE_SETTINGS : {}),
     }))
@@ -4433,14 +4431,14 @@ function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
           placeholder={
             draft.kind === 'nanobot'
-              ? getBrowserLocalServiceUrl(8787)
+              ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
               : draft.kind === 'codex-local'
-                ? getBrowserLocalServiceUrl(8787)
+                ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
               : draft.kind === 'claude-local'
-                ? getBrowserLocalServiceUrl(8787)
+                ? DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT
               : draft.kind === 'native'
                 ? 'https://api.openai.com/v1'
-                : 'http://localhost:8080/v1'
+                : DEFAULT_DIFY_LOCAL_ENDPOINT
           }
         />
       </label>

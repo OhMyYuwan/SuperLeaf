@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { EditorState, type Transaction } from '@codemirror/state'
+import type { Completion } from '@codemirror/autocomplete'
+import type { EditorView } from '@codemirror/view'
 import {
   findLatexStructuredSnippet,
   latexBeginEnvironmentSnippetCompletions,
@@ -44,4 +47,58 @@ describe('latex snippets', () => {
     expect(labels).toContain('table')
     expect(labels).toContain('tabular')
   })
+
+  it('keeps cite and ref snippet cursors inside empty braces', () => {
+    expect(applySnippetCompletion('\\cite', '\\cite')).toEqual({
+      doc: '\\cite{}',
+      cursor: '\\cite{'.length,
+    })
+    expect(applySnippetCompletion('\\ref', '\\ref')).toEqual({
+      doc: '\\ref{}',
+      cursor: '\\ref{'.length,
+    })
+  })
+
+  it('offers no-argument formatting shortcuts with the cursor after the command', () => {
+    const shortcuts = ['noindent', 'indent', 'newpage', 'clearpage', 'smallskip', 'medskip', 'bigskip']
+
+    for (const shortcut of shortcuts) {
+      expect(latexSnippetCommandTriggers().has(shortcut)).toBe(true)
+      expect(applySnippetCompletion(`\\${shortcut}`, `\\${shortcut}`)).toEqual({
+        doc: `\\${shortcut} `,
+        cursor: `\\${shortcut} `.length,
+      })
+    }
+  })
 })
+
+function applySnippetCompletion(prefix: string, label: string): { doc: string; cursor: number } {
+  const completion = latexCommandSnippetCompletions(prefix.replace(/^\\/, ''))
+    .find((item) => item.label === label)
+  expect(completion).toBeDefined()
+
+  const apply = (completion as Completion).apply
+  expect(apply).toBeTypeOf('function')
+
+  let state = EditorState.create({ doc: prefix })
+  const editor = {
+    get state() {
+      return state
+    },
+    dispatch(transaction: Transaction) {
+      state = transaction.state
+    },
+  } as unknown as EditorView
+
+  ;(apply as Exclude<Completion['apply'], string | undefined>)(
+    editor,
+    completion as Completion,
+    0,
+    prefix.length,
+  )
+
+  return {
+    doc: state.doc.toString(),
+    cursor: state.selection.main.head,
+  }
+}

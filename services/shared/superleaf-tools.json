@@ -1,0 +1,314 @@
+{
+  "id": "superleaf.tools",
+  "version": 1,
+  "instructions": {
+    "mcp": [
+      "Use these tools to access the active SuperLeaf project/document context.",
+      "Read SuperLeaf documents through project_read_doc/project_grep instead of local files.",
+      "Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content.",
+      "Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection.",
+      "Use propose_doc_edit for paper edits and create_suggestion only when the user asks for an annotation/suggestion card."
+    ]
+  },
+  "examples": {
+    "listDocsMarker": "<superleaf_tool_call>{\"name\":\"project_list_docs\",\"arguments\":{}}</superleaf_tool_call>",
+    "readDocMarker": "<superleaf_tool_call>{\"name\":\"project_read_doc\",\"arguments\":{\"doc_id\":\"...\"}}</superleaf_tool_call>"
+  },
+  "resources": [
+    {
+      "uri": "superleaf://tool-kernel/instructions",
+      "name": "SuperLeaf MCP Instructions",
+      "description": "Operational guidance for local agents using SuperLeaf tools safely.",
+      "mimeType": "text/plain",
+      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content. Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
+    },
+    {
+      "uri": "superleaf://tool-kernel/tools",
+      "name": "SuperLeaf Tool Catalog",
+      "description": "JSON catalog of SuperLeaf MCP tools and schemas.",
+      "mimeType": "application/json",
+      "kind": "tools_manifest"
+    },
+    {
+      "uri": "superleaf://browser-bridge/contract",
+      "name": "SuperLeaf Browser Bridge Contract",
+      "description": "How Local Agent Host queues tool calls for the active SuperLeaf browser context.",
+      "mimeType": "text/plain",
+      "text": "The browser bridge registers project_id, conversation_id, document_id, selection offsets, backend_url, and SuperLeaf origin with Local Agent Host. When an MCP client calls a SuperLeaf tool, Local Agent Host queues the request for the active browser context. The browser executes the existing backend-authorized route using the user's current login state and submits the result back to Local Agent Host. If no browser context is active, tool calls fail or time out with an explicit error."
+    },
+    {
+      "uri": "superleaf://context/current",
+      "name": "Current SuperLeaf Context",
+      "description": "Dynamic summary of the active SuperLeaf browser bridge context. Includes document id, range, hashes, and clipped selection preview, but not full document content.",
+      "mimeType": "application/json",
+      "kind": "current_context"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "superleaf_project_review",
+      "description": "Plan a read-only review of the active SuperLeaf project before answering.",
+      "arguments": [
+        {
+          "name": "task",
+          "description": "The user's concrete review or analysis request.",
+          "required": true
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": {
+            "type": "text",
+            "text": "Use SuperLeaf tools to work on this request: {{task}}\n\nStart with project_list_docs, then use project_read_doc, project_outline, or project_grep as needed. Do not claim SuperLeaf tools are unavailable if this prompt came from the SuperLeaf MCP server."
+          }
+        }
+      ]
+    },
+    {
+      "name": "superleaf_paper_edit",
+      "description": "Edit academic writing through user-approved SuperLeaf proposals.",
+      "arguments": [
+        {
+          "name": "task",
+          "description": "The paper editing request.",
+          "required": true
+        },
+        {
+          "name": "doc_id",
+          "description": "Optional SuperLeaf document id to inspect first.",
+          "required": false
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": {
+            "type": "text",
+            "text": "Paper editing task: {{task}}\n\nIf doc_id is provided, read it first with project_read_doc: {{doc_id}}\nUse project_grep or project_outline when you need surrounding context. For changes, call propose_doc_edit with exact original_text when available. Do not directly rewrite local files as a substitute for SuperLeaf proposals."
+          }
+        }
+      ]
+    },
+    {
+      "name": "superleaf_create_annotation",
+      "description": "Create a persistent SuperLeaf suggestion or annotation only when requested.",
+      "arguments": [
+        {
+          "name": "task",
+          "description": "The annotation or suggestion request.",
+          "required": true
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": {
+            "type": "text",
+            "text": "Annotation task: {{task}}\n\nOnly use create_suggestion when the user explicitly asks for a comment, annotation, or suggestion card. Read the relevant text through project_read_doc or project_grep first and anchor the suggestion with exact original_text."
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "project_list_docs",
+      "description": "List all documents in the current SuperLeaf project. Returns id, name, format, folder_id, and updated_at. Use this to discover related files before reading or editing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "project_read_doc",
+      "description": "Read the contents of a SuperLeaf project document by id. Optional range_start/range_end character offsets trim the slice. Use this instead of local filesystem reads for SuperLeaf documents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "doc_id": {
+            "type": "string"
+          },
+          "range_start": {
+            "type": "integer",
+            "description": "Character offset to start reading at."
+          },
+          "range_end": {
+            "type": "integer",
+            "description": "Character offset to stop at, exclusive."
+          }
+        },
+        "required": [
+          "doc_id"
+        ]
+      }
+    },
+    {
+      "name": "project_grep",
+      "description": "Search SuperLeaf project documents with a regular expression. Returns matches with surrounding preview. Optionally filter by document format such as tex or md.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regular expression pattern."
+          },
+          "format": {
+            "type": "string",
+            "description": "Optional document format filter, for example tex or md."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum matches to return."
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    },
+    {
+      "name": "project_outline",
+      "description": "Return the heading outline of one SuperLeaf document. Use this to understand a long document before reading the body.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "doc_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id"
+        ]
+      }
+    },
+    {
+      "name": "project_write_text_file",
+      "description": "Create a new text document in the current SuperLeaf project by relative path and write its full content. Intermediate folders are created automatically. The tool refuses to overwrite existing documents, files, or folders. Use this when the user explicitly asks to create, write, add, or generate a new project file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative project path, for example references/paper-style.md or examples/rule.txt."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full UTF-8 text content for the new file."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "tex",
+              "md",
+              "txt"
+            ],
+            "description": "Optional stored document format. If omitted, inferred from the filename extension when supported, otherwise txt."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "project_create_text_file",
+      "description": "Alias of project_write_text_file. Create a new text document in the current SuperLeaf project by relative path. The tool refuses to overwrite existing documents, files, or folders.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "tex",
+              "md",
+              "txt"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "propose_doc_edit",
+      "description": "Create a SuperLeaf edit proposal for the active document. The edit is not applied until the user accepts it in SuperLeaf. Use this for normal document modification requests. Pass original_text copied from project_read_doc when possible for reliable anchoring.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "original_text": {
+            "type": "string",
+            "description": "Exact text to replace, copied verbatim from project_read_doc when possible."
+          },
+          "range_start": {
+            "type": "integer",
+            "description": "Character offset where the replacement starts, inclusive."
+          },
+          "range_end": {
+            "type": "integer",
+            "description": "Character offset where the replacement ends, exclusive."
+          },
+          "new_text": {
+            "type": "string",
+            "description": "Replacement text. May be empty to delete the matched text."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short human-readable explanation of the proposed change."
+          }
+        },
+        "required": [
+          "range_start",
+          "range_end",
+          "new_text"
+        ]
+      }
+    },
+    {
+      "name": "create_suggestion",
+      "description": "Create a persistent SuperLeaf annotation/suggestion card anchored to the active document. Only use this when the user explicitly asks for an annotation, comment, or suggestion card. Use propose_doc_edit instead for normal editing requests.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "original_text": {
+            "type": "string",
+            "description": "Exact text the annotation refers to, copied verbatim from project_read_doc."
+          },
+          "proposed_text": {
+            "type": "string",
+            "description": "Suggested replacement text."
+          },
+          "content": {
+            "type": "string",
+            "description": "Annotation content shown on the suggestion card."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short reason for the suggestion."
+          },
+          "range_start": {
+            "type": "integer",
+            "description": "Character offset hint for disambiguation."
+          },
+          "range_end": {
+            "type": "integer",
+            "description": "Character offset hint for disambiguation."
+          }
+        },
+        "required": [
+          "original_text",
+          "content"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+name: ${SUPERLEAF_PROJECT_NAME:-superleaf}
+
+services:
+  gateway:
+    image: docker.io/library/nginx:1.27-alpine
+    ports:
+      - "${SUPERLEAF_BIND_ADDR:-127.0.0.1}:${SUPERLEAF_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      collab:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend:
+    image: ${SUPERLEAF_FRONTEND_IMAGE:-ghcr.io/ohmyyuwan/superleaf-frontend:latest}
+    environment:
+      SUPERLEAF_BROWSER_BACKEND_URL: ""
+      SUPERLEAF_BROWSER_COLLAB_WS_URL: /collab
+    expose:
+      - "5173"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  backend:
+    image: ${SUPERLEAF_BACKEND_IMAGE:-ghcr.io/ohmyyuwan/superleaf-backend:latest}
+    user: "${SUPERLEAF_RUNTIME_UID:-10001}:${SUPERLEAF_RUNTIME_GID:-10001}"
+    environment:
+      YLW_DATA_DIR: /data
+      YLW_COLLAB_SERVER_URL: http://collab:4444
+      YLW_COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
+      YLW_PUBLIC_REGISTRATION: ${YLW_PUBLIC_REGISTRATION:-false}
+      YLW_BOOTSTRAP_TOKEN: ${YLW_BOOTSTRAP_TOKEN:-}
+      YLW_PUBLIC_BASE_URL: ${YLW_PUBLIC_BASE_URL:-}
+      YLW_REGISTRATION_INVITE_TTL_DAYS: ${YLW_REGISTRATION_INVITE_TTL_DAYS:-7}
+      YLW_SMTP_HOST: ${YLW_SMTP_HOST:-}
+      YLW_SMTP_PORT: ${YLW_SMTP_PORT:-587}
+      YLW_SMTP_USERNAME: ${YLW_SMTP_USERNAME:-}
+      YLW_SMTP_PASSWORD: ${YLW_SMTP_PASSWORD:-}
+      YLW_SMTP_FROM: ${YLW_SMTP_FROM:-}
+      YLW_SMTP_TLS: ${YLW_SMTP_TLS:-true}
+      YLW_COOKIE_SECURE: ${YLW_COOKIE_SECURE:-auto}
+      YLW_MCP_STDIO_ENABLED: ${YLW_MCP_STDIO_ENABLED:-false}
+    volumes:
+      - ./data/backend:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  collab:
+    image: ${SUPERLEAF_COLLAB_IMAGE:-ghcr.io/ohmyyuwan/superleaf-collab:latest}
+    user: "${SUPERLEAF_RUNTIME_UID:-10001}:${SUPERLEAF_RUNTIME_GID:-10001}"
+    environment:
+      BACKEND_URL: http://backend:8000
+      COLLAB_HOST: 0.0.0.0
+      COLLAB_PORT: 4444
+      COLLAB_DATA_DIR: /data/collab
+      COLLAB_WS_PATH_PREFIX: /collab
+      COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
+    volumes:
+      - ./data/collab:/data/collab
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "4444"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4444/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped

@@ -12,6 +12,15 @@ const INTERNAL_TOKEN_HEADER = 'x-superleaf-internal-token'
 
 let persistence: LeveldbPersistence
 
+interface LeveldbPersistenceWithDocNames extends LeveldbPersistence {
+  getAllDocNames: () => Promise<string[]>
+}
+
+export interface HttpIntegration {
+  getActiveDocIds: () => string[]
+  getLoadedDocText: (docId: string) => string | null
+}
+
 export function initPersistence() {
   persistence = new LeveldbPersistence(DATA_DIR)
   console.log(`[collab-server] persistence: ${DATA_DIR}`)
@@ -69,12 +78,28 @@ export async function storeUpdate(docId: string, update: Uint8Array): Promise<vo
  *   GET  /docs/:docId/text   — returns current plain text of the document
  *   GET  /health             — health check
  */
-export function handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+export function handleHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  integration: HttpIntegration,
+): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
 
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ status: 'ok' }))
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/docs/active') {
+    if (!isAuthorizedInternalRequest(req)) {
+      res.writeHead(401)
+      res.end('Unauthorized')
+      return
+    }
+    const docIds = integration.getActiveDocIds()
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ doc_ids: docIds, count: docIds.length }))
     return
   }
 
@@ -86,7 +111,18 @@ export function handleHttpRequest(req: http.IncomingMessage, res: http.ServerRes
       return
     }
     const docId = decodeURIComponent(textMatch[1])
-    void getDocText(docId, res)
+    const loadedText = integration.getLoadedDocText(docId)
+    if (loadedText !== null) {
+      writeJson(res, 200, {
+        doc_id: docId,
+        text: loadedText,
+        length: loadedText.length,
+        initialized: true,
+        source: 'loaded',
+      })
+      return
+    }
+    void getPersistedDocText(docId, res)
     return
   }
 
@@ -94,18 +130,37 @@ export function handleHttpRequest(req: http.IncomingMessage, res: http.ServerRes
   res.end('Not Found')
 }
 
-async function getDocText(docId: string, res: http.ServerResponse): Promise<void> {
+async function getPersistedDocText(docId: string, res: http.ServerResponse): Promise<void> {
   try {
+    const docNames = await (persistence as LeveldbPersistenceWithDocNames).getAllDocNames()
+    if (!docNames.includes(docId)) {
+      writeJson(res, 404, {
+        code: 'collab_doc_not_initialized',
+        doc_id: docId,
+        initialized: false,
+      })
+      return
+    }
     const doc = await persistence.getYDoc(docId)
     const text = doc.getText('content').toString()
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ doc_id: docId, text, length: text.length }))
+    writeJson(res, 200, {
+      doc_id: docId,
+      text,
+      length: text.length,
+      initialized: true,
+      source: 'persisted',
+    })
     doc.destroy()
   } catch (err) {
     console.error(`[collab-server] getDocText error for ${docId}:`, err)
     res.writeHead(500)
     res.end('Internal Server Error')
   }
+}
+
+function writeJson(res: http.ServerResponse, statusCode: number, payload: object): void {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(payload))
 }
 
 function isAuthorizedInternalRequest(req: http.IncomingMessage): boolean {

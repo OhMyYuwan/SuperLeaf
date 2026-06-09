@@ -27,6 +27,7 @@ export interface RegisterBody {
   password: string
   display_name?: string
   bootstrap_token?: string
+  invite_token?: string
 }
 
 export const authApi = {

@@ -24,10 +24,12 @@ from ..schemas import (
     FolderOut,
     ProjectTreeOut,
 )
+from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.event_bus import bus
-from ..services.project_fs_service import ProjectFsService
+from ..services.project_fs_service import DocVersionConflictError, ProjectFsService
 from ..services.project_member_service import ProjectMemberService
+from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
 from .deps import (
     get_current_project,
     get_current_user,
@@ -189,14 +191,69 @@ def update_doc(
     if existing is None or existing.project_id != project.id:
         raise HTTPException(404, "doc not found")
     origin = (getattr(body, "origin", None) or "auto_save")
-    doc = svc.update_doc_content(
-        doc_id,
-        body.content,
-        origin=origin,
-        actor=str(project.user_id) if project.user_id else None,
-    )
+    try:
+        doc = svc.update_doc_content(
+            doc_id,
+            body.content,
+            origin=origin,
+            actor=str(project.user_id) if project.user_id else None,
+            expected_version=body.base_version,
+        )
+    except DocVersionConflictError as exc:
+        current = DocOut.model_validate(exc.current)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "doc_version_conflict",
+                "doc_id": exc.current.id,
+                "current_version": exc.current.version,
+                "updated_at": current.updated_at.isoformat(),
+            },
+        ) from exc
     if doc is None:
         raise HTTPException(404, "doc not found")
+    out = DocOut.model_validate(doc)
+    bus.publish(
+        project.id,
+        "doc.updated",
+        {"doc_id": doc.id, "version": doc.version, "updated_at": out.updated_at.isoformat()},
+        origin_client_id=x_client_id,
+    )
+    return out
+
+
+@router.post("/api/docs/{doc_id}/collab-flush", response_model=DocOut)
+async def flush_collab_doc(
+    doc_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
+) -> DocOut:
+    existing = ProjectFsService(db, project).get_doc(doc_id)
+    if existing is None or existing.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+
+    try:
+        doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
+    except collab_snapshot_service.CollabSnapshotError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Unable to read the current collaboration state",
+            },
+        ) from exc
+    if doc is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "collab_flush_failed",
+                "message": "Collaboration state is not ready yet",
+            },
+        )
+    if doc.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+
     out = DocOut.model_validate(doc)
     bus.publish(
         project.id,
@@ -342,6 +399,7 @@ async def import_project_zip(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
+    await flush_project_collab_or_503(project)
     try:
         doc_count, file_count, byte_count = ProjectFsService(db, project).replace_from_zip(
             blob
@@ -566,6 +624,7 @@ def export_zip(
     db: Session = Depends(get_session),
     project: Project = Depends(get_project_from_path),
 ) -> Response:
+    flush_project_collab_or_503_sync(project)
     data = ProjectFsService(db, project).export_zip()
     safe_name = (project.name or "project").replace('"', "").strip() or "project"
     return Response(

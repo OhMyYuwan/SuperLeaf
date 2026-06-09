@@ -21,6 +21,11 @@ import type { ChangeSet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { baseExtensions, languageFor, shortcutKeymapFor } from './extensions'
 import type { EditorFormat } from './extensions'
+import {
+  DEFAULT_LATEX_EDITOR_THEME_ID,
+  latexEditorTheme,
+  type LatexEditorThemeId,
+} from './theme'
 import { spellingFor } from './spelling'
 import { setLatexCompletionDataEffect } from './latex-language'
 import type {
@@ -94,6 +99,7 @@ export interface LatexEditorProps {
   filePathCompletions?: LatexFilePathCompletion[]
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
+  themeId?: LatexEditorThemeId
 }
 
 export function LatexEditor({
@@ -119,6 +125,7 @@ export function LatexEditor({
   filePathCompletions,
   labelCompletions,
   commandCompletions,
+  themeId = DEFAULT_LATEX_EDITOR_THEME_ID,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -133,6 +140,7 @@ export function LatexEditor({
   const languageCompartment = useMemo(() => new Compartment(), [])
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
   const spellingCompartment = useMemo(() => new Compartment(), [])
+  const themeCompartment = useMemo(() => new Compartment(), [])
   const completionData = useMemo<LatexCompletionData>(
     () => ({
       citations: citationCompletions ?? [],
@@ -223,7 +231,10 @@ export function LatexEditor({
       doc: initialDoc,
       selection: selectionSpecFromRestore(restoreStateRef.current, initialDoc.length),
       extensions: [
-        ...baseExtensions({ includeHistory: !isCollab }),
+        ...baseExtensions({
+          includeHistory: !isCollab,
+          themeExtension: themeCompartment.of(latexEditorTheme(themeId)),
+        }),
         ...(isCollab ? collaborationExtensions(yText!, awareness!) : []),
         languageCompartment.of(languageFor(format, completionData)),
         shortcutsCompartment.of(shortcutKeymapFor(format)),
@@ -301,6 +312,19 @@ export function LatexEditor({
     // Rebuild the editor when collaboration mode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collaborating, yText, awareness])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: themeCompartment.reconfigure(latexEditorTheme(themeId)),
+    })
+  }, [themeCompartment, themeId])
+
+  useEffect(() => {
+    if (!collaborating || !yText) return
+    onChangeRef.current(yText.toString())
+  }, [collaborating, yText])
 
   // Apply external value changes without rebuilding the editor.
   // In collaboration mode, Yjs owns the document — skip external value sync.

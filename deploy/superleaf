@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 ENV_FILE="${SUPERLEAF_ENV_FILE:-$ROOT/.env}"
 COMPOSE_FILE="$ROOT/compose.yml"
+MULTI_COMPOSE_FILE="$ROOT/compose.multi.yml"
 TLS_COMPOSE_FILE="$ROOT/compose.tls.yml"
 GENERATED_BOOTSTRAP_TOKEN=""
 GENERATED_COLLAB_INTERNAL_TOKEN=0
@@ -15,6 +16,14 @@ compose() {
 
 compose_tls() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
+}
+
+compose_multi() {
+  docker compose --env-file "$ENV_FILE" -f "$MULTI_COMPOSE_FILE" "$@"
+}
+
+stop_multi_stack_for_single() {
+  compose_multi down >/dev/null 2>&1 || true
 }
 
 generate_secret() {
@@ -170,6 +179,7 @@ Usage:
   ./superleaf init
   ./superleaf up
   ./superleaf tls-up
+  ./superleaf multi-up
   ./superleaf down
   ./superleaf restart
   ./superleaf status
@@ -192,6 +202,7 @@ case "$cmd" in
   up)
     init_env
     ensure_dirs
+    stop_multi_stack_for_single
     compose up -d "$@"
     ;;
   tls-up)
@@ -199,26 +210,49 @@ case "$cmd" in
     ensure_dirs
     compose_tls up -d "$@"
     ;;
+  multi-up)
+    init_env
+    ensure_dirs
+    compose_multi up -d "$@"
+    ;;
   down)
     ensure_env
     compose down "$@"
+    ;;
+  multi-down)
+    ensure_env
+    compose_multi down "$@"
     ;;
   restart)
     init_env
     ensure_dirs
     compose restart "$@"
     ;;
+  multi-restart)
+    init_env
+    ensure_dirs
+    compose_multi restart "$@"
+    ;;
   status|ps)
     ensure_env
     compose ps "$@"
+    ;;
+  multi-status|multi-ps)
+    ensure_env
+    compose_multi ps "$@"
     ;;
   logs)
     ensure_env
     compose logs -f "$@"
     ;;
+  multi-logs)
+    ensure_env
+    compose_multi logs -f "$@"
+    ;;
   update)
     init_env
     ensure_dirs
+    stop_multi_stack_for_single
     compose pull
     compose up -d
     ;;

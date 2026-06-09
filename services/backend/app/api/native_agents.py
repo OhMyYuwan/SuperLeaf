@@ -7,6 +7,7 @@ left for a follow-up request.
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -73,10 +74,85 @@ router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
 
 OFFICIAL_BADGE_STYLES = {"metal", "minimal"}
 _official_badge_style_override: str | None = None
+LOCAL_AGENT_HOST_PACKAGE_GLOB = "superleaf-local-agent-host-*.zip"
+LOCAL_AGENT_HOST_DOWNLOAD_PATH = "/api/native-agent/local-agent-host/download"
+LOCAL_AGENT_HOST_DEFAULT_ENDPOINT = "http://127.0.0.1:8787"
+LOCAL_AGENT_HOST_DEFAULT_MCP_URL = "http://127.0.0.1:8787/mcp"
+LOCAL_AGENT_HOST_MANIFEST_FILE = "superleaf-local-agent-host.manifest.json"
+LOCAL_AGENT_HOST_BUNDLE_FILES = [
+    "package.json",
+    "server.mjs",
+    "superleaf-tools.mjs",
+    "README.md",
+    ".env.example",
+    "start-local-agent-host.sh",
+    "start-local-agent-host.command",
+    "start-local-agent-host.cmd",
+    "start-local-agent-host.ps1",
+    "start-local-agent-host-background.command",
+    "start-local-agent-host-background.cmd",
+    "start-local-agent-host-background.ps1",
+    "stop-local-agent-host.command",
+    "stop-local-agent-host.cmd",
+    "stop-local-agent-host.ps1",
+    "install-local-agent-host-startup.command",
+    "uninstall-local-agent-host-startup.command",
+    "install-local-agent-host-startup.cmd",
+    "uninstall-local-agent-host-startup.cmd",
+    "install-local-agent-host-startup.ps1",
+    "uninstall-local-agent-host-startup.ps1",
+    "scripts/package.mjs",
+    "scripts/smoke-mcp.mjs",
+    "scripts/mcp-sdk-migration-gate.mjs",
+    "scripts/mcp-inspector.mjs",
+    "scripts/local-agent-compat-matrix.mjs",
+    "scripts/nanobot-tool-calls-matrix.mjs",
+]
+LOCAL_AGENT_HOST_SHARED_BUNDLE_FILES = [
+    ("services/shared/superleaf-tools.json", "superleaf-tools.json"),
+]
+LOCAL_AGENT_HOST_REQUIRED_PACKAGE_FILES = sorted(
+    set(LOCAL_AGENT_HOST_BUNDLE_FILES)
+    | {bundle_relative for _source_relative, bundle_relative in LOCAL_AGENT_HOST_SHARED_BUNDLE_FILES}
+    | {LOCAL_AGENT_HOST_MANIFEST_FILE}
+)
 
 
 class OfficialBadgeUiPatch(BaseModel):
     style: str = Field(pattern="^(metal|minimal)$")
+
+
+class LocalAgentHostPackageOut(BaseModel):
+    version: str
+    filename: str
+    size_bytes: int
+    checksum_algorithm: str
+    sha256: str
+    download_path: str
+    endpoint: str
+    mcp_url: str
+    manifest_filename: str
+    manifest: dict
+    included_files: list[str]
+    macos: dict[str, str]
+    windows: dict[str, str]
+    codex_env: dict[str, str]
+    claude_env: dict[str, str]
+
+
+class LocalAgentHostUpdateOut(BaseModel):
+    status: str
+    channel: str
+    current_version: str
+    latest_version: str
+    update_available: bool
+    update_strategy: str
+    download_path: str
+    checksum_algorithm: str
+    sha256: str
+    manifest_filename: str
+    manifest: dict
+    package: LocalAgentHostPackageOut
 
 
 def _credential_out(row: NativeAgentCredential) -> NativeAgentCredentialOut:
@@ -180,6 +256,215 @@ def _project_skill_export_archive(row: Skill) -> tuple[str, bytes]:
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         )
     return folder_name, archive.getvalue()
+
+
+def _repo_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "services" / "local-agent-host").is_dir():
+            return parent
+    return current.parents[4]
+
+
+def _local_agent_host_version(host_root: Path) -> str:
+    package_json = host_root / "package.json"
+    if package_json.exists():
+        try:
+            return json.loads(package_json.read_text(encoding="utf-8")).get("version") or "0.1.0"
+        except (OSError, json.JSONDecodeError):
+            return "0.1.0"
+    return "0.1.0"
+
+
+def _local_agent_host_archive_entries(payload: bytes) -> set[str]:
+    entries: set[str] = set()
+    with zipfile.ZipFile(io.BytesIO(payload), mode="r") as zf:
+        for name in zf.namelist():
+            clean_name = name.strip("/")
+            if not clean_name or clean_name.endswith("/"):
+                continue
+            relative = clean_name.split("/", 1)[1] if "/" in clean_name else clean_name
+            if relative:
+                entries.add(relative)
+    return entries
+
+
+def _local_agent_host_package_entries(payload: bytes) -> list[str]:
+    return sorted(_local_agent_host_archive_entries(payload))
+
+
+def _local_agent_host_package_has_required_files(payload: bytes) -> bool:
+    try:
+        entries = _local_agent_host_archive_entries(payload)
+    except zipfile.BadZipFile:
+        return False
+    return set(LOCAL_AGENT_HOST_REQUIRED_PACKAGE_FILES).issubset(entries)
+
+
+def _local_agent_host_packaged_archive(root: Path) -> Path | None:
+    packaged = sorted(
+        (root / "dist").glob(LOCAL_AGENT_HOST_PACKAGE_GLOB),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for package_path in packaged:
+        try:
+            payload = package_path.read_bytes()
+        except OSError:
+            continue
+        if _local_agent_host_package_has_required_files(payload):
+            return package_path
+    return None
+
+
+def _local_agent_host_install_manifest(*, version: str, files: list[str], source: str) -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "superleaf.local_agent_host.package",
+        "version": version,
+        "source": source,
+        "endpoint": LOCAL_AGENT_HOST_DEFAULT_ENDPOINT,
+        "mcp_url": LOCAL_AGENT_HOST_DEFAULT_MCP_URL,
+        "manifest_filename": LOCAL_AGENT_HOST_MANIFEST_FILE,
+        "required_files": LOCAL_AGENT_HOST_REQUIRED_PACKAGE_FILES,
+        "included_files": files,
+        "platforms": {
+            "macos": {
+                "foreground": "./start-local-agent-host.sh",
+                "finder": "start-local-agent-host.command",
+                "background": "start-local-agent-host-background.command",
+                "stop": "stop-local-agent-host.command",
+                "install_start_at_login": "install-local-agent-host-startup.command",
+                "uninstall_start_at_login": "uninstall-local-agent-host-startup.command",
+            },
+            "windows": {
+                "foreground": "start-local-agent-host.cmd",
+                "background": "start-local-agent-host-background.cmd",
+                "stop": "stop-local-agent-host.cmd",
+                "powershell_foreground": ".\\start-local-agent-host.ps1",
+                "install_start_at_login": "install-local-agent-host-startup.cmd",
+                "uninstall_start_at_login": "uninstall-local-agent-host-startup.cmd",
+            },
+        },
+        "agent_env": {
+            "codex": {
+                "SL_LOCAL_AGENT_HOST_CODEX_ENABLED": "1",
+                "SL_LOCAL_AGENT_HOST_CODEX_BIN": "codex",
+                "SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT": "app-server",
+                "SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP": "1",
+            },
+            "claude": {
+                "SL_LOCAL_AGENT_HOST_CLAUDE_ENABLED": "1",
+                "SL_LOCAL_AGENT_HOST_CLAUDE_BIN": "claude",
+                "SL_LOCAL_AGENT_HOST_CLAUDE_PERMISSION_MODE": "default",
+            },
+        },
+        "verification": {
+            "checksum_algorithm": "sha256",
+            "checksum_source": "/api/native-agent/local-agent-host/package",
+        },
+    }
+
+
+def _build_local_agent_host_package(root: Path) -> tuple[str, bytes]:
+    host_root = root / "services" / "local-agent-host"
+    if not host_root.exists() or not host_root.is_dir():
+        raise FileNotFoundError("Local Agent Host source directory is missing")
+    version = _local_agent_host_version(host_root)
+    bundle_name = f"superleaf-local-agent-host-{version}"
+    manifest_files = list(LOCAL_AGENT_HOST_REQUIRED_PACKAGE_FILES)
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for relative in LOCAL_AGENT_HOST_BUNDLE_FILES:
+            source = host_root / relative
+            if not source.is_file():
+                continue
+            zf.write(source, f"{bundle_name}/{relative}")
+        for source_relative, bundle_relative in LOCAL_AGENT_HOST_SHARED_BUNDLE_FILES:
+            source = root / source_relative
+            if not source.is_file():
+                continue
+            zf.write(source, f"{bundle_name}/{bundle_relative}")
+        zf.writestr(
+            f"{bundle_name}/{LOCAL_AGENT_HOST_MANIFEST_FILE}",
+            json.dumps(
+                _local_agent_host_install_manifest(
+                    version=version,
+                    files=manifest_files,
+                    source="backend-fallback",
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+    return f"{bundle_name}.zip", archive.getvalue()
+
+
+def _local_agent_host_package() -> tuple[str, bytes]:
+    root = _repo_root()
+    package_path = _local_agent_host_packaged_archive(root)
+    if package_path is not None:
+        return package_path.name, package_path.read_bytes()
+    return _build_local_agent_host_package(root)
+
+
+def _local_agent_host_package_version(filename: str) -> str:
+    match = re.match(r"superleaf-local-agent-host-(.+)\.zip$", filename)
+    if match:
+        return match.group(1)
+    return _local_agent_host_version(_repo_root() / "services" / "local-agent-host")
+
+
+def _local_agent_host_package_info() -> LocalAgentHostPackageOut:
+    filename, payload = _local_agent_host_package()
+    version = _local_agent_host_package_version(filename)
+    included_files = _local_agent_host_package_entries(payload)
+    manifest = _local_agent_host_install_manifest(
+        version=version,
+        files=included_files,
+        source="package-info",
+    )
+    return LocalAgentHostPackageOut(
+        version=version,
+        filename=filename,
+        size_bytes=len(payload),
+        checksum_algorithm="sha256",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        download_path=LOCAL_AGENT_HOST_DOWNLOAD_PATH,
+        endpoint=LOCAL_AGENT_HOST_DEFAULT_ENDPOINT,
+        mcp_url=LOCAL_AGENT_HOST_DEFAULT_MCP_URL,
+        manifest_filename=LOCAL_AGENT_HOST_MANIFEST_FILE,
+        manifest=manifest,
+        included_files=included_files,
+        macos={
+            "foreground": "./start-local-agent-host.sh",
+            "finder": "start-local-agent-host.command",
+            "background": "start-local-agent-host-background.command",
+            "stop": "stop-local-agent-host.command",
+            "install_start_at_login": "install-local-agent-host-startup.command",
+            "uninstall_start_at_login": "uninstall-local-agent-host-startup.command",
+        },
+        windows={
+            "foreground": "start-local-agent-host.cmd",
+            "background": "start-local-agent-host-background.cmd",
+            "stop": "stop-local-agent-host.cmd",
+            "powershell_foreground": ".\\start-local-agent-host.ps1",
+            "install_start_at_login": "install-local-agent-host-startup.cmd",
+            "uninstall_start_at_login": "uninstall-local-agent-host-startup.cmd",
+        },
+        codex_env={
+            "SL_LOCAL_AGENT_HOST_CODEX_ENABLED": "1",
+            "SL_LOCAL_AGENT_HOST_CODEX_BIN": "codex",
+            "SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT": "app-server",
+            "SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP": "1",
+        },
+        claude_env={
+            "SL_LOCAL_AGENT_HOST_CLAUDE_ENABLED": "1",
+            "SL_LOCAL_AGENT_HOST_CLAUDE_BIN": "claude",
+            "SL_LOCAL_AGENT_HOST_CLAUDE_PERMISSION_MODE": "default",
+        },
+    )
 
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
@@ -688,6 +973,66 @@ def delete_skill(
     user: User = Depends(get_current_user),
 ) -> None:
     NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+
+
+@router.get("/local-agent-host/package", response_model=LocalAgentHostPackageOut)
+def get_local_agent_host_package(
+    user: User = Depends(get_current_user),
+) -> LocalAgentHostPackageOut:
+    del user
+    try:
+        return _local_agent_host_package_info()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/local-agent-host/update", response_model=LocalAgentHostUpdateOut)
+def get_local_agent_host_update(
+    current_version: str = "",
+    user: User = Depends(get_current_user),
+) -> LocalAgentHostUpdateOut:
+    del user
+    try:
+        package = _local_agent_host_package_info()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    normalized_current = (current_version or "").strip()
+    return LocalAgentHostUpdateOut(
+        status="ok",
+        channel="local",
+        current_version=normalized_current,
+        latest_version=package.version,
+        update_available=bool(normalized_current and normalized_current != package.version),
+        update_strategy="manual-download",
+        download_path=package.download_path,
+        checksum_algorithm=package.checksum_algorithm,
+        sha256=package.sha256,
+        manifest_filename=package.manifest_filename,
+        manifest=package.manifest,
+        package=package,
+    )
+
+
+@router.get("/local-agent-host/download")
+def download_local_agent_host(
+    user: User = Depends(get_current_user),
+) -> Response:
+    del user
+    try:
+        filename, payload = _local_agent_host_package()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    disposition = f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
+    sha256 = hashlib.sha256(payload).hexdigest()
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": disposition,
+            "X-SuperLeaf-Package-Sha256": sha256,
+            "X-SuperLeaf-Package-Checksum-Algorithm": "sha256",
+        },
+    )
 
 
 @router.get("/skills/{skill_id}/download")

@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     # user exists. Local/dev deployments can opt back into public registration.
     public_registration: bool = False
     bootstrap_token: str = ""
+    public_base_url: str = ""
+    registration_invite_ttl_days: int = 7
+
+    # Optional SMTP delivery for administrator-created registration invites.
+    # If unset, invite links are still shown in the admin console for manual copy.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
 
     # Session cookie transport policy:
     # - auto: mark cookies Secure for HTTPS / X-Forwarded-Proto=https requests

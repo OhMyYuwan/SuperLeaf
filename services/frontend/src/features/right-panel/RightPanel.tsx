@@ -5,12 +5,13 @@
  * other component needs to know about it.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
 import type { CachedWorkflow, Provider, WorkflowDefinition, WorkflowDefinitionDraft } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { DiscussionTab } from './DiscussionTab'
+import type { SelectedAgentByDocument } from './discussionAgentSelection'
 import { TeamTab } from './TeamTab'
 import { RunHistoryTab } from './RunHistoryTab'
 import { ProjectArchiveTab } from './ProjectArchiveTab'
@@ -50,16 +51,24 @@ interface RightPanelProps {
 export function RightPanel(props: RightPanelProps) {
   const [internalTab, setInternalTab] = useState('discussion')
   const [versionSubtab, setVersionSubtab] = useState<'archive' | 'document'>('archive')
+  const [selectedAgentByDocument, setSelectedAgentByDocument] =
+    useState<SelectedAgentByDocument>({})
   const currentProjectRole = useProjectStore((s) => s.currentProjectRole)
   const canManageArchive = currentProjectRole === 'owner'
   const selectedTab = props.selectedTab ?? internalTab
   const onTabChange = props.onTabChange ?? setInternalTab
-
-  useEffect(() => {
-    if (!canManageArchive && versionSubtab === 'archive') {
-      setVersionSubtab('document')
+  const activeVersionSubtab = canManageArchive ? versionSubtab : 'document'
+  const handleSelectAgentForDocument = useCallback((documentId: string, workflowId: string) => {
+    setSelectedAgentByDocument((prev) =>
+      prev[documentId] === workflowId ? prev : { ...prev, [documentId]: workflowId },
+    )
+  }, [])
+  const handleChatWithAgent = (workflow: CachedWorkflow) => {
+    if (props.activeDocumentId) {
+      handleSelectAgentForDocument(props.activeDocumentId, workflow.id)
     }
-  }, [canManageArchive, versionSubtab])
+    onTabChange('discussion')
+  }
 
   return (
     <div className="panel right-panel">
@@ -91,6 +100,8 @@ export function RightPanel(props: RightPanelProps) {
             workflows={props.workflows}
             documentId={props.activeDocumentId}
             activeSelection={props.activeSelection}
+            selectedAgentByDocument={selectedAgentByDocument}
+            onSelectAgentForDocument={handleSelectAgentForDocument}
             onJumpToRange={props.onJumpToRange}
           />
         </Tabs.Content>
@@ -113,6 +124,7 @@ export function RightPanel(props: RightPanelProps) {
             onCreateDefinition={props.onCreateDefinition}
             onUpdateDefinition={props.onUpdateDefinition}
             onDeleteDefinition={props.onDeleteDefinition}
+            onChatWithAgent={handleChatWithAgent}
           />
         </Tabs.Content>
 
@@ -144,20 +156,20 @@ export function RightPanel(props: RightPanelProps) {
             <div className="history-subnav">
               {canManageArchive && (
                 <button
-                  className={`history-subnav-btn ${versionSubtab === 'archive' ? 'is-active' : ''}`}
+                  className={`history-subnav-btn ${activeVersionSubtab === 'archive' ? 'is-active' : ''}`}
                   onClick={() => setVersionSubtab('archive')}
                 >
                   项目归档
                 </button>
               )}
               <button
-                className={`history-subnav-btn ${versionSubtab === 'document' ? 'is-active' : ''}`}
+                className={`history-subnav-btn ${activeVersionSubtab === 'document' ? 'is-active' : ''}`}
                 onClick={() => setVersionSubtab('document')}
               >
                 文档历史
               </button>
             </div>
-            {versionSubtab === 'archive' ? (
+            {activeVersionSubtab === 'archive' ? (
               <ProjectArchiveTab />
             ) : (
               <HistoryTab documentId={props.activeDocumentId} embedded />

@@ -7,8 +7,14 @@
 
 import { create } from 'zustand'
 import { providerApi, type Provider, type ProviderDraft, type ProviderUpdate } from '../services/backendApi'
+import {
+  DEFAULT_LATEX_EDITOR_THEME_ID,
+  isLatexEditorThemeId,
+  type LatexEditorThemeId,
+} from '../features/latex-editor/theme'
 
 const PROJECT_LIST_GROUPING_KEY = 'yuwanlab.projectListGrouping'
+const LATEX_EDITOR_THEME_KEY = 'yuwanlab.latexEditorTheme'
 
 export type ProjectListGrouping = 'grouped' | 'mixed'
 
@@ -17,9 +23,16 @@ function readInitialProjectListGrouping(): ProjectListGrouping {
   return window.localStorage.getItem(PROJECT_LIST_GROUPING_KEY) === 'mixed' ? 'mixed' : 'grouped'
 }
 
+function readInitialLatexEditorTheme(): LatexEditorThemeId {
+  if (typeof window === 'undefined') return DEFAULT_LATEX_EDITOR_THEME_ID
+  const stored = window.localStorage.getItem(LATEX_EDITOR_THEME_KEY)
+  return isLatexEditorThemeId(stored) ? stored : DEFAULT_LATEX_EDITOR_THEME_ID
+}
+
 interface SettingsState {
   providers: Provider[]
   projectListGrouping: ProjectListGrouping
+  latexEditorTheme: LatexEditorThemeId
   loading: boolean
   loaded: boolean
   error: string | null
@@ -33,12 +46,14 @@ interface SettingsState {
   probe: (id: string) => Promise<Provider | null>
   getActive: () => Provider | null
   setProjectListGrouping: (grouping: ProjectListGrouping) => void
+  setLatexEditorTheme: (theme: LatexEditorThemeId) => void
   reset: () => void
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
   projectListGrouping: readInitialProjectListGrouping(),
+  latexEditorTheme: readInitialLatexEditorTheme(),
   loading: false,
   loaded: false,
   error: null,
@@ -120,6 +135,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       window.localStorage.setItem(PROJECT_LIST_GROUPING_KEY, grouping)
     }
     set({ projectListGrouping: grouping })
+  },
+
+  setLatexEditorTheme: (theme) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LATEX_EDITOR_THEME_KEY, theme)
+    }
+    set({ latexEditorTheme: theme })
   },
 
   reset: () => set({ providers: [], loaded: false, error: null }),

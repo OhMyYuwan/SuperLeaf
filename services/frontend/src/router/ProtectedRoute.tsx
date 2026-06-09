@@ -16,9 +16,10 @@ import { useUserStore } from '../stores/userStore'
 
 interface Props {
   children: React.ReactNode
+  requireAdmin?: boolean
 }
 
-export function ProtectedRoute({ children }: Props) {
+export function ProtectedRoute({ children, requireAdmin = false }: Props) {
   const location = useLocation()
   const currentUser = useUserStore((s) => s.currentUser)
   const loaded = useUserStore((s) => s.loaded)
@@ -44,6 +45,10 @@ export function ProtectedRoute({ children }: Props) {
         state={{ from: location.pathname + location.search }}
       />
     )
+  }
+
+  if (requireAdmin && !currentUser.is_admin) {
+    return <Navigate to="/projects" replace />
   }
 
   return <>{children}</>

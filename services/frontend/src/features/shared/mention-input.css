@@ -20,6 +20,11 @@
   line-height: 1.5;
   letter-spacing: normal;
   word-spacing: normal;
+  font-kerning: normal;
+  font-variant-ligatures: normal;
+  font-variant-east-asian: normal;
+  text-rendering: auto;
+  tab-size: 4;
   color: inherit;
   background: var(--bg-input, transparent);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
@@ -33,10 +38,10 @@
   position: relative;
   z-index: 2;
   background: transparent;
-  /* Make the textarea text invisible — the mirror behind shows the styled
-     copy, including colored mention spans. The caret stays visible because
-     it's drawn separately by the browser. */
-  color: var(--mention-input-color, transparent);
+  /* Keep the native textarea as the visible text + caret source. The mirror
+     behind only paints mention affordances, so mixed English/CJK glyph widths
+     cannot make the visible text drift away from the browser caret. */
+  color: var(--mention-input-color, inherit);
   caret-color: var(--mention-caret-color, #e5e7eb);
 }
 
@@ -46,7 +51,7 @@
 
 .mention-input-stack .mention-input-textarea::selection {
   background: rgba(90, 143, 255, 0.35);
-  color: var(--mention-selection-color, transparent);
+  color: var(--mention-selection-color, inherit);
 }
 
 .mention-input-stack.without-mirror .mention-input-textarea::selection {
@@ -54,7 +59,7 @@
 }
 
 .mention-input-stack .mention-input-textarea::placeholder {
-  color: var(--mention-native-placeholder-color, transparent);
+  color: var(--mention-native-placeholder-color, var(--text-muted, rgba(255, 255, 255, 0.45)));
 }
 
 .mention-input-stack.without-mirror .mention-input-textarea::placeholder {
@@ -79,7 +84,12 @@
   line-height: 1.5;
   letter-spacing: normal;
   word-spacing: normal;
-  color: var(--mention-text-color, #e5e7eb);
+  font-kerning: normal;
+  font-variant-ligatures: normal;
+  font-variant-east-asian: normal;
+  text-rendering: auto;
+  tab-size: 4;
+  color: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 6px 8px;
@@ -87,7 +97,7 @@
 }
 
 .mention-input-placeholder {
-  color: var(--mention-placeholder-color, var(--text-muted, rgba(255, 255, 255, 0.45)));
+  color: transparent;
 }
 
 /* Inline mention chips inside the mirror layer.
@@ -99,7 +109,7 @@
 .mention-input-mirror .mention-tag {
   display: inline !important;
   background: rgba(59, 130, 246, 0.22);
-  color: #93c5fd;
+  color: transparent;
   text-decoration: underline;
   text-decoration-color: rgba(59, 130, 246, 0.5);
   text-underline-offset: 2px;
@@ -108,13 +118,13 @@
 
 .mention-input-mirror .mention-tag-file {
   background: var(--mention-file-bg, rgba(34, 197, 94, 0.22));
-  color: var(--mention-file-color, #86efac);
+  color: transparent;
   text-decoration-color: var(--mention-file-border, rgba(34, 197, 94, 0.4));
 }
 
 .mention-input-mirror .mention-tag-workflow {
   background: rgba(168, 85, 247, 0.22);
-  color: #d8b4fe;
+  color: transparent;
   text-decoration-color: rgba(168, 85, 247, 0.4);
 }
 

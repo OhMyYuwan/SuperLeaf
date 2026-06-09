@@ -66,6 +66,32 @@ class Session(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
 
 
+class RegistrationInvite(Base):
+    """One-time admin-issued registration invitation.
+
+    The plaintext token is only returned to the admin at creation/rotation time.
+    Persisting the SHA-256 hash keeps leaked database backups from becoming
+    usable registration links.
+    """
+
+    __tablename__ = "registration_invites"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(255), default="", index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hint: Mapped[str] = mapped_column(String(16), default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    send_status: Mapped[str] = mapped_column(String(32), default="not_requested")
+    send_error: Mapped[str] = mapped_column(Text, default="")
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+
+
 class GitHubAccount(Base):
     """User-scoped GitHub authorization.
 
@@ -987,6 +1013,44 @@ class Annotation(Base):
     # JSON
     thread: Mapped[list] = mapped_column(JSON, default=list)
     attached_files: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class AnnotationAgentSuggestion(Base):
+    """Private Agent-generated suggestions for a user's visible annotation.
+
+    These records are deliberately separate from ``Annotation.thread`` so an
+    Agent's draft advice remains private until the user explicitly publishes
+    or applies it. One user/Agent pair owns at most one current suggestion set
+    for an annotation; reruns update the row instead of accumulating stale
+    drafts.
+    """
+
+    __tablename__ = "annotation_agent_suggestions"
+    __table_args__ = (
+        UniqueConstraint(
+            "annotation_id",
+            "user_id",
+            "agent_id",
+            name="uq_annotation_agent_suggestions_annotation_user_agent",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    doc_id: Mapped[str] = mapped_column(ForeignKey("docs.id"), index=True)
+    annotation_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    agent_id: Mapped[str] = mapped_column(String(128), index=True, default="")
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(24), default="drafted")
+    suggestions: Mapped[list] = mapped_column(JSON, default=list)
+    internal_meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

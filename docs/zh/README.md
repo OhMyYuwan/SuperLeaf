@@ -15,6 +15,8 @@ nav_order: 2
 - [原生 Agent](./agents/README.html)：后端原生 Agent、凭证、模型、AgentSkill。
 - [Skill 使用与市场](./agents/skills.html)：官方 Skill Market、私有 Skill、共享 Skill、项目化 Skill 开发。
 - [MCP 使用与市场](./agents/mcps.html)：拥有的 MCP、自定义 MCP、连通性和功能性检查。
+- [Local Agent Host 与 SuperLeaf MCP](./agents/local-agent-mcp.html)：macOS / Windows 上启动本地 Host，并让 Codex、Nanobot、Claude 使用 SuperLeaf 工具。
+- [SuperLeaf MCP 构建方案](./superleaf-mcp-architecture-plan.html)：本地 Agent、Browser Bridge、Tool Kernel、Remote MCP 的大版本迭代计划。
 - [Provider 配置](./providers/README.html)：外部模型服务的接入方式。
   - [Nanobot](./providers/nanobot.html) — 已完成，推荐本地单用户首选
   - [Dify](./providers/dify.html)
@@ -24,6 +26,7 @@ nav_order: 2
 - [交互数据收集](./annotation-training-data.html)：交互数据保留、训练数据导出、CSV Skill。
 - [故障排查](./troubleshooting/README.html)：端口、代理、Provider、智能体技能市场、LaTeX 编译。
 - [架构总览](./architecture/overview.html)：三服务架构和数据模型。
+- [自动回复批注执行计划](./architecture/annotation-auto-reply-plan.html)：手动触发的私有 Agent 批注建议功能规划。
 - [开发导航与 Project Map](./development/README.html)：ACP 支持层、路由文件和支撑仓库边界。
 
 ## 文档约定

@@ -70,6 +70,9 @@ def run_migrations(engine: Engine) -> None:
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
         _add_conversation_user_renamed(conn)
+        _add_archived_at_to_annotations(conn)
+        _create_annotation_agent_suggestion_table(conn)
+        _create_registration_invite_table(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -314,6 +317,49 @@ def _json_blob_to_value(blob: Any) -> Any:
 def _looks_like_dataset_source_pointer(value: Any) -> bool:
     value = _json_blob_to_value(value)
     return isinstance(value, dict) and {"document_id", "range_start", "range_end"}.issubset(value.keys())
+
+
+def _create_registration_invite_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS registration_invites (
+                id VARCHAR(32) NOT NULL PRIMARY KEY,
+                email VARCHAR(255) DEFAULT '',
+                token_hash VARCHAR(64) NOT NULL,
+                token_hint VARCHAR(16) DEFAULT '',
+                created_by_user_id VARCHAR(32) NOT NULL,
+                created_at DATETIME,
+                expires_at DATETIME,
+                used_at DATETIME,
+                used_by_user_id VARCHAR(32),
+                revoked_at DATETIME,
+                send_status VARCHAR(32) DEFAULT 'not_requested',
+                send_error TEXT DEFAULT '',
+                last_sent_at DATETIME,
+                note TEXT DEFAULT ''
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_registration_invites_token_hash "
+            "ON registration_invites(token_hash)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_registration_invites_email "
+            "ON registration_invites(email)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_registration_invites_created_by_user_id "
+            "ON registration_invites(created_by_user_id)"
+        )
+    )
 
 
 def _add_is_global_to_annotations(conn) -> None:
@@ -827,3 +873,66 @@ def _add_conversation_user_renamed(conn) -> None:
         conn.execute(
             text("ALTER TABLE conversations ADD COLUMN sort_index FLOAT DEFAULT NULL")
         )
+
+
+def _add_archived_at_to_annotations(conn) -> None:
+    """Add `archived_at` column to annotations for sorting archived cards."""
+    if not _table_exists(conn, "annotations"):
+        return
+    if not _column_exists(conn, "annotations", "archived_at"):
+        conn.execute(
+            text("ALTER TABLE annotations ADD COLUMN archived_at DATETIME DEFAULT NULL")
+        )
+    # Backfill: existing archived annotations get updated_at as a reasonable proxy.
+    conn.execute(
+        text(
+            "UPDATE annotations SET archived_at = updated_at "
+            "WHERE status = 'archived' AND archived_at IS NULL"
+        )
+    )
+
+
+def _create_annotation_agent_suggestion_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS annotation_agent_suggestions (
+                id VARCHAR(32) NOT NULL,
+                project_id VARCHAR(32) NOT NULL,
+                doc_id VARCHAR(32) NOT NULL,
+                annotation_id VARCHAR(64) NOT NULL,
+                user_id VARCHAR(32) NOT NULL DEFAULT '',
+                agent_id VARCHAR(128) NOT NULL DEFAULT '',
+                source_hash VARCHAR(64) NOT NULL DEFAULT '',
+                status VARCHAR(24) NOT NULL DEFAULT 'drafted',
+                suggestions JSON NOT NULL,
+                internal_meta JSON NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                CONSTRAINT uq_annotation_agent_suggestions_annotation_user_agent
+                    UNIQUE (annotation_id, user_id, agent_id),
+                FOREIGN KEY(project_id) REFERENCES projects (id),
+                FOREIGN KEY(doc_id) REFERENCES docs (id),
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """
+        )
+    )
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_project_id "
+        "ON annotation_agent_suggestions(project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_doc_id "
+        "ON annotation_agent_suggestions(doc_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_annotation_id "
+        "ON annotation_agent_suggestions(annotation_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_user_id "
+        "ON annotation_agent_suggestions(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_agent_id "
+        "ON annotation_agent_suggestions(agent_id)",
+        "CREATE INDEX IF NOT EXISTS ix_annotation_agent_suggestions_created_at "
+        "ON annotation_agent_suggestions(created_at)",
+    )
+    for stmt in indexes:
+        conn.execute(text(stmt))

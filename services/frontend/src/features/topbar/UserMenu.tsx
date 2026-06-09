@@ -69,6 +69,14 @@ export function UserMenu({ onOpenPersonalPanel }: UserMenuProps) {
               <UserRound size={14} /> 个人面板
             </DropdownMenu.Item>
           )}
+          {currentUser.is_admin && (
+            <DropdownMenu.Item
+              className="user-menu-item"
+              onSelect={() => navigate('/admin')}
+            >
+              <ShieldCheck size={14} /> 管理员控制台
+            </DropdownMenu.Item>
+          )}
           <DropdownMenu.Item
             className="user-menu-item"
             onSelect={() => void handleLogout()}

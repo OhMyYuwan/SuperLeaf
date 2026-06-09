@@ -9,12 +9,35 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND_DIR="$ROOT_DIR/services/frontend"
 BACKEND_DIR="$ROOT_DIR/services/backend"
 COLLAB_DIR="$ROOT_DIR/services/collab-server"
+LOCAL_AGENT_HOST_DIR="$ROOT_DIR/services/local-agent-host"
 LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="$LOG_DIR/pids"
 
 FRONTEND_PORT="${YLW_FRONTEND_PORT:-${YLW_PORT:-5173}}"
 BACKEND_PORT="${YLW_BACKEND_PORT:-8000}"
 COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
+COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-superleaf-local-collab-internal-token}}"
+LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
+LOCAL_AGENT_HOST_PORT="${SL_LOCAL_AGENT_HOST_PORT:-8787}"
+LOCAL_AGENT_HOST_ORIGINS="${SL_LOCAL_AGENT_HOST_ORIGINS:-*}"
+LOCAL_AGENT_HOST_NANOBOT_URL="${SL_LOCAL_AGENT_HOST_NANOBOT_URL:-http://127.0.0.1:8900}"
+LOCAL_AGENT_HOST_CODEX_ENABLED="${SL_LOCAL_AGENT_HOST_CODEX_ENABLED:-1}"
+LOCAL_AGENT_HOST_CODEX_BIN="${SL_LOCAL_AGENT_HOST_CODEX_BIN:-codex}"
+LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS="${SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS:-600000}"
+LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS="${SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS:-0}"
+LOCAL_AGENT_HOST_CODEX_TRANSPORT="${SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT:-app-server}"
+LOCAL_AGENT_HOST_CODEX_PREWARM="${SL_LOCAL_AGENT_HOST_CODEX_PREWARM:-1}"
+LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE="${SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE:-local}"
+LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT="${SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT:-17989}"
+LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL="${SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL:-}"
+LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET="${SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET:-~/.codex/app-server-control/app-server-control.sock}"
+LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART="${SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART:-1}"
+LOCAL_AGENT_HOST_CODEX_AUTO_MCP="${SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP:-1}"
+LOCAL_AGENT_HOST_MCP_URL="${SL_LOCAL_AGENT_HOST_MCP_URL:-}"
+LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS="${SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS:-900000}"
+LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS="${SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS:-120000}"
+LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS="${SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS:-25000}"
+LOCAL_AGENT_HOST_DATA_DIR="${SL_LOCAL_AGENT_HOST_DATA_DIR:-}"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -116,6 +139,7 @@ stop_service() {
     backend)  port="$BACKEND_PORT" ;;
     collab)   port="$COLLAB_PORT" ;;
     frontend) port="$FRONTEND_PORT" ;;
+    local-agent-host) port="$LOCAL_AGENT_HOST_PORT" ;;
     *)        port="" ;;
   esac
 
@@ -163,6 +187,7 @@ stop_service() {
 }
 
 stop_all() {
+  stop_service "local-agent-host"
   stop_service "frontend"
   stop_service "collab"
   stop_service "backend"
@@ -181,7 +206,7 @@ start_backend() {
   log "Starting backend on :$BACKEND_PORT → $logfile"
   (
     cd "$BACKEND_DIR"
-    exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
+    YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "backend" "$pid"
@@ -210,7 +235,7 @@ start_collab() {
   log "Starting collab-server on :$COLLAB_PORT → $logfile"
   (
     cd "$COLLAB_DIR"
-    COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" exec npx tsx src/index.ts
+    COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec npx tsx src/index.ts
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "collab" "$pid"
@@ -253,6 +278,94 @@ start_frontend() {
     i=$((i + 1))
   done
   warn "Frontend did not respond within ~4s (pid $pid, check $logfile)"
+}
+
+start_local_agent_host() {
+  stop_service "local-agent-host"
+  ensure_log_dir
+  local session_dir="$LOG_DIR/latest"
+  [ ! -d "$session_dir" ] && session_dir="$(create_session_dir)"
+  local logfile="$session_dir/local-agent-host.log"
+
+  log "Starting local-agent-host on $LOCAL_AGENT_HOST_BIND:$LOCAL_AGENT_HOST_PORT → $logfile"
+  local pid=""
+  if command -v screen >/dev/null 2>&1; then
+    local screen_name="superleaf-local-agent-host-$LOCAL_AGENT_HOST_PORT"
+    local dir_q logfile_q env_cmd
+    printf -v dir_q "%q" "$LOCAL_AGENT_HOST_DIR"
+    printf -v logfile_q "%q" "$logfile"
+    printf -v env_cmd \
+      "SL_LOCAL_AGENT_HOST_BIND=%q SL_LOCAL_AGENT_HOST_PORT=%q SL_LOCAL_AGENT_HOST_ORIGINS=%q SL_LOCAL_AGENT_HOST_NANOBOT_URL=%q SL_LOCAL_AGENT_HOST_CODEX_ENABLED=%q SL_LOCAL_AGENT_HOST_CODEX_BIN=%q SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS=%q SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT=%q SL_LOCAL_AGENT_HOST_CODEX_PREWARM=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART=%q SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=%q SL_LOCAL_AGENT_HOST_MCP_URL=%q SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=%q SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=%q SL_LOCAL_AGENT_HOST_DATA_DIR=%q" \
+      "$LOCAL_AGENT_HOST_BIND" \
+      "$LOCAL_AGENT_HOST_PORT" \
+      "$LOCAL_AGENT_HOST_ORIGINS" \
+      "$LOCAL_AGENT_HOST_NANOBOT_URL" \
+      "$LOCAL_AGENT_HOST_CODEX_ENABLED" \
+      "$LOCAL_AGENT_HOST_CODEX_BIN" \
+      "$LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS" \
+      "$LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS" \
+      "$LOCAL_AGENT_HOST_CODEX_TRANSPORT" \
+      "$LOCAL_AGENT_HOST_CODEX_PREWARM" \
+      "$LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE" \
+      "$LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT" \
+      "$LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL" \
+      "$LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET" \
+      "$LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART" \
+      "$LOCAL_AGENT_HOST_CODEX_AUTO_MCP" \
+      "$LOCAL_AGENT_HOST_MCP_URL" \
+      "$LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS" \
+      "$LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS" \
+      "$LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS" \
+      "$LOCAL_AGENT_HOST_DATA_DIR"
+    screen -S "$screen_name" -X quit >/dev/null 2>&1 || true
+    screen -dmS "$screen_name" bash -lc \
+      "cd $dir_q && $env_cmd exec node server.mjs >> $logfile_q 2>&1"
+  else
+    (
+      cd "$LOCAL_AGENT_HOST_DIR"
+      SL_LOCAL_AGENT_HOST_BIND="$LOCAL_AGENT_HOST_BIND" \
+        SL_LOCAL_AGENT_HOST_PORT="$LOCAL_AGENT_HOST_PORT" \
+        SL_LOCAL_AGENT_HOST_ORIGINS="$LOCAL_AGENT_HOST_ORIGINS" \
+        SL_LOCAL_AGENT_HOST_NANOBOT_URL="$LOCAL_AGENT_HOST_NANOBOT_URL" \
+        SL_LOCAL_AGENT_HOST_CODEX_ENABLED="$LOCAL_AGENT_HOST_CODEX_ENABLED" \
+        SL_LOCAL_AGENT_HOST_CODEX_BIN="$LOCAL_AGENT_HOST_CODEX_BIN" \
+        SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS="$LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS" \
+        SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS="$LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS" \
+        SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT="$LOCAL_AGENT_HOST_CODEX_TRANSPORT" \
+        SL_LOCAL_AGENT_HOST_CODEX_PREWARM="$LOCAL_AGENT_HOST_CODEX_PREWARM" \
+        SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE="$LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE" \
+        SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT="$LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT" \
+        SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL="$LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL" \
+        SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET="$LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET" \
+        SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART="$LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART" \
+        SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP="$LOCAL_AGENT_HOST_CODEX_AUTO_MCP" \
+        SL_LOCAL_AGENT_HOST_MCP_URL="$LOCAL_AGENT_HOST_MCP_URL" \
+        SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS="$LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS" \
+        SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS="$LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS" \
+        SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS="$LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS" \
+        SL_LOCAL_AGENT_HOST_DATA_DIR="$LOCAL_AGENT_HOST_DATA_DIR" \
+        exec nohup node server.mjs </dev/null
+    ) >> "$logfile" 2>&1 &
+    pid=$!
+  fi
+
+  local health_host="127.0.0.1"
+  if [ "$LOCAL_AGENT_HOST_BIND" != "0.0.0.0" ] && [ "$LOCAL_AGENT_HOST_BIND" != "::" ]; then
+    health_host="$LOCAL_AGENT_HOST_BIND"
+  fi
+  local i=0
+  while [ $i -lt 8 ]; do
+    if curl -s "http://$health_host:$LOCAL_AGENT_HOST_PORT/health" >/dev/null 2>&1; then
+      local listen_pid
+      listen_pid="$(lsof -nP -iTCP:"$LOCAL_AGENT_HOST_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+      save_pid "local-agent-host" "${listen_pid:-$pid}"
+      ok "Local Agent Host ready (pid ${listen_pid:-$pid})"
+      return 0
+    fi
+    sleep 0.4
+    i=$((i + 1))
+  done
+  warn "Local Agent Host did not respond within ~3s (pid $pid, check $logfile)"
 }
 
 build_frontend() {
@@ -373,13 +486,14 @@ start_preview_all() {
 status_all() {
   printf "%-12s %-10s %-8s %s\n" "SERVICE" "STATUS" "PID" "PORT"
   printf "%-12s %-10s %-8s %s\n" "-------" "------" "---" "----"
-  for svc in backend collab frontend; do
+  for svc in backend collab frontend local-agent-host; do
     local pid port status_label
     pid="$(read_pid "$svc")"
     case "$svc" in
       backend)  port="$BACKEND_PORT" ;;
       collab)   port="$COLLAB_PORT" ;;
       frontend) port="$FRONTEND_PORT" ;;
+      local-agent-host) port="$LOCAL_AGENT_HOST_PORT" ;;
     esac
     # Check both PID and port — uvicorn --reload forks, so PID may not match
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -476,6 +590,11 @@ case "${1:-help}" in
     start_frontend_preview
     ;;
 
+  local-agent-host)
+    require_cmd node
+    start_local_agent_host
+    ;;
+
   logs)
     # Tail log files from the latest session
     if [ ! -d "$LOG_DIR/latest" ]; then
@@ -515,6 +634,8 @@ Usage:
   ./start.sh backend      Start backend only
   ./start.sh collab       Start collab-server only
   ./start.sh frontend     Start frontend only
+  ./start.sh local-agent-host
+                          Start Local Agent Host proxy/bridge
   ./start.sh frontend-preview
                           Build + start frontend preview only (no HMR)
   ./start.sh build        Build frontend production bundle
@@ -529,6 +650,24 @@ Env:
   YLW_FRONTEND_PORT=5173   Frontend port
   YLW_BACKEND_PORT=8000    Backend port
   YLW_COLLAB_PORT=4444     Collab-server port
+  SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
+                           Local Agent Host bind address
+  SL_LOCAL_AGENT_HOST_PORT=8787
+                           Local Agent Host port
+  SL_LOCAL_AGENT_HOST_ORIGINS=*
+                           Local Agent Host CORS allow-list
+  SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
+                           Local Nanobot base URL proxied by Local Agent Host
+  SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=1
+                           Inject SuperLeaf MCP URL into managed Codex app-server
+  SL_LOCAL_AGENT_HOST_MCP_URL=http://127.0.0.1:8787/mcp
+                           SuperLeaf MCP URL advertised to local agents
+  SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=900000
+                           Active SuperLeaf MCP context TTL in milliseconds
+  SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=120000
+                           Max time an MCP tool waits for browser execution
+  SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=25000
+                           Max browser long-poll wait for MCP tool requests
   VITE_COLLAB_WS_URL       WebSocket URL for collab (default: ws://localhost:4444)
 
 USAGE

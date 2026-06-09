@@ -46,10 +46,12 @@ deploy/images/
 
 # ACP protocol package (external dependency)
 acp-protocol/
+.acp/ 
 
 # ACP kernel and docs (contain user privacy data)
 .acp/kernel/
 services/docs/
+
 
 # Python
 __pycache__/
@@ -83,3 +85,13 @@ logs/
 supports/
 SecurityReports/
 memory/
+
+
+
+services/local-agent-host/
+docs/superpowers/
+
+
+# test
+services/frontend/src/__tests__/
+services/backend/test/

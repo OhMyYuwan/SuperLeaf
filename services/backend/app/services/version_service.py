@@ -26,7 +26,7 @@ from ..models import Blob, DocumentLabel, DocumentVersion
 COOLDOWN = timedelta(minutes=10)
 VERSION_CAP = 100
 
-ALLOWED_ORIGINS = {"auto_save", "accept_suggestion", "manual", "restore", "ai_edit"}
+ALLOWED_ORIGINS = {"auto_save", "accept_suggestion", "manual", "restore", "ai_edit", "collab_snapshot"}
 
 
 def _sha1(data: bytes) -> str:

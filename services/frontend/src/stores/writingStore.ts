@@ -16,7 +16,12 @@
  */
 
 import { create } from 'zustand'
-import type { Document, DocumentFormat, Paragraph, Section } from '../types/document'
+import type { Document, DocumentFormat } from '../types/document'
+import {
+  buildParagraphChunks as _buildParagraphChunks,
+  countChunkableParagraphs,
+  type ParagraphChunk,
+} from '../services/paragraphChunking'
 import {
   flattenFileCandidates,
   parseMentions,
@@ -25,7 +30,13 @@ import {
   uniqueMentionedFiles,
   type AttachedFile,
 } from '../services/mentions'
-import { useCollaborationStore } from './collaborationStore'
+import { uuid } from '../lib/uuid'
+import {
+  applyWriteOutput as _applyWriteOutput,
+  readCurrentText as _readCurrentText,
+  type ApplyMode,
+} from '../services/documentWriter'
+import { useAnnotationStore } from './annotationStore'
 import { useDocumentStore } from './documentStore'
 import { useFilesystemStore } from './filesystemStore'
 import { useWorkflowStore } from './workflowStore'
@@ -58,8 +69,6 @@ interface WritingState {
 
 const DEFAULT_INSTRUCTION = ''
 const POLISH_CHUNK_CHARS = 2600
-const AUTO_MARKER_RE = /^\s*%\s*AUTO\b/im
-const LATEX_BEGIN_DOCUMENT_RE = /\\begin\s*\{\s*document\s*\}/i
 
 const WRITE_CONTRACT_BASE_DRAFT = [
   '[WRITE MODE CONTRACT — DRAFT]',
@@ -124,13 +133,7 @@ function buildWriteContract(mode: WritingMode, format: DocumentFormat): string {
   return [base, ...rules, '[END WRITE MODE CONTRACT]'].join('\n')
 }
 
-interface WriteChunk {
-  index: number
-  total: number
-  range: { from: number; to: number }
-  text: string
-  sectionTitle: string
-}
+type WriteChunk = ParagraphChunk
 
 export const useWritingStore = create<WritingState>((set, get) => ({
   targetKind: 'agent',
@@ -284,7 +287,15 @@ async function runSingleCall(args: {
     return
   }
   const fenced = extractFencedBlock(raw)
-  const written = applyWriteOutput({
+  if (fenced.fallback) {
+    ingestAsSuggestion({ docId: doc.id, raw, mode, range })
+    onProgress({
+      completed: 1,
+      lastMessage: 'Agent 输出未包含有效围栏，已转化为批注，请在批注面板查看。',
+    })
+    return
+  }
+  const written = _applyWriteOutput({
     docId: doc.id,
     mode: mode === 'append' ? 'append' : 'replace-doc',
     range,
@@ -293,9 +304,7 @@ async function runSingleCall(args: {
   onProgress({
     completed: 1,
     lastWriteChars: written,
-    lastMessage: fenced.fallback
-      ? `已写入 ${written} 字（注意：未识别到代码围栏，已直接写入完整原文）。`
-      : `写入完成：${written} 字。`,
+    lastMessage: `写入完成：${written} 字。`,
   })
 }
 
@@ -345,7 +354,7 @@ async function runPolishLoop(args: {
     }
 
     // 重新读取该范围的当前文本，作为最新原文给 agent（可能因之前段落的写入有局部改动）
-    const liveText = readCurrentText(doc.id, adjustedRange)
+    const liveText = _readCurrentText(doc.id, adjustedRange)
     const query = buildPolishQuery({
       doc,
       chunk: { ...chunk, text: liveText || chunk.text },
@@ -382,10 +391,35 @@ async function runPolishLoop(args: {
       continue
     }
     const fenced = extractFencedBlock(raw)
-    if (fenced.fallback && !firstFallback) firstFallback = true
+    if (fenced.fallback) {
+      if (!firstFallback) firstFallback = true
+      ingestAsSuggestion({
+        docId: doc.id,
+        raw,
+        mode: 'polish-paragraphs',
+        range: adjustedRange,
+      })
+      onProgress({
+        lastMessage: `第 ${i + 1} 段未识别到围栏，已转化为批注。`,
+      })
+      continue
+    }
+
+    // 校验：写入前检查 adjustedRange 处的文本是否仍与预期一致，
+    // 防止 cumulativeDelta 漂移导致写错位置。
+    const preWriteText = _readCurrentText(doc.id, adjustedRange)
+    if (preWriteText !== chunk.text) {
+      const similarity = simpleSimilarity(preWriteText, chunk.text)
+      if (similarity < 0.8) {
+        onProgress({
+          lastMessage: `第 ${i + 1} 段：当前文本与预期不符（相似度 ${(similarity * 100).toFixed(0)}%），已跳过。`,
+        })
+        continue
+      }
+    }
 
     const oldLen = adjustedRange.to - adjustedRange.from
-    const written = applyWriteOutput({
+    const written = _applyWriteOutput({
       docId: doc.id,
       mode: 'replace-range',
       range: adjustedRange,
@@ -594,210 +628,91 @@ function pickStringField(obj: unknown, keys: string[]): string {
   return ''
 }
 
-const FENCE_RE = /```(?:[a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)\n```/
+const FENCE_RE = /```(?:[a-zA-Z0-9_+#-]*)\s*\n?([\s\S]*?)\n?\s*```/
 
 function extractFencedBlock(raw: string): { text: string; fallback: boolean } {
   const m = FENCE_RE.exec(raw)
   if (m && m[1]) {
-    return { text: m[1].trim(), fallback: false }
+    // Only strip the leading newline after the opening fence tag;
+    // preserve trailing content and internal formatting.
+    return { text: m[1].replace(/^\n/, ''), fallback: false }
   }
-  return { text: raw.trim(), fallback: true }
+  return { text: '', fallback: true }
 }
 
-// =============================================================
-//  Write back (collab-aware)
-// =============================================================
-
-export type ApplyMode = 'replace-doc' | 'append' | 'replace-range'
-
-export function readCurrentText(docId: string, range: { from: number; to: number }): string {
-  const collab = useCollaborationStore.getState()
-  if (collab.provider && collab.currentDocId === docId) {
-    const text = collab.provider.yText.toString()
-    return text.slice(range.from, Math.min(range.to, text.length))
-  }
-  const live = useDocumentStore.getState().documents[docId]?.content ?? ''
-  return live.slice(range.from, Math.min(range.to, live.length))
-}
-
-export function applyWriteOutput(args: {
+/** When fenced-block extraction fails, ingest the raw output as a suggestion
+ *  annotation card so the user can review it in the annotation panel. */
+function ingestAsSuggestion(params: {
   docId: string
-  mode: ApplyMode
+  raw: string
+  mode: WritingMode
   range: { from: number; to: number }
-  text: string
-}): number {
-  const collab = useCollaborationStore.getState()
-  const yText =
-    collab.provider && collab.currentDocId === args.docId
-      ? collab.provider.yText
-      : null
-
-  if (yText) {
-    const ydoc = collab.provider!.doc
-    const liveLen = yText.length
-    const liveText = yText.toString()
-    // eslint-disable-next-line no-console
-    console.log('[writingStore] applyWriteOutput via yText', {
-      mode: args.mode,
-      docId: args.docId,
-      yTextLen: liveLen,
-      writeChars: args.text.length,
-      range: args.range,
-    })
-    let written = args.text.length
-    ydoc.transact(() => {
-      switch (args.mode) {
-        case 'replace-doc':
-          if (liveLen > 0) yText.delete(0, liveLen)
-          if (args.text.length > 0) yText.insert(0, args.text)
-          break
-        case 'append': {
-          const trimmed = liveText.replace(/\s+$/u, '')
-          const trailingDropped = liveLen - trimmed.length
-          if (trailingDropped > 0) yText.delete(trimmed.length, trailingDropped)
-          const sep = trimmed.length > 0 ? '\n\n' : ''
-          yText.insert(trimmed.length, sep + args.text)
-          written = sep.length + args.text.length
-          break
-        }
-        case 'replace-range': {
-          const from = Math.max(0, Math.min(args.range.from, liveLen))
-          const to = Math.max(from, Math.min(args.range.to, liveLen))
-          if (to > from) yText.delete(from, to - from)
-          if (args.text.length > 0) yText.insert(from, args.text)
-          break
-        }
-      }
-    })
-    return written
-  }
-
-  const docStore = useDocumentStore.getState()
-  const live = docStore.documents[args.docId]?.content ?? ''
-  // eslint-disable-next-line no-console
-  console.log('[writingStore] applyWriteOutput via documentStore', {
-    mode: args.mode,
-    docId: args.docId,
-    liveLen: live.length,
-    writeChars: args.text.length,
-    range: args.range,
+}): void {
+  const store = useAnnotationStore.getState()
+  const suggestionId = uuid()
+  const reason = params.mode === 'polish-paragraphs'
+    ? '围栏提取失败，已跳过该段。以下为 Agent 原始输出，请手动参考。'
+    : '围栏提取失败，已取消写入。以下为 Agent 原始输出，请手动参考或重新指令。'
+  store.ingestRun({
+    runId: suggestionId,
+    workflowId: 'writing-fallback',
+    documentId: params.docId,
+    agentName: 'Writing Agent',
+    parsed: {
+      annotations: [],
+      suggestions: [{
+        id: suggestionId,
+        targetRange: params.range,
+        original: '',
+        proposed: params.raw,
+        reason,
+        confidence: 0,
+        status: 'pending',
+        createdAt: new Date(),
+      }],
+      risks: [],
+    },
   })
-  let next: string
-  let written = args.text.length
-  switch (args.mode) {
-    case 'replace-doc':
-      next = args.text
-      break
-    case 'append': {
-      const trimmed = live.replace(/\s+$/u, '')
-      const sep = trimmed.length > 0 ? '\n\n' : ''
-      next = trimmed + sep + args.text
-      written = sep.length + args.text.length
-      break
-    }
-    case 'replace-range': {
-      const liveLen = live.length
-      const from = Math.max(0, Math.min(args.range.from, liveLen))
-      const to = Math.max(from, Math.min(args.range.to, liveLen))
-      next = live.slice(0, from) + args.text + live.slice(to)
-      break
-    }
-  }
-  docStore.updateContent(args.docId, next)
-  return written
 }
 
 // =============================================================
-//  Paragraph chunking (self-contained — no shared state with
-//  automationStore; we keep it independent on purpose)
+//  Write back — delegates to shared documentWriter module
+// =============================================================
+
+export { _applyWriteOutput as applyWriteOutput, _readCurrentText as readCurrentText }
+export type { ApplyMode }
+
+// =============================================================
+//  Paragraph chunking — delegates to shared paragraphChunking module
 // =============================================================
 
 function buildParagraphChunks(doc: Document, maxChars: number): WriteChunk[] {
-  const paragraphs = [...(doc.structure.paragraphs ?? [])]
-    .filter((p) => p.text.trim().length > 0)
-    .filter((p) => shouldIncludeParagraph(doc, p))
-    .sort((a, b) => a.range.from - b.range.from)
-
-  const raw = paragraphs.flatMap((p) => splitParagraph(doc, p, maxChars))
-  return raw.map((c, idx) => ({ ...c, index: idx + 1, total: raw.length }))
-}
-
-function shouldIncludeParagraph(doc: Document, paragraph: Paragraph): boolean {
-  const text = paragraph.text.trim()
-  if (!text) return false
-  if (AUTO_MARKER_RE.test(text)) return true
-  if (doc.format !== 'tex') return true
-  return !isBeforeLatexDocumentBody(doc.content, paragraph.range)
-}
-
-function isBeforeLatexDocumentBody(content: string, range: { from: number; to: number }): boolean {
-  const match = LATEX_BEGIN_DOCUMENT_RE.exec(content)
-  if (!match) return false
-  const bodyStart = match.index + match[0].length
-  return range.to <= bodyStart
-}
-
-function splitParagraph(
-  doc: Document,
-  paragraph: Paragraph,
-  maxChars: number,
-): Array<Omit<WriteChunk, 'index' | 'total'>> {
-  if (paragraph.text.length <= maxChars) {
-    return [{
-      range: paragraph.range,
-      text: paragraph.text,
-      sectionTitle: sectionTitleAt(doc.structure.sections, paragraph.range.from),
-    }]
-  }
-  const out: Array<Omit<WriteChunk, 'index' | 'total'>> = []
-  let cursor = paragraph.range.from
-  while (cursor < paragraph.range.to) {
-    const desiredEnd = Math.min(cursor + maxChars, paragraph.range.to)
-    const end = findSplitPoint(doc.content, cursor, desiredEnd, paragraph.range.to)
-    out.push({
-      range: { from: cursor, to: end },
-      text: doc.content.slice(cursor, end),
-      sectionTitle: sectionTitleAt(doc.structure.sections, cursor),
-    })
-    cursor = skipWhitespace(doc.content, end, paragraph.range.to)
-  }
-  return out
-}
-
-function findSplitPoint(content: string, from: number, desiredEnd: number, maxEnd: number): number {
-  if (desiredEnd >= maxEnd) return maxEnd
-  const window = content.slice(from, desiredEnd)
-  const candidates = ['\n', '。', '.', ';', '；', ',', '，', ' ']
-  for (const marker of candidates) {
-    const idx = window.lastIndexOf(marker)
-    if (idx > Math.floor(window.length * 0.45)) {
-      return from + idx + marker.length
-    }
-  }
-  return desiredEnd
-}
-
-function skipWhitespace(content: string, from: number, maxEnd: number): number {
-  let pos = from
-  while (pos < maxEnd && /\s/.test(content[pos] ?? '')) pos += 1
-  return pos
-}
-
-function sectionTitleAt(sections: Section[], pos: number): string {
-  let best: Section | undefined
-  for (const section of sections) {
-    if (pos >= section.range.from && pos < section.range.to) {
-      if (!best || section.level > best.level) best = section
-    }
-  }
-  return best?.title ?? ''
+  return _buildParagraphChunks(doc, maxChars)
 }
 
 export function countPolishableParagraphs(doc: Document): number {
-  return (doc.structure.paragraphs ?? [])
-    .filter((p) => p.text.trim().length > 0)
-    .filter((p) => shouldIncludeParagraph(doc, p))
-    .length
+  return countChunkableParagraphs(doc)
+}
+
+/** Quick approximate similarity between two strings (0–1).
+ *  Uses a sliding-window substring heuristic to avoid O(n²) LCS. */
+function simpleSimilarity(a: string, b: string): number {
+  if (a === b) return 1
+  if (!a || !b) return 0
+  const maxLen = Math.max(a.length, b.length)
+  if (maxLen > 5000) {
+    // For long texts, sample head + tail to keep it fast.
+    const aSample = a.slice(0, 500) + a.slice(-500)
+    const bSample = b.slice(0, 500) + b.slice(-500)
+    return simpleSimilarity(aSample, bSample)
+  }
+  let common = 0
+  const shorter = a.length < b.length ? a : b
+  const longer = a.length < b.length ? b : a
+  for (let i = 0; i < shorter.length; i++) {
+    if (longer.includes(shorter.slice(i, i + 10))) common += 10
+  }
+  return common / maxLen
 }
 
 // =============================================================

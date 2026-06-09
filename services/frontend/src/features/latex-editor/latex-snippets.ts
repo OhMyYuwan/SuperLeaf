@@ -11,6 +11,10 @@ export interface LatexStructuredSnippet {
   boost?: number
 }
 
+// 维护快捷指令时改这里：
+// - 新增快捷指令：在 LATEX_STRUCTURED_SNIPPETS 追加一项，commandTriggers 决定输入 \xxx 时匹配哪些触发词。
+// - 调整快速填充内容：修改 template；`${1:默认文本}` 会预填文字，`${1}` 是空的第一个可编辑位置。
+// - 控制光标位置：CodeMirror 展开后先选中编号最小的占位符；`${0}` 是最终跳转点，若希望光标留在空括号里就不要在末尾放 `${0}`。
 export const LATEX_STRUCTURED_SNIPPETS: LatexStructuredSnippet[] = [
   {
     id: 'figure',
@@ -169,12 +173,68 @@ export const LATEX_STRUCTURED_SNIPPETS: LatexStructuredSnippet[] = [
     template: '\\includegraphics[width=${1:0.8\\linewidth}]\\{${2:assets/figure.png}\\}${0}',
   },
   {
+    id: 'noindent',
+    label: 'noindent',
+    commandTriggers: ['noindent'],
+    detail: 'suppress paragraph indentation',
+    boost: 75,
+    template: '\\noindent ${0}',
+  },
+  {
+    id: 'indent',
+    label: 'indent',
+    commandTriggers: ['indent'],
+    detail: 'force paragraph indentation',
+    boost: 74,
+    template: '\\indent ${0}',
+  },
+  {
+    id: 'newpage',
+    label: 'newpage',
+    commandTriggers: ['newpage'],
+    detail: 'page break',
+    boost: 74,
+    template: '\\newpage ${0}',
+  },
+  {
+    id: 'clearpage',
+    label: 'clearpage',
+    commandTriggers: ['clearpage'],
+    detail: 'page break and flush floats',
+    boost: 74,
+    template: '\\clearpage ${0}',
+  },
+  {
+    id: 'smallskip',
+    label: 'smallskip',
+    commandTriggers: ['smallskip'],
+    detail: 'small vertical space',
+    boost: 73,
+    template: '\\smallskip ${0}',
+  },
+  {
+    id: 'medskip',
+    label: 'medskip',
+    commandTriggers: ['medskip'],
+    detail: 'medium vertical space',
+    boost: 73,
+    template: '\\medskip ${0}',
+  },
+  {
+    id: 'bigskip',
+    label: 'bigskip',
+    commandTriggers: ['bigskip'],
+    detail: 'large vertical space',
+    boost: 73,
+    template: '\\bigskip ${0}',
+  },
+  {
     id: 'cite',
     label: 'cite',
     commandTriggers: ['cite'],
     detail: 'citation command',
     boost: 76,
-    template: '\\cite\\{${1:key}\\}${0}',
+    template: '\\cite\\{${1}\\}',
   },
   {
     id: 'ref',
@@ -182,7 +242,7 @@ export const LATEX_STRUCTURED_SNIPPETS: LatexStructuredSnippet[] = [
     commandTriggers: ['ref'],
     detail: 'reference command',
     boost: 76,
-    template: '\\ref\\{${1:label}\\}${0}',
+    template: '\\ref\\{${1}\\}',
   },
 ]
 

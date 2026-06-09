@@ -215,6 +215,26 @@ ifconfig | grep 'inet ' | grep -v 127.0.0.1
 {: .warning }
 局域网共享时无 TLS 加密，密码和文档内容在网段内明文传输。同网段任何人都能访问注册页面。建议仅在可信网络（如办公室、家庭）使用。
 
+## 管理员邀请码注册
+
+默认部署保持 `YLW_PUBLIC_REGISTRATION=false`。首位管理员用 Bootstrap Token 注册后，
+可以从右上角账号菜单进入 `/admin`，创建一次性邀请码或注册链接。邀请链接只在创建
+或重新发送时显示明文；数据库只保存 token hash。
+
+如需邮件发送邀请码，在 `deploy/.env` 中配置：
+
+```env
+YLW_PUBLIC_BASE_URL=https://superleaf.example.edu
+YLW_SMTP_HOST=smtp.example.edu
+YLW_SMTP_PORT=587
+YLW_SMTP_USERNAME=your-account
+YLW_SMTP_PASSWORD=your-password
+YLW_SMTP_FROM=SuperLeaf <no-reply@example.edu>
+YLW_SMTP_TLS=true
+```
+
+未配置 SMTP 时，管理员页面仍会显示可复制的邀请码链接。
+
 ### 公网部署
 
 适用场景：服务器部署，供互联网用户访问。
@@ -228,9 +248,10 @@ ifconfig | grep 'inet ' | grep -v 127.0.0.1
 2. `YLW_BOOTSTRAP_TOKEN` 已设置且保密
 3. `YLW_PUBLIC_REGISTRATION=false`
 4. `YLW_COLLAB_INTERNAL_TOKEN` 已设置
-5. `YLW_COOKIE_SECURE=true`，或确认外部反代发送 `X-Forwarded-Proto: https` 且使用 `YLW_COOKIE_SECURE=auto`
-6. 防火墙只开放 443（HTTPS），不开放 8080
-7. 如果使用外部反代，`SUPERLEAF_BIND_ADDR` 保持 `127.0.0.1`（由反代转发）
+5. 首位管理员已创建，后续账号通过 `/admin` 邀请码注册
+6. `YLW_COOKIE_SECURE=true`，或确认外部反代发送 `X-Forwarded-Proto: https` 且使用 `YLW_COOKIE_SECURE=auto`
+7. 防火墙只开放 443（HTTPS），不开放 8080
+8. 如果使用外部反代，`SUPERLEAF_BIND_ADDR` 保持 `127.0.0.1`（由反代转发）
 
 使用内置 TLS gateway override：
 

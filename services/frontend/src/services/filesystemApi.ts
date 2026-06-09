@@ -7,6 +7,7 @@
  *   POST /api/docs
  *   GET  /api/docs/:id
  *   PUT  /api/docs/:id
+ *   POST /api/docs/:id/collab-flush
  */
 
 import { BACKEND_BASE, buildHeaders, http } from './backendApi'
@@ -93,10 +94,15 @@ export const filesystemApi = {
 
   getDoc: (id: string) => http<BackendDoc>(`/api/docs/${encodeURIComponent(id)}`),
 
-  updateDoc: (id: string, content: string) =>
+  updateDoc: (id: string, content: string, baseVersion?: number) =>
     http<BackendDoc>(`/api/docs/${encodeURIComponent(id)}`, {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, base_version: baseVersion }),
+    }),
+
+  flushCollabDoc: (id: string) =>
+    http<BackendDoc>(`/api/docs/${encodeURIComponent(id)}/collab-flush`, {
+      method: 'POST',
     }),
 
   renameEntity: (entityType: 'folder' | 'doc' | 'file', entityId: string, name: string) =>

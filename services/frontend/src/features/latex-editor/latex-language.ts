@@ -17,8 +17,9 @@ import {
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult } from '@codemirror/autocomplete'
 import { linter, type Diagnostic } from '@codemirror/lint'
-import { StateEffect, StateField, type Extension } from '@codemirror/state'
-import type { EditorView, Rect } from '@codemirror/view'
+import { StateEffect, StateField, RangeSetBuilder, type Extension } from '@codemirror/state'
+import { Decoration, ViewPlugin } from '@codemirror/view'
+import type { DecorationSet, EditorView, Rect, ViewUpdate } from '@codemirror/view'
 import {
   latexBeginEnvironmentSnippetCompletions,
   latexCommandSnippetCompletions,
@@ -118,6 +119,29 @@ const LATEX_COMMANDS: string[] = [
 export const setLatexCompletionDataEffect = StateEffect.define<LatexCompletionData>()
 const MISSING_CITATION_MARK_CLASS = 'ylw-cm-missing-citation'
 const MISSING_REFERENCE_MARK_CLASS = 'ylw-cm-missing-reference'
+const REFERENCE_KEY_MARK_CLASS = 'ylw-latex-reference-key'
+const REFERENCE_KEY_COMMANDS = new Set([
+  'label',
+  'ref',
+  'eqref',
+  'pageref',
+  'autoref',
+  'cref',
+  'Cref',
+  'nameref',
+  'cite',
+  'citep',
+  'citet',
+  'citealp',
+  'citeauthor',
+  'citeyear',
+  'parencite',
+  'textcite',
+  'autocite',
+  'footcite',
+  'supercite',
+  'nocite',
+])
 
 const latexCompletionDataState = StateField.define<LatexCompletionData>({
   create: () => normalizeLatexCompletionData(),
@@ -351,6 +375,80 @@ function missingCrossReferenceLinter(): Extension {
   )
 }
 
+export interface LatexReferenceKeyRange {
+  from: number
+  to: number
+}
+
+export function findLatexReferenceKeyRanges(source: string): LatexReferenceKeyRange[] {
+  const ranges: LatexReferenceKeyRange[] = []
+  const commandRe = /\\([A-Za-z]+)\*?(?:\s*\[[^\]]*])*\s*\{/g
+  let match: RegExpExecArray | null
+
+  while ((match = commandRe.exec(source)) !== null) {
+    const commandName = match[1]
+    if (!REFERENCE_KEY_COMMANDS.has(commandName)) continue
+
+    const contentStart = commandRe.lastIndex
+    const contentEnd = findLatexArgumentEnd(source, contentStart)
+    if (contentEnd <= contentStart) continue
+
+    ranges.push({ from: contentStart, to: contentEnd })
+    commandRe.lastIndex = contentEnd + 1
+  }
+
+  return ranges
+}
+
+function findLatexArgumentEnd(source: string, contentStart: number): number {
+  let depth = 1
+  for (let index = contentStart; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (char === '{') {
+      depth += 1
+      continue
+    }
+    if (char !== '}') continue
+    depth -= 1
+    if (depth === 0) return index
+  }
+  return -1
+}
+
+function buildLatexReferenceKeyDecorations(source: string): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const range of findLatexReferenceKeyRanges(source)) {
+    builder.add(
+      range.from,
+      range.to,
+      Decoration.mark({
+        class: REFERENCE_KEY_MARK_CLASS,
+      }),
+    )
+  }
+  return builder.finish()
+}
+
+const latexReferenceKeyDecorationView = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+
+    constructor(view: EditorView) {
+      this.decorations = buildLatexReferenceKeyDecorations(view.state.doc.toString())
+    }
+
+    update(update: ViewUpdate) {
+      if (!update.docChanged) return
+      this.decorations = buildLatexReferenceKeyDecorations(update.state.doc.toString())
+    }
+  },
+  { decorations: (view) => view.decorations },
+)
+
 const GRAPHIC_COMMANDS = /\\includegraphics(?:\[[^\]]*])?\{([^{}]*)$/
 const INCLUDE_COMMANDS = /\\(?:input|include|subfile)\{([^{}]*)$/
 const BIB_COMMANDS = /\\(?:bibliography|addbibresource)\{([^{}]*)$/
@@ -548,6 +646,7 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
     latexCompletionDataState.init(() => normalizeLatexCompletionData(completionData)),
     new LanguageSupport(StreamLanguage.define(stex)),
     latexFolding(),
+    latexReferenceKeyDecorationView,
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     missingCrossReferenceLinter(),
     autocompletion({
@@ -556,4 +655,8 @@ export function latex(completionData?: Partial<LatexCompletionData>): Extension 
       positionInfo: positionLatexCompletionInfo,
     }),
   ]
+}
+
+export const __test__ = {
+  findLatexReferenceKeyRanges,
 }

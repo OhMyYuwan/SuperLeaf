@@ -28,6 +28,17 @@ interface CollaborationState {
 
   connect: (projectId: string, docId: string, user: { id: string; name: string }) => Promise<void>
   disconnect: () => void
+  waitUntilSynced: (docId: string, timeoutMs?: number) => Promise<void>
+  getCurrentText: (docId: string) => string | null
+}
+
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+async function issueCollabToken(docId: string): Promise<string> {
+  const res = await http<{ token: string; expires_in: number }>(
+    `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
+  )
+  return res.token
 }
 
 export const useCollaborationStore = create<CollaborationState>()((set, get) => ({
@@ -38,6 +49,10 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   currentDocId: null,
 
   connect: async (projectId, docId, user) => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
     const prev = get().provider
     if (prev) {
       prev.destroy()
@@ -47,10 +62,7 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     // Fetch a short-lived, document-scoped collab token from the backend.
     let token: string
     try {
-      const res = await http<{ token: string; expires_in: number }>(
-        `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
-      )
-      token = res.token
+      token = await issueCollabToken(docId)
     } catch {
       console.warn('[collaborationStore] failed to get collab token')
       set({ status: 'disconnected', provider: null, peers: [], currentProjectId: null, currentDocId: null })
@@ -68,6 +80,25 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     provider.onStatusChange((status) => {
       if (get().provider !== provider) return
       set({ status })
+      if (status === 'disconnected') {
+        if (reconnectTimer) clearTimeout(reconnectTimer)
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          const state = get()
+          if (state.provider !== provider || state.currentProjectId !== projectId || state.currentDocId !== docId) {
+            return
+          }
+          void (async () => {
+            try {
+              const token = await issueCollabToken(docId)
+              if (get().provider !== provider || get().currentDocId !== docId) return
+              provider.refreshToken(token)
+            } catch {
+              console.warn('[collaborationStore] failed to refresh collab token')
+            }
+          })()
+        }, 1000)
+      }
     })
 
     provider.awareness.on('change', () => {
@@ -85,10 +116,65 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   },
 
   disconnect: () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
     const { provider } = get()
     if (provider) {
       provider.destroy()
     }
     set({ provider: null, status: 'disconnected', peers: [], currentProjectId: null, currentDocId: null })
+  },
+
+  waitUntilSynced: (docId, timeoutMs = 5000) => {
+    const state = get()
+    const provider = state.provider
+    if (!provider || state.currentDocId !== docId) {
+      return Promise.resolve()
+    }
+    if (state.status === 'synced' || provider.isSynced()) {
+      if (state.status !== 'synced') {
+        set({ status: 'synced' })
+      }
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let unsubscribe: (() => void) | null = null
+      const finish = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (unsubscribe) unsubscribe()
+        clearTimeout(timer)
+        if (err) reject(err)
+        else resolve()
+      }
+      const timer = setTimeout(() => {
+        finish(new Error('协作连接尚未同步，请稍后再保存'))
+      }, timeoutMs)
+      unsubscribe = provider.onStatusChange((status) => {
+        const latest = get()
+        const latestProvider = latest.provider
+        if (latestProvider !== provider || latest.currentDocId !== docId) {
+          finish()
+          return
+        }
+        if (status === 'synced' || latestProvider.isSynced()) {
+          finish()
+        }
+      })
+      if (provider.isSynced()) {
+        finish()
+      }
+    })
+  },
+
+  getCurrentText: (docId) => {
+    const state = get()
+    if (!state.provider || state.currentDocId !== docId) {
+      return null
+    }
+    return state.provider.yText.toString()
   },
 }))

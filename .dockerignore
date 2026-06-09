@@ -27,6 +27,10 @@ deploy/backups/
 deploy/dist/
 deploy/images/
 
+services/local-agent-host/.env
+services/local-agent-host/local-agent-host.log
+services/local-agent-host/local-agent-host.pid
+
 .env
 .env.*
 !.env.example

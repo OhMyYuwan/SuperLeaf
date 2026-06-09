@@ -13,6 +13,7 @@ import logging
 import httpx
 
 from ..database import SessionLocal
+from ..models import Doc, Project
 from ..settings import settings
 from .project_fs_service import ProjectFsService
 
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
 _COLLAB_INTERNAL_TOKEN_HEADER = "X-SuperLeaf-Internal-Token"
+
+
+class CollabSnapshotError(RuntimeError):
+    pass
 
 
 def start_snapshot_loop() -> None:
@@ -56,56 +61,111 @@ async def _loop() -> None:
 
 
 async def _snapshot_active_docs(base_url: str) -> None:
-    """Fetch text from collab-server for all docs that have been opened."""
-    # The collab-server doesn't expose a list of active docs via HTTP yet,
-    # so we rely on the frontend telling us which docs are collaborative.
-    # For now, we query the docs that have been recently updated (last 5 min)
-    # and check if collab-server has them.
+    """Fetch text from collab-server for every active Yjs room."""
+    doc_ids = await _fetch_active_doc_ids(base_url)
+    for doc_id in doc_ids:
+        await snapshot_doc_from_collab(doc_id, base_url=base_url)
+
+
+async def snapshot_project_from_collab(
+    project_id: str,
+    *,
+    base_url: str | None = None,
+) -> list[str]:
+    """Flush active Yjs docs for a project into the database before DB-only work."""
+    resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
+    try:
+        active_doc_ids = await _fetch_active_doc_ids(resolved_base_url)
+    except httpx.HTTPError as exc:
+        raise CollabSnapshotError("failed to list active collaboration docs") from exc
+
+    if not active_doc_ids:
+        return []
+
     db = SessionLocal()
     try:
-        from datetime import datetime, timedelta
-
-        from ..models import Doc, Project
-
-        cutoff = datetime.utcnow() - timedelta(minutes=5)
-        recent_docs = (
-            db.query(Doc)
-            .filter(Doc.updated_at >= cutoff)
+        rows = (
+            db.query(Doc.id)
+            .filter(Doc.project_id == project_id)
+            .filter(Doc.id.in_(active_doc_ids))
             .all()
         )
+        project_doc_ids = [str(row[0]) for row in rows]
+    finally:
+        db.close()
 
+    flushed: list[str] = []
+    for doc_id in project_doc_ids:
+        doc = await snapshot_doc_from_collab(doc_id, base_url=resolved_base_url)
+        if doc is None:
+            raise CollabSnapshotError(f"failed to snapshot active doc {doc_id}")
+        flushed.append(doc_id)
+    return flushed
+
+
+async def _fetch_active_doc_ids(base_url: str) -> list[str]:
+    url = f"{base_url.rstrip('/')}/docs/active"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers=_collab_internal_headers())
+        resp.raise_for_status()
+        data = resp.json()
+    ids = data.get("doc_ids", [])
+    if not isinstance(ids, list):
+        return []
+    return [str(doc_id) for doc_id in ids if doc_id is not None and str(doc_id)]
+
+
+async def snapshot_doc_from_collab(doc_id: str, *, base_url: str | None = None) -> Doc | None:
+    resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
+    try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for doc in recent_docs:
-                try:
-                    resp = await client.get(
-                        f"{base_url}/docs/{doc.id}/text",
-                        headers=_collab_internal_headers(),
-                    )
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                    new_text = data.get("text", "")
-                    if not new_text or new_text == doc.content:
-                        continue
-                    # Update via service to get version bump + snapshot.
-                    project = db.get(Project, doc.project_id)
-                    if project is None:
-                        logger.debug(
-                            "[collab-snapshot] skipped doc %s; project %s not found",
-                            doc.id,
-                            doc.project_id,
-                        )
-                        continue
-                    svc = ProjectFsService(db, project)
-                    svc.update_doc_content(
-                        doc.id,
-                        new_text,
-                        origin="collab_snapshot",
-                        actor=None,
-                    )
-                    logger.debug("[collab-snapshot] snapshotted doc %s", doc.id)
-                except httpx.HTTPError:
-                    continue
+            resp = await client.get(
+                f"{resolved_base_url}/docs/{doc_id}/text",
+                headers=_collab_internal_headers(),
+            )
+    except httpx.HTTPError as exc:
+        logger.debug("[collab-snapshot] failed to fetch doc %s", doc_id)
+        raise CollabSnapshotError(f"failed to fetch collab doc {doc_id}") from exc
+
+    if resp.status_code != 200:
+        raise CollabSnapshotError(
+            f"collab doc {doc_id} text endpoint returned HTTP {resp.status_code}"
+        )
+    data = resp.json()
+    if data.get("initialized") is False:
+        logger.debug("[collab-snapshot] skipped uninitialized collab doc %s", doc_id)
+        return None
+    new_text = data.get("text")
+    if new_text is None:
+        return None
+    if not isinstance(new_text, str):
+        new_text = str(new_text)
+
+    db = SessionLocal()
+    try:
+        doc = db.get(Doc, doc_id)
+        if doc is None:
+            return None
+        if new_text == doc.content:
+            return doc
+        project = db.get(Project, doc.project_id)
+        if project is None:
+            logger.debug(
+                "[collab-snapshot] skipped doc %s; project %s not found",
+                doc.id,
+                doc.project_id,
+            )
+            return None
+        svc = ProjectFsService(db, project)
+        updated = svc.update_doc_content(
+            doc.id,
+            new_text,
+            origin="collab_snapshot",
+            actor=None,
+        )
+        if updated is not None:
+            logger.debug("[collab-snapshot] snapshotted doc %s", doc.id)
+        return updated
     finally:
         db.close()
 

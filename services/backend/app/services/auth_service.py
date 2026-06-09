@@ -37,6 +37,7 @@ from ..models import (
     WorkflowRun,
 )
 from ..settings import settings
+from .registration_invite_service import RegistrationInviteError, RegistrationInviteService
 
 SESSION_LIFETIME = timedelta(days=14)
 _PASSWORD_POLICY = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).{8,}$")
@@ -94,6 +95,7 @@ class AuthService:
         display_name: str = "",
         ip: str = "",
         bootstrap_token: str = "",
+        invite_token: str = "",
     ) -> tuple[User, str]:
         email_normalized = email.strip().lower()
         if not email_normalized or "@" not in email_normalized:
@@ -105,7 +107,12 @@ class AuthService:
             raise AuthError("Email already registered")
 
         is_first = self.db.query(User).count() == 0
-        self._check_registration_policy(is_first=is_first, bootstrap_token=bootstrap_token)
+        self._check_registration_policy(
+            is_first=is_first,
+            bootstrap_token=bootstrap_token,
+            invite_token=invite_token,
+            email=email_normalized,
+        )
         user = User(
             email=email_normalized,
             password_hash=self.hash_password(password),
@@ -117,6 +124,8 @@ class AuthService:
 
         if is_first:
             self._backfill_existing_resources(user.id)
+        elif invite_token.strip():
+            self._consume_registration_invite(invite_token, email=email_normalized, user_id=user.id)
 
         token = self._create_session(user, ip)
         user.last_login_at = datetime.utcnow()
@@ -125,8 +134,14 @@ class AuthService:
         self.db.refresh(user)
         return user, token
 
-    @staticmethod
-    def _check_registration_policy(*, is_first: bool, bootstrap_token: str) -> None:
+    def _check_registration_policy(
+        self,
+        *,
+        is_first: bool,
+        bootstrap_token: str,
+        invite_token: str,
+        email: str,
+    ) -> None:
         if is_first:
             required_token = settings.bootstrap_token.strip()
             if required_token:
@@ -138,8 +153,22 @@ class AuthService:
                 return
             raise RegistrationClosedError("Registration requires a bootstrap token")
 
+        supplied_invite = invite_token.strip()
+        if supplied_invite:
+            try:
+                RegistrationInviteService(self.db).assert_available(supplied_invite, email=email)
+            except RegistrationInviteError as e:
+                raise RegistrationClosedError(str(e)) from e
+            return
+
         if not settings.public_registration:
             raise RegistrationClosedError("Registration is disabled")
+
+    def _consume_registration_invite(self, token: str, *, email: str, user_id: str) -> None:
+        try:
+            RegistrationInviteService(self.db).consume(token, email=email, used_by_user_id=user_id)
+        except RegistrationInviteError as e:
+            raise RegistrationClosedError(str(e)) from e
 
     def authenticate(self, email: str, password: str, ip: str = "") -> tuple[User, str]:
         email_normalized = email.strip().lower()

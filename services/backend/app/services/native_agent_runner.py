@@ -9,43 +9,25 @@ raw filesystem access.
 from __future__ import annotations
 
 import json
-import re
-import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from hashlib import sha256
-from pathlib import Path
 from typing import Any
 
-from ..database import SessionLocal
-from ..models import Doc, FileBlob, Folder, Project
-from .agent_workspace_service import (
-    AgentWorkspaceError,
-    list_agent_workspace_files,
-    read_agent_workspace_file,
-)
 from .attached_files import render_attached_files_block
-from .event_bus import bus
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
 from .nanobot_client import NanobotClient
-from .project_fs_service import ProjectFsService
-from .project_member_service import ProjectMemberService
-
-_PROJECT_CREATE_CONTENT_LIMIT = 512 * 1024
-_PROJECT_CREATE_MAX_PATH_CHARS = 512
-_PROJECT_CREATE_MAX_SEGMENT_CHARS = 256
-_PROJECT_CREATE_DOC_EXTS: dict[str, str] = {
-    "tex": "tex",
-    "latex": "tex",
-    "ltx": "tex",
-    "bib": "tex",
-    "sty": "tex",
-    "cls": "tex",
-    "bst": "tex",
-    "md": "md",
-    "markdown": "md",
-    "txt": "txt",
-}
+from .native_agent_tool_kernel import (
+    BROWSER_SUPERLEAF_TOOL_NAMES,
+    NativeAgentToolContext,
+    NativeAgentToolResult as _ToolExecutionResult,
+    browser_superleaf_tools,
+    execute_native_agent_db_tool,
+    execute_native_agent_local_tool,
+    native_agent_project_context_tools,
+    native_agent_skill_tools,
+    native_agent_workspace_tools,
+)
 
 
 @dataclass(slots=True)
@@ -118,18 +100,6 @@ class NativeRunPayload:
     allow_project_context: bool = False
 
 
-@dataclass(slots=True)
-class _ToolExecutionResult:
-    content: str
-    failed: bool = False
-    failed_function_name: str = ""
-    tool_kind: str = "workspace"
-    trace_payload: dict[str, Any] | None = None
-    # Set when the tool wants the runner to surface a side-channel event
-    # (e.g. propose_doc_edit emits an edit proposal card to the chat UI).
-    side_event: dict[str, Any] | None = None
-
-
 class NativeAgentRunner:
     def __init__(self, config: NativeAgentRuntimeConfig) -> None:
         self.config = config
@@ -200,6 +170,44 @@ class NativeAgentRunner:
             "prior_messages": prior_messages,
             "message_count": len(prior_messages) + 2,
         }
+
+    async def execute_browser_nanobot_tool(
+        self,
+        call: dict[str, Any],
+        payload: NativeRunPayload,
+    ) -> _ToolExecutionResult:
+        """Execute the small SuperLeaf tool subset exposed to browser Nanobot.
+
+        Browser-side Nanobot runs are transported by the frontend, but the
+        backend remains the authorization boundary for project reads and edit
+        proposals. Keep this surface intentionally narrower than native Agents:
+        no workspace file reads, no project file creation, no MCP calls.
+        """
+        return await self.execute_browser_superleaf_tool(
+            call,
+            payload,
+            tool_kind="browser_nanobot",
+            surface_name="browser Nanobot",
+        )
+
+    async def execute_browser_superleaf_tool(
+        self,
+        call: dict[str, Any],
+        payload: NativeRunPayload,
+        *,
+        tool_kind: str = "browser_local_agent",
+        surface_name: str = "browser local Agent",
+    ) -> _ToolExecutionResult:
+        """Execute the small SuperLeaf tool subset exposed to browser transports."""
+        name = _tool_call_name(call)
+        if name not in BROWSER_SUPERLEAF_TOOL_NAMES:
+            return _ToolExecutionResult(
+                f"ERROR: tool {name or '(missing)'} is not available for {surface_name} runs",
+                failed=True,
+                failed_function_name=name,
+                tool_kind=tool_kind,
+            )
+        return await self._execute_tool(call, {}, payload)
 
     def _system_prompt(self, payload: NativeRunPayload | None = None) -> str:
         inputs = (payload.inputs if payload else {}) or {}
@@ -288,11 +296,21 @@ class NativeAgentRunner:
                     (
                         "Document edit tool: when the user asks you to change the text of the "
                         "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
+                        "To specify the edit range, also pass the exact text you want to replace as "
+                        "original_text — the system will locate it automatically and character offsets "
+                        "become only a disambiguation hint. Always read the surrounding context first "
+                        "(project_read_doc) to get the exact text. "
                         "This proposes the change as a card in the chat — the user must click accept "
                         "to actually apply it. Do NOT paste the replacement text directly into your "
-                        "markdown reply; use the tool. After proposing, give a one-line summary of the "
-                        "intent. Always read the surrounding context first (project_read_doc) to make "
-                        "sure your character offsets are correct."
+                        "markdown reply; use the tool."
+                    ),
+                    (
+                        "Annotation tool: when the user EXPLICITLY asks to create an annotation, "
+                        "suggestion card, or persistent note, call create_suggestion(original_text, content). "
+                        "This creates a durable annotation in the annotation panel (saved to database). "
+                        "Do NOT use create_suggestion for normal editing requests — use propose_doc_edit. "
+                        "Only use create_suggestion when the user says things like "
+                        "'create an annotation', 'add a suggestion card', '留下批注' etc."
                     ),
                     (
                         "If MCP tools are available, call them only when the user explicitly asks "
@@ -517,12 +535,12 @@ class NativeAgentRunner:
         mcp_refs = [] if project_context_only or skill_only else await discover_mcp_tools(self.config.runtime_config)
         mcp_tool_map = {ref.function_name: ref for ref in mcp_refs}
         if skill_only:
-            base_tools = _skill_tools()
+            base_tools = native_agent_skill_tools()
         elif project_context_only:
-            base_tools = _project_context_tools() + _skill_tools()
+            base_tools = native_agent_project_context_tools() + native_agent_skill_tools()
         else:
-            base_tools = _workspace_tools()
-            base_tools = base_tools + _skill_tools()
+            base_tools = native_agent_workspace_tools()
+            base_tools = base_tools + native_agent_skill_tools()
         tools = base_tools + [ref.definition for ref in mcp_refs]
 
         while True:
@@ -614,37 +632,18 @@ class NativeAgentRunner:
             args = json.loads(args_raw) if isinstance(args_raw, str) else dict(args_raw)
         except (TypeError, ValueError):
             args = {}
-        root = Path(self.config.workspace_root)
         try:
-            if name == "list_agent_files":
-                prefix = str(args.get("prefix") or ".agents")
-                files = list_agent_workspace_files(root, prefix=prefix)
-                return _ToolExecutionResult(
-                    json.dumps(
-                        [{"path": file.path, "type": file.type, "size": file.size} for file in files],
-                        ensure_ascii=False,
-                    )
-                )
-            if name == "read_agent_file":
-                path = str(args.get("path") or "")
-                content = read_agent_workspace_file(root, path)
-                return _ToolExecutionResult(content)
-            if name == "use_skill":
-                return self._tool_use_skill(args)
-            if name == "project_list_docs":
-                return self._tool_project_list_docs(args)
-            if name == "project_read_doc":
-                return self._tool_project_read_doc(args)
-            if name == "project_grep":
-                return self._tool_project_grep(args)
-            if name == "project_outline":
-                return self._tool_project_outline(args)
-            if name in {"project_write_text_file", "project_create_text_file"}:
-                result = self._tool_project_write_text_file(args)
-                result.tool_kind = "project_write"
-                return result
-            if name == "propose_doc_edit":
-                return self._tool_propose_doc_edit(args, payload)
+            tool_context = self._tool_context(payload)
+            local_tool_result = execute_native_agent_local_tool(name, args, tool_context)
+            if local_tool_result is not None:
+                return local_tool_result
+            db_tool_result = execute_native_agent_db_tool(
+                name,
+                args,
+                tool_context,
+            )
+            if db_tool_result is not None:
+                return db_tool_result
             if name in mcp_tool_map:
                 ref = mcp_tool_map[name]
                 try:
@@ -664,381 +663,20 @@ class NativeAgentRunner:
                         raw_result=result,
                     )
                 return _ToolExecutionResult(result, tool_kind="mcp")
-        except AgentWorkspaceError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}")
         except Exception as exc:  # noqa: BLE001
             return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
 
-    def _tool_use_skill(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        skill_id = str(args.get("skill_id") or "").strip()
-        reason = str(args.get("reason") or "").strip()
-        if not skill_id:
-            return _ToolExecutionResult("ERROR: skill_id is required", failed=True, tool_kind="skill")
-        skill = self._skill_by_ref(skill_id)
-        if skill is None:
-            available = ", ".join(s.name for s in self.config.skills)
-            return _ToolExecutionResult(
-                f"ERROR: skill not found. Available: {available}",
-                failed=True,
-                tool_kind="skill",
-            )
-        # Resolve the skill folder on disk
-        root = Path(self.config.workspace_root)
-        skill_path = root / ".agents" / skill.folder_path
-        # If pointing to a .skillref.json, resolve the target_path
-        if skill_path.is_file() and skill_path.suffix == ".json":
-            try:
-                ref = json.loads(skill_path.read_text(encoding="utf-8"))
-                target = ref.get("target_path", "")
-                folder = Path(target) if target else skill_path.parent
-            except (OSError, json.JSONDecodeError):
-                return _ToolExecutionResult("ERROR: cannot resolve skill reference", failed=True, tool_kind="skill")
-        else:
-            folder = skill_path
-        # Read only SKILL.md
-        skill_md = folder / "SKILL.md"
-        if not skill_md.is_file():
-            return _ToolExecutionResult("ERROR: SKILL.md not found", failed=True, tool_kind="skill")
-        try:
-            content = skill_md.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}", failed=True, tool_kind="skill")
-        if not content:
-            return _ToolExecutionResult("ERROR: SKILL.md is empty", failed=True, tool_kind="skill")
-        # Build file tree listing
-        tree = _skill_file_tree(folder)
-        payload = skill.activation_payload(reason=reason)
-        return _ToolExecutionResult(
-            content + "\n\n---\n\nFiles in this Skill:\n" + tree,
-            tool_kind="skill",
-            trace_payload=payload,
+    def _tool_context(self, payload: NativeRunPayload | None) -> NativeAgentToolContext:
+        return NativeAgentToolContext(
+            project_id=self.config.project_id,
+            user_id=self.config.user_id,
+            active_document_id=(payload.document_id if payload else ""),
+            active_range_start=(payload.range_start if payload else 0),
+            active_range_end=(payload.range_end if payload else 0),
+            workspace_root=self.config.workspace_root,
+            skills=self.config.skills,
         )
-
-    def _skill_by_ref(self, skill_id: str) -> NativeSkillBlock | None:
-        needle = _normalize_skill_ref(skill_id)
-        for skill in self.config.skills:
-            refs = [skill.id, skill.name, *skill.aliases]
-            if any(_normalize_skill_ref(ref) == needle for ref in refs):
-                return skill
-        return None
-
-    # ------------------------------------------------------------------
-    # project_* tools. Every handler opens a short-lived session and filters
-    # by project_id/user_id from runtime config; Agent inputs never reach the
-    # project scope clause.
-    # ------------------------------------------------------------------
-
-    def _project_scope_ok(self) -> bool:
-        return bool(self.config.project_id and self.config.user_id)
-
-    def _tool_project_list_docs(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        with SessionLocal() as db:
-            rows = (
-                db.query(Doc.id, Doc.name, Doc.format, Doc.folder_id, Doc.updated_at)
-                .filter(
-                    Doc.project_id == self.config.project_id,
-                )
-                .order_by(Doc.name.asc())
-                .limit(_PROJECT_LIST_LIMIT)
-                .all()
-            )
-        out = [
-            {
-                "id": r.id,
-                "name": r.name,
-                "format": r.format,
-                "folder_id": r.folder_id or "",
-                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
-            }
-            for r in rows
-        ]
-        return _ToolExecutionResult(json.dumps(out, ensure_ascii=False))
-
-    def _tool_project_read_doc(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        doc_id = str(args.get("doc_id") or "").strip()
-        if not doc_id:
-            return _ToolExecutionResult("ERROR: doc_id is required", failed=True)
-        try:
-            range_start = int(args.get("range_start") or 0)
-            range_end_raw = args.get("range_end")
-            range_end = int(range_end_raw) if range_end_raw is not None else None
-        except (TypeError, ValueError):
-            return _ToolExecutionResult("ERROR: range_start/range_end must be integers", failed=True)
-        with SessionLocal() as db:
-            doc = db.get(Doc, doc_id)
-            if doc is None or doc.project_id != self.config.project_id:
-                return _ToolExecutionResult("ERROR: doc not found in this project", failed=True)
-            content = doc.content or ""
-            name = doc.name
-            fmt = doc.format
-        total = len(content)
-        start = max(0, min(range_start, total))
-        end = total if range_end is None else max(start, min(range_end, total))
-        if end - start > _PROJECT_READ_LIMIT:
-            end = start + _PROJECT_READ_LIMIT
-        slice_text = content[start:end]
-        out = {
-            "doc_id": doc_id,
-            "name": name,
-            "format": fmt,
-            "total_length": total,
-            "range_start": start,
-            "range_end": end,
-            "content": slice_text,
-            "truncated": end < total or start > 0,
-        }
-        return _ToolExecutionResult(json.dumps(out, ensure_ascii=False))
-
-    def _tool_project_grep(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        pattern = str(args.get("pattern") or "").strip()
-        if not pattern:
-            return _ToolExecutionResult("ERROR: pattern is required", failed=True)
-        format_filter = str(args.get("format") or "").strip().lower()
-        try:
-            max_results = int(args.get("max_results") or _PROJECT_GREP_DEFAULT_LIMIT)
-        except (TypeError, ValueError):
-            max_results = _PROJECT_GREP_DEFAULT_LIMIT
-        max_results = max(1, min(max_results, _PROJECT_GREP_HARD_LIMIT))
-        try:
-            regex = re.compile(pattern, re.MULTILINE)
-        except re.error as exc:
-            return _ToolExecutionResult(f"ERROR: invalid regex: {exc}", failed=True)
-        with SessionLocal() as db:
-            q = db.query(Doc.id, Doc.name, Doc.format, Doc.content).filter(
-                Doc.project_id == self.config.project_id,
-            )
-            if format_filter:
-                q = q.filter(Doc.format == format_filter)
-            rows = q.all()
-        hits: list[dict[str, Any]] = []
-        for row in rows:
-            content = row.content or ""
-            for m in regex.finditer(content):
-                line_start = content.rfind("\n", 0, m.start()) + 1
-                line_end = content.find("\n", m.end())
-                line_end = len(content) if line_end == -1 else line_end
-                line_no = content.count("\n", 0, m.start()) + 1
-                preview = content[line_start:line_end]
-                if len(preview) > _PROJECT_GREP_PREVIEW_CHARS:
-                    cut_at = max(0, m.start() - line_start - 60)
-                    preview = preview[cut_at : cut_at + _PROJECT_GREP_PREVIEW_CHARS]
-                hits.append(
-                    {
-                        "doc_id": row.id,
-                        "doc_name": row.name,
-                        "format": row.format,
-                        "offset": m.start(),
-                        "line": line_no,
-                        "preview": preview,
-                    }
-                )
-                if len(hits) >= max_results:
-                    break
-            if len(hits) >= max_results:
-                break
-        return _ToolExecutionResult(
-            json.dumps(
-                {"hits": hits, "truncated": len(hits) >= max_results},
-                ensure_ascii=False,
-            )
-        )
-
-    def _tool_project_outline(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        doc_id = str(args.get("doc_id") or "").strip()
-        if not doc_id:
-            return _ToolExecutionResult("ERROR: doc_id is required", failed=True)
-        with SessionLocal() as db:
-            doc = db.get(Doc, doc_id)
-            if doc is None or doc.project_id != self.config.project_id:
-                return _ToolExecutionResult("ERROR: doc not found in this project", failed=True)
-            content = doc.content or ""
-            fmt = (doc.format or "").lower()
-            name = doc.name
-        sections = _extract_outline(content, fmt)
-        return _ToolExecutionResult(
-            json.dumps(
-                {"doc_id": doc_id, "name": name, "format": fmt, "sections": sections},
-                ensure_ascii=False,
-            )
-        )
-
-    def _tool_project_write_text_file(self, args: dict[str, Any]) -> _ToolExecutionResult:
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        path_raw = str(args.get("path") or "")
-        try:
-            path_parts = _normalize_project_create_path(path_raw)
-        except ValueError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
-
-        content = args.get("content")
-        if not isinstance(content, str):
-            return _ToolExecutionResult("ERROR: content must be a string", failed=True)
-        content_bytes = len(content.encode("utf-8"))
-        if content_bytes > _PROJECT_CREATE_CONTENT_LIMIT:
-            return _ToolExecutionResult(
-                f"ERROR: content exceeds {_PROJECT_CREATE_CONTENT_LIMIT} bytes",
-                failed=True,
-            )
-
-        name = path_parts[-1]
-        try:
-            doc_format = _project_doc_format_for_name(name, args.get("format"))
-        except ValueError as exc:
-            return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
-
-        with SessionLocal() as db:
-            project = db.get(Project, self.config.project_id)
-            if project is None:
-                return _ToolExecutionResult("ERROR: project not found", failed=True)
-            if not ProjectMemberService(db).can_write(project.id, self.config.user_id):
-                return _ToolExecutionResult("ERROR: project write access required", failed=True)
-
-            svc = ProjectFsService(db, project)
-            parent_folder_id: str | None = None
-            for folder_name in path_parts[:-1]:
-                conflict = _project_sibling_kind(db, project.id, parent_folder_id, folder_name)
-                if conflict in {"doc", "file"}:
-                    return _ToolExecutionResult(
-                        f"ERROR: cannot create folder '{folder_name}' because a {conflict} "
-                        "with that name already exists",
-                        failed=True,
-                    )
-                folder = _project_find_folder(db, project.id, parent_folder_id, folder_name)
-                if folder is None:
-                    try:
-                        folder = svc.create_folder(
-                            parent_folder_id=parent_folder_id,
-                            name=folder_name,
-                        )
-                    except ValueError as exc:
-                        return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
-                parent_folder_id = folder.id
-
-            existing = _project_sibling_kind(db, project.id, parent_folder_id, name)
-            if existing is not None:
-                return _ToolExecutionResult(
-                    f"ERROR: cannot create '{name}' because a {existing} with that name already exists",
-                    failed=True,
-                )
-            try:
-                doc = svc.create_doc(
-                    folder_id=parent_folder_id,
-                    name=name,
-                    format=doc_format,
-                    content=content,
-                )
-            except ValueError as exc:
-                return _ToolExecutionResult(f"ERROR: {exc}", failed=True)
-
-            payload = {
-                "action": "doc.created",
-                "doc_id": doc.id,
-                "folder_id": doc.folder_id,
-                "name": doc.name,
-                "format": doc.format,
-                "path": "/".join(path_parts),
-                "doc": _tree_doc_payload(doc),
-            }
-            bus.publish(project.id, "project.tree.changed", payload, origin_client_id="")
-
-        return _ToolExecutionResult(
-            json.dumps(
-                {
-                    "status": "created",
-                    "doc_id": payload["doc_id"],
-                    "path": payload["path"],
-                    "name": payload["name"],
-                    "format": payload["format"],
-                    "size_bytes": payload["doc"]["size_bytes"],
-                },
-                ensure_ascii=False,
-            ),
-            tool_kind="project_write",
-            side_event={"event": "native.agent.project_file_created", "data": payload},
-        )
-
-    def _tool_propose_doc_edit(
-        self,
-        args: dict[str, Any],
-        payload: NativeRunPayload,
-    ) -> _ToolExecutionResult:
-        """Surface an edit proposal to the chat UI; never writes the doc.
-
-        Scope is locked to payload.document_id — the agent cannot target other
-        docs. The handler verifies the range against the live doc, captures
-        the original_text snapshot for stale detection on the frontend, and
-        emits a side event the runner forwards as native.agent.edit_proposal.
-        """
-        if not self._project_scope_ok():
-            return _ToolExecutionResult("ERROR: project scope not available", failed=True)
-        document_id = (payload.document_id or "").strip()
-        if not document_id:
-            return _ToolExecutionResult(
-                "ERROR: propose_doc_edit requires an active document; none is bound to this conversation",
-                failed=True,
-            )
-        try:
-            range_start = int(args.get("range_start"))
-            range_end = int(args.get("range_end"))
-        except (TypeError, ValueError):
-            return _ToolExecutionResult(
-                "ERROR: range_start and range_end must be integers", failed=True
-            )
-        new_text = args.get("new_text")
-        if not isinstance(new_text, str):
-            return _ToolExecutionResult("ERROR: new_text must be a string", failed=True)
-        reason = str(args.get("reason") or "").strip()
-
-        with SessionLocal() as db:
-            doc = db.get(Doc, document_id)
-            if doc is None or doc.project_id != self.config.project_id:
-                return _ToolExecutionResult(
-                    "ERROR: active document not found in this project", failed=True
-                )
-            content = doc.content or ""
-        total = len(content)
-        start = max(0, min(range_start, total))
-        end = max(start, min(range_end, total))
-        original_text = content[start:end]
-
-        proposal_id = uuid.uuid4().hex
-        proposal = {
-            "proposal_id": proposal_id,
-            "document_id": document_id,
-            "range_start": start,
-            "range_end": end,
-            "original_text": original_text,
-            "new_text": new_text,
-            "reason": reason,
-        }
-
-        tool_reply = {
-            "status": "proposed",
-            "proposal_id": proposal_id,
-            "document_id": document_id,
-            "range_start": start,
-            "range_end": end,
-            "note": (
-                "Proposal queued; awaiting user approval in chat. "
-                "Do not propose the same edit again — briefly explain the intent in plain text."
-            ),
-        }
-        return _ToolExecutionResult(
-            json.dumps(tool_reply, ensure_ascii=False),
-            tool_kind="edit_proposal",
-            side_event={"event": "native.agent.edit_proposal", "data": proposal},
-        )
-
 
 def _mcp_failure_result(
     ref: McpToolRef,
@@ -1187,6 +825,89 @@ def _delta_text(evt: dict[str, Any]) -> str:
     return text if isinstance(text, str) else ""
 
 
+def browser_nanobot_system_prompt() -> str:
+    return "\n".join(
+        [
+            "You are a local Nanobot Agent collaborating inside SuperLeaf.",
+            "The browser is your transport; SuperLeaf backend executes project tools after authorization.",
+            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "Do not use your own local filesystem or shell as a substitute for SuperLeaf project tools. "
+                "SuperLeaf project context exists only through the tools listed in this prompt."
+            ),
+            (
+                "If this API channel cannot call tools natively, request exactly one SuperLeaf tool by "
+                "replying with only this marker and no Markdown: "
+                '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>. '
+                "Replace name and arguments as needed."
+            ),
+            (
+                "When the user asks you to change the current document, call "
+                "propose_doc_edit with original_text copied from project_read_doc, "
+                "range_start/range_end as hints, replacement new_text, and a short reason."
+            ),
+            (
+                "When the user asks you to create, write, add, or generate a new "
+                "SuperLeaf project file, call project_write_text_file or "
+                "project_create_text_file with a relative path and the complete file "
+                "content. These tools create database-backed SuperLeaf project "
+                "documents and refuse to overwrite existing files."
+            ),
+            (
+                "Do not claim that an edit has been applied. propose_doc_edit only creates "
+                "a proposal card; the user must accept it before the document changes."
+            ),
+            "Do not ask SuperLeaf to record local files read, commands run, or internal reasoning.",
+            "Return concise Markdown for ordinary answers.",
+        ]
+    )
+
+
+def browser_codex_system_prompt() -> str:
+    return "\n".join(
+        [
+            "You are a local Codex Agent collaborating inside SuperLeaf.",
+            "You may use your normal local code and repository capabilities when relevant.",
+            "SuperLeaf project documents, comments, selections, and edit proposals are not your local filesystem; access them through the SuperLeaf tools listed in this prompt.",
+            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "If native MCP/function tools are available, call the SuperLeaf tool directly. "
+                "Only if no direct tool channel is available, request one SuperLeaf tool by replying "
+                "with exactly one marker and no prose: "
+                '<superleaf_tool_call>{"name":"project_list_docs","arguments":{}}</superleaf_tool_call>. '
+                "Replace name and arguments as needed."
+            ),
+            (
+                "When the user asks you to modify a SuperLeaf document, first read the relevant text if needed, "
+                "then call propose_doc_edit with original_text copied verbatim from project_read_doc, "
+                "range_start/range_end as hints, replacement new_text, and a short reason."
+            ),
+            (
+                "When the user asks you to create, write, add, or generate a new "
+                "SuperLeaf project file, call project_write_text_file or "
+                "project_create_text_file with a relative path and the complete file "
+                "content. These tools create database-backed SuperLeaf project "
+                "documents and refuse to overwrite existing files."
+            ),
+            (
+                "Do not claim that a SuperLeaf edit has been applied. propose_doc_edit only creates "
+                "a proposal card; the user must accept it before the document changes."
+            ),
+            "Do not ask SuperLeaf to record local files read, shell commands, or internal reasoning.",
+            "Return concise Markdown for ordinary answers.",
+        ]
+    )
+
+
+def browser_nanobot_tools() -> list[dict[str, Any]]:
+    return browser_superleaf_tools()
+
+
+def _tool_call_name(call: dict[str, Any]) -> str:
+    fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+    return str(fn.get("name") or "")
+
+
 def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:
     if payload is None:
         return False
@@ -1234,366 +955,6 @@ def _unique_non_empty(values: list[str]) -> list[str]:
         seen.add(item)
         out.append(item)
     return out
-
-
-def _normalize_skill_ref(value: str) -> str:
-    return str(value or "").strip().lower()
-
-
-def _skill_file_tree(folder: Path) -> str:
-    """Return a markdown-style file tree of a skill folder."""
-    lines: list[str] = []
-    _FORBIDDEN = {".git", "node_modules", "__pycache__", ".venv"}
-    for path in sorted(folder.rglob("*")):
-        if any(part in _FORBIDDEN for part in path.parts):
-            continue
-        rel = path.relative_to(folder).as_posix()
-        if path.is_dir():
-            lines.append(f"  {rel}/")
-        else:
-            size = path.stat().st_size
-            lines.append(f"  {rel}  ({size}B)")
-    return "\n".join(lines) if lines else "(empty)"
-
-
-def _normalize_project_create_path(raw_path: str) -> list[str]:
-    path = raw_path.strip().replace("\\", "/")
-    if not path:
-        raise ValueError("path is required")
-    if len(path) > _PROJECT_CREATE_MAX_PATH_CHARS:
-        raise ValueError(f"path exceeds {_PROJECT_CREATE_MAX_PATH_CHARS} characters")
-    if path.startswith("/") or re.match(r"^[A-Za-z]:", path):
-        raise ValueError("path must be relative to the current project")
-    if path.endswith("/"):
-        raise ValueError("path must include a filename")
-    raw_parts = path.split("/")
-    if any(part == "" for part in raw_parts):
-        raise ValueError("path must not contain empty segments")
-    parts: list[str] = []
-    for part in raw_parts:
-        clean = part.strip()
-        if clean != part:
-            raise ValueError("path segments must not have leading or trailing spaces")
-        if clean in {".", ".."} or clean.casefold() == ".git":
-            raise ValueError("path contains a forbidden segment")
-        if "\x00" in clean:
-            raise ValueError("path contains an invalid character")
-        if len(clean) > _PROJECT_CREATE_MAX_SEGMENT_CHARS:
-            raise ValueError(
-                f"path segment exceeds {_PROJECT_CREATE_MAX_SEGMENT_CHARS} characters"
-            )
-        parts.append(clean)
-    if not parts:
-        raise ValueError("path must include a filename")
-    return parts
-
-
-def _project_doc_format_for_name(name: str, requested: Any) -> str:
-    raw = str(requested or "").strip().lower()
-    if raw:
-        if raw not in {"tex", "md", "txt"}:
-            raise ValueError("format must be one of tex, md, or txt")
-        return raw
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    return _PROJECT_CREATE_DOC_EXTS.get(ext, "txt")
-
-
-def _project_find_folder(
-    db: Any,
-    project_id: str,
-    parent_folder_id: str | None,
-    name: str,
-) -> Folder | None:
-    return (
-        db.query(Folder)
-        .filter(
-            Folder.project_id == project_id,
-            Folder.parent_folder_id == parent_folder_id,
-            Folder.name == name,
-        )
-        .first()
-    )
-
-
-def _project_sibling_kind(
-    db: Any,
-    project_id: str,
-    folder_id: str | None,
-    name: str,
-) -> str | None:
-    if _project_find_folder(db, project_id, folder_id, name) is not None:
-        return "folder"
-    doc = (
-        db.query(Doc.id)
-        .filter(Doc.project_id == project_id, Doc.folder_id == folder_id, Doc.name == name)
-        .first()
-    )
-    if doc is not None:
-        return "doc"
-    file_blob = (
-        db.query(FileBlob.id)
-        .filter(
-            FileBlob.project_id == project_id,
-            FileBlob.folder_id == folder_id,
-            FileBlob.name == name,
-        )
-        .first()
-    )
-    return "file" if file_blob is not None else None
-
-
-def _tree_doc_payload(doc: Doc) -> dict[str, object]:
-    return {
-        "id": doc.id,
-        "name": doc.name,
-        "format": doc.format,
-        "size_bytes": len((doc.content or "").encode("utf-8")),
-        "updated_at": doc.updated_at.isoformat(),
-    }
-
-
-def _workspace_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "list_agent_files",
-                "description": "List files and folders in this Agent's read-only .agents workspace.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prefix": {
-                            "type": "string",
-                            "description": "Path under .agents, for example .agents or .agents/skills.",
-                        }
-                    },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "read_agent_file",
-                "description": "Read a safe text file from this Agent's read-only .agents workspace.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": (
-                                "File path under .agents, for example "
-                                ".agents/skills/name/SKILL.md."
-                            ),
-                        }
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "project_list_docs",
-                "description": (
-                    "List all documents in the current project (read-only). "
-                    "Returns id, name, format, folder_id, updated_at. "
-                    "Use this to discover related files before editing."
-                ),
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "project_read_doc",
-                "description": (
-                    "Read the contents of a project document by id. "
-                    "Optional range_start/range_end (character offsets) trim the slice. "
-                    "Returned content is capped at 40000 characters; pass a range to read more."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "doc_id": {"type": "string"},
-                        "range_start": {
-                            "type": "integer",
-                            "description": "Character offset to start reading at (default 0).",
-                        },
-                        "range_end": {
-                            "type": "integer",
-                            "description": "Character offset to stop at (exclusive). Omit for end-of-doc.",
-                        },
-                    },
-                    "required": ["doc_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "project_grep",
-                "description": (
-                    "Search project documents with a Python regular expression. "
-                    "Returns up to max_results matches with surrounding line preview. "
-                    "Optionally filter by format (e.g. 'tex' or 'md')."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "pattern": {"type": "string", "description": "Python regex (multiline)."},
-                        "format": {
-                            "type": "string",
-                            "description": "Restrict to docs of this format, e.g. tex or md.",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Cap on hits returned (default 30, max 100).",
-                        },
-                    },
-                    "required": ["pattern"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "project_outline",
-                "description": (
-                    "Return the heading outline (sections / chapters) of one document. "
-                    "Cheap way to understand a long doc before reading the body."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {"doc_id": {"type": "string"}},
-                    "required": ["doc_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "project_write_text_file",
-                "description": (
-                    "Create a new text document in the current project by relative path and "
-                    "write its full content in the same database operation. "
-                    "Use only when the user explicitly asks you to create a new project file "
-                    "or reference file. Intermediate folders are created automatically. "
-                    "The tool refuses to overwrite existing docs, files, or folders. "
-                    "Supported document formats are tex, md, and txt; format is inferred "
-                    "from the filename when possible and otherwise defaults to txt."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": (
-                                "Relative project path, for example "
-                                "references/paper-style.md or examples/rule.txt."
-                            ),
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Full UTF-8 text content for the new file.",
-                        },
-                        "format": {
-                            "type": "string",
-                            "enum": ["tex", "md", "txt"],
-                            "description": (
-                                "Optional stored document format. If omitted, inferred from "
-                                "the filename extension when supported, otherwise txt."
-                            ),
-                        },
-                    },
-                    "required": ["path", "content"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "propose_doc_edit",
-                "description": (
-                    "Propose a text edit to the document currently open in this discussion. "
-                    "PROPOSE ONLY — the edit is NOT applied until the user clicks accept "
-                    "in the chat UI. Use this whenever the user asks you to change the text. "
-                    "Always read the surrounding context first (e.g. with project_read_doc) "
-                    "to compute correct character offsets. Scope is locked to the active "
-                    "document; you cannot target other docs."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "range_start": {
-                            "type": "integer",
-                            "description": "Character offset where the replacement starts (inclusive).",
-                        },
-                        "range_end": {
-                            "type": "integer",
-                            "description": (
-                                "Character offset where the replacement ends (exclusive). "
-                                "Equal to range_start for a pure insertion."
-                            ),
-                        },
-                        "new_text": {
-                            "type": "string",
-                            "description": "The replacement text. May be empty to delete the range.",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Short human-readable explanation of why this change is proposed.",
-                        },
-                    },
-                    "required": ["range_start", "range_end", "new_text"],
-                },
-            },
-        },
-    ]
-
-
-def _skill_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "use_skill",
-                "description": (
-                    "Load the full instructions for one available Skill. "
-                    "Calling this tool means the Skill is activated for this run."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "skill_id": {
-                            "type": "string",
-                            "description": "The id or alias from the Available Skills list.",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Brief reason this Skill is needed now.",
-                        },
-                    },
-                    "required": ["skill_id"],
-                },
-            },
-        }
-    ]
-
-
-_PROJECT_CONTEXT_TOOL_NAMES = {
-    "project_list_docs",
-    "project_read_doc",
-    "project_grep",
-    "project_outline",
-}
-
-
-def _project_context_tools() -> list[dict[str, Any]]:
-    return [
-        tool
-        for tool in _workspace_tools()
-        if tool.get("function", {}).get("name") in _PROJECT_CONTEXT_TOOL_NAMES
-    ]
 
 
 class _ToolAccumulator:
@@ -1648,52 +1009,3 @@ class _ToolAccumulator:
                 call["id"] = f"tool-call-{index}"
             out.append(call)
         return out
-
-
-# project_* tool budget — keeps tool returns inside the model's context.
-_PROJECT_LIST_LIMIT = 200
-_PROJECT_READ_LIMIT = 40_000
-_PROJECT_GREP_DEFAULT_LIMIT = 30
-_PROJECT_GREP_HARD_LIMIT = 100
-_PROJECT_GREP_PREVIEW_CHARS = 240
-
-_LATEX_HEAD_RE = re.compile(
-    r"^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*\{([^}]*)\}",
-    re.MULTILINE,
-)
-_MARKDOWN_HEAD_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
-_LATEX_LEVEL = {
-    "part": 0,
-    "chapter": 1,
-    "section": 2,
-    "subsection": 3,
-    "subsubsection": 4,
-    "paragraph": 5,
-    "subparagraph": 6,
-}
-
-
-def _extract_outline(content: str, fmt: str) -> list[dict[str, Any]]:
-    if fmt == "tex":
-        regex = _LATEX_HEAD_RE
-        out: list[dict[str, Any]] = []
-        for m in regex.finditer(content):
-            kind = m.group(1)
-            out.append({
-                "level": _LATEX_LEVEL.get(kind, 3),
-                "kind": kind,
-                "title": m.group(2).strip(),
-                "offset": m.start(),
-            })
-        return out
-    if fmt == "md":
-        out = []
-        for m in _MARKDOWN_HEAD_RE.finditer(content):
-            out.append({
-                "level": len(m.group(1)),
-                "kind": "h" + str(len(m.group(1))),
-                "title": m.group(2).strip(),
-                "offset": m.start(),
-            })
-        return out
-    return []

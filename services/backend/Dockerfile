@@ -1,3 +1,5 @@
+FROM node:22-bookworm-slim AS node-runtime
+
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 
 ARG INSTALL_TEXLIVE=false
@@ -24,18 +26,38 @@ RUN apt-get update && \
     if [ "${INSTALL_TEXLIVE}" = "true" ]; then \
       apt-get install -y --no-install-recommends \
         latexmk \
+        biber \
+        ghostscript \
+        python3-pygments \
+        fonts-noto-cjk \
         texlive-latex-base \
         texlive-latex-recommended \
+        texlive-latex-extra \
+        texlive-plain-generic \
+        texlive-science \
+        texlive-publishers \
+        texlive-bibtex-extra \
         texlive-fonts-recommended \
+        texlive-fonts-extra \
+        texlive-lang-chinese \
+        texlive-luatex \
         texlive-xetex; \
     fi && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 RUN groupadd --gid "${APP_GID}" appuser && \
     useradd --uid "${APP_UID}" --gid "${APP_GID}" --home-dir /data/home --no-create-home --shell /usr/sbin/nologin appuser
 
 COPY services/backend/pyproject.toml services/backend/uv.lock ./
 COPY services/backend/app ./app
+COPY services/local-agent-host ./services/local-agent-host
+COPY services/shared/superleaf-tools.json ./services/shared/superleaf-tools.json
 
 RUN uv sync --frozen --no-dev
 

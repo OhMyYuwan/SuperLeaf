@@ -126,6 +126,49 @@
   overflow: hidden;
 }
 
+.editor-preview-sync-handle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.code-to-pdf-sync-btn {
+  position: absolute;
+  top: clamp(64px, 18%, 132px);
+  left: 50%;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f172a;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+
+.code-to-pdf-sync-btn:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.68);
+  color: #1d4ed8;
+  background: #ffffff;
+}
+
+.code-to-pdf-sync-btn:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.75);
+  outline-offset: 2px;
+}
+
+.code-to-pdf-sync-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .column-header {
   display: flex;
   align-items: center;

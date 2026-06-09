@@ -6,8 +6,9 @@
  * that lists agent + workflow + file candidates, sectioned by kind.
  *
  * By default, a second "mirror" layer sits behind multiline textareas and
- * renders the same text with each mention wrapped in a colored span. Callers
- * that use normal visible textarea text can disable that mirror layer.
+ * paints mention affordances without owning the visible text. The native
+ * textarea remains the visible text/caret source, which keeps mixed-width
+ * English/CJK input aligned.
  */
 
 import {
@@ -20,9 +21,8 @@ import {
 } from 'react'
 import {
   formatInsertion,
+  buildMentionMirrorSegments,
   HARD_REJECT_BYTES,
-  parseMentions,
-  segmentText,
   SOFT_WARN_BYTES,
   type AgentCandidate,
   type FileCandidate,
@@ -59,7 +59,7 @@ interface MentionInputProps {
   menuPlacement?: 'bottom' | 'top' | 'composer-panel'
   /** Render the multiline mirror layer used for inline mention highlights. */
   renderMirrorLayer?: boolean
-  /** Render multiline placeholders in the mirror layer for transparent textareas. */
+  /** Deprecated: native textarea placeholders are used so text/caret alignment stays exact. */
   renderMirrorPlaceholder?: boolean
   /** Auto-expand height as content grows, up to a CSS max-height. */
   autoResize?: boolean
@@ -90,7 +90,6 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       onSubmit,
       menuPlacement = 'bottom',
       renderMirrorLayer = true,
-      renderMirrorPlaceholder = true,
       autoResize = false,
     } = props
 
@@ -249,16 +248,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     // transparent-text mode it owns both normal text and highlighted mentions.
     const highlightSegments = useMemo(() => {
       if (!shouldRenderMirrorLayer) return []
-      if (!value.includes('@')) return [{ type: 'text' as const, content: value }]
-      const mentions = parseMentions(value, allCandidates)
-      return segmentText(value, mentions)
+      return buildMentionMirrorSegments(value, allCandidates)
     }, [value, allCandidates, shouldRenderMirrorLayer])
     const displayPlaceholder = value.length === 0 ? placeholder : undefined
-    const shouldUseMirrorPlaceholder = shouldRenderMirrorLayer && renderMirrorPlaceholder
-    const mirrorPlaceholderText = shouldUseMirrorPlaceholder
-      ? displayPlaceholder
-      : undefined
-    const nativePlaceholderText = shouldUseMirrorPlaceholder ? undefined : displayPlaceholder
+    const nativePlaceholderText = displayPlaceholder
 
     const handleScroll = () => {
       if (!shouldRenderMirrorLayer || !mirrorRef.current || !taRef.current) return
@@ -284,34 +277,31 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
                 ref={mirrorRef}
                 className="mention-input-mirror"
                 aria-hidden="true"
+                data-testid="mention-input-mirror"
               >
-                {mirrorPlaceholderText ? (
-                  <span className="mention-input-placeholder">{mirrorPlaceholderText}</span>
-                ) : (
-                  highlightSegments.map((seg, i) => {
-                    if (seg.type === 'mention') {
-                      const cls =
-                        seg.candidate.kind === 'file'
-                          ? 'mention-tag mention-tag-file'
-                          : seg.candidate.kind === 'workflow'
-                            ? 'mention-tag mention-tag-workflow'
-                            : 'mention-tag'
-                      return (
-                        <span key={i} className={cls}>
-                          {seg.raw}
-                        </span>
-                      )
-                    }
-                    return <span key={i}>{seg.content}</span>
-                  })
-                )}
+                {highlightSegments.map((seg, i) => {
+                  if (seg.type === 'mention') {
+                    const cls =
+                      seg.candidate.kind === 'file'
+                        ? 'mention-tag mention-tag-file'
+                        : seg.candidate.kind === 'workflow'
+                          ? 'mention-tag mention-tag-workflow'
+                          : 'mention-tag'
+                    return (
+                      <span key={i} className={cls}>
+                        {seg.raw}
+                      </span>
+                    )
+                  }
+                  return <span key={i}>{seg.content}</span>
+                })}
                 {/* trailing newline so the mirror grows with the textarea content */}
                 {'​'}
               </div>
             )}
             <textarea
               ref={taRef}
-              className={`mention-input-textarea ${shouldRenderMirrorLayer ? 'transparent-caret' : ''} ${autoResize ? 'auto-resize' : ''}`}
+              className={`mention-input-textarea ${shouldRenderMirrorLayer ? 'with-highlight-mirror' : ''} ${autoResize ? 'auto-resize' : ''}`}
               value={value}
               onChange={handleChange}
               onKeyDown={handleKeyDown}

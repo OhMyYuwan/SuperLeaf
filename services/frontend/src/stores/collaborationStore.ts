@@ -29,6 +29,7 @@ interface CollaborationState {
   connect: (projectId: string, docId: string, user: { id: string; name: string }) => Promise<void>
   disconnect: () => void
   waitUntilSynced: (docId: string, timeoutMs?: number) => Promise<void>
+  getCurrentText: (docId: string) => string | null
 }
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -167,5 +168,13 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
         finish()
       }
     })
+  },
+
+  getCurrentText: (docId) => {
+    const state = get()
+    if (!state.provider || state.currentDocId !== docId) {
+      return null
+    }
+    return state.provider.yText.toString()
   },
 }))

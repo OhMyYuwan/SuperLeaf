@@ -230,10 +230,41 @@ export const useDocumentStore = create<DocumentState>()(
         }))
         try {
           if (get().collaborating[id]) {
-            await useCollaborationStore.getState().waitUntilSynced(id)
-            const saved = await filesystemApi.flushCollabDoc(id)
-            get().upsertFromBackendDoc(saved)
-            return
+            const collab = useCollaborationStore.getState()
+            const collabText = collab.getCurrentText(id)
+            if (collabText !== null) {
+              try {
+                await collab.waitUntilSynced(id)
+                const saved = await filesystemApi.flushCollabDoc(id)
+                get().upsertFromBackendDoc(saved)
+                return
+              } catch (flushErr) {
+                console.warn('[documentStore] collab flush failed; saving current Yjs text via REST', flushErr)
+                const saved = await filesystemApi.updateDoc(id, collabText)
+                const savedAt = backendUpdatedAtMs(saved, Date.now())
+                set((state) => ({
+                  saveStatus: { ...state.saveStatus, [id]: 'saved' },
+                  lastSavedAt: { ...state.lastSavedAt, [id]: savedAt },
+                  saveError: { ...state.saveError, [id]: null },
+                  backendVersions: { ...state.backendVersions, [id]: saved.version },
+                  documents: state.documents[id]
+                    ? {
+                        ...state.documents,
+                        [id]: {
+                          ...state.documents[id],
+                          content: collabText,
+                          structure: parseDocument(collabText, state.documents[id].format),
+                          version: saved.version,
+                        },
+                      }
+                    : state.documents,
+                }))
+                return
+              }
+            }
+            set((state) => ({
+              collaborating: { ...state.collaborating, [id]: false },
+            }))
           }
           const baseVersion = get().backendVersions[id] ?? existing.version
           const saved = await filesystemApi.updateDoc(id, existing.content, baseVersion)

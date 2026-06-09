@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
@@ -71,6 +71,16 @@ class ProjectFsService:
         )
         files = (
             self.db.query(FileBlob)
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                    FileBlob.mime_type,
+                    FileBlob.size_bytes,
+                    FileBlob.updated_at,
+                )
+            )
             .filter(FileBlob.project_id == project.id)
             .order_by(FileBlob.name.asc())
             .all()

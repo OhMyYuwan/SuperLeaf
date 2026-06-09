@@ -65,6 +65,24 @@ You can also prepare the environment without starting containers:
 ./superleaf init
 ```
 
+After the first admin is created, open `/admin` from the account menu to
+create one-time registration invitations. Keep `YLW_PUBLIC_REGISTRATION=false`
+for campus or multi-user deployments. Set `YLW_PUBLIC_BASE_URL` to the public
+HTTPS origin, for example `https://superleaf.example.edu`, so invite links in
+emails point to the right server.
+
+Email delivery is optional. If SMTP is not configured, `/admin` still shows a
+copyable invite link/code. To send invitations by email, set:
+
+```env
+YLW_SMTP_HOST=smtp.example.edu
+YLW_SMTP_PORT=587
+YLW_SMTP_USERNAME=your-account
+YLW_SMTP_PASSWORD=your-password
+YLW_SMTP_FROM=SuperLeaf <no-reply@example.edu>
+YLW_SMTP_TLS=true
+```
+
 Backend uses `YLW_COLLAB_INTERNAL_TOKEN` when reading Yjs document snapshots
 from Collab Server, and Collab Server rejects `/docs/:docId/text` without this
 internal token.

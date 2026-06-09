@@ -72,6 +72,7 @@ def run_migrations(engine: Engine) -> None:
         _add_conversation_user_renamed(conn)
         _add_archived_at_to_annotations(conn)
         _create_annotation_agent_suggestion_table(conn)
+        _create_registration_invite_table(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -316,6 +317,49 @@ def _json_blob_to_value(blob: Any) -> Any:
 def _looks_like_dataset_source_pointer(value: Any) -> bool:
     value = _json_blob_to_value(value)
     return isinstance(value, dict) and {"document_id", "range_start", "range_end"}.issubset(value.keys())
+
+
+def _create_registration_invite_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS registration_invites (
+                id VARCHAR(32) NOT NULL PRIMARY KEY,
+                email VARCHAR(255) DEFAULT '',
+                token_hash VARCHAR(64) NOT NULL,
+                token_hint VARCHAR(16) DEFAULT '',
+                created_by_user_id VARCHAR(32) NOT NULL,
+                created_at DATETIME,
+                expires_at DATETIME,
+                used_at DATETIME,
+                used_by_user_id VARCHAR(32),
+                revoked_at DATETIME,
+                send_status VARCHAR(32) DEFAULT 'not_requested',
+                send_error TEXT DEFAULT '',
+                last_sent_at DATETIME,
+                note TEXT DEFAULT ''
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_registration_invites_token_hash "
+            "ON registration_invites(token_hash)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_registration_invites_email "
+            "ON registration_invites(email)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_registration_invites_created_by_user_id "
+            "ON registration_invites(created_by_user_id)"
+        )
+    )
 
 
 def _add_is_global_to_annotations(conn) -> None:

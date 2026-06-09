@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUserStore } from '../stores/userStore'
 import { BackendError } from '../services/backendApi'
 import { AuthSplitShell } from './components/AuthSplitShell'
@@ -16,12 +16,14 @@ import './auth.css'
 
 export function RegisterPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const register = useUserStore((s) => s.register)
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [bootstrapToken, setBootstrapToken] = useState('')
+  const [inviteToken, setInviteToken] = useState(() => searchParams.get('invite') ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeSlideId, setActiveSlideId] = useState(AUTH_SLIDES[0].id)
@@ -37,6 +39,7 @@ export function RegisterPage() {
         password,
         display_name: displayName.trim(),
         bootstrap_token: bootstrapToken.trim(),
+        invite_token: inviteToken.trim(),
       })
       navigate('/projects', { replace: true })
     } catch (e) {
@@ -57,7 +60,7 @@ export function RegisterPage() {
         <div className="auth-brand">SuperLeaf</div>
         <h2 className="auth-title">注册</h2>
         <p className="auth-subtle">
-          首位管理员需要部署配置中的 Bootstrap Token；开放注册关闭时，后续账号也需由管理员规划创建。
+          首位管理员使用 Bootstrap Token 初始化；后续账号可使用管理员发放的一次性邀请码。
         </p>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="auth-label">
@@ -95,7 +98,19 @@ export function RegisterPage() {
             <span className="auth-hint">至少 8 位，需包含字母与数字。</span>
           </label>
           <label className="auth-label">
-            Bootstrap Token（首次初始化）
+            邀请码
+            <input
+              type="text"
+              value={inviteToken}
+              onChange={(e) => setInviteToken(e.target.value)}
+              autoComplete="one-time-code"
+              maxLength={512}
+              placeholder="管理员提供的一次性邀请码"
+            />
+            <span className="auth-hint">邀请链接会自动填入，可直接注册。</span>
+          </label>
+          <label className="auth-label">
+            Bootstrap Token
             <input
               type="password"
               value={bootstrapToken}
@@ -103,7 +118,7 @@ export function RegisterPage() {
               autoComplete="one-time-code"
               maxLength={512}
             />
-            <span className="auth-hint">由部署者在 `.env` 中设置；公开注册环境可留空。</span>
+            <span className="auth-hint">仅首次创建管理员时需要。</span>
           </label>
           {error && <div className="auth-error">{error}</div>}
           <button type="submit" className="auth-primary" disabled={busy}>

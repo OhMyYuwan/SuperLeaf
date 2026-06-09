@@ -65,6 +65,8 @@ interface AnnotationPanelProps {
   agents?: CachedWorkflow[]
 }
 
+const EMPTY_AUTO_REPLY_ROWS: AnnotationAgentSuggestion[] = []
+
 /** Fallback clipboard copy using a hidden textarea. Works in non-HTTPS contexts. */
 function fallbackCopy(text: string): void {
   const ta = document.createElement('textarea')
@@ -347,7 +349,10 @@ function AnnotationCard({
   const remove = useAnnotationStore((s) => s.remove)
   const publish = useAnnotationStore((s) => s.publish)
   const appendThread = useAnnotationStore((s) => s.appendThread)
-  const autoReplyRows = useAnnotationAgentSuggestionStore((s) => s.suggestionsByAnnotation[item.id] ?? [])
+  // Keep this fallback stable. Returning `?? []` from a Zustand selector
+  // creates a fresh array per render and can trigger React's maximum update
+  // depth guard via repeated external-store snapshot changes.
+  const autoReplyRows = useAnnotationAgentSuggestionStore((s) => s.suggestionsByAnnotation[item.id] ?? EMPTY_AUTO_REPLY_ROWS)
   const runAutoReply = useAnnotationAgentSuggestionStore((s) => s.runAutoReply)
   const autoReplyRunning = useAnnotationAgentSuggestionStore((s) => Boolean(s.runningByDoc[item.documentId]))
   const runWorkflow = useWorkflowStore((s) => s.run)

@@ -1409,10 +1409,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-nanobot/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserNanobot: (
     conversationId: string,
@@ -1437,10 +1438,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-codex/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserCodex: (
     conversationId: string,
@@ -1465,10 +1467,11 @@ export const conversationApi = {
       inputs: Record<string, unknown>
       tool_call: NanobotToolCall
     },
+    init?: Pick<HttpInit, 'signal'>,
   ) =>
     http<BrowserNanobotToolResult>(
       `/api/conversations/${encodeURIComponent(conversationId)}/browser-claude/tool`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', body: JSON.stringify(body), signal: init?.signal },
     ),
   finishBrowserClaude: (
     conversationId: string,

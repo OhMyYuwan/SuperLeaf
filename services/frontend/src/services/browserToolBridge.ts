@@ -99,6 +99,7 @@ export interface StartBrowserToolBridgeArgs {
   ) => Promise<BrowserToolBridgeResult | BrowserNanobotToolResult>
   waitMs?: number
   refreshMs?: number
+  requestTimeoutMs?: number
   onActivity?: () => void
   onPollError?: (err: unknown) => void
   onRequestError?: (request: BrowserToolBridgeRequest, err: unknown) => void
@@ -419,8 +420,18 @@ async function executeAndSubmitBridgeRequest(
   args: StartBrowserToolBridgeArgs & { signal: AbortSignal },
   request: BrowserToolBridgeRequest,
 ): Promise<void> {
+  const requestTimeoutMs = Math.max(1000, args.requestTimeoutMs ?? 105000)
+  const requestCtl = new AbortController()
+  let timedOut = false
+  const abortRequest = () => requestCtl.abort(args.signal.reason ?? 'stopped')
+  if (args.signal.aborted) abortRequest()
+  else args.signal.addEventListener('abort', abortRequest, { once: true })
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    requestCtl.abort(new DOMException(`SuperLeaf MCP browser tool ${request.name} timed out after ${requestTimeoutMs}ms`, 'TimeoutError'))
+  }, requestTimeoutMs)
   try {
-    const result = await args.executeRequest(request, args.signal)
+    const result = await args.executeRequest(request, requestCtl.signal)
     const toolKind = 'tool_kind' in result ? result.tool_kind : result.toolKind
     args.onActivity?.()
     await submitBrowserToolBridgeResult({
@@ -438,17 +449,23 @@ async function executeAndSubmitBridgeRequest(
     })
   } catch (err) {
     if (args.signal.aborted) return
-    args.onRequestError?.(request, err)
+    const normalizedError = timedOut
+      ? new Error(`SuperLeaf MCP browser tool ${request.name} timed out after ${Math.round(requestTimeoutMs / 1000)}s while waiting for the SuperLeaf backend/browser bridge result.`)
+      : err
+    args.onRequestError?.(request, normalizedError)
     await submitBrowserToolBridgeResult({
       endpoint: args.endpoint,
       requestId: request.id,
-      content: err instanceof Error ? err.message : String(err),
+      content: normalizedError instanceof Error ? normalizedError.message : String(normalizedError),
       failed: true,
       name: request.name,
       toolKind: 'superleaf_mcp',
       events: [],
       signal: args.signal,
     }).catch(() => undefined)
+  } finally {
+    window.clearTimeout(timeout)
+    args.signal.removeEventListener('abort', abortRequest)
   }
 }
 

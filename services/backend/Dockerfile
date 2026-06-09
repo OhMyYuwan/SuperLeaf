@@ -26,9 +26,21 @@ RUN apt-get update && \
     if [ "${INSTALL_TEXLIVE}" = "true" ]; then \
       apt-get install -y --no-install-recommends \
         latexmk \
+        biber \
+        ghostscript \
+        python3-pygments \
+        fonts-noto-cjk \
         texlive-latex-base \
         texlive-latex-recommended \
+        texlive-latex-extra \
+        texlive-plain-generic \
+        texlive-science \
+        texlive-publishers \
+        texlive-bibtex-extra \
         texlive-fonts-recommended \
+        texlive-fonts-extra \
+        texlive-lang-chinese \
+        texlive-luatex \
         texlive-xetex; \
     fi && \
     rm -rf /var/lib/apt/lists/*

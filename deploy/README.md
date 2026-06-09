@@ -1,8 +1,12 @@
 # SuperLeaf Deploy
 
-This folder is the user-facing deployment bundle. It runs SuperLeaf behind one
-gateway. Local deployments expose one HTTP port; public deployments should use
-HTTPS through either the bundled TLS override or an external reverse proxy.
+This folder is the user-facing deployment bundle. The default mode runs
+SuperLeaf as one container that includes Nginx, the frontend, the FastAPI
+backend, and the Yjs collab server. Nginx proxies to localhost inside that
+container, so restricted Podman/Docker bridge networks do not block startup.
+
+Local deployments expose one HTTP port; public deployments should use HTTPS
+through either the bundled TLS override or an external reverse proxy.
 
 ## Start
 
@@ -15,6 +19,17 @@ Open `http://localhost:8080` by default.
 The gateway binds to `127.0.0.1` by default. To intentionally expose it on a
 trusted LAN, set `SUPERLEAF_BIND_ADDR=0.0.0.0` in `.env` and review
 registration, TLS, and firewall settings first.
+
+For a campus server such as `172.28.7.26`, use:
+
+```env
+SUPERLEAF_BIND_ADDR=0.0.0.0
+SUPERLEAF_HTTP_PORT=8080
+YLW_PUBLIC_BASE_URL=http://172.28.7.26:8080
+YLW_PUBLIC_REGISTRATION=false
+```
+
+Then open `http://172.28.7.26:8080/` from the campus network.
 
 ## HTTPS For Public Deployments
 
@@ -112,14 +127,34 @@ If you are testing with a local image archive before registry images are
 published, load it before starting:
 
 ```bash
+# Docker:
 docker load -i images/superleaf-deploy-images.tar.gz
+
+# Podman:
+podman load -i images/superleaf-deploy-images.tar.gz
 ```
 
 ## Configure Images
 
-The defaults use GHCR-compatible tags. A local image archive can provide those
-same tags after `docker load`, so `./superleaf up` works before the images are
-published to GHCR. Edit `.env` to pin release images or use your own registry:
+The default `SUPERLEAF_IMAGE` is an all-in-one image:
+
+```env
+SUPERLEAF_IMAGE=ghcr.io/ohmyyuwan/superleaf:v0.1.0
+```
+
+A local image archive can provide that tag after `docker load` or
+`podman load`, so `./superleaf up` works before the image is published to GHCR.
+
+The previous multi-container topology is still available for normal Docker
+Compose environments:
+
+```bash
+./superleaf multi-up
+./superleaf multi-status
+./superleaf multi-logs
+```
+
+Those commands use the advanced image variables:
 
 ```env
 SUPERLEAF_BACKEND_IMAGE=ghcr.io/ohmyyuwan/superleaf-backend:v0.1.0
@@ -132,7 +167,7 @@ SUPERLEAF_COLLAB_IMAGE=ghcr.io/ohmyyuwan/superleaf-collab:v0.1.0
 ```bash
 ./superleaf status
 ./superleaf logs
-./superleaf logs backend
+./superleaf logs app
 ./superleaf update
 ./superleaf backup
 ./superleaf restore backups/superleaf-backup-YYYYmmdd-HHMMSS.tar.gz
@@ -140,6 +175,22 @@ SUPERLEAF_COLLAB_IMAGE=ghcr.io/ohmyyuwan/superleaf-collab:v0.1.0
 ```
 
 Runtime data is stored under `data/`. Backups are written under `backups/`.
+
+To migrate data from another machine, stop SuperLeaf on the source machine and
+pack the deployment `.env` plus runtime data:
+
+```bash
+tar -czf superleaf-data.tar.gz -C /path/to/superleaf .env data
+```
+
+Copy `superleaf-data.tar.gz` to the server, extract it inside the deployment
+directory, then start:
+
+```bash
+tar -xzf superleaf-data.tar.gz -C /opt/superleaf
+cd /opt/superleaf
+./superleaf up
+```
 
 ## Package A Release Bundle
 

@@ -22,17 +22,24 @@ trap cleanup EXIT
 
 mkdir -p "$OUT_DIR" "$PACKAGE_DIR"
 cp "$ROOT/compose.yml" "$PACKAGE_DIR/compose.yml"
+cp "$ROOT/compose.multi.yml" "$PACKAGE_DIR/compose.multi.yml"
+cp "$ROOT/compose.tls.yml" "$PACKAGE_DIR/compose.tls.yml"
 cp "$ROOT/.env.example" "$PACKAGE_DIR/.env.example"
 cp "$ROOT/README.md" "$PACKAGE_DIR/README.md"
 cp "$ROOT/superleaf" "$PACKAGE_DIR/superleaf"
+cp "$ROOT/install-superleaf-server.sh" "$PACKAGE_DIR/install-superleaf-server.sh"
 cp -R "$ROOT/gateway" "$PACKAGE_DIR/gateway"
+if [ -d "$ROOT/images" ]; then
+  cp -R "$ROOT/images" "$PACKAGE_DIR/images"
+fi
 
+sed -i.bak "s|ghcr.io/ohmyyuwan/superleaf:latest|ghcr.io/ohmyyuwan/superleaf:$VERSION|g" "$PACKAGE_DIR/.env.example"
 sed -i.bak "s|ghcr.io/ohmyyuwan/superleaf-backend:latest|ghcr.io/ohmyyuwan/superleaf-backend:$VERSION|g" "$PACKAGE_DIR/.env.example"
 sed -i.bak "s|ghcr.io/ohmyyuwan/superleaf-frontend:latest|ghcr.io/ohmyyuwan/superleaf-frontend:$VERSION|g" "$PACKAGE_DIR/.env.example"
 sed -i.bak "s|ghcr.io/ohmyyuwan/superleaf-collab:latest|ghcr.io/ohmyyuwan/superleaf-collab:$VERSION|g" "$PACKAGE_DIR/.env.example"
 rm -f "$PACKAGE_DIR/.env.example.bak"
 
-chmod +x "$PACKAGE_DIR/superleaf"
-tar -czf "$ARCHIVE" -C "$WORK_DIR" "superleaf-deploy-$VERSION"
+chmod +x "$PACKAGE_DIR/superleaf" "$PACKAGE_DIR/install-superleaf-server.sh"
+COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$WORK_DIR" "superleaf-deploy-$VERSION"
 
 echo "Wrote $ARCHIVE"

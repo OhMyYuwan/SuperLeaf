@@ -72,18 +72,35 @@ import {
 import { MentionInput } from '../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
+import {
+  conversationScopeKey as buildConversationScopeKey,
+  documentConversationsNewestFirst,
+  enabledDiscussionAgents,
+  resolveDiscussionAgentId,
+  timestampValue,
+  type SelectedAgentByDocument,
+} from './discussionAgentSelection'
 
 interface DiscussionTabProps {
   workflows: CachedWorkflow[]
   documentId: string | null
   activeSelection: Selection | null
+  selectedAgentByDocument: SelectedAgentByDocument
+  onSelectAgentForDocument: (documentId: string, workflowId: string) => void
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
 const USER_MESSAGE_PREVIEW_CHAR_LIMIT = 260
 const USER_MESSAGE_PREVIEW_LINE_LIMIT = 6
 
-export function DiscussionTab({ workflows, documentId, activeSelection, onJumpToRange }: DiscussionTabProps) {
+export function DiscussionTab({
+  workflows,
+  documentId,
+  activeSelection,
+  selectedAgentByDocument,
+  onSelectAgentForDocument,
+  onJumpToRange,
+}: DiscussionTabProps) {
   const conversations = useConversationStore((s) => s.conversations)
   const messages = useConversationStore((s) => s.messages)
   const streaming = useConversationStore((s) => s.streaming)
@@ -114,11 +131,12 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   )
   const providers = useSettingsStore((s) => s.providers)
 
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [manualConversation, setManualConversation] = useState<{
     scopeKey: string
     id: string
   } | null>(null)
+  const [loadedConversationDocumentId, setLoadedConversationDocumentId] =
+    useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -140,15 +158,23 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     () => new Map(providers.map((provider) => [provider.id, provider.name])),
     [providers],
   )
+  const activeProviderId = useMemo(
+    () => providers.find((provider) => provider.is_active)?.id ?? null,
+    [providers],
+  )
+  const availableWorkflows = useMemo(
+    () => enabledDiscussionAgents(workflows),
+    [workflows],
+  )
   const agentCandidates: AgentCandidate[] = useMemo(
     () =>
-      workflows.map((w) => ({
+      availableWorkflows.map((w) => ({
         kind: 'agent',
         id: w.id,
         name: w.name,
         displayName: formatAgentDisplayName(w, providerNamesById),
       })),
-    [workflows, providerNamesById],
+    [availableWorkflows, providerNamesById],
   )
   const workflowCandidates: WorkflowCandidate[] = useMemo(
     () =>
@@ -164,30 +190,66 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     () => [...agentCandidates, ...workflowCandidates, ...fileCandidates],
     [agentCandidates, workflowCandidates, fileCandidates],
   )
-  const validSelectedAgentId = useMemo(
-    () =>
-      selectedAgentId && workflows.some((w) => w.id === selectedAgentId)
-        ? selectedAgentId
-        : workflows[0]?.id ?? null,
-    [selectedAgentId, workflows],
+  const conversationsReadyForDocument = loadedConversationDocumentId === documentId
+  const conversationList = useMemo(
+    () => (conversationsReadyForDocument ? Object.values(conversations) : []),
+    [conversations, conversationsReadyForDocument],
   )
-  const conversationScopeKey = `${documentId ?? ''}::${validSelectedAgentId ?? ''}`
+  const documentConversations = useMemo(
+    () => documentConversationsNewestFirst(conversationList, documentId, availableWorkflows),
+    [conversationList, documentId, availableWorkflows],
+  )
+  const validSelectedAgentId = useMemo(
+    () => {
+      const manualAgentId = documentId ? selectedAgentByDocument[documentId] : undefined
+      const manualAgentIsAvailable = availableWorkflows.some(
+        (workflow) => workflow.id === manualAgentId,
+      )
+      if (!conversationsReadyForDocument && !manualAgentIsAvailable) return null
+      return resolveDiscussionAgentId({
+        documentId,
+        workflows,
+        conversations: conversationList,
+        selectedAgentByDocument,
+        activeProviderId,
+      })
+    },
+    [
+      documentId,
+      workflows,
+      availableWorkflows,
+      conversationList,
+      selectedAgentByDocument,
+      activeProviderId,
+      conversationsReadyForDocument,
+    ],
+  )
+  const currentConversationScopeKey = buildConversationScopeKey(
+    documentId,
+    validSelectedAgentId,
+  )
 
-  // Load conversations when document or agent changes.
+  // Load all conversations for the current document so Agent choice can be
+  // restored from the document's previous discussion, regardless of Agent.
   useEffect(() => {
-    if (!documentId || !validSelectedAgentId) return
-    loadConversations({ documentId, workflowId: validSelectedAgentId })
-  }, [documentId, validSelectedAgentId, loadConversations])
+    if (!documentId) return
+    let cancelled = false
+    void loadConversations({ documentId }).then(() => {
+      if (!cancelled) setLoadedConversationDocumentId(documentId)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, loadConversations])
 
-  // Filter conversations for current (doc, agent).
+  // The message stream stays scoped to the selected Agent; the history menu
+  // shows every enabled Agent discussion for the document.
   const filteredConversations = useMemo(() => {
-    return Object.values(conversations)
-      .filter((c) => c.document_id === documentId && c.workflow_id === validSelectedAgentId)
-      .sort(compareConversationsNewestFirst)
-  }, [conversations, documentId, validSelectedAgentId])
+    return documentConversations.filter((c) => c.workflow_id === validSelectedAgentId)
+  }, [documentConversations, validSelectedAgentId])
 
   const activeConversationIdForRender =
-    manualConversation?.scopeKey === conversationScopeKey &&
+    manualConversation?.scopeKey === currentConversationScopeKey &&
     filteredConversations.some((c) => c.id === manualConversation.id)
       ? manualConversation.id
       : null
@@ -208,7 +270,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
       title: '新对话',
     })
     if (conv) {
-      setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
+      setManualConversation({ scopeKey: currentConversationScopeKey, id: conv.id })
     }
   }
 
@@ -262,7 +324,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const handleDragEnd = (e: DragEndEvent) => {
     const { active, over } = e
     if (!over || active.id === over.id) return
-    const list = filteredConversations
+    const list = documentConversations
     const oldIdx = list.findIndex((c) => c.id === active.id)
     const newIdx = list.findIndex((c) => c.id === over.id)
     if (oldIdx === -1 || newIdx === -1) return
@@ -350,9 +412,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
   const activeStreamingStats = effectiveConversationId
     ? streamingStats[effectiveConversationId]
     : undefined
-  const activeProposals = effectiveConversationId
-    ? proposalsByConv[effectiveConversationId] ?? []
-    : []
+  const activeProposals = useMemo(
+    () => (effectiveConversationId ? proposalsByConv[effectiveConversationId] ?? [] : []),
+    [effectiveConversationId, proposalsByConv],
+  )
   const activeLocalApprovals = effectiveConversationId
     ? localApprovalsByConv[effectiveConversationId] ?? []
     : []
@@ -460,6 +523,14 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
     )
   }
 
+  if (availableWorkflows.length === 0) {
+    return (
+      <div className="tab-empty">
+        当前没有启用的 Agent。去"团队管理" tab 启用一个 Agent。
+      </div>
+    )
+  }
+
   return (
     <div className="discussion-tab">
       <div className="discussion-header">
@@ -468,11 +539,17 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
           <select
             value={validSelectedAgentId ?? ''}
             onChange={(e) => {
-              setSelectedAgentId(e.target.value || null)
+              const nextAgentId = e.target.value || null
+              if (documentId && nextAgentId) {
+                onSelectAgentForDocument(documentId, nextAgentId)
+              }
               setManualConversation(null)
             }}
           >
-            {workflows.map((w) => (
+            {!validSelectedAgentId && (
+              <option value="">加载 Agent…</option>
+            )}
+            {availableWorkflows.map((w) => (
               <option key={w.id} value={w.id}>
                 {formatAgentDisplayName(w, providerNamesById)}
               </option>
@@ -484,10 +561,10 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
             <DropdownMenu.Trigger asChild>
               <button
                 className="ghost-btn small"
-                title={`对话历史 (${filteredConversations.length})`}
+                title={`对话历史 (${documentConversations.length})`}
               >
                 <History size={14} />
-                <span className="conversation-count">{filteredConversations.length}</span>
+                <span className="conversation-count">{documentConversations.length}</span>
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
@@ -495,7 +572,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                 <div className="conversation-dropdown-header">
                   <span>对话历史</span>
                 </div>
-                {filteredConversations.length === 0 && (
+                {documentConversations.length === 0 && (
                   <div className="conversation-dropdown-empty">
                     还没有对话
                   </div>
@@ -506,19 +583,29 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
                   onDragEnd={handleDragEnd}
                 >
                   <SortableContext
-                    items={filteredConversations.map((c) => c.id)}
+                    items={documentConversations.map((c) => c.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {filteredConversations.map((conv) => (
+                    {documentConversations.map((conv) => (
                       <SortableConversationItem
                         key={conv.id}
                         conv={conv}
+                        agentName={
+                          availableWorkflows.find((workflow) => workflow.id === conv.workflow_id)
+                            ?.name
+                        }
                         active={conv.id === effectiveConversationId}
                         renamingId={renamingId}
                         renameText={renameText}
                         onRenameTextChange={setRenameText}
                         onSelect={() => {
-                          setManualConversation({ scopeKey: conversationScopeKey, id: conv.id })
+                          if (documentId) {
+                            onSelectAgentForDocument(documentId, conv.workflow_id)
+                          }
+                          setManualConversation({
+                            scopeKey: buildConversationScopeKey(conv.document_id, conv.workflow_id),
+                            id: conv.id,
+                          })
                           setHistoryOpen(false)
                         }}
                         onStartRename={handleStartRename}
@@ -538,6 +625,7 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
             className="ghost-btn small"
             onClick={handleNewConversation}
             title="新建对话"
+            disabled={!validSelectedAgentId}
           >
             <Plus size={14} />
           </button>
@@ -557,7 +645,9 @@ export function DiscussionTab({ workflows, documentId, activeSelection, onJumpTo
         <div className="message-area-full">
           {!effectiveConversationId && (
             <div className="message-empty">
-              {filteredConversations.length === 0
+              {!conversationsReadyForDocument
+                ? '正在加载对话历史…'
+                : documentConversations.length === 0
                 ? '点击右上角 + 创建新对话'
                 : '从右上角历史按钮选择一个对话'}
             </div>
@@ -843,6 +933,7 @@ const DiscussionComposer = memo(function DiscussionComposer({
 
 interface SortableConversationItemProps {
   conv: Conversation
+  agentName?: string
   active: boolean
   renamingId: string | null
   renameText: string
@@ -858,6 +949,7 @@ interface SortableConversationItemProps {
 
 function SortableConversationItem({
   conv,
+  agentName,
   active,
   renamingId,
   renameText,
@@ -942,7 +1034,7 @@ function SortableConversationItem({
               </div>
             )}
             <div className="conversation-dropdown-meta">
-              {conv.message_count} 条 · {formatTime(conv.updated_at)}
+              {agentName ? `${agentName} · ` : ''}{conv.message_count} 条 · {formatTime(conv.updated_at)}
             </div>
           </>
         )}
@@ -1300,17 +1392,6 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString()
 }
 
-function compareConversationsNewestFirst(a: Conversation, b: Conversation): number {
-  if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
-  const ka = a.sort_index ?? timestampValue(a.updated_at)
-  const kb = b.sort_index ?? timestampValue(b.updated_at)
-  return (
-    kb - ka ||
-    timestampValue(b.created_at) - timestampValue(a.created_at) ||
-    b.id.localeCompare(a.id)
-  )
-}
-
 function formatAgentDisplayName(
   agent: Pick<CachedWorkflow, 'id' | 'provider_id' | 'name'>,
   providerNamesById: ReadonlyMap<string, string>,
@@ -1321,11 +1402,6 @@ function formatAgentDisplayName(
 
 function shortAgentId(id: string): string {
   return id.trim().slice(0, 5) || '-----'
-}
-
-function timestampValue(iso: string): number {
-  const value = new Date(iso).getTime()
-  return Number.isFinite(value) ? value : 0
 }
 
 /**

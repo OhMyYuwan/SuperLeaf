@@ -138,6 +138,13 @@
   white-space: pre;
 }
 
+.agent-md pre.agent-md-codepre {
+  overflow-x: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .agent-md pre code {
   padding: 0;
   color: inherit;

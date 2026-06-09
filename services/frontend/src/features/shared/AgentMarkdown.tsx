@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import MarkdownIt from 'markdown-it'
 import { mdKatex } from './markdownKatex'
 import 'katex/dist/katex.min.css'
@@ -16,9 +16,7 @@ interface RenderedMarkdown {
 }
 
 export function AgentMarkdown({ source, className, tone = 'default' }: AgentMarkdownProps) {
-  const codeBlocksRef = useRef<string[]>([])
   const rendered = useMemo(() => renderMarkdown(source ?? ''), [source])
-  codeBlocksRef.current = rendered.codeBlocks
 
   const handleClick = async (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
@@ -30,7 +28,7 @@ export function AgentMarkdown({ source, className, tone = 'default' }: AgentMark
     event.stopPropagation()
 
     const index = Number(button.dataset.codeIndex)
-    const text = codeBlocksRef.current[index]
+    const text = rendered.codeBlocks[index]
     if (Number.isNaN(index) || text === undefined) return
 
     try {
@@ -78,7 +76,7 @@ function renderMarkdown(source: string): RenderedMarkdown {
       `<span class="agent-md-codelang">${md.utils.escapeHtml(language)}</span>`,
       `<button type="button" class="agent-md-copy" data-agent-md-copy data-code-index="${index}">复制</button>`,
       '</div>',
-      `<pre><code${langClass}>${md.utils.escapeHtml(content)}</code></pre>`,
+      `<pre class="agent-md-codepre"><code${langClass}>${md.utils.escapeHtml(content)}</code></pre>`,
       '</div>',
     ].join('')
   }

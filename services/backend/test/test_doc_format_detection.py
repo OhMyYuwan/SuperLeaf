@@ -202,6 +202,39 @@ class TestUploadSplitsByContent:
         assert resp.json()["kind"] == "file"
 
 
+@pytest.fixture()
+def make_fileblob(db: Session, project: Project):
+    def _make(name: str, blob: bytes) -> str:
+        from app.models import FileBlob
+        f = FileBlob(
+            project_id=project.id,
+            folder_id=None,
+            name=name,
+            mime_type="application/octet-stream",
+            size_bytes=len(blob),
+            blob=blob,
+        )
+        db.add(f)
+        db.commit()
+        db.refresh(f)
+        return f.id
+    return _make
+
+
+class TestConvertGuardsBinary:
+    def test_convert_binary_blob_rejected(self, auth_client: TestClient, project: Project, make_fileblob) -> None:
+        file_id = make_fileblob(name="img.png", blob=b"\x89PNG\r\n\x1a\n\x00\x00")
+        resp = auth_client.post(f"/api/files/{file_id}/convert-to-doc", headers={"X-Project-Id": project.id})
+        assert resp.status_code == 400
+        assert "not text" in resp.json().get("detail", "").lower()
+
+    def test_convert_unknown_text_ext_becomes_txt_doc(self, auth_client: TestClient, project: Project, make_fileblob) -> None:
+        file_id = make_fileblob(name="notes.tikz", blob=b"\\draw (1,1);")
+        resp = auth_client.post(f"/api/files/{file_id}/convert-to-doc", headers={"X-Project-Id": project.id})
+        assert resp.status_code == 201
+        assert resp.json()["format"] == "txt"
+
+
 class TestRenameReturnsFormat:
     def test_rename_returns_new_format_for_doc(self, db: Session, project: Project) -> None:
         svc = ProjectFsService(db, project)

@@ -550,19 +550,11 @@ def convert_file_to_doc(
     f = db.get(FileBlob, file_id)
     if f is None or f.project_id != project.id:
         raise HTTPException(404, "file not found")
-    blob = f.blob or b""
-    # For legacy migration, accept files by extension (not content) so that
-    # pre-existing files with minor encoding issues can still be converted.
-    # We fall back to txt for unknown text extensions; binary-only formats
-    # (no dot, or extension not in our text set) are rejected via is_text_payload.
+    raw = f.blob or b""
+    if not is_text_payload(raw):
+        raise HTTPException(400, "file is not text and cannot be edited")
+    content = raw.decode("utf-8")
     fmt = doc_format_for_name(f.name)
-    # Only allow conversion if the file looks text-like OR has a known text extension.
-    # Use the old extension-based allowlist as a gate.
-    _known_text_exts = {"tex", "latex", "ltx", "bib", "sty", "cls", "bst", "md", "markdown", "txt"}
-    ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
-    if ext not in _known_text_exts and not is_text_payload(blob):
-        raise HTTPException(400, "file is not a recognized text format")
-    content = blob.decode("utf-8", errors="ignore")
     svc = ProjectFsService(db, project)
     try:
         doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)

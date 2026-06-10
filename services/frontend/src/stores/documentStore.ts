@@ -56,6 +56,7 @@ interface DocumentState {
   refreshFromBackend: (id: string) => Promise<void>
   saveBackendDoc: (id: string) => Promise<void>
   flushPendingSave: (id: string) => Promise<void>
+  applyDocFormatChange: (docId: string, format: DocumentFormat) => void
 }
 
 const debounceTimers: Record<string, ReturnType<typeof setTimeout> | undefined> = {}
@@ -296,6 +297,22 @@ export const useDocumentStore = create<DocumentState>()(
           showToast(`文档保存失败：${msg}`, { level: 'error' })
         }
       },
+
+      applyDocFormatChange: (docId, format) =>
+        set((state) => {
+          const doc = state.documents[docId]
+          if (!doc || doc.format === format) return state
+          return {
+            documents: {
+              ...state.documents,
+              [docId]: {
+                ...doc,
+                format,
+                structure: parseDocument(doc.content, format),
+              },
+            },
+          }
+        }),
 
       flushPendingSave: async (id) => {
         const pending = debounceTimers[id]

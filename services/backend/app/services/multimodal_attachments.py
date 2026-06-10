@@ -220,7 +220,9 @@ def to_openai_chat_content_parts(
 
     Schema:
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-        {"type": "file", "file": {"filename": "x.pdf", "file_data": "data:application/pdf;base64,..."}}
+
+    For PDFs with 1 page: convert to PNG for vision (GPT-4o can't "see" type=file PDFs).
+    For PDFs with >1 page: skip (multi-page vision not supported inline).
 
     Returns empty list if provider doesn't support any attachments.
     """
@@ -235,15 +237,40 @@ def to_openai_chat_content_parts(
                 parts.append({"type": "image_url", "image_url": {"url": data_uri}})
         elif att.kind == "document" and caps.get("pdf_inline"):
             if att.size_bytes <= caps.get("max_inline_bytes", DEFAULT_INLINE_THRESHOLD):
-                blob = att.blob_loader()
-                b64 = base64.b64encode(blob).decode("ascii")
-                data_uri = f"data:application/pdf;base64,{b64}"
-                parts.append(
-                    {
-                        "type": "file",
-                        "file": {"filename": att.name, "file_data": data_uri},
-                    }
-                )
+                # Convert single-page PDF to PNG for vision
+                try:
+                    from io import BytesIO
+
+                    from pdf2image import convert_from_bytes
+                    from PIL import Image
+                    from pypdf import PdfReader
+
+                    blob = att.blob_loader()
+                    # Check page count
+                    reader = PdfReader(BytesIO(blob))
+                    page_count = len(reader.pages)
+
+                    if page_count == 1:
+                        # Convert to PNG for vision
+                        images = convert_from_bytes(blob, first_page=1, last_page=1, dpi=150)
+                        if images:
+                            img = images[0]
+                            # Convert to PNG bytes
+                            buf = BytesIO()
+                            img.save(buf, format="PNG")
+                            png_bytes = buf.getvalue()
+
+                            b64 = base64.b64encode(png_bytes).decode("ascii")
+                            data_uri = f"data:image/png;base64,{b64}"
+                            parts.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    else:
+                        # Multi-page PDF: skip for now (could implement per-page conversion later)
+                        pass
+                except Exception as e:
+                    # Conversion failed: skip this PDF
+                    print(f"[WARN] Failed to convert PDF {att.name} to PNG: {e}")
+                    pass
+    return parts
     return parts
 
 

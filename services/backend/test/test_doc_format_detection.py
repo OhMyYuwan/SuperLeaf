@@ -122,6 +122,86 @@ class TestRenameRecomputesFormat:
         assert svc.rename_entity("file", f.id, "photo.png") is True
 
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.api import filesystem
+from app.api.deps import get_current_user
+from app.models import User
+from app.database import get_session
+
+
+@pytest.fixture()
+def app_client(db: Session):
+    _app = FastAPI()
+    _app.include_router(filesystem.router)
+    _app.dependency_overrides[get_session] = lambda: db
+    return _app
+
+
+@pytest.fixture()
+def client(app_client: FastAPI) -> TestClient:
+    return TestClient(app_client)
+
+
+@pytest.fixture()
+def user(db: Session) -> User:
+    u = User(id="u1", email="test@example.com", password_hash="x")
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    return u
+
+
+@pytest.fixture()
+def auth_client(app_client: FastAPI, user: User, project: Project, db: Session) -> TestClient:
+    from app.models import ProjectMember
+
+    pm = ProjectMember(user_id=user.id, project_id=project.id, role="owner")
+    db.add(pm)
+    db.commit()
+
+    def override_get_current_user():
+        return user
+
+    app_client.dependency_overrides[get_current_user] = override_get_current_user
+    return TestClient(app_client)
+
+
+class TestUploadSplitsByContent:
+    def test_unknown_text_ext_uploads_as_doc(self, auth_client: TestClient, project: Project) -> None:
+        resp = auth_client.post(
+            f"/api/files/upload",
+            files={"file": ("diagram.tikz", b"\\draw (0,0);", "text/plain")},
+            data={"folder_id": ""},
+            headers={"X-Project-Id": project.id},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["kind"] == "doc"
+        assert body["format"] == "txt"
+
+    def test_png_uploads_as_file(self, auth_client: TestClient, project: Project) -> None:
+        png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        resp = auth_client.post(
+            f"/api/files/upload",
+            files={"file": ("x.png", png, "image/png")},
+            data={"folder_id": ""},
+            headers={"X-Project-Id": project.id},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["kind"] == "file"
+
+    def test_tex_with_invalid_utf8_uploads_as_file(self, auth_client: TestClient, project: Project) -> None:
+        resp = auth_client.post(
+            f"/api/files/upload",
+            files={"file": ("weird.tex", b"\xa3\xa3\xa3\x00", "application/octet-stream")},
+            data={"folder_id": ""},
+            headers={"X-Project-Id": project.id},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["kind"] == "file"
+
+
 class TestRenameReturnsFormat:
     def test_rename_returns_new_format_for_doc(self, db: Session, project: Project) -> None:
         svc = ProjectFsService(db, project)

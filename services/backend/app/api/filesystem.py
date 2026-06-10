@@ -28,7 +28,7 @@ from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.event_bus import bus
 from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
-from ..services.project_fs_service import DocVersionConflictError, ProjectFsService
+from ..services.project_fs_service import DocVersionConflictError, ProjectFsService, doc_format_for_name, is_text_payload
 from ..services.project_member_service import ProjectMemberService
 from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
 from .deps import (
@@ -373,25 +373,6 @@ def move_entity(
     return {"ok": True}
 
 
-_TEXT_DOC_EXTS: dict[str, str] = {
-    # extension (no dot, lowercase) -> stored Doc.format
-    "tex": "tex",
-    "latex": "tex",
-    "ltx": "tex",
-    "bib": "tex",
-    "sty": "tex",
-    "cls": "tex",
-    "bst": "tex",
-    "md": "md",
-    "markdown": "md",
-    "txt": "txt",
-}
-
-
-def _doc_format_for_filename(name: str) -> str | None:
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    return _TEXT_DOC_EXTS.get(ext)
-
 
 def _publish_tree_changed(
     project: Project,
@@ -455,19 +436,13 @@ async def upload_file(
     name = file.filename or "untitled"
     svc = ProjectFsService(db, project)
 
-    # Text-like uploads go into `docs` so they can be opened in the editor.
-    doc_format = _doc_format_for_filename(name)
-    if doc_format is not None:
-        content = blob.decode("utf-8", errors="ignore")
-
-    if doc_format is not None:
+    # Text-like uploads (decodable, no null bytes) go into `docs` so they can
+    # be opened in the editor. Everything else stays a binary FileBlob.
+    if is_text_payload(blob):
+        content = blob.decode("utf-8")
+        fmt = doc_format_for_name(name)
         try:
-            d = svc.create_doc(
-                folder_id=folder_id,
-                name=name,
-                format=doc_format,
-                content=content,
-            )
+            d = svc.create_doc(folder_id=folder_id, name=name, format=fmt, content=content)
         except ProjectEntryNameError as e:
             raise HTTPException(400, str(e)) from e
         except ValueError as e:
@@ -482,12 +457,7 @@ async def upload_file(
             format=d.format,
             doc=_tree_doc_payload(d),
         )
-        return {
-            "kind": "doc",
-            "id": d.id,
-            "name": d.name,
-            "format": d.format,
-        }
+        return {"ok": True, "kind": "doc", "id": d.id, "format": d.format}
 
     # Improve MIME type detection: use mimetypes module if content_type is missing or generic
     mime_type = file.content_type or "application/octet-stream"
@@ -516,13 +486,7 @@ async def upload_file(
         mime_type=f.mime_type,
         file=_tree_file_payload(f),
     )
-    return {
-        "kind": "file",
-        "id": f.id,
-        "name": f.name,
-        "size_bytes": f.size_bytes,
-        "mime_type": f.mime_type,
-    }
+    return {"ok": True, "kind": "file", "id": f.id}
 
 
 _INLINE_MIME_PREFIXES = ("image/", "text/", "audio/", "video/")
@@ -586,10 +550,19 @@ def convert_file_to_doc(
     f = db.get(FileBlob, file_id)
     if f is None or f.project_id != project.id:
         raise HTTPException(404, "file not found")
-    fmt = _doc_format_for_filename(f.name)
-    if fmt is None:
+    blob = f.blob or b""
+    # For legacy migration, accept files by extension (not content) so that
+    # pre-existing files with minor encoding issues can still be converted.
+    # We fall back to txt for unknown text extensions; binary-only formats
+    # (no dot, or extension not in our text set) are rejected via is_text_payload.
+    fmt = doc_format_for_name(f.name)
+    # Only allow conversion if the file looks text-like OR has a known text extension.
+    # Use the old extension-based allowlist as a gate.
+    _known_text_exts = {"tex", "latex", "ltx", "bib", "sty", "cls", "bst", "md", "markdown", "txt"}
+    ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
+    if ext not in _known_text_exts and not is_text_payload(blob):
         raise HTTPException(400, "file is not a recognized text format")
-    content = (f.blob or b"").decode("utf-8", errors="ignore")
+    content = blob.decode("utf-8", errors="ignore")
     svc = ProjectFsService(db, project)
     try:
         doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)

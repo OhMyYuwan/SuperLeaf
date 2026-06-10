@@ -1164,6 +1164,8 @@ def create_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
+    if body.skill_recipes and not getattr(settings, "skill_npx_install_enabled", True):
+        raise HTTPException(403, "npx skill installation is disabled by server policy")
     try:
         row = NativeAgentService(db).create_agent(
             project_id=project.id,
@@ -1208,6 +1210,8 @@ def install_agent_skill_recipe(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentSkillInstallOut:
+    if not getattr(settings, "skill_npx_install_enabled", True):
+        raise HTTPException(403, "NPX skill installation is disabled by backend configuration")
     try:
         row = NativeAgentService(db).install_agent_skill_recipe(
             agent_id,

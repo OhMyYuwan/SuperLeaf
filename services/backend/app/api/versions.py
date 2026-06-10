@@ -52,11 +52,7 @@ def _version_to_out(
     binary = blob.string_length is None
     content: str | None = None
     if include_content and not binary:
-        try:
-            content = blob.content.decode("utf-8")
-        except UnicodeDecodeError:
-            binary = True
-            content = None
+        content = _decode_text_blob_lossy(blob)
     return VersionOut(
         id=v.id,
         version=v.version,
@@ -83,11 +79,8 @@ def _current_doc_blob(doc: Doc) -> Blob:
     )
 
 
-def _decode_text_blob_or_400(blob: Blob, detail: str) -> str:
-    try:
-        return blob.content.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(400, detail) from None
+def _decode_text_blob_lossy(blob: Blob) -> str:
+    return blob.content.decode("utf-8", errors="ignore")
 
 
 @router.get("/{doc_id}/versions", response_model=list[VersionOut])
@@ -202,7 +195,7 @@ def restore_version(
     if blob.string_length is None:
         raise HTTPException(400, "cannot restore a binary version into a text doc")
 
-    text = _decode_text_blob_or_400(blob, "version content is not valid UTF-8 text")
+    text = _decode_text_blob_lossy(blob)
     actor = user.id
     svc = ProjectFsService(db, project)
     doc = svc.update_doc_content(

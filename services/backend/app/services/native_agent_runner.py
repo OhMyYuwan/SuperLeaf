@@ -700,8 +700,8 @@ def _tool_exception_result(exc: Exception, *, failed_function_name: str = "") ->
 def _format_tool_exception(exc: Exception) -> str:
     if isinstance(exc, UnicodeDecodeError):
         return (
-            "file content is not valid UTF-8 text; convert the file to UTF-8 "
-            "or attach/open it as a binary file"
+            "file content includes invalid UTF-8 bytes and this tool could not "
+            "recover automatically"
         )
     return f"{type(exc).__name__}: {exc}"
 

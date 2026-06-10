@@ -438,11 +438,7 @@ async def upload_file(
     # Text-like uploads go into `docs` so they can be opened in the editor.
     doc_format = _doc_format_for_filename(name)
     if doc_format is not None:
-        try:
-            content = blob.decode("utf-8")
-        except UnicodeDecodeError:
-            # Fallback: if decoding fails, treat as binary file instead.
-            doc_format = None
+        content = blob.decode("utf-8", errors="ignore")
 
     if doc_format is not None:
         try:
@@ -569,10 +565,7 @@ def convert_file_to_doc(
     fmt = _doc_format_for_filename(f.name)
     if fmt is None:
         raise HTTPException(400, "file is not a recognized text format")
-    try:
-        content = (f.blob or b"").decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(400, "file is not valid UTF-8 text") from None
+    content = (f.blob or b"").decode("utf-8", errors="ignore")
     svc = ProjectFsService(db, project)
     doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
     _publish_tree_changed(

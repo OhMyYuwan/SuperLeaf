@@ -329,7 +329,8 @@ export interface AttachedFile {
   truncated?: boolean
   original_size_bytes: number
   mime?: string
-  url?: string
+  file_id?: string  // Primary identifier for binary files (backend resolves blob)
+  url?: string      // Deprecated: kept for backward compat, new code uses file_id
   /** Set when this file was reduced to a stub because total budget was hit. */
   omitted?: boolean
   omit_reason?: string
@@ -375,7 +376,8 @@ export async function resolveAttachedFiles(
           kind: 'binary',
           original_size_bytes: c.size_bytes,
           mime: c.mime,
-          url: filesystemApi.fileUrl(c.id),
+          file_id: c.id,  // Primary: backend resolves blob server-side
+          url: filesystemApi.fileUrl(c.id),  // Fallback: backward compat
         }
         return { candidate: c, attached: stub, ok: true as const }
       }

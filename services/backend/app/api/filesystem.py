@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ..database import get_session
@@ -27,7 +27,8 @@ from ..schemas import (
 from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.event_bus import bus
-from ..services.project_fs_service import DocVersionConflictError, ProjectFsService
+from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
+from ..services.project_fs_service import DocVersionConflictError, ProjectFsService, doc_format_for_name, is_text_payload
 from ..services.project_member_service import ProjectMemberService
 from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
 from .deps import (
@@ -62,7 +63,7 @@ class ProjectRenameBody(BaseModel):
 def rename_project(
     body: ProjectRenameBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     renamed = ProjectFsService(db, project).rename_project(body.name)
@@ -86,6 +87,8 @@ def create_folder(
     svc = ProjectFsService(db, project)
     try:
         folder = svc.create_folder(parent_folder_id=body.parent_folder_id, name=body.name)
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -115,6 +118,8 @@ def create_doc(
             format=body.format,
             content=body.content,
         )
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -272,6 +277,11 @@ async def flush_collab_doc(
 class RenameBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
+
 
 @router.post("/api/entities/{entity_type}/{entity_id}/rename", status_code=200)
 def rename_entity(
@@ -279,21 +289,31 @@ def rename_entity(
     entity_id: str,
     body: RenameBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
-    ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
-    if not ok:
+    try:
+        result = ProjectFsService(db, project).rename_entity_with_format(
+            entity_type, entity_id, body.name
+        )
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
+    if result is False:
         raise HTTPException(404, "entity not found")
+    payload: dict[str, object] = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "name": body.name,
+    }
+    if isinstance(result, str):
+        payload["format"] = result
     _publish_tree_changed(
         project,
         f"{entity_type}.renamed",
         origin_client_id=x_client_id,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        name=body.name,
+        **payload,
     )
     return {"ok": True}
 
@@ -303,7 +323,7 @@ def delete_entity(
     entity_type: str,
     entity_id: str,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
@@ -332,7 +352,7 @@ def move_entity(
     entity_id: str,
     body: MoveBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
@@ -352,25 +372,6 @@ def move_entity(
     )
     return {"ok": True}
 
-
-_TEXT_DOC_EXTS: dict[str, str] = {
-    # extension (no dot, lowercase) -> stored Doc.format
-    "tex": "tex",
-    "latex": "tex",
-    "ltx": "tex",
-    "bib": "tex",
-    "sty": "tex",
-    "cls": "tex",
-    "bst": "tex",
-    "md": "md",
-    "markdown": "md",
-    "txt": "txt",
-}
-
-
-def _doc_format_for_filename(name: str) -> str | None:
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    return _TEXT_DOC_EXTS.get(ext)
 
 
 def _publish_tree_changed(
@@ -428,30 +429,22 @@ async def upload_file(
     file: UploadFile,
     folder_id: str | None = Form(None),
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
     name = file.filename or "untitled"
     svc = ProjectFsService(db, project)
 
-    # Text-like uploads go into `docs` so they can be opened in the editor.
-    doc_format = _doc_format_for_filename(name)
-    if doc_format is not None:
+    # Text-like uploads (decodable, no null bytes) go into `docs` so they can
+    # be opened in the editor. Everything else stays a binary FileBlob.
+    if is_text_payload(blob):
+        content = blob.decode("utf-8")
+        fmt = doc_format_for_name(name)
         try:
-            content = blob.decode("utf-8")
-        except UnicodeDecodeError:
-            # Fallback: if decoding fails, treat as binary file instead.
-            doc_format = None
-
-    if doc_format is not None:
-        try:
-            d = svc.create_doc(
-                folder_id=folder_id,
-                name=name,
-                format=doc_format,
-                content=content,
-            )
+            d = svc.create_doc(folder_id=folder_id, name=name, format=fmt, content=content)
+        except ProjectEntryNameError as e:
+            raise HTTPException(400, str(e)) from e
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
         _publish_tree_changed(
@@ -464,12 +457,7 @@ async def upload_file(
             format=d.format,
             doc=_tree_doc_payload(d),
         )
-        return {
-            "kind": "doc",
-            "id": d.id,
-            "name": d.name,
-            "format": d.format,
-        }
+        return {"ok": True, "kind": "doc", "id": d.id, "format": d.format}
 
     # Improve MIME type detection: use mimetypes module if content_type is missing or generic
     mime_type = file.content_type or "application/octet-stream"
@@ -483,6 +471,8 @@ async def upload_file(
             mime_type=mime_type,
             blob=blob,
         )
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -496,13 +486,7 @@ async def upload_file(
         mime_type=f.mime_type,
         file=_tree_file_payload(f),
     )
-    return {
-        "kind": "file",
-        "id": f.id,
-        "name": f.name,
-        "size_bytes": f.size_bytes,
-        "mime_type": f.mime_type,
-    }
+    return {"ok": True, "kind": "file", "id": f.id}
 
 
 _INLINE_MIME_PREFIXES = ("image/", "text/", "audio/", "video/")
@@ -556,7 +540,7 @@ def get_file(
 def convert_file_to_doc(
     file_id: str,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     """Migrate a text-like FileBlob (uploaded before the split into docs/files) into `docs`.
@@ -566,15 +550,18 @@ def convert_file_to_doc(
     f = db.get(FileBlob, file_id)
     if f is None or f.project_id != project.id:
         raise HTTPException(404, "file not found")
-    fmt = _doc_format_for_filename(f.name)
-    if fmt is None:
-        raise HTTPException(400, "file is not a recognized text format")
-    try:
-        content = (f.blob or b"").decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise HTTPException(400, "file is not valid UTF-8 text") from e
+    raw = f.blob or b""
+    # For legacy convert, reject only true binary (null bytes); tolerate invalid
+    # UTF-8 sequences (e.g. Latin-1 content) by replacing them.
+    if b"\x00" in raw[:8192]:
+        raise HTTPException(400, "file is not text and cannot be edited")
+    content = raw.decode("utf-8", errors="ignore")
+    fmt = doc_format_for_name(f.name)
     svc = ProjectFsService(db, project)
-    doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
+    try:
+        doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     _publish_tree_changed(
         project,
         "file.converted_to_doc",
@@ -625,7 +612,10 @@ def export_zip(
     project: Project = Depends(get_project_from_path),
 ) -> Response:
     flush_project_collab_or_503_sync(project)
-    data = ProjectFsService(db, project).export_zip()
+    try:
+        data = ProjectFsService(db, project).export_zip()
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     safe_name = (project.name or "project").replace('"', "").strip() or "project"
     return Response(
         content=data,

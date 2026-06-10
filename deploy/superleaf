@@ -11,15 +11,210 @@ GENERATED_BOOTSTRAP_TOKEN=""
 GENERATED_COLLAB_INTERNAL_TOKEN=0
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  run_compose -f "$COMPOSE_FILE" "$@"
 }
 
 compose_tls() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
+  run_compose -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" "$@"
 }
 
 compose_multi() {
-  docker compose --env-file "$ENV_FILE" -f "$MULTI_COMPOSE_FILE" "$@"
+  run_compose -f "$MULTI_COMPOSE_FILE" "$@"
+}
+
+detect_compose_provider() {
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "docker-compose" ]; then
+    command -v docker-compose >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER=docker-compose but docker-compose was not found" >&2
+      exit 1
+    }
+    echo "docker-compose"
+    return
+  fi
+
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "podman-compose" ]; then
+    command -v podman-compose >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER=podman-compose but podman-compose was not found" >&2
+      exit 1
+    }
+    echo "podman-compose"
+    return
+  fi
+
+  if [ "${SUPERLEAF_COMPOSE_PROVIDER:-}" = "docker compose" ]; then
+    command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 || {
+      echo "SUPERLEAF_COMPOSE_PROVIDER='docker compose' but Docker Compose v2 was not found" >&2
+      exit 1
+    }
+    echo "docker compose"
+    return
+  fi
+
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+    return
+  fi
+  if command -v podman-compose >/dev/null 2>&1; then
+    echo "podman-compose"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    echo "docker-run"
+    return
+  fi
+
+  echo "No container provider found. Install Docker, Docker Compose v2, docker-compose, or podman-compose." >&2
+  exit 1
+}
+
+run_compose() {
+  local provider
+  provider="$(detect_compose_provider)"
+  case "$provider" in
+    "docker compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        docker compose "$@"
+      else
+        docker compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    "docker-compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        docker-compose "$@"
+      else
+        docker-compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    "podman-compose")
+      if [ "$ENV_FILE" = "$ROOT/.env" ]; then
+        podman-compose "$@"
+      else
+        podman-compose --env-file "$ENV_FILE" "$@"
+      fi
+      ;;
+    "docker-run")
+      run_direct_docker "$@"
+      ;;
+    *)
+      echo "Unsupported Compose provider: $provider" >&2
+      exit 1
+      ;;
+  esac
+}
+
+direct_container_name() {
+  local project
+  project="$(read_env_value "SUPERLEAF_PROJECT_NAME" | tr -d '[:space:]')"
+  project="${project:-superleaf}"
+  echo "${project}_app"
+}
+
+direct_docker_up() {
+  local force_recreate=0
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force-recreate|--renew-anon-volumes)
+        force_recreate=1
+        ;;
+    esac
+  done
+
+  local name
+  local image
+  local bind_addr
+  local http_port
+  name="$(direct_container_name)"
+  image="$(read_env_value "SUPERLEAF_IMAGE" | tr -d '[:space:]')"
+  bind_addr="$(read_env_value "SUPERLEAF_BIND_ADDR" | tr -d '[:space:]')"
+  http_port="$(read_env_value "SUPERLEAF_HTTP_PORT" | tr -d '[:space:]')"
+  image="${image:-ghcr.io/ohmyyuwan/superleaf:latest}"
+  bind_addr="${bind_addr:-127.0.0.1}"
+  http_port="${http_port:-8080}"
+
+  if docker container inspect "$name" >/dev/null 2>&1; then
+    if [ "$force_recreate" -eq 1 ]; then
+      docker rm -f "$name"
+    else
+      docker start "$name" >/dev/null
+      return
+    fi
+  fi
+
+  docker run \
+    --name "$name" \
+    -d \
+    --env-file "$ENV_FILE" \
+    -e YLW_DATA_DIR=/data/backend \
+    -e YLW_COLLAB_SERVER_URL=http://127.0.0.1:4444 \
+    -e BACKEND_URL=http://127.0.0.1:8000 \
+    -e COLLAB_HOST=127.0.0.1 \
+    -e COLLAB_PORT=4444 \
+    -e COLLAB_DATA_DIR=/data/collab \
+    -e COLLAB_WS_PATH_PREFIX=/collab \
+    -e COLLAB_INTERNAL_TOKEN="$(read_env_value "YLW_COLLAB_INTERNAL_TOKEN")" \
+    -e SUPERLEAF_BROWSER_BACKEND_URL= \
+    -e SUPERLEAF_BROWSER_COLLAB_WS_URL=/collab \
+    -v "$ROOT/data/backend:/data/backend" \
+    -v "$ROOT/data/collab:/data/collab" \
+    -p "$bind_addr:$http_port:8080" \
+    --restart unless-stopped \
+    --health-cmd "curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1" \
+    --health-interval 10s \
+    --health-timeout 3s \
+    --health-start-period 20s \
+    --health-retries 12 \
+    "$image"
+}
+
+run_direct_docker() {
+  local files=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f)
+        files+=("$2")
+        shift 2
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  local cmd="${1:-help}"
+  shift || true
+
+  local name
+  name="$(direct_container_name)"
+
+  case "$cmd" in
+    up)
+      direct_docker_up "$@"
+      ;;
+    down)
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      ;;
+    restart)
+      docker restart "$name"
+      ;;
+    ps|status)
+      docker ps -a --filter "name=$name"
+      ;;
+    logs)
+      docker logs -f "$@" "$name"
+      ;;
+    pull)
+      docker pull "$(read_env_value "SUPERLEAF_IMAGE" | tr -d '[:space:]')"
+      ;;
+    *)
+      echo "Direct Docker provider does not support compose command: $cmd" >&2
+      exit 2
+      ;;
+  esac
 }
 
 stop_multi_stack_for_single() {

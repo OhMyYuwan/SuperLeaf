@@ -32,10 +32,7 @@ MAX_EXACT_LINE_REFINEMENT_LINES = 2_000
 def _decode(blob: Blob) -> str | None:
     if blob.string_length is None:
         return None
-    try:
-        return blob.content.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    return blob.content.decode("utf-8", errors="ignore")
 
 
 def compute_diff(blob_a: Blob, blob_b: Blob) -> list[dict[str, Any]] | dict[str, bool]:

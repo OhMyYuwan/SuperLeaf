@@ -4,7 +4,8 @@
  * Base URL resolution:
  *   1. window.__SUPERLEAF_CONFIG__.backendUrl if provided by deployment
  *   2. import.meta.env.VITE_BACKEND_URL if provided at build time
- *   3. Auto-detect based on current hostname for local/LAN development
+ *   3. Use same-origin /api for production/all-in-one deployments
+ *   4. Auto-detect based on current hostname only for Vite development
  *   4. http://localhost:8000 fallback
  */
 
@@ -18,22 +19,19 @@ function getBackendUrl(): string {
   if (import.meta.env.VITE_BACKEND_URL) {
     return normalizeHttpBase(import.meta.env.VITE_BACKEND_URL)
   }
-  // Auto-detect: use current hostname with backend port
-  // This allows LAN devices to access backend via server IP
   if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location
-    // Only auto-detect for non-localhost access
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    const { protocol, hostname, port } = window.location
+    // Vite dev/preview serves the frontend separately, so use the backend port.
+    if (port === '5173' || port === '5174' || port === '4173') {
       const url = `${protocol}//${hostname}:8000`
-      console.log('[backendApi] Auto-detected backend URL:', url, '(from hostname:', hostname, ')')
+      console.log('[backendApi] Using dev backend URL:', url)
       return url
     }
-    // Preserve the browser hostname so session cookies stay on the same host.
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      const url = `${protocol}//${hostname}:8000`
-      console.log('[backendApi] Using local backend URL:', url)
-      return url
-    }
+
+    // Packaged Docker/all-in-one deployments proxy /api through the same host.
+    // This keeps cookies same-origin and avoids probing an unexposed :8000 port.
+    console.log('[backendApi] Using same-origin backend URL')
+    return ''
   }
   console.log('[backendApi] Using default backend URL: http://127.0.0.1:8000')
   return 'http://127.0.0.1:8000'
@@ -1143,6 +1141,20 @@ export interface CompileSyncToPdfResult {
   column: number
 }
 
+export interface CompileSyncFromPdfRequest {
+  page: number
+  x: number
+  y: number
+}
+
+export interface CompileSyncFromPdfResult {
+  document_id: string
+  offset: number
+  line: number
+  column: number
+  source_path: string
+}
+
 export interface CompileSettings {
   main_doc_id: string
   compiler: string
@@ -1159,6 +1171,11 @@ export const compileApi = {
     }),
   syncToPdf: (body: CompileSyncToPdfRequest) =>
     http<CompileSyncToPdfResult>('/api/compile/sync-to-pdf', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  syncFromPdf: (body: CompileSyncFromPdfRequest) =>
+    http<CompileSyncFromPdfResult>('/api/compile/sync-from-pdf', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

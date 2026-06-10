@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     mcp_inline_config_enabled: bool = False
     mcp_remote_private_networks_enabled: bool = False
 
+    # NPX skill install policy. Public deployments keep this disabled; local /
+    # trusted deployments can opt in to allow installing skills via npx recipes.
+    skill_npx_install_enabled: bool = False
+
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url

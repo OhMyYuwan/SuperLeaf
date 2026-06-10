@@ -70,7 +70,7 @@ import {
   type WorkflowCandidate,
 } from '../../services/mentions'
 import { MentionInput } from '../shared/MentionInput'
-import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { confirmLargeFileAttachment, confirmMultimodalBudget } from '../shared/fileSizeGate'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
 import {
   conversationScopeKey as buildConversationScopeKey,
@@ -358,6 +358,12 @@ export function DiscussionTab({
     // the text are purely a human-readable trace of what the user invoked.
     const mentionedFiles = uniqueMentionedFiles(mentions)
     const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
+
+    // Check multimodal budget before resolving
+    if (!confirmMultimodalBudget(mentionedFiles)) {
+      return
+    }
+
     const attachedFiles = await resolveAttachedFiles(mentionedFiles, {
       onFetchError: (file) =>
         console.warn('[DiscussionTab] failed to fetch file', file.path),

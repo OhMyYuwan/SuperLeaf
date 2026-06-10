@@ -25,7 +25,24 @@ from .mcp_policy import (
 )
 
 MAX_MCP_RESULT_CHARS = 24_000
-MCP_TIMEOUT_SECONDS = 45.0
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# Local Agent Host caps each MCP tool at 120s (SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS).
+# Stay above that with headroom for connection + JSON-RPC round-trips so a slow
+# tool surfaces as a tool-side timeout instead of an httpx.ReadTimeout that the
+# UI renders as a generic "network error".
+MCP_TIMEOUT_SECONDS = _env_float("YLW_MCP_TIMEOUT_SECONDS", 150.0)
 ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3"}
 MCP_PROTOCOL_VERSION = "2024-11-05"
 

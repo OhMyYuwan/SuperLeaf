@@ -8,12 +8,13 @@ Phase 1 keeps the integration intentionally narrow:
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+from .sse_decode import iter_sse_json_events
 
 
 @dataclass(slots=True)
@@ -123,20 +124,8 @@ class NanobotClient:
                     raw = await resp.aread()
                     raise NanobotError(resp.status_code, raw.decode(errors="replace")[:400])
 
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if not payload:
-                        continue
-                    if payload == "[DONE]":
-                        return
-                    try:
-                        yield json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
+                async for event in iter_sse_json_events(resp.aiter_raw()):
+                    yield event
 
     async def _request_json(self, method: str, path: str) -> Any:
         async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:

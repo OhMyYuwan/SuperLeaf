@@ -16,12 +16,13 @@ proxy (e.g. Clash on 127.0.0.1:7897) that breaks loopback traffic.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from .sse_decode import iter_sse_json_events
 
 CHAT_MODES = {"chat", "advanced-chat", "agent-chat"}
 
@@ -64,6 +65,36 @@ class DifyClient:
             tags=data.get("tags", []) or [],
             mode=data.get("mode", "workflow"),
         )
+
+    async def upload_file(self, blob: bytes, mime: str, name: str, user: str) -> str:
+        """Upload a file to Dify's /files/upload and return upload_file_id.
+
+        Args:
+            blob: file bytes
+            mime: MIME type (e.g., "image/png")
+            name: original filename
+            user: user identifier for Dify's logging
+
+        Returns:
+            upload_file_id from Dify's response
+
+        Raises:
+            DifyError if upload fails
+        """
+        url = f"{self.endpoint}/files/upload"
+        files = {
+            "file": (name, blob, mime),
+        }
+        data = {"user": user}
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            resp = await client.post(url, headers=self._headers, files=files, data=data)
+            if resp.status_code != 201:
+                raise DifyError(resp.status_code, resp.text[:400])
+            result = resp.json()
+            upload_id = str(result.get("id") or "")
+            if not upload_id:
+                raise DifyError(resp.status_code, "Dify upload returned no id")
+            return upload_id
 
     # ------------------------------------------------------------------ run
 
@@ -115,16 +146,8 @@ class DifyClient:
                 if resp.status_code != 200:
                     raw = await resp.aread()
                     raise DifyError(resp.status_code, raw.decode(errors="replace")[:400])
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
-                        return
-                    try:
-                        yield json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
+                async for event in iter_sse_json_events(resp.aiter_raw()):
+                    yield event
 
     async def run_blocking(
         self,

@@ -7,8 +7,8 @@ hitting Dify, and so the chat stays coherent if the Dify side resets.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 import uuid
 from datetime import datetime
@@ -22,14 +22,14 @@ from sse_starlette.sse import EventSourceResponse
 from ..database import get_session
 from ..models import Conversation, Doc, Message, Project, User
 from ..schemas import (
-    BrowserCodexFinishIn,
-    BrowserCodexPrepareOut,
-    BrowserCodexToolIn,
-    BrowserCodexToolOut,
     BrowserClaudeFinishIn,
     BrowserClaudePrepareOut,
     BrowserClaudeToolIn,
     BrowserClaudeToolOut,
+    BrowserCodexFinishIn,
+    BrowserCodexPrepareOut,
+    BrowserCodexToolIn,
+    BrowserCodexToolOut,
     BrowserNanobotFinishIn,
     BrowserNanobotPrepareOut,
     BrowserNanobotToolIn,
@@ -865,6 +865,8 @@ async def send_message(
 
         try:
             if resolved.source == "native":
+                from ..services.multimodal_attachments import resolve_multimodal_attachments
+
                 agent = resolved.native_agent
                 if agent is None:
                     raise TypeError("Native Agent resolution is missing agent row")
@@ -885,6 +887,40 @@ async def send_message(
                     user_id=user.id,
                     runtime_config=agent.runtime_config or {},
                 )
+
+                # Resolve multimodal attachments for OpenAI Chat format
+                attached_files = prompt_payload.get("attached_files") or []
+                multimodal_attachments = resolve_multimodal_attachments(
+                    attached_files, "openai_chat", db, project.id
+                )
+
+                # === 诊断日志开始 ===
+                from ..services.multimodal_attachments import to_openai_chat_content_parts
+                print(f"\n{'='*60}")
+                print(f"[MULTIMODAL DEBUG] Provider: native (agent_id={agent.id})")
+                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
+                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
+                for att in multimodal_attachments:
+                    print(f"  - name={att.name}")
+                    print(f"    kind={att.kind}")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    mime={att.mime}")
+                multimodal_parts_debug = to_openai_chat_content_parts(multimodal_attachments)
+                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts_debug)} content parts")
+                for i, part in enumerate(multimodal_parts_debug):
+                    ptype = part.get("type", "?")
+                    if ptype == "image_url":
+                        url_str = part.get("image_url", {}).get("url", "")
+                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
+                    elif ptype == "file":
+                        fname = part.get("file", {}).get("filename", "?")
+                        fdata = part.get("file", {}).get("file_data", "")
+                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
+                    else:
+                        print(f"  part[{i}] type={ptype}")
+                print(f"{'='*60}\n")
+                # === 诊断日志结束 ===
+
                 runner = NativeAgentRunner(
                     NativeAgentRuntimeConfig(
                         agent_id=agent.id,
@@ -909,6 +945,7 @@ async def send_message(
                     inputs=native_inputs,
                     query="",
                     conversation_id=native_conversation_id,
+                    multimodal_attachments=multimodal_attachments,
                 )
                 async for evt in runner.stream(payload):
                     kind = str(evt.get("event") or "")
@@ -934,21 +971,59 @@ async def send_message(
                     yield {"event": kind, "data": json.dumps(data)}
                 external_conv_id = native_conversation_id
             elif provider.kind == "nanobot":
+                from ..services.multimodal_attachments import (
+                    resolve_multimodal_attachments,
+                    to_openai_chat_content_parts,
+                )
                 from ..services.nanobot_client import NanobotClient
+
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
+
                 # Use session_id to let Nanobot manage conversation context
                 session_id = f"ylw-{conversation_id}"
-                if image_attachments:
+
+                # Resolve multimodal attachments (images + PDFs)
+                attached_files = prompt_payload.get("attached_files") or []
+                multimodal_attachments = resolve_multimodal_attachments(
+                    attached_files, "openai_chat", db, project.id
+                )
+
+                # === 诊断日志开始 ===
+                print(f"\n{'='*60}")
+                print(f"[MULTIMODAL DEBUG] Provider: {provider.kind}")
+                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
+                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
+                for att in multimodal_attachments:
+                    print(f"  - name={att.name}")
+                    print(f"    kind={att.kind}")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    mime={att.mime}")
+
+                multimodal_parts = to_openai_chat_content_parts(multimodal_attachments)
+                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts)} content parts")
+                for i, part in enumerate(multimodal_parts):
+                    ptype = part.get("type", "?")
+                    if ptype == "image_url":
+                        url_str = part.get("image_url", {}).get("url", "")
+                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
+                    elif ptype == "file":
+                        fname = part.get("file", {}).get("filename", "?")
+                        fdata = part.get("file", {}).get("file_data", "")
+                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
+                    else:
+                        print(f"  part[{i}] type={ptype}")
+                print(f"{'='*60}\n")
+                # === 诊断日志结束 ===
+
+                if multimodal_parts:
                     user_content: list[dict[str, Any]] | str = [
                         {"type": "text", "text": agent_query},
                     ]
-                    for img in image_attachments:
-                        user_content.append(
-                            {"type": "image_url", "image_url": {"url": img["url"]}}
-                        )
+                    user_content.extend(multimodal_parts)
                 else:
                     user_content = agent_query
+
                 async for evt in client.run_streaming(
                     model=cw.external_id,
                     messages=[{"role": "user", "content": user_content}],
@@ -969,8 +1044,33 @@ async def send_message(
                     yield {"event": "nanobot", "data": json.dumps(evt)}
             else:
                 from ..services.dify_client import DifyClient
+                from ..services.multimodal_attachments import (
+                    resolve_multimodal_attachments,
+                    to_dify_files_payload,
+                )
+
                 if not isinstance(client, DifyClient):
                     raise TypeError(f"Expected DifyClient for dify provider, got {type(client)}")
+
+                # Resolve and upload multimodal attachments
+                attached_files = prompt_payload.get("attached_files") or []
+                multimodal_attachments = resolve_multimodal_attachments(
+                    attached_files, "dify", db, project.id
+                )
+                # Upload each image to Dify
+                for att in multimodal_attachments:
+                    if att.kind == "image" and not att.upload_id:
+                        blob = att.blob_loader()
+                        try:
+                            upload_id = await client.upload_file(
+                                blob, att.mime, att.name, f"superleaf-conv-{conversation_id[:8]}"
+                            )
+                            att.upload_id = upload_id
+                        except Exception:
+                            # Upload failed; skip this attachment (logged in dify_files_payload as omit)
+                            pass
+
+                dify_files = to_dify_files_payload(multimodal_attachments)
                 mode = (provider.meta or {}).get("mode") or cw.kind or "chat"
                 async for evt in client.run_streaming(
                     mode=mode,
@@ -978,6 +1078,7 @@ async def send_message(
                     user=f"superleaf-conv-{conversation_id[:8]}",
                     query=agent_query,
                     conversation_id=external_conv_id,
+                    files=dify_files if dify_files else None,
                 ):
                     kind = evt.get("event")
                     if evt.get("conversation_id"):

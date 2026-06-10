@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, load_only
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
 from . import version_service
+from .project_entry_name import validate_project_entry_name
 
 _MAX_ZIP_UPLOAD_BYTES = 100 * 1024 * 1024
 _MAX_ZIP_ENTRIES = 5000
@@ -38,6 +39,42 @@ _DOC_SUFFIX_FORMATS = {
     ".markdown": "md",
     ".txt": "txt",
 }
+
+
+def doc_format_for_name(name: str) -> str:
+    """Return the editor highlight format for a text doc by its filename.
+
+    Maps known suffixes to tex/md; every other (text) file defaults to txt.
+    The text/binary split is decided separately by is_text_payload — this
+    function only chooses the highlight language for files already known to
+    be text.
+    """
+    suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    return _DOC_SUFFIX_FORMATS.get(suffix, "txt")
+
+
+_TEXT_SNIFF_BYTES = 8192
+
+
+def is_text_payload(payload: bytes) -> bool:
+    """Decide if a byte payload should be treated as editable text.
+
+    Inspects only the first 8KB: a null byte means binary; otherwise the
+    prefix must decode as strict UTF-8. Uses strict decode (no errors=
+    "ignore"/"replace") so binary files are never silently coerced into docs.
+    """
+    head = payload[:_TEXT_SNIFF_BYTES]
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        # A truncated multibyte sequence at the 8KB boundary is a false
+        # negative; acceptable since real text files rarely split exactly there.
+        return False
+    return True
+
+
 SKILL_DATA_FOLDER_NAME = "_skill_data"
 
 
@@ -51,6 +88,39 @@ class ProjectFsService:
     def __init__(self, db: Session, project: Project) -> None:
         self.db = db
         self.project = project
+
+    def _get_folder_in_project(self, folder_id: str | None) -> Folder | None:
+        if not folder_id:
+            return None
+        folder = self.db.get(Folder, folder_id)
+        if folder is None or folder.project_id != self.project.id:
+            return None
+        return folder
+
+    def _get_doc_in_project(self, doc_id: str) -> Doc | None:
+        doc = self.db.get(Doc, doc_id)
+        if doc is None or doc.project_id != self.project.id:
+            return None
+        return doc
+
+    def _get_file_in_project(self, file_id: str) -> FileBlob | None:
+        file = self.db.get(FileBlob, file_id)
+        if file is None or file.project_id != self.project.id:
+            return None
+        return file
+
+    def _get_entity_in_project(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> Folder | Doc | FileBlob | None:
+        if entity_type == "folder":
+            return self._get_folder_in_project(entity_id)
+        if entity_type == "doc":
+            return self._get_doc_in_project(entity_id)
+        if entity_type == "file":
+            return self._get_file_in_project(entity_id)
+        return None
 
     # ------------------------------------------------------------------- tree
 
@@ -97,7 +167,11 @@ class ProjectFsService:
         for f in files:
             files_by_folder[f.folder_id].append(f)
 
-        def build_folder_node(folder_id: str | None, name: str, is_virtual_root: bool = False) -> TreeFolderOut:
+        def build_folder_node(
+            folder_id: str | None,
+            name: str,
+            is_virtual_root: bool = False,
+        ) -> TreeFolderOut:
             children_folders = []
             if not is_virtual_root:
                 candidate_children = folders_by_parent.get(folder_id, [])
@@ -157,10 +231,9 @@ class ProjectFsService:
 
     def create_folder(self, *, parent_folder_id: str | None, name: str) -> Folder:
         project = self.project
-        if parent_folder_id:
-            parent = self.db.get(Folder, parent_folder_id)
-            if parent is None or parent.project_id != project.id:
-                raise ValueError("parent folder not found")
+        name = validate_project_entry_name(name)
+        if parent_folder_id and self._get_folder_in_project(parent_folder_id) is None:
+            raise ValueError("parent folder not found")
 
         existing = (
             self.db.query(Folder)
@@ -198,10 +271,9 @@ class ProjectFsService:
 
     def create_doc(self, *, folder_id: str | None, name: str, format: str, content: str) -> Doc:
         project = self.project
-        if folder_id:
-            folder = self.db.get(Folder, folder_id)
-            if folder is None or folder.project_id != project.id:
-                raise ValueError("folder not found")
+        name = validate_project_entry_name(name)
+        if folder_id and self._get_folder_in_project(folder_id) is None:
+            raise ValueError("folder not found")
 
         existing = self._find_doc_by_name(folder_id, name)
         if existing is not None:
@@ -229,7 +301,7 @@ class ProjectFsService:
         return doc
 
     def get_doc(self, doc_id: str) -> Doc | None:
-        return self.db.get(Doc, doc_id)
+        return self._get_doc_in_project(doc_id)
 
     def update_doc_content(
         self,
@@ -240,7 +312,7 @@ class ProjectFsService:
         actor: str | None = None,
         expected_version: int | None = None,
     ) -> Doc | None:
-        doc = self.db.get(Doc, doc_id)
+        doc = self._get_doc_in_project(doc_id)
         if doc is None:
             return None
         if expected_version is not None and doc.version != expected_version:
@@ -264,23 +336,37 @@ class ProjectFsService:
 
     # --------------------------------------------------------- rename / delete
 
-    def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
-        model = {"folder": Folder, "doc": Doc, "file": FileBlob}.get(entity_type)
-        if model is None:
-            return False
-        entity = self.db.get(model, entity_id)
+    def rename_entity_with_format(
+        self, entity_type: str, entity_id: str, new_name: str
+    ) -> str | None | bool:
+        """Rename an entity; return the doc's new format.
+
+        Returns:
+          - str  : the recomputed format (only for docs)
+          - None : success but entity has no format (folder/file)
+          - False: entity not found
+        """
+        new_name = validate_project_entry_name(new_name)
+        entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return False
         entity.name = new_name  # type: ignore[union-attr]
         entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
+        new_format: str | None = None
         if entity_type == "doc":
+            new_format = doc_format_for_name(new_name)
+            entity.format = new_format  # type: ignore[union-attr]
             self._delete_doc_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
             self._delete_file_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         elif entity_type == "file":
             self._delete_file_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
             self._delete_doc_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         self.db.commit()
-        return True
+        return new_format
+
+    def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
+        result = self.rename_entity_with_format(entity_type, entity_id, new_name)
+        return result is not False
 
     def move_entity(
         self, entity_type: str, entity_id: str, target_folder_id: str | None
@@ -339,10 +425,7 @@ class ProjectFsService:
         """Delete an entity and return the count of deleted rows (recursive for folders)."""
         if entity_type == "folder":
             return self._delete_folder_recursive(entity_id)
-        model = {"doc": Doc, "file": FileBlob}.get(entity_type)
-        if model is None:
-            return 0
-        entity = self.db.get(model, entity_id)
+        entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return 0
         self.db.delete(entity)
@@ -350,14 +433,26 @@ class ProjectFsService:
         return 1
 
     def _delete_folder_recursive(self, folder_id: str) -> int:
-        folder = self.db.get(Folder, folder_id)
+        folder = self._get_folder_in_project(folder_id)
         if folder is None:
             return 0
         count = 0
-        for child in self.db.query(Folder).filter(Folder.parent_folder_id == folder_id).all():
+        for child in (
+            self.db.query(Folder)
+            .filter(Folder.project_id == self.project.id, Folder.parent_folder_id == folder_id)
+            .all()
+        ):
             count += self._delete_folder_recursive(child.id)
-        count += self.db.query(Doc).filter(Doc.folder_id == folder_id).delete()
-        count += self.db.query(FileBlob).filter(FileBlob.folder_id == folder_id).delete()
+        count += (
+            self.db.query(Doc)
+            .filter(Doc.project_id == self.project.id, Doc.folder_id == folder_id)
+            .delete()
+        )
+        count += (
+            self.db.query(FileBlob)
+            .filter(FileBlob.project_id == self.project.id, FileBlob.folder_id == folder_id)
+            .delete()
+        )
         self.db.delete(folder)
         count += 1
         self.db.commit()
@@ -374,10 +469,9 @@ class ProjectFsService:
         blob: bytes,
     ) -> FileBlob:
         project = self.project
-        if folder_id:
-            folder = self.db.get(Folder, folder_id)
-            if folder is None or folder.project_id != project.id:
-                raise ValueError("folder not found")
+        name = validate_project_entry_name(name)
+        if folder_id and self._get_folder_in_project(folder_id) is None:
+            raise ValueError("folder not found")
         existing = self._find_file_by_name(folder_id, name)
         if existing is not None:
             existing.mime_type = mime_type
@@ -512,6 +606,17 @@ class ProjectFsService:
         if not root.exists() or not root.is_dir():
             raise ValueError("import root not found")
 
+        importable_paths: list[Path] = []
+        for file_path in sorted(root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(root)
+            if ".git" in rel.parts:
+                continue
+            for part in rel.parts:
+                validate_project_entry_name(part, field="import entry name")
+            importable_paths.append(file_path)
+
         self.db.query(Doc).filter(Doc.project_id == self.project.id).delete(
             synchronize_session=False
         )
@@ -542,28 +647,19 @@ class ProjectFsService:
         doc_count = 0
         file_count = 0
         byte_count = 0
-        for file_path in sorted(root.rglob("*")):
-            if not file_path.is_file():
-                continue
+        for file_path in importable_paths:
             rel = file_path.relative_to(root)
-            if ".git" in rel.parts:
-                continue
             payload = file_path.read_bytes()
             byte_count += len(payload)
             parent = ensure_folder(rel.parent)
-            suffix = file_path.suffix.lower()
-            doc_format = _doc_format(suffix)
-            if doc_format is not None:
-                try:
-                    content = payload.decode("utf-8")
-                except UnicodeDecodeError:
-                    content = payload.decode("utf-8", errors="replace")
+            if is_text_payload(payload):
+                content = payload.decode("utf-8")
                 self.db.add(
                     Doc(
                         project_id=self.project.id,
                         folder_id=parent.id if parent else None,
                         name=rel.name,
-                        format=doc_format,
+                        format=doc_format_for_name(rel.name),
                         content=content,
                         version=1,
                     )
@@ -632,7 +728,7 @@ class ProjectFsService:
 
         folder_paths: dict[str, str] = {}
         for f in folders:
-            folder_paths[f.id] = f.name
+            folder_paths[f.id] = validate_project_entry_name(f.name, field="folder name")
 
         def resolve_path(folder_id: str | None) -> str:
             parts: list[str] = []
@@ -649,13 +745,15 @@ class ProjectFsService:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for d in docs:
                 prefix = resolve_path(d.folder_id)
-                path = f"{prefix}/{d.name}" if prefix else d.name
+                name = validate_project_entry_name(d.name, field="document name")
+                path = f"{prefix}/{name}" if prefix else name
                 if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
                     continue
                 zf.writestr(path, d.content or "")
             for f in files:
                 prefix = resolve_path(f.folder_id)
-                path = f"{prefix}/{f.name}" if prefix else f.name
+                name = validate_project_entry_name(f.name, field="file name")
+                path = f"{prefix}/{name}" if prefix else name
                 if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
                     continue
                 zf.writestr(path, f.blob or b"")
@@ -687,7 +785,7 @@ class ProjectFsService:
                 folder = folder_by_id.get(current)
                 if folder is None:
                     break
-                parts.append(_safe_name(folder.name))
+                parts.append(validate_project_entry_name(folder.name, field="folder name"))
                 current = folder.parent_folder_id
             parts.reverse()
             return parts
@@ -696,7 +794,10 @@ class ProjectFsService:
         file_count = 0
         byte_count = 0
         for doc in docs:
-            rel = Path(*folder_parts(doc.folder_id), _safe_name(doc.name))
+            rel = Path(
+                *folder_parts(doc.folder_id),
+                validate_project_entry_name(doc.name, field="document name"),
+            )
             if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = (doc.content or "").encode("utf-8")
@@ -705,7 +806,10 @@ class ProjectFsService:
             byte_count += len(payload)
 
         for file in files:
-            rel = Path(*folder_parts(file.folder_id), _safe_name(file.name))
+            rel = Path(
+                *folder_parts(file.folder_id),
+                validate_project_entry_name(file.name, field="file name"),
+            )
             if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = file.blob or b""
@@ -716,12 +820,10 @@ class ProjectFsService:
         return doc_count, file_count, byte_count
 
 
-def _doc_format(suffix: str) -> str | None:
-    return _DOC_SUFFIX_FORMATS.get(suffix)
-
-
 def _safe_zip_member_path(name: str) -> Path | None:
-    normalized = name.replace("\\", "/").strip()
+    if "\\" in name:
+        raise ValueError("zip archive contains an unsafe path")
+    normalized = name
     if not normalized:
         return None
     path = PurePosixPath(normalized)
@@ -733,6 +835,7 @@ def _safe_zip_member_path(name: str) -> Path | None:
     for part in parts:
         if part in {"", ".", ".."} or "\x00" in part:
             raise ValueError("zip archive contains an unsafe path")
+        validate_project_entry_name(part, field="zip entry name")
     return Path(*parts)
 
 

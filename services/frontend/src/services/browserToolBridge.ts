@@ -32,6 +32,12 @@ export interface BrowserToolBridgeContext {
   resource_count?: number
   prompt_count?: number
   expires_at: number
+  // Recovery hints from the server (present after a reconnect): how many tool
+  // calls are still awaiting a result for this conversation. resuming=true means
+  // an agent turn was in flight when this browser (re)connected.
+  pending_calls?: number
+  in_flight?: number
+  resuming?: boolean
 }
 
 export interface BrowserToolBridgeRequest {
@@ -122,21 +128,39 @@ export async function startBrowserToolBridge(
   if (args.parentSignal.aborted) stop()
   else args.parentSignal.addEventListener('abort', stop, { once: true })
 
+  // Re-register the context to extend its server-side TTL and recover its
+  // context_id after any blip. Shared by the periodic heartbeat and the
+  // tab-visibility handler below.
+  const heartbeat = () => {
+    if (ctl.signal.aborted) return
+    registerBrowserToolBridgeContext({
+      endpoint: args.endpoint,
+      context: args.context,
+      signal: ctl.signal,
+    })
+      .then(() => args.onActivity?.())
+      .catch((err) => {
+        if (!ctl.signal.aborted) args.onRefreshError?.(err)
+      })
+  }
+
   const refreshMs = Math.max(0, args.refreshMs ?? 60000)
-  const refreshTimer = refreshMs > 0
-    ? window.setInterval(() => {
-        if (ctl.signal.aborted) return
-        registerBrowserToolBridgeContext({
-          endpoint: args.endpoint,
-          context: args.context,
-          signal: ctl.signal,
-        })
-          .then(() => args.onActivity?.())
-          .catch((err) => {
-            if (!ctl.signal.aborted) args.onRefreshError?.(err)
-          })
-      }, refreshMs)
-    : 0
+  const refreshTimer = refreshMs > 0 ? window.setInterval(heartbeat, refreshMs) : 0
+
+  // Background tabs get setInterval throttled (often to >=1/min), so a long
+  // background period can let the context TTL lapse. Fire an immediate heartbeat
+  // when the tab becomes visible again to close that gap. Guarded for non-DOM
+  // environments (SSR/tests).
+  const canListen =
+    typeof window !== 'undefined' && typeof window.addEventListener === 'function'
+  const onVisible = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') heartbeat()
+  }
+  const onOnline = () => heartbeat()
+  if (canListen) {
+    window.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+  }
 
   void runBrowserToolBridgeLoop({
     ...args,
@@ -156,6 +180,10 @@ export async function startBrowserToolBridge(
     stop: () => {
       args.parentSignal.removeEventListener('abort', stop)
       if (refreshTimer) window.clearInterval(refreshTimer)
+      if (canListen && typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('visibilitychange', onVisible)
+        window.removeEventListener('online', onOnline)
+      }
       stop()
     },
   }
@@ -342,6 +370,13 @@ async function runBrowserToolBridgeLoop(
   args: StartBrowserToolBridgeArgs & { contextId: string; signal: AbortSignal },
 ): Promise<void> {
   let contextId = args.contextId
+  // Backoff state for repeated poll failures (server down, network lost). Reset
+  // to 0 on any successful poll so transient blips don't accumulate delay.
+  let consecutiveFailures = 0
+  // Wakes the loop out of its backoff sleep the instant connectivity or tab
+  // visibility is restored, so recovery is immediate rather than waiting out the
+  // current backoff interval.
+  const wake = createWakeSignal(args.signal)
   while (!args.signal.aborted) {
     let requests: BrowserToolBridgeRequest[] = []
     try {
@@ -351,6 +386,7 @@ async function runBrowserToolBridgeLoop(
         signal: args.signal,
         waitMs: args.waitMs,
       })
+      consecutiveFailures = 0
     } catch (err) {
       if (args.signal.aborted) break
       args.onPollError?.(err)
@@ -365,7 +401,10 @@ async function runBrowserToolBridgeLoop(
       } catch (refreshErr) {
         if (!args.signal.aborted) args.onRefreshError?.(refreshErr)
       }
-      await sleep(800)
+      consecutiveFailures += 1
+      // Exponential backoff capped at 8s, woken early by online/visibility events.
+      const backoff = Math.min(8000, 500 * 2 ** Math.min(consecutiveFailures - 1, 4))
+      await sleepOrWake(backoff, wake, args.signal)
       continue
     }
 
@@ -374,12 +413,15 @@ async function runBrowserToolBridgeLoop(
       await executeAndSubmitBridgeRequest(args, request)
     }
   }
+  wake.dispose()
 }
 
 async function runBrowserApprovalBridgeLoop(
   args: StartBrowserToolBridgeArgs & { contextId: string; signal: AbortSignal },
 ): Promise<void> {
   let contextId = args.contextId
+  let consecutiveFailures = 0
+  const wake = createWakeSignal(args.signal)
   while (!args.signal.aborted) {
     let requests: BrowserToolBridgeApprovalRequest[] = []
     try {
@@ -389,6 +431,7 @@ async function runBrowserApprovalBridgeLoop(
         signal: args.signal,
         waitMs: args.waitMs,
       })
+      consecutiveFailures = 0
     } catch (err) {
       if (args.signal.aborted) break
       args.onApprovalPollError?.(err)
@@ -403,7 +446,9 @@ async function runBrowserApprovalBridgeLoop(
       } catch (refreshErr) {
         if (!args.signal.aborted) args.onRefreshError?.(refreshErr)
       }
-      await sleep(800)
+      consecutiveFailures += 1
+      const backoff = Math.min(8000, 500 * 2 ** Math.min(consecutiveFailures - 1, 4))
+      await sleepOrWake(backoff, wake, args.signal)
       continue
     }
 
@@ -414,6 +459,7 @@ async function runBrowserApprovalBridgeLoop(
     }
     if (requests.length > 0) await sleep(1000)
   }
+  wake.dispose()
 }
 
 async function executeAndSubmitBridgeRequest(
@@ -545,4 +591,70 @@ function parseToolCallArguments(value: unknown): Record<string, unknown> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+interface WakeSignal {
+  /** Promise that resolves the next time a wake event (online/visible) fires. */
+  next: () => Promise<void>
+  dispose: () => void
+}
+
+// Bridges browser connectivity/visibility events into the poll loop's backoff
+// sleep. When the network comes back or the tab is refocused, any in-progress
+// backoff is cut short so reconnection is immediate. Degrades to a no-op source
+// (sleep runs to full duration) in environments without window event support
+// (SSR, unit tests), so callers never need to branch on environment.
+function createWakeSignal(parentSignal: AbortSignal): WakeSignal {
+  const canListen =
+    typeof window !== 'undefined' && typeof window.addEventListener === 'function'
+  let resolvers: Array<() => void> = []
+  const fire = () => {
+    const pending = resolvers
+    resolvers = []
+    for (const resolve of pending) resolve()
+  }
+  const onOnline = () => fire()
+  const onVisible = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') fire()
+  }
+  if (canListen) {
+    window.addEventListener('online', onOnline)
+    window.addEventListener('visibilitychange', onVisible)
+  }
+  const dispose = () => {
+    // Re-check window at teardown: the bridge can outlive the page (or, in
+    // tests, the stubbed global) and dispose may run after window is gone.
+    if (canListen && typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('visibilitychange', onVisible)
+    }
+    fire() // release any awaiter so the loop can observe abort and exit
+  }
+  if (parentSignal.aborted) dispose()
+  else parentSignal.addEventListener('abort', dispose, { once: true })
+  return {
+    next: () => new Promise<void>((resolve) => resolvers.push(resolve)),
+    dispose,
+  }
+}
+
+// Sleep for `ms`, but resolve early if the wake signal fires or the loop is
+// aborted — whichever comes first.
+async function sleepOrWake(ms: number, wake: WakeSignal, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return
+  let timer = 0
+  let onAbort: (() => void) | null = null
+  const timeout = new Promise<void>((resolve) => {
+    timer = window.setTimeout(resolve, ms)
+  })
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = () => resolve()
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    await Promise.race([timeout, wake.next(), aborted])
+  } finally {
+    if (timer) window.clearTimeout(timer)
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  }
 }

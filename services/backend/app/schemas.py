@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from .services.project_entry_name import validate_project_entry_name
 
 
 class ProviderIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct|claude-local|nanobot|native|codex-local)$")
+    kind: str = Field(
+        pattern="^(dify-local|dify-cloud|claude-direct|claude-local|nanobot|native|codex-local)$"
+    )
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1, max_length=1024)
     activate: bool = False
@@ -19,8 +23,14 @@ class ProviderIn(BaseModel):
     codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
     codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
     codex_service_tier: str | None = Field(default=None, max_length=64)
-    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
-    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_sandbox: str | None = Field(
+        default=None,
+        pattern="^(read-only|workspace-write|danger-full-access)$",
+    )
+    codex_approval_policy: str | None = Field(
+        default=None,
+        pattern="^(never|untrusted|on-request|on-failure)$",
+    )
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
     codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
     codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
@@ -39,8 +49,14 @@ class ProviderUpdate(BaseModel):
     codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
     codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
     codex_service_tier: str | None = Field(default=None, max_length=64)
-    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
-    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_sandbox: str | None = Field(
+        default=None,
+        pattern="^(read-only|workspace-write|danger-full-access)$",
+    )
+    codex_approval_policy: str | None = Field(
+        default=None,
+        pattern="^(never|untrusted|on-request|on-failure)$",
+    )
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
     codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
     codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
@@ -925,6 +941,11 @@ class FolderCreateIn(BaseModel):
     parent_folder_id: str | None = None
     name: str = Field(min_length=1, max_length=256)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
+
 
 class FolderOut(BaseModel):
     id: str
@@ -943,6 +964,11 @@ class DocCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     format: str = Field(pattern="^(tex|md|txt)$")
     content: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
 
 
 class DocUpdateIn(BaseModel):
@@ -1041,6 +1067,20 @@ class CompileSyncToPdfOut(BaseModel):
     height: float | None = None
     line: int
     column: int
+
+
+class CompileSyncFromPdfIn(BaseModel):
+    page: int
+    x: float
+    y: float
+
+
+class CompileSyncFromPdfOut(BaseModel):
+    document_id: str
+    offset: int
+    line: int
+    column: int
+    source_path: str
 
 
 class ProjectCompileSettingsIn(BaseModel):

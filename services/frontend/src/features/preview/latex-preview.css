@@ -282,6 +282,7 @@
   flex-direction: column;
   align-items: flex-start;
   position: relative;
+  background: transparent;
 }
 
 .latex-preview-pdf .react-pdf__Document {
@@ -292,6 +293,15 @@
   min-width: 100%;
   width: max-content;
   margin: 0 auto;
+}
+
+.latex-preview-native-pdf {
+  align-self: stretch;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #ffffff;
 }
 
 .latex-preview-empty {
@@ -305,11 +315,33 @@
 .latex-pdf-page-shell {
   position: relative;
   flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: visible;
+  background: transparent;
 }
 
 .latex-pdf-page {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  overflow: visible;
+  outline: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 1px 3px rgba(148, 163, 184, 0.18);
   background: white;
+}
+
+.latex-pdf-page canvas {
+  display: block;
+  max-width: none;
+  max-height: none;
+}
+
+.latex-pdf-page-placeholder {
+  width: 100%;
+  min-height: inherit;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.72);
+  outline: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: none;
 }
 
 .pdf-source-sync-message {

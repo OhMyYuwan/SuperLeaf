@@ -114,16 +114,39 @@ def render_attached_files_block(files: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def collect_image_attachments(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return binary attachments that look like images, for multimodal forwarding."""
+def collect_binary_attachments(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return all binary attachments with metadata for multimodal forwarding.
+
+    Replaces collect_image_attachments to support PDF, audio, and other types.
+    Returns list of {file_id, url, mime, name} dicts for each binary attachment.
+    """
     out: list[dict[str, Any]] = []
     for f in files:
         if f.get("kind") != "binary":
             continue
+        file_id = str(f.get("file_id") or "").strip()
         mime = str(f.get("mime") or "")
         url = str(f.get("url") or "")
-        if not url:
+        name = str(f.get("name") or "attachment")
+
+        # file_id is primary; url is fallback for backward compat
+        if not file_id and not url:
             continue
-        if mime.startswith("image/"):
-            out.append({"url": url, "mime": mime, "name": f.get("name", "image")})
+
+        out.append({
+            "file_id": file_id,
+            "url": url,
+            "mime": mime,
+            "name": name,
+        })
     return out
+
+
+def collect_image_attachments(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deprecated alias for collect_binary_attachments filtered to images only.
+
+    Kept for backward compatibility with nanobot branch in conversations.py.
+    New code should use collect_binary_attachments + multimodal_attachments module.
+    """
+    all_binaries = collect_binary_attachments(files)
+    return [f for f in all_binaries if f["mime"].startswith("image/")]

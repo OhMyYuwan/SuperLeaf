@@ -652,19 +652,14 @@ class ProjectFsService:
             payload = file_path.read_bytes()
             byte_count += len(payload)
             parent = ensure_folder(rel.parent)
-            suffix = file_path.suffix.lower()
-            doc_format = _doc_format(suffix)
-            if doc_format is not None:
-                try:
-                    content = payload.decode("utf-8")
-                except UnicodeDecodeError:
-                    content = payload.decode("utf-8", errors="replace")
+            if is_text_payload(payload):
+                content = payload.decode("utf-8")
                 self.db.add(
                     Doc(
                         project_id=self.project.id,
                         folder_id=parent.id if parent else None,
                         name=rel.name,
-                        format=doc_format,
+                        format=doc_format_for_name(rel.name),
                         content=content,
                         version=1,
                     )
@@ -823,10 +818,6 @@ class ProjectFsService:
             byte_count += len(payload)
 
         return doc_count, file_count, byte_count
-
-
-def _doc_format(suffix: str) -> str | None:
-    return _DOC_SUFFIX_FORMATS.get(suffix)
 
 
 def _safe_zip_member_path(name: str) -> Path | None:

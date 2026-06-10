@@ -257,3 +257,35 @@ class TestRenameReturnsFormat:
     def test_rename_returns_false_sentinel_when_missing(self, db: Session, project: Project) -> None:
         svc = ProjectFsService(db, project)
         assert svc.rename_entity_with_format("doc", "nonexistent", "x.tex") is False
+
+
+import io
+import zipfile
+
+
+def _make_zip(entries: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+class TestZipImportSplitsByContent:
+    def test_unknown_text_ext_imports_as_doc(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        blob = _make_zip({"main.tex": b"\\documentclass{article}", "fig.tikz": b"\\draw;"})
+        svc.replace_from_zip(blob)
+        docs = {d.name: d.format for d in db.query(Doc).filter(Doc.project_id == project.id)}
+        assert docs.get("fig.tikz") == "txt"
+        assert docs.get("main.tex") == "tex"
+
+    def test_binary_in_zip_imports_as_file(self, db: Session, project: Project) -> None:
+        from app.models import FileBlob
+
+        svc = ProjectFsService(db, project)
+        png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        blob = _make_zip({"main.tex": b"x", "logo.png": png})
+        svc.replace_from_zip(blob)
+        files = {f.name for f in db.query(FileBlob).filter(FileBlob.project_id == project.id)}
+        assert "logo.png" in files

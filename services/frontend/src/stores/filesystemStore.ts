@@ -9,6 +9,16 @@ import { create } from 'zustand'
 import { filesystemApi, type ProjectTree, type TreeDoc, type TreeFile, type TreeFolder } from '../services/filesystemApi'
 import { useDocumentStore } from './documentStore'
 
+const TEX_EXTS = new Set(['tex', 'latex', 'ltx', 'bib', 'sty', 'cls', 'bst'])
+const MD_EXTS = new Set(['md', 'markdown'])
+
+export function docFormatForName(name: string): 'tex' | 'md' | 'txt' {
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  if (TEX_EXTS.has(ext)) return 'tex'
+  if (MD_EXTS.has(ext)) return 'md'
+  return 'txt'
+}
+
 export interface ActivePreviewFile {
   id: string
   name: string
@@ -155,6 +165,11 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
         const result = renameTreeEntity(tree.root, entityType, entityId, name)
         if (!result) return false
         nextTree = { ...tree, root: result }
+        if (action === 'doc.renamed') {
+          const fmt =
+            (payload.format as 'tex' | 'md' | 'txt' | undefined) ?? docFormatForName(name)
+          useDocumentStore.getState().applyDocFormatChange(entityId, fmt)
+        }
         break
       }
       case 'folder.deleted':
@@ -417,7 +432,7 @@ function insertTreeEntity(
   return result.changed ? result.folder : null
 }
 
-function renameTreeEntity(
+export function renameTreeEntity(
   folder: TreeFolder,
   entityType: TreeEntityType,
   entityId: string,
@@ -444,7 +459,7 @@ function renameTreeEntity(
     const nextDocs = folder.docs.map((doc) => {
       if (doc.id !== entityId) return doc
       changed = true
-      return { ...doc, name }
+      return { ...doc, name, format: docFormatForName(name) }
     })
     if (changed) nextFolder = { ...nextFolder, docs: nextDocs }
   }

@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Project
+from ..models import Doc, Project
 from ..schemas import (
     CompileIn,
     CompileOut,
@@ -30,7 +30,7 @@ from ..schemas import (
     ProjectCompileSettingsOut,
 )
 from ..services.latex_compiler import get_compiler_service
-from .deps import get_current_project, get_project_from_path
+from .deps import get_current_project, get_project_from_path, require_write_access
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
 
@@ -62,11 +62,12 @@ def rescan_compilers() -> CompilerInfoOut:
 async def compile_project(
     body: CompileIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
 ) -> CompileOut:
     # Resolve settings: explicit body > project-level saved > service default.
     compiler = body.compiler or project.compiler or None
-    main_doc_id = body.main_doc_id or project.main_doc_id or None
+    requested_main_doc_id = body.main_doc_id if body.main_doc_id is not None else project.main_doc_id
+    main_doc_id = _validate_main_doc_id(db, project, requested_main_doc_id)
 
     svc = get_compiler_service()
     result = await svc.compile_project(
@@ -234,10 +235,10 @@ def get_settings(
 def update_settings(
     body: ProjectCompileSettingsIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
 ) -> ProjectCompileSettingsOut:
     if body.main_doc_id is not None:
-        project.main_doc_id = body.main_doc_id
+        project.main_doc_id = _validate_main_doc_id(db, project, body.main_doc_id) or ""
     if body.compiler is not None:
         project.compiler = body.compiler
     db.commit()
@@ -246,3 +247,14 @@ def update_settings(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
     )
+
+
+def _validate_main_doc_id(db: Session, project: Project, main_doc_id: str | None) -> str | None:
+    if not main_doc_id:
+        return None
+    doc = db.get(Doc, main_doc_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(400, "main_doc_id must belong to the current project")
+    if doc.format != "tex":
+        raise HTTPException(400, "main_doc_id must reference a tex document")
+    return doc.id

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, load_only
 from ..models import Doc, FileBlob, Folder, Project
 from ..schemas import ProjectTreeOut, TreeDocOut, TreeFileOut, TreeFolderOut
 from . import version_service
+from .project_entry_name import validate_project_entry_name
 
 _MAX_ZIP_UPLOAD_BYTES = 100 * 1024 * 1024
 _MAX_ZIP_ENTRIES = 5000
@@ -194,6 +195,7 @@ class ProjectFsService:
 
     def create_folder(self, *, parent_folder_id: str | None, name: str) -> Folder:
         project = self.project
+        name = validate_project_entry_name(name)
         if parent_folder_id and self._get_folder_in_project(parent_folder_id) is None:
             raise ValueError("parent folder not found")
 
@@ -233,6 +235,7 @@ class ProjectFsService:
 
     def create_doc(self, *, folder_id: str | None, name: str, format: str, content: str) -> Doc:
         project = self.project
+        name = validate_project_entry_name(name)
         if folder_id and self._get_folder_in_project(folder_id) is None:
             raise ValueError("folder not found")
 
@@ -298,6 +301,7 @@ class ProjectFsService:
     # --------------------------------------------------------- rename / delete
 
     def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
+        new_name = validate_project_entry_name(new_name)
         entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return False
@@ -413,6 +417,7 @@ class ProjectFsService:
         blob: bytes,
     ) -> FileBlob:
         project = self.project
+        name = validate_project_entry_name(name)
         if folder_id and self._get_folder_in_project(folder_id) is None:
             raise ValueError("folder not found")
         existing = self._find_file_by_name(folder_id, name)
@@ -549,6 +554,17 @@ class ProjectFsService:
         if not root.exists() or not root.is_dir():
             raise ValueError("import root not found")
 
+        importable_paths: list[Path] = []
+        for file_path in sorted(root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(root)
+            if ".git" in rel.parts:
+                continue
+            for part in rel.parts:
+                validate_project_entry_name(part, field="import entry name")
+            importable_paths.append(file_path)
+
         self.db.query(Doc).filter(Doc.project_id == self.project.id).delete(
             synchronize_session=False
         )
@@ -579,12 +595,8 @@ class ProjectFsService:
         doc_count = 0
         file_count = 0
         byte_count = 0
-        for file_path in sorted(root.rglob("*")):
-            if not file_path.is_file():
-                continue
+        for file_path in importable_paths:
             rel = file_path.relative_to(root)
-            if ".git" in rel.parts:
-                continue
             payload = file_path.read_bytes()
             byte_count += len(payload)
             parent = ensure_folder(rel.parent)
@@ -669,7 +681,7 @@ class ProjectFsService:
 
         folder_paths: dict[str, str] = {}
         for f in folders:
-            folder_paths[f.id] = f.name
+            folder_paths[f.id] = validate_project_entry_name(f.name, field="folder name")
 
         def resolve_path(folder_id: str | None) -> str:
             parts: list[str] = []
@@ -686,13 +698,15 @@ class ProjectFsService:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for d in docs:
                 prefix = resolve_path(d.folder_id)
-                path = f"{prefix}/{d.name}" if prefix else d.name
+                name = validate_project_entry_name(d.name, field="document name")
+                path = f"{prefix}/{name}" if prefix else name
                 if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
                     continue
                 zf.writestr(path, d.content or "")
             for f in files:
                 prefix = resolve_path(f.folder_id)
-                path = f"{prefix}/{f.name}" if prefix else f.name
+                name = validate_project_entry_name(f.name, field="file name")
+                path = f"{prefix}/{name}" if prefix else name
                 if _is_ignored_project_artifact_path(PurePosixPath(path), project=project):
                     continue
                 zf.writestr(path, f.blob or b"")
@@ -724,7 +738,7 @@ class ProjectFsService:
                 folder = folder_by_id.get(current)
                 if folder is None:
                     break
-                parts.append(_safe_name(folder.name))
+                parts.append(validate_project_entry_name(folder.name, field="folder name"))
                 current = folder.parent_folder_id
             parts.reverse()
             return parts
@@ -733,7 +747,10 @@ class ProjectFsService:
         file_count = 0
         byte_count = 0
         for doc in docs:
-            rel = Path(*folder_parts(doc.folder_id), _safe_name(doc.name))
+            rel = Path(
+                *folder_parts(doc.folder_id),
+                validate_project_entry_name(doc.name, field="document name"),
+            )
             if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = (doc.content or "").encode("utf-8")
@@ -742,7 +759,10 @@ class ProjectFsService:
             byte_count += len(payload)
 
         for file in files:
-            rel = Path(*folder_parts(file.folder_id), _safe_name(file.name))
+            rel = Path(
+                *folder_parts(file.folder_id),
+                validate_project_entry_name(file.name, field="file name"),
+            )
             if _is_ignored_materialized_path(rel, project=self.project):
                 continue
             payload = file.blob or b""
@@ -758,7 +778,9 @@ def _doc_format(suffix: str) -> str | None:
 
 
 def _safe_zip_member_path(name: str) -> Path | None:
-    normalized = name.replace("\\", "/").strip()
+    if "\\" in name:
+        raise ValueError("zip archive contains an unsafe path")
+    normalized = name
     if not normalized:
         return None
     path = PurePosixPath(normalized)
@@ -770,6 +792,7 @@ def _safe_zip_member_path(name: str) -> Path | None:
     for part in parts:
         if part in {"", ".", ".."} or "\x00" in part:
             raise ValueError("zip archive contains an unsafe path")
+        validate_project_entry_name(part, field="zip entry name")
     return Path(*parts)
 
 

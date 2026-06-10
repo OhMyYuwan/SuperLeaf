@@ -32,6 +32,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, load_only
 
 from ..models import Doc, FileBlob, Folder, Project
+from .project_entry_name import ProjectEntryNameError, validate_project_entry_name
 
 # All known TeX Live / MacTeX binaries we'll try to detect.
 KNOWN_COMPILERS = ("latexmk", "pdflatex", "xelatex", "lualatex")
@@ -164,9 +165,22 @@ class LatexCompilerService:
         # Write project tree to temp dir and compile.
         with tempfile.TemporaryDirectory(prefix="ylw-tex-") as tmp:
             tmpdir = Path(tmp)
-            main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
-                db, project_id, tmpdir, main_doc
-            )
+            try:
+                main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
+                    db, project_id, tmpdir, main_doc
+                )
+            except ProjectEntryNameError as exc:
+                result = CompileResult(
+                    ok=False,
+                    pdf=None,
+                    synctex=None,
+                    log="",
+                    error=str(exc),
+                    compiler=chosen_compiler,
+                    duration_ms=int((time.time() - started) * 1000),
+                )
+                self._pdf_cache[project_id] = result
+                return result
 
             result = await self._run_compiler(
                 tmpdir=tmpdir,
@@ -222,9 +236,28 @@ class LatexCompilerService:
         """Write all docs + files of the project into tmpdir, preserving folder
         structure. Returns the relative path of the main doc within tmpdir."""
 
-        folders = (
-            db.query(Folder).filter(Folder.project_id == project_id).all()
+        folders = db.query(Folder).filter(Folder.project_id == project_id).all()
+        docs = db.query(Doc).filter(Doc.project_id == project_id).all()
+        file_metadata = (
+            db.query(FileBlob)
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                )
+            )
+            .filter(FileBlob.project_id == project_id)
+            .all()
         )
+        for folder in folders:
+            validate_project_entry_name(folder.name, field="folder name")
+        for doc in docs:
+            validate_project_entry_name(doc.name, field="document name")
+        for file in file_metadata:
+            validate_project_entry_name(file.name, field="file name")
+        validate_project_entry_name(main_doc.name, field="document name")
+
         folder_paths: dict[str, Path] = {}
 
         def resolve_folder_path(folder_id: str | None) -> Path:
@@ -246,19 +279,6 @@ class LatexCompilerService:
         for path in folder_paths.values():
             path.mkdir(parents=True, exist_ok=True)
 
-        docs = db.query(Doc).filter(Doc.project_id == project_id).all()
-        file_metadata = (
-            db.query(FileBlob)
-            .options(
-                load_only(
-                    FileBlob.id,
-                    FileBlob.folder_id,
-                    FileBlob.name,
-                )
-            )
-            .filter(FileBlob.project_id == project_id)
-            .all()
-        )
         existing_paths: set[str] = set()
 
         def add_existing(path: Path) -> None:

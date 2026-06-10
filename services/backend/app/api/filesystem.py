@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ..database import get_session
@@ -27,6 +27,7 @@ from ..schemas import (
 from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.event_bus import bus
+from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
 from ..services.project_fs_service import DocVersionConflictError, ProjectFsService
 from ..services.project_member_service import ProjectMemberService
 from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
@@ -86,6 +87,8 @@ def create_folder(
     svc = ProjectFsService(db, project)
     try:
         folder = svc.create_folder(parent_folder_id=body.parent_folder_id, name=body.name)
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -115,6 +118,8 @@ def create_doc(
             format=body.format,
             content=body.content,
         )
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -272,6 +277,11 @@ async def flush_collab_doc(
 class RenameBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
+
 
 @router.post("/api/entities/{entity_type}/{entity_id}/rename", status_code=200)
 def rename_entity(
@@ -284,7 +294,10 @@ def rename_entity(
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
-    ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
+    try:
+        ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     if not ok:
         raise HTTPException(404, "entity not found")
     _publish_tree_changed(
@@ -448,6 +461,8 @@ async def upload_file(
                 format=doc_format,
                 content=content,
             )
+        except ProjectEntryNameError as e:
+            raise HTTPException(400, str(e)) from e
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
         _publish_tree_changed(
@@ -479,6 +494,8 @@ async def upload_file(
             mime_type=mime_type,
             blob=blob,
         )
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     _publish_tree_changed(
@@ -567,7 +584,10 @@ def convert_file_to_doc(
         raise HTTPException(400, "file is not a recognized text format")
     content = (f.blob or b"").decode("utf-8", errors="ignore")
     svc = ProjectFsService(db, project)
-    doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
+    try:
+        doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     _publish_tree_changed(
         project,
         "file.converted_to_doc",
@@ -618,7 +638,10 @@ def export_zip(
     project: Project = Depends(get_project_from_path),
 ) -> Response:
     flush_project_collab_or_503_sync(project)
-    data = ProjectFsService(db, project).export_zip()
+    try:
+        data = ProjectFsService(db, project).export_zip()
+    except ProjectEntryNameError as e:
+        raise HTTPException(400, str(e)) from e
     safe_name = (project.name or "project").replace('"', "").strip() or "project"
     return Response(
         content=data,

@@ -571,8 +571,8 @@ def convert_file_to_doc(
         raise HTTPException(400, "file is not a recognized text format")
     try:
         content = (f.blob or b"").decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise HTTPException(400, "file is not valid UTF-8 text") from e
+    except UnicodeDecodeError:
+        raise HTTPException(400, "file is not valid UTF-8 text") from None
     svc = ProjectFsService(db, project)
     doc = svc.create_doc(folder_id=f.folder_id, name=f.name, format=fmt, content=content)
     _publish_tree_changed(

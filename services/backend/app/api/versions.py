@@ -13,12 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Blob, Doc, DocumentLabel, DocumentVersion, Project
+from ..models import Blob, Doc, DocumentLabel, DocumentVersion, Project, User
 from ..schemas import DiffOut, DocOut, LabelIn, LabelOut, OperationIn, OperationOut, VersionOut
 from ..services import operation_service, version_service
 from ..services.diff_service import compute_diff
 from ..services.project_fs_service import ProjectFsService
-from .deps import get_current_project
+from .deps import get_current_project, get_current_user, require_write_access
 
 router = APIRouter(prefix="/api/docs", tags=["versions"])
 
@@ -81,6 +81,13 @@ def _current_doc_blob(doc: Doc) -> Blob:
         string_length=len(doc.content or ""),
         created_at=doc.updated_at or datetime.utcnow(),
     )
+
+
+def _decode_text_blob_or_400(blob: Blob, detail: str) -> str:
+    try:
+        return blob.content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(400, detail) from None
 
 
 @router.get("/{doc_id}/versions", response_model=list[VersionOut])
@@ -178,7 +185,8 @@ def restore_version(
     doc_id: str,
     version: int,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
+    user: User = Depends(get_current_user),
 ) -> DocOut:
     """Restore is append-only: it applies the historical content as the new
     head and records a fresh `origin='restore'` snapshot. The original
@@ -194,8 +202,8 @@ def restore_version(
     if blob.string_length is None:
         raise HTTPException(400, "cannot restore a binary version into a text doc")
 
-    text = blob.content.decode("utf-8")
-    actor = str(project.user_id) if project.user_id else None
+    text = _decode_text_blob_or_400(blob, "version content is not valid UTF-8 text")
+    actor = user.id
     svc = ProjectFsService(db, project)
     doc = svc.update_doc_content(
         doc_id,
@@ -223,19 +231,20 @@ def add_label(
     doc_id: str,
     body: LabelIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
+    user: User = Depends(get_current_user),
 ) -> LabelOut:
     _ensure_doc(db, project, doc_id)
     try:
         label = version_service.add_label(db, doc_id, body.version, body.text)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     operation_service.record(
         db,
         doc_id,
         "label_add",
         payload={"version": body.version, "label_id": label.id, "text": body.text},
-        actor=str(project.user_id) if project.user_id else None,
+        actor=user.id,
     )
     db.commit()
     return LabelOut.model_validate(label)
@@ -246,7 +255,8 @@ def remove_label(
     doc_id: str,
     label_id: str,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
+    user: User = Depends(get_current_user),
 ) -> None:
     _ensure_doc(db, project, doc_id)
     label = db.get(DocumentLabel, label_id)
@@ -262,7 +272,7 @@ def remove_label(
         doc_id,
         "label_remove",
         payload=payload,
-        actor=str(project.user_id) if project.user_id else None,
+        actor=user.id,
     )
     db.commit()
 
@@ -290,7 +300,8 @@ def create_operation(
     doc_id: str,
     body: OperationIn,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
+    user: User = Depends(get_current_user),
 ) -> OperationOut:
     """Frontend-driven entry point.
 
@@ -305,9 +316,9 @@ def create_operation(
             doc_id,
             body.type,
             payload=body.payload,
-            actor=str(project.user_id) if project.user_id else None,
+            actor=user.id,
         )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
     db.commit()
     return OperationOut.model_validate(row)

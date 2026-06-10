@@ -894,6 +894,33 @@ async def send_message(
                     attached_files, "openai_chat", db, project.id
                 )
 
+                # === 诊断日志开始 ===
+                from ..services.multimodal_attachments import to_openai_chat_content_parts
+                print(f"\n{'='*60}")
+                print(f"[MULTIMODAL DEBUG] Provider: native (agent_id={agent.id})")
+                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
+                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
+                for att in multimodal_attachments:
+                    print(f"  - name={att.name}")
+                    print(f"    kind={att.kind}")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    mime={att.mime}")
+                multimodal_parts_debug = to_openai_chat_content_parts(multimodal_attachments)
+                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts_debug)} content parts")
+                for i, part in enumerate(multimodal_parts_debug):
+                    ptype = part.get("type", "?")
+                    if ptype == "image_url":
+                        url_str = part.get("image_url", {}).get("url", "")
+                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
+                    elif ptype == "file":
+                        fname = part.get("file", {}).get("filename", "?")
+                        fdata = part.get("file", {}).get("file_data", "")
+                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
+                    else:
+                        print(f"  part[{i}] type={ptype}")
+                print(f"{'='*60}\n")
+                # === 诊断日志结束 ===
+
                 runner = NativeAgentRunner(
                     NativeAgentRuntimeConfig(
                         agent_id=agent.id,
@@ -961,7 +988,33 @@ async def send_message(
                 multimodal_attachments = resolve_multimodal_attachments(
                     attached_files, "openai_chat", db, project.id
                 )
+
+                # === 诊断日志开始 ===
+                print(f"\n{'='*60}")
+                print(f"[MULTIMODAL DEBUG] Provider: {provider.kind}")
+                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
+                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
+                for att in multimodal_attachments:
+                    print(f"  - name={att.name}")
+                    print(f"    kind={att.kind}")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    mime={att.mime}")
+
                 multimodal_parts = to_openai_chat_content_parts(multimodal_attachments)
+                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts)} content parts")
+                for i, part in enumerate(multimodal_parts):
+                    ptype = part.get("type", "?")
+                    if ptype == "image_url":
+                        url_str = part.get("image_url", {}).get("url", "")
+                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
+                    elif ptype == "file":
+                        fname = part.get("file", {}).get("filename", "?")
+                        fdata = part.get("file", {}).get("file_data", "")
+                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
+                    else:
+                        print(f"  part[{i}] type={ptype}")
+                print(f"{'='*60}\n")
+                # === 诊断日志结束 ===
 
                 if multimodal_parts:
                     user_content: list[dict[str, Any]] | str = [

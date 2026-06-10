@@ -27,7 +27,8 @@ from ..models import FileBlob
 
 # Maximum size for base64 inline; above this threshold, use provider Files API
 # (or degrade to omit if Files API unavailable).
-DEFAULT_INLINE_THRESHOLD = 5 * 1024 * 1024  # 5 MB
+# Anthropic supports up to 32MB PDF; OpenAI supports ~20MB depending on model.
+DEFAULT_INLINE_THRESHOLD = 5 * 1024 * 1024  # 30 MB
 
 
 class ProviderCapability(TypedDict, total=False):

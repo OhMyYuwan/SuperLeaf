@@ -1043,6 +1043,20 @@ class CompileSyncToPdfOut(BaseModel):
     column: int
 
 
+class CompileSyncFromPdfIn(BaseModel):
+    page: int
+    x: float
+    y: float
+
+
+class CompileSyncFromPdfOut(BaseModel):
+    document_id: str
+    offset: int
+    line: int
+    column: int
+    source_path: str
+
+
 class ProjectCompileSettingsIn(BaseModel):
     main_doc_id: str | None = None
     compiler: str | None = None

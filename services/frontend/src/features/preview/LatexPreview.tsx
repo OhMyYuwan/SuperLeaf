@@ -42,6 +42,7 @@ import {
   type SourceJump,
 } from '../../services/previewSourceMap'
 import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
+import { pdfPointFromPageClientPosition } from './pdfCoordinate'
 import './latex-preview.css'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -212,9 +213,44 @@ export function LatexPreview({
   const handlePdfDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (!(target instanceof HTMLElement)) return
+    void jumpFromPdfDoubleClick(target, event.clientX, event.clientY)
+  }
+
+  async function jumpFromPdfDoubleClick(target: HTMLElement, clientX: number, clientY: number) {
+    const pageShell = target.closest<HTMLElement>('.latex-pdf-page-shell')
+    const pageNumber = Number.parseInt(pageShell?.dataset.pageNumber ?? '', 10)
+    const naturalSize = Number.isFinite(pageNumber) ? pdfPageSizesRef.current[pageNumber] : null
+
+    if (pageShell && naturalSize && Number.isFinite(pageNumber)) {
+      const point = pdfPointFromPageClientPosition({
+        pageNumber,
+        clientX,
+        clientY,
+        pageRect: pageShell.getBoundingClientRect(),
+        naturalSize,
+      })
+      if (point) {
+        try {
+          const location = await compileApi.syncFromPdf(point)
+          onSourceJump?.({
+            documentId: location.document_id,
+            pos: location.offset,
+          })
+          setPdfSyncMessage(null)
+          return
+        } catch {
+          // Fall back to text-layer matching when reverse SyncTeX is unavailable or stale.
+        }
+      }
+    }
+
     const textElement = target.closest<HTMLElement>('.react-pdf__Page__textContent span')
     const jump = sourceJumpFromPreviewText(source, textElement?.textContent)
-    if (jump) onSourceJump?.(jump)
+    if (jump) {
+      onSourceJump?.(jump)
+    } else {
+      showPdfSyncMessage('未找到对应源码位置，请先确认已编译最新内容')
+    }
   }
 
   function showPdfSyncMessage(message: string) {

@@ -52,6 +52,39 @@ class ProjectFsService:
         self.db = db
         self.project = project
 
+    def _get_folder_in_project(self, folder_id: str | None) -> Folder | None:
+        if not folder_id:
+            return None
+        folder = self.db.get(Folder, folder_id)
+        if folder is None or folder.project_id != self.project.id:
+            return None
+        return folder
+
+    def _get_doc_in_project(self, doc_id: str) -> Doc | None:
+        doc = self.db.get(Doc, doc_id)
+        if doc is None or doc.project_id != self.project.id:
+            return None
+        return doc
+
+    def _get_file_in_project(self, file_id: str) -> FileBlob | None:
+        file = self.db.get(FileBlob, file_id)
+        if file is None or file.project_id != self.project.id:
+            return None
+        return file
+
+    def _get_entity_in_project(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> Folder | Doc | FileBlob | None:
+        if entity_type == "folder":
+            return self._get_folder_in_project(entity_id)
+        if entity_type == "doc":
+            return self._get_doc_in_project(entity_id)
+        if entity_type == "file":
+            return self._get_file_in_project(entity_id)
+        return None
+
     # ------------------------------------------------------------------- tree
 
     def get_tree(self) -> ProjectTreeOut:
@@ -97,7 +130,11 @@ class ProjectFsService:
         for f in files:
             files_by_folder[f.folder_id].append(f)
 
-        def build_folder_node(folder_id: str | None, name: str, is_virtual_root: bool = False) -> TreeFolderOut:
+        def build_folder_node(
+            folder_id: str | None,
+            name: str,
+            is_virtual_root: bool = False,
+        ) -> TreeFolderOut:
             children_folders = []
             if not is_virtual_root:
                 candidate_children = folders_by_parent.get(folder_id, [])
@@ -157,10 +194,8 @@ class ProjectFsService:
 
     def create_folder(self, *, parent_folder_id: str | None, name: str) -> Folder:
         project = self.project
-        if parent_folder_id:
-            parent = self.db.get(Folder, parent_folder_id)
-            if parent is None or parent.project_id != project.id:
-                raise ValueError("parent folder not found")
+        if parent_folder_id and self._get_folder_in_project(parent_folder_id) is None:
+            raise ValueError("parent folder not found")
 
         existing = (
             self.db.query(Folder)
@@ -198,10 +233,8 @@ class ProjectFsService:
 
     def create_doc(self, *, folder_id: str | None, name: str, format: str, content: str) -> Doc:
         project = self.project
-        if folder_id:
-            folder = self.db.get(Folder, folder_id)
-            if folder is None or folder.project_id != project.id:
-                raise ValueError("folder not found")
+        if folder_id and self._get_folder_in_project(folder_id) is None:
+            raise ValueError("folder not found")
 
         existing = self._find_doc_by_name(folder_id, name)
         if existing is not None:
@@ -229,7 +262,7 @@ class ProjectFsService:
         return doc
 
     def get_doc(self, doc_id: str) -> Doc | None:
-        return self.db.get(Doc, doc_id)
+        return self._get_doc_in_project(doc_id)
 
     def update_doc_content(
         self,
@@ -240,7 +273,7 @@ class ProjectFsService:
         actor: str | None = None,
         expected_version: int | None = None,
     ) -> Doc | None:
-        doc = self.db.get(Doc, doc_id)
+        doc = self._get_doc_in_project(doc_id)
         if doc is None:
             return None
         if expected_version is not None and doc.version != expected_version:
@@ -265,10 +298,7 @@ class ProjectFsService:
     # --------------------------------------------------------- rename / delete
 
     def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
-        model = {"folder": Folder, "doc": Doc, "file": FileBlob}.get(entity_type)
-        if model is None:
-            return False
-        entity = self.db.get(model, entity_id)
+        entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return False
         entity.name = new_name  # type: ignore[union-attr]
@@ -339,10 +369,7 @@ class ProjectFsService:
         """Delete an entity and return the count of deleted rows (recursive for folders)."""
         if entity_type == "folder":
             return self._delete_folder_recursive(entity_id)
-        model = {"doc": Doc, "file": FileBlob}.get(entity_type)
-        if model is None:
-            return 0
-        entity = self.db.get(model, entity_id)
+        entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return 0
         self.db.delete(entity)
@@ -350,14 +377,26 @@ class ProjectFsService:
         return 1
 
     def _delete_folder_recursive(self, folder_id: str) -> int:
-        folder = self.db.get(Folder, folder_id)
+        folder = self._get_folder_in_project(folder_id)
         if folder is None:
             return 0
         count = 0
-        for child in self.db.query(Folder).filter(Folder.parent_folder_id == folder_id).all():
+        for child in (
+            self.db.query(Folder)
+            .filter(Folder.project_id == self.project.id, Folder.parent_folder_id == folder_id)
+            .all()
+        ):
             count += self._delete_folder_recursive(child.id)
-        count += self.db.query(Doc).filter(Doc.folder_id == folder_id).delete()
-        count += self.db.query(FileBlob).filter(FileBlob.folder_id == folder_id).delete()
+        count += (
+            self.db.query(Doc)
+            .filter(Doc.project_id == self.project.id, Doc.folder_id == folder_id)
+            .delete()
+        )
+        count += (
+            self.db.query(FileBlob)
+            .filter(FileBlob.project_id == self.project.id, FileBlob.folder_id == folder_id)
+            .delete()
+        )
         self.db.delete(folder)
         count += 1
         self.db.commit()
@@ -374,10 +413,8 @@ class ProjectFsService:
         blob: bytes,
     ) -> FileBlob:
         project = self.project
-        if folder_id:
-            folder = self.db.get(Folder, folder_id)
-            if folder is None or folder.project_id != project.id:
-                raise ValueError("folder not found")
+        if folder_id and self._get_folder_in_project(folder_id) is None:
+            raise ValueError("folder not found")
         existing = self._find_file_by_name(folder_id, name)
         if existing is not None:
             existing.mime_type = mime_type

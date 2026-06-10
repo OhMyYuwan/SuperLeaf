@@ -62,7 +62,7 @@ class ProjectRenameBody(BaseModel):
 def rename_project(
     body: ProjectRenameBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     renamed = ProjectFsService(db, project).rename_project(body.name)
@@ -279,7 +279,7 @@ def rename_entity(
     entity_id: str,
     body: RenameBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
@@ -303,7 +303,7 @@ def delete_entity(
     entity_type: str,
     entity_id: str,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
@@ -332,7 +332,7 @@ def move_entity(
     entity_id: str,
     body: MoveBody,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     if entity_type not in ("folder", "doc", "file"):
@@ -428,7 +428,7 @@ async def upload_file(
     file: UploadFile,
     folder_id: str | None = Form(None),
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
@@ -556,7 +556,7 @@ def get_file(
 def convert_file_to_doc(
     file_id: str,
     db: Session = Depends(get_session),
-    project: Project = Depends(get_current_project),
+    project: Project = Depends(require_write_access),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> DocOut:
     """Migrate a text-like FileBlob (uploaded before the split into docs/files) into `docs`.

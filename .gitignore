@@ -95,3 +95,4 @@ docs/superpowers/
 # test
 services/frontend/src/__tests__/
 services/backend/test/
+docs/analysis/

@@ -107,10 +107,14 @@ class NativeAgentRunner:
         self.config = config
 
     async def stream(self, payload: NativeRunPayload) -> AsyncIterator[dict[str, Any]]:
+        # run_streaming itself uses timeout=None for the SSE channel; this value
+        # only affects probe()/list_models() and any future non-streaming calls.
+        # Keep it generous so a slow Local Agent Host bootstrap doesn't surface
+        # as a misleading network error.
         client = NanobotClient(
             endpoint=self.config.provider_endpoint,
             api_key=self.config.api_key,
-            timeout=30.0,
+            timeout=60.0,
         )
         system_prompt = self._system_prompt(payload)
         user_prompt = self._user_prompt(payload)

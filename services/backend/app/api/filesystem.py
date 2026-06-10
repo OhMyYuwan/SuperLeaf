@@ -295,18 +295,25 @@ def rename_entity(
     if entity_type not in ("folder", "doc", "file"):
         raise HTTPException(400, "entity_type must be folder|doc|file")
     try:
-        ok = ProjectFsService(db, project).rename_entity(entity_type, entity_id, body.name)
+        result = ProjectFsService(db, project).rename_entity_with_format(
+            entity_type, entity_id, body.name
+        )
     except ProjectEntryNameError as e:
         raise HTTPException(400, str(e)) from e
-    if not ok:
+    if result is False:
         raise HTTPException(404, "entity not found")
+    payload: dict[str, object] = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "name": body.name,
+    }
+    if isinstance(result, str):
+        payload["format"] = result
     _publish_tree_changed(
         project,
         f"{entity_type}.renamed",
         origin_client_id=x_client_id,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        name=body.name,
+        **payload,
     )
     return {"ok": True}
 

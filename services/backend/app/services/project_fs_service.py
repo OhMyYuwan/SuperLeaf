@@ -336,22 +336,37 @@ class ProjectFsService:
 
     # --------------------------------------------------------- rename / delete
 
-    def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
+    def rename_entity_with_format(
+        self, entity_type: str, entity_id: str, new_name: str
+    ) -> str | None | bool:
+        """Rename an entity; return the doc's new format.
+
+        Returns:
+          - str  : the recomputed format (only for docs)
+          - None : success but entity has no format (folder/file)
+          - False: entity not found
+        """
         new_name = validate_project_entry_name(new_name)
         entity = self._get_entity_in_project(entity_type, entity_id)
         if entity is None:
             return False
         entity.name = new_name  # type: ignore[union-attr]
         entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
+        new_format: str | None = None
         if entity_type == "doc":
-            entity.format = doc_format_for_name(new_name)  # type: ignore[union-attr]
+            new_format = doc_format_for_name(new_name)
+            entity.format = new_format  # type: ignore[union-attr]
             self._delete_doc_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
             self._delete_file_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         elif entity_type == "file":
             self._delete_file_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
             self._delete_doc_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         self.db.commit()
-        return True
+        return new_format
+
+    def rename_entity(self, entity_type: str, entity_id: str, new_name: str) -> bool:
+        result = self.rename_entity_with_format(entity_type, entity_id, new_name)
+        return result is not False
 
     def move_entity(
         self, entity_type: str, entity_id: str, target_folder_id: str | None

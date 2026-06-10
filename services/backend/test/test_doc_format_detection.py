@@ -120,3 +120,27 @@ class TestRenameRecomputesFormat:
         db.commit()
         svc = ProjectFsService(db, project)
         assert svc.rename_entity("file", f.id, "photo.png") is True
+
+
+class TestRenameReturnsFormat:
+    def test_rename_returns_new_format_for_doc(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        doc = svc.create_doc(folder_id=None, name="a.md", format="md", content="x")
+        result = svc.rename_entity_with_format("doc", doc.id, "a.tex")
+        assert result == "tex"
+
+    def test_rename_returns_none_for_file(self, db: Session, project: Project) -> None:
+        from app.models import FileBlob
+
+        f = FileBlob(
+            project_id=project.id, folder_id=None, name="img.png",
+            mime_type="image/png", size_bytes=3, blob=b"abc",
+        )
+        db.add(f)
+        db.commit()
+        svc = ProjectFsService(db, project)
+        assert svc.rename_entity_with_format("file", f.id, "p.png") is None
+
+    def test_rename_returns_false_sentinel_when_missing(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        assert svc.rename_entity_with_format("doc", "nonexistent", "x.tex") is False

@@ -344,6 +344,7 @@ class ProjectFsService:
         entity.name = new_name  # type: ignore[union-attr]
         entity.updated_at = datetime.utcnow()  # type: ignore[union-attr]
         if entity_type == "doc":
+            entity.format = doc_format_for_name(new_name)  # type: ignore[union-attr]
             self._delete_doc_siblings(entity.folder_id, new_name, keep_id=entity.id)  # type: ignore[union-attr]
             self._delete_file_siblings(entity.folder_id, new_name)  # type: ignore[union-attr]
         elif entity_type == "file":

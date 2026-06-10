@@ -52,3 +52,71 @@ class TestIsTextPayload:
         # 8KB of valid text, then a null byte beyond the window -> still text.
         payload = (b"a" * 8192) + b"\x00"
         assert is_text_payload(payload) is True
+
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base
+from app.models import Doc, Project
+from app.services.project_fs_service import ProjectFsService
+
+
+@pytest.fixture()
+def db():
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+@pytest.fixture()
+def project(db: Session) -> Project:
+    p = Project(name="p", user_id="u1")
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return p
+
+
+class TestRenameRecomputesFormat:
+    def test_rename_md_to_tex_updates_format(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        doc = svc.create_doc(folder_id=None, name="a.md", format="md", content="# hi")
+        ok = svc.rename_entity("doc", doc.id, "a.tex")
+        assert ok is True
+        db.refresh(doc)
+        assert doc.format == "tex"
+
+    def test_rename_to_unknown_ext_sets_txt(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        doc = svc.create_doc(folder_id=None, name="a.tex", format="tex", content="x")
+        svc.rename_entity("doc", doc.id, "a.tikz")
+        db.refresh(doc)
+        assert doc.format == "txt"
+
+    def test_rename_file_does_not_touch_format(self, db: Session, project: Project) -> None:
+        # Files (FileBlob) have no format column; rename must not crash on them.
+        from app.models import FileBlob
+
+        f = FileBlob(
+            project_id=project.id, folder_id=None, name="img.png",
+            mime_type="image/png", size_bytes=3, blob=b"abc",
+        )
+        db.add(f)
+        db.commit()
+        svc = ProjectFsService(db, project)
+        assert svc.rename_entity("file", f.id, "photo.png") is True

@@ -551,9 +551,11 @@ def convert_file_to_doc(
     if f is None or f.project_id != project.id:
         raise HTTPException(404, "file not found")
     raw = f.blob or b""
-    if not is_text_payload(raw):
+    # For legacy convert, reject only true binary (null bytes); tolerate invalid
+    # UTF-8 sequences (e.g. Latin-1 content) by replacing them.
+    if b"\x00" in raw[:8192]:
         raise HTTPException(400, "file is not text and cannot be edited")
-    content = raw.decode("utf-8")
+    content = raw.decode("utf-8", errors="ignore")
     fmt = doc_format_for_name(f.name)
     svc = ProjectFsService(db, project)
     try:

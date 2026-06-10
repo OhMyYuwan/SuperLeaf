@@ -41,6 +41,7 @@ export interface ProjectTreeChangePayload {
   doc_id?: string
   file_id?: string
   name?: string
+  format?: 'tex' | 'md' | 'txt'
 }
 
 interface FilesystemState {

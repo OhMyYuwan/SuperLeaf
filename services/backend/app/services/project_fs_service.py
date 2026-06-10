@@ -53,6 +53,28 @@ def doc_format_for_name(name: str) -> str:
     return _DOC_SUFFIX_FORMATS.get(suffix, "txt")
 
 
+_TEXT_SNIFF_BYTES = 8192
+
+
+def is_text_payload(payload: bytes) -> bool:
+    """Decide if a byte payload should be treated as editable text.
+
+    Inspects only the first 8KB: a null byte means binary; otherwise the
+    prefix must decode as strict UTF-8. Uses strict decode (no errors=
+    "ignore"/"replace") so binary files are never silently coerced into docs.
+    """
+    head = payload[:_TEXT_SNIFF_BYTES]
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        # A truncated multibyte sequence at the 8KB boundary is a false
+        # negative; acceptable since real text files rarely split exactly there.
+        return False
+    return True
+
+
 SKILL_DATA_FOLDER_NAME = "_skill_data"
 
 

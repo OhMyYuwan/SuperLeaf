@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.project_fs_service import doc_format_for_name  # is_text_payload added in Task 2
+from app.services.project_fs_service import doc_format_for_name, is_text_payload
 
 
 class TestDocFormatForName:
@@ -25,3 +25,30 @@ class TestDocFormatForName:
 
     def test_uppercase_extension_is_normalized(self) -> None:
         assert doc_format_for_name("MAIN.TEX") == "tex"
+
+
+class TestIsTextPayload:
+    def test_plain_utf8_text_is_text(self) -> None:
+        assert is_text_payload("hello world\n".encode("utf-8")) is True
+
+    def test_utf8_with_multibyte_chars_is_text(self) -> None:
+        assert is_text_payload("中文内容 αβγ\n".encode("utf-8")) is True
+
+    def test_empty_payload_is_text(self) -> None:
+        assert is_text_payload(b"") is True
+
+    def test_payload_with_null_byte_is_binary(self) -> None:
+        assert is_text_payload(b"PK\x03\x04\x00\x00") is False
+
+    def test_invalid_utf8_is_binary(self) -> None:
+        # 0xa3 is a lone continuation byte — invalid UTF-8 start.
+        assert is_text_payload(b"\xa3\xa3\xa3") is False
+
+    def test_png_header_is_binary(self) -> None:
+        png_magic = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        assert is_text_payload(png_magic) is False
+
+    def test_only_first_8kb_is_inspected(self) -> None:
+        # 8KB of valid text, then a null byte beyond the window -> still text.
+        payload = (b"a" * 8192) + b"\x00"
+        assert is_text_payload(payload) is True

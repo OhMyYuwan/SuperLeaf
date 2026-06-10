@@ -66,6 +66,36 @@ class DifyClient:
             mode=data.get("mode", "workflow"),
         )
 
+    async def upload_file(self, blob: bytes, mime: str, name: str, user: str) -> str:
+        """Upload a file to Dify's /files/upload and return upload_file_id.
+
+        Args:
+            blob: file bytes
+            mime: MIME type (e.g., "image/png")
+            name: original filename
+            user: user identifier for Dify's logging
+
+        Returns:
+            upload_file_id from Dify's response
+
+        Raises:
+            DifyError if upload fails
+        """
+        url = f"{self.endpoint}/files/upload"
+        files = {
+            "file": (name, blob, mime),
+        }
+        data = {"user": user}
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            resp = await client.post(url, headers=self._headers, files=files, data=data)
+            if resp.status_code != 201:
+                raise DifyError(resp.status_code, resp.text[:400])
+            result = resp.json()
+            upload_id = str(result.get("id") or "")
+            if not upload_id:
+                raise DifyError(resp.status_code, "Dify upload returned no id")
+            return upload_id
+
     # ------------------------------------------------------------------ run
 
     def is_chat_mode(self, mode: str) -> bool:

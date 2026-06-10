@@ -100,6 +100,7 @@ class NativeRunPayload:
     context_files: list[dict[str, Any]] = field(default_factory=list)
     prior_messages: list[dict[str, Any]] = field(default_factory=list)
     allow_project_context: bool = False
+    multimodal_attachments: list[Any] = field(default_factory=list)  # ResolvedAttachment from multimodal_attachments module
 
 
 class NativeAgentRunner:
@@ -117,7 +118,7 @@ class NativeAgentRunner:
             timeout=60.0,
         )
         system_prompt = self._system_prompt(payload)
-        user_prompt = self._user_prompt(payload)
+        user_message = self._build_user_message(payload)
         in_workflow_chat = bool(payload.prior_messages)
         allow_project_context = _payload_allows_project_context(payload)
         session_id = None if in_workflow_chat else (payload.conversation_id or None)
@@ -139,7 +140,7 @@ class NativeAgentRunner:
             async for evt in self._stream_with_workspace_tools(
                 client,
                 system_prompt,
-                user_prompt,
+                user_message,
                 session_id,
                 payload,
                 project_context_only=in_workflow_chat and allow_project_context,
@@ -148,13 +149,19 @@ class NativeAgentRunner:
                 yield evt
             return
 
+        # Build messages list with proper content format
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            *payload.prior_messages,
+        ]
+        if isinstance(user_message, dict):
+            messages.append(user_message)
+        else:
+            messages.append({"role": "user", "content": user_message})
+
         async for evt in client.run_streaming(
             model=self.config.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *payload.prior_messages,
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             session_id=session_id,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -474,7 +481,15 @@ class NativeAgentRunner:
             )
         return "\n".join(part for part in parts if part is not None).strip()
 
-    def _user_prompt(self, payload: NativeRunPayload) -> str:
+    def _build_user_message(self, payload: NativeRunPayload) -> dict[str, Any] | str:
+        """Build user message content for OpenAI Chat Completions.
+
+        Returns either:
+        - Plain string when no multimodal attachments
+        - {"role": "user", "content": [text_part, ...image_parts]} when multimodal
+        """
+        from .multimodal_attachments import to_openai_chat_content_parts
+
         inputs = payload.inputs or {}
         selection_text = str(inputs.get("target_text") or payload.query or "").strip()
         instruction = str(inputs.get("instruction") or payload.query or "").strip()
@@ -523,13 +538,37 @@ class NativeAgentRunner:
         file_block = render_attached_files_block(attached_files)
         if file_block:
             parts.extend(["", file_block])
-        return "\n".join(parts).strip()
+
+        text_content = "\n".join(parts).strip()
+
+        # If no multimodal attachments, return plain string (backward compat)
+        if not payload.multimodal_attachments:
+            return text_content
+
+        # Build OpenAI content parts: text + multimodal
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_content}]
+        multimodal_parts = to_openai_chat_content_parts(payload.multimodal_attachments)
+        content_parts.extend(multimodal_parts)
+
+        return {"role": "user", "content": content_parts}
+
+    def _user_prompt(self, payload: NativeRunPayload) -> str:
+        """Legacy wrapper for _build_user_message when only text is needed."""
+        msg = self._build_user_message(payload)
+        if isinstance(msg, str):
+            return msg
+        # Extract text from content parts
+        if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            for part in msg["content"]:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    return str(part.get("text", ""))
+        return ""
 
     async def _stream_with_workspace_tools(
         self,
         client: NanobotClient,
         system_prompt: str,
-        user_prompt: str,
+        user_message: dict[str, Any] | str,
         session_id: str | None,
         payload: NativeRunPayload,
         *,
@@ -539,8 +578,12 @@ class NativeAgentRunner:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *payload.prior_messages,
-            {"role": "user", "content": user_prompt},
         ]
+        if isinstance(user_message, dict):
+            messages.append(user_message)
+        else:
+            messages.append({"role": "user", "content": user_message})
+
         mcp_refs = (
             []
             if project_context_only or skill_only

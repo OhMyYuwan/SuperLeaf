@@ -39,6 +39,20 @@ _DOC_SUFFIX_FORMATS = {
     ".markdown": "md",
     ".txt": "txt",
 }
+
+
+def doc_format_for_name(name: str) -> str:
+    """Return the editor highlight format for a text doc by its filename.
+
+    Maps known suffixes to tex/md; every other (text) file defaults to txt.
+    The text/binary split is decided separately by is_text_payload — this
+    function only chooses the highlight language for files already known to
+    be text.
+    """
+    suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    return _DOC_SUFFIX_FORMATS.get(suffix, "txt")
+
+
 SKILL_DATA_FOLDER_NAME = "_skill_data"
 
 

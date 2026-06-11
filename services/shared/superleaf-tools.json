@@ -113,6 +113,28 @@
   ],
   "tools": [
     {
+      "name": "superleaf_list_projects",
+      "description": "List all SuperLeaf projects the authenticated user can access. Returns project id, name, type, role, and updated_at. Use this first in token-authenticated mode to discover available projects, then call superleaf_select_project to set the active one.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "superleaf_select_project",
+      "description": "Set the active project for this MCP session. After calling this, project_list_docs, project_read_doc, project_grep, and project_outline will default to operating on this project. Required in token-authenticated mode before using other project tools.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "The project id to make active."
+          }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
       "name": "project_list_docs",
       "description": "List all documents in the current SuperLeaf project. Returns id, name, format, folder_id, and updated_at. Use this to discover related files before reading or editing.",
       "inputSchema": {

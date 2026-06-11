@@ -73,6 +73,7 @@ def run_migrations(engine: Engine) -> None:
         _add_archived_at_to_annotations(conn)
         _create_annotation_agent_suggestion_table(conn)
         _create_registration_invite_table(conn)
+        _create_mcp_tokens_table(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -358,6 +359,40 @@ def _create_registration_invite_table(conn) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_registration_invites_created_by_user_id "
             "ON registration_invites(created_by_user_id)"
+        )
+    )
+
+
+def _create_mcp_tokens_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS mcp_tokens (
+                id VARCHAR(32) NOT NULL PRIMARY KEY,
+                user_id VARCHAR(32) NOT NULL,
+                name VARCHAR(128) DEFAULT '',
+                token_hash VARCHAR(64) NOT NULL,
+                token_hint VARCHAR(16) DEFAULT '',
+                scope VARCHAR(16) DEFAULT 'read',
+                created_at DATETIME,
+                expires_at DATETIME,
+                last_used_at DATETIME,
+                last_used_ip VARCHAR(64) DEFAULT '',
+                revoked_at DATETIME
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_mcp_tokens_token_hash "
+            "ON mcp_tokens(token_hash)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_mcp_tokens_user_id "
+            "ON mcp_tokens(user_id)"
         )
     )
 

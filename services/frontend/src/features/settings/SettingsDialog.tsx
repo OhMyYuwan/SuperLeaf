@@ -28,6 +28,7 @@ import {
   LATEX_EDITOR_THEME_PRESETS,
   type LatexEditorThemeId,
 } from '../latex-editor/theme'
+import { McpTokenSettings } from './McpTokenSettings'
 import './settings.css'
 
 interface SettingsDialogProps {
@@ -35,7 +36,7 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type SettingsTab = 'account' | 'editor' | 'providers'
+type SettingsTab = 'account' | 'editor' | 'providers' | 'mcp-tokens'
 
 const DEFAULT_DIFY_LOCAL_ENDPOINT = 'http://localhost:8080/v1'
 const LOCAL_AGENT_PROVIDER_KINDS = new Set<ProviderDraft['kind']>(['nanobot', 'codex-local', 'claude-local'])
@@ -102,6 +103,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             >
               Agent
             </button>
+            <button
+              className={activeTab === 'mcp-tokens' ? 'active' : ''}
+              onClick={() => setActiveTab('mcp-tokens')}
+              role="tab"
+              aria-selected={activeTab === 'mcp-tokens'}
+            >
+              MCP Token
+            </button>
           </div>
 
           <div className="settings-body">
@@ -114,6 +123,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
             {activeTab === 'editor' && (
               <EditorAppearanceSettings />
+            )}
+
+            {activeTab === 'mcp-tokens' && (
+              <McpTokenSettings />
             )}
 
             {activeTab === 'providers' && (

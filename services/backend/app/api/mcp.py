@@ -44,12 +44,33 @@ from .deps import McpAuthContext, get_current_user, get_mcp_auth
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
+
+def _is_dangerous_regex(pattern: str) -> bool:
+    """Heuristic check for catastrophic backtracking patterns (ReDoS).
+
+    Rejects patterns with nested quantifiers that can cause exponential
+    backtracking on long strings: (a+)+, (a*)+, (a+)*, (a|a)+, etc.
+    This is a conservative heuristic; it may reject some safe patterns.
+    """
+    # Reject nested quantifiers: +/*/? immediately following a closing paren or bracket
+    # that itself contains a quantifier
+    danger_patterns = [
+        r"\([^)]*[+*?][^)]*\)[+*?]",  # (...)+ or (...)* or (...)?*
+        r"\[[^\]]*[+*?][^\]]*\][+*?]",  # [...]+ or ...
+    ]
+    for danger in danger_patterns:
+        if re.search(danger, pattern):
+            return True
+    return False
+
 # Mirror the native agent tool kernel limits so MCP and in-browser tools behave
 # identically.
 _READ_LIMIT = 20_000
 _GREP_DEFAULT_LIMIT = 50
 _GREP_HARD_LIMIT = 200
 _GREP_PREVIEW_CHARS = 240
+_GREP_MAX_PATTERN_LENGTH = 500  # Reject overly complex regex patterns
+_GREP_MAX_DOC_CHARS = 500_000  # Skip documents exceeding this size (ReDoS mitigation)
 _LIST_LIMIT = 500
 
 
@@ -228,6 +249,15 @@ def mcp_grep(
     db: Session = Depends(get_session),
 ) -> McpGrepOut:
     _require_project_access(db, project_id, ctx.user.id)
+
+    # ReDoS mitigation: reject overly long or complex patterns
+    if len(pattern) > _GREP_MAX_PATTERN_LENGTH:
+        raise HTTPException(400, f"regex pattern too long (max {_GREP_MAX_PATTERN_LENGTH} chars)")
+
+    # Heuristic check for catastrophic backtracking patterns
+    if _is_dangerous_regex(pattern):
+        raise HTTPException(400, "regex pattern rejected: potential catastrophic backtracking")
+
     try:
         regex = re.compile(pattern, re.MULTILINE)
     except re.error as exc:
@@ -243,6 +273,9 @@ def mcp_grep(
     hits: list[McpGrepHit] = []
     for row in rows:
         content = row.content or ""
+        # ReDoS mitigation: skip excessively large documents
+        if len(content) > _GREP_MAX_DOC_CHARS:
+            continue
         for m in regex.finditer(content):
             line_start = content.rfind("\n", 0, m.start()) + 1
             line_end = content.find("\n", m.end())

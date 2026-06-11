@@ -23,6 +23,7 @@ from ..models import McpToken, User
 TOKEN_PREFIX = "slmcp_"
 _TOKEN_BYTES = 32  # 32 random bytes -> 43 url-safe base64 chars
 MAX_TOKENS_PER_USER = 25
+_LAST_USED_THROTTLE_SECONDS = 60  # Only update last_used_at if older than this
 
 
 def _hash_token(plaintext: str) -> str:
@@ -116,9 +117,19 @@ class McpTokenService:
         user = self.db.get(User, row.user_id)
         if user is None or user.is_disabled:
             return None
-        row.last_used_at = datetime.utcnow()
-        row.last_used_ip = ip or ""
-        self.db.commit()
+
+        # Throttle last_used_at updates to reduce SQLite write contention.
+        # Only update if it's been more than _LAST_USED_THROTTLE_SECONDS since last update.
+        now = datetime.utcnow()
+        should_update = (
+            row.last_used_at is None
+            or (now - row.last_used_at).total_seconds() >= _LAST_USED_THROTTLE_SECONDS
+        )
+        if should_update:
+            row.last_used_at = now
+            row.last_used_ip = ip or ""
+            self.db.commit()
+
         return user, row
 
 

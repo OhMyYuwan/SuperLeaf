@@ -47,6 +47,7 @@ import {
 import { MentionInput, type MentionInputHandle } from '../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
+import { showToast } from '../shared/toast'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
@@ -94,6 +95,7 @@ export function AnnotationPanel({
 }: AnnotationPanelProps) {
   const itemsById = useAnnotationStore((s) => s.items)
   const createUserComment = useAnnotationStore((s) => s.createUserComment)
+  const recoverRangesForDocument = useAnnotationStore((s) => s.recoverRangesForDocument)
   const runWorkflow = useWorkflowStore((s) => s.run)
   const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const definitions = useWorkflowStore((s) => s.definitions)
@@ -101,6 +103,7 @@ export function AnnotationPanel({
   const documents = useDocumentStore((s) => s.documents)
   const [showArchived, setShowArchived] = useState(false)
   const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
+  const [recoveringRanges, setRecoveringRanges] = useState(false)
 
   const fileCandidates = useMemo(() => flattenFileCandidates(tree), [tree])
   // Pin the currently-open document to the top of the file list (marked
@@ -147,6 +150,28 @@ export function AnnotationPanel({
         return bTime - aTime
       })
   }, [itemsById, documentId])
+
+  const handleRecoverRanges = () => {
+    if (!documentId) return
+    const currentText = documents[documentId]?.content ?? ''
+    setRecoveringRanges(true)
+    try {
+      const summary = recoverRangesForDocument(documentId, currentText)
+      if (summary.total === 0) {
+        showToast('当前文档没有可修复的批注', { level: 'info' })
+      } else if (summary.recovered > 0 && summary.needsReview > 0) {
+        showToast(`已修复 ${summary.recovered} 个批注位置；${summary.needsReview} 个需要人工确认`, { level: 'warning' })
+      } else if (summary.recovered > 0) {
+        showToast(`已修复 ${summary.recovered} 个批注位置`, { level: 'success' })
+      } else if (summary.needsReview > 0) {
+        showToast(`${summary.needsReview} 个批注位置需要人工确认`, { level: 'warning' })
+      } else {
+        showToast('批注位置正常', { level: 'success' })
+      }
+    } finally {
+      setRecoveringRanges(false)
+    }
+  }
 
   const handleSubmitComment = async ({
     content,
@@ -273,14 +298,27 @@ export function AnnotationPanel({
         />
       )}
 
-      {archivedItems.length > 0 && (
-        <button
-          className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
-          onClick={() => setShowArchived((v) => !v)}
-        >
-          <Archive size={13} />
-          已归档 ({archivedItems.length})
-        </button>
+      {(items.length > 0 || archivedItems.length > 0) && (
+        <div className="ann-panel-actions">
+          <button
+            className="ann-panel-tool"
+            onClick={handleRecoverRanges}
+            disabled={recoveringRanges}
+            title="根据当前文档重新定位漂移的批注"
+          >
+            <RotateCcw size={13} />
+            {recoveringRanges ? '修复中' : '修复位置'}
+          </button>
+          {archivedItems.length > 0 && (
+            <button
+              className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              <Archive size={13} />
+              已归档 ({archivedItems.length})
+            </button>
+          )}
+        </div>
       )}
 
       {showArchived ? (

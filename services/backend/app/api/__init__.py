@@ -13,6 +13,7 @@ from . import (
     github,
     health,
     major_versions,
+    mcp,
     native_agents,
     notifications,
     projects,
@@ -46,3 +47,4 @@ api_router.include_router(major_versions.router)
 api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
 api_router.include_router(notifications.router)
+api_router.include_router(mcp.router)

@@ -8,12 +8,15 @@ someone else.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Project, User
+from ..models import McpToken, Project, User
 from ..services.auth_service import AuthService
+from ..services.mcp_token_service import McpTokenService
 from ..services.project_member_service import ProjectMemberService
 
 
@@ -97,3 +100,61 @@ def require_write_access(
     if not member_svc.can_write(x_project_id, user.id):
         raise HTTPException(403, "Read-only access")
     return project
+
+
+# ---------------------------------------------------------------------------
+# MCP token authentication (IDE/CLI clients)
+#
+# These dependencies resolve a `Authorization: Bearer slmcp_...` header to a
+# user via the mcp_tokens table, completely independent of the browser session
+# cookie. The resolved context carries the token scope so write tools can be
+# gated without a second lookup.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class McpAuthContext:
+    user: User
+    token: McpToken
+
+    @property
+    def scope(self) -> str:
+        return self.token.scope or "read"
+
+    @property
+    def can_write(self) -> bool:
+        return self.scope == "write"
+
+
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        return ""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return ""
+    return token.strip()
+
+
+def get_mcp_auth(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_session),
+) -> McpAuthContext:
+    """Resolve an MCP bearer token to its owning user, or raise 401."""
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(401, "Missing MCP bearer token")
+    client_ip = request.client.host if request.client else ""
+    resolved = McpTokenService(db).verify_token(token, ip=client_ip or "")
+    if resolved is None:
+        raise HTTPException(401, "Invalid or expired MCP token")
+    user, row = resolved
+    return McpAuthContext(user=user, token=row)
+
+
+def require_mcp_write(
+    ctx: McpAuthContext = Depends(get_mcp_auth),
+) -> McpAuthContext:
+    if not ctx.can_write:
+        raise HTTPException(403, "This MCP token is read-only (scope=read)")
+    return ctx

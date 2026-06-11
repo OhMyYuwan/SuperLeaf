@@ -203,7 +203,7 @@ class GitHubService:
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+                body = json.loads(resp.read().decode("utf-8", errors="replace"))
         except Exception as exc:  # pragma: no cover - network/runtime path
             raise GitHubError(f"GitHub OAuth 交换失败：{exc}") from exc
         if "error" in body:
@@ -279,7 +279,7 @@ class GitHubService:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 scope = resp.headers.get("X-OAuth-Scopes", "")
-                return json.loads(resp.read().decode("utf-8")), scope
+                return json.loads(resp.read().decode("utf-8", errors="replace")), scope
         except Exception as exc:  # pragma: no cover - network/runtime path
             raise GitHubError(f"GitHub API 请求失败：{exc}") from exc
 
@@ -293,7 +293,7 @@ class GitHubService:
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             try:
@@ -334,6 +334,8 @@ class GitHubService:
                     cwd=cwd,
                     env=env,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     check=False,

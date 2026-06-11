@@ -39,6 +39,8 @@ rules:
     - services/frontend/.vite/
     - services/collab-server/node_modules/
     - services/collab-server/dist/
+    - services/local-agent-host/node_modules/
+    - services/local-agent-host/dist/
     - services/backend/.venv/
     - services/backend/**/__pycache__/
     - services/backend/.pytest_cache/
@@ -85,6 +87,11 @@ rules:
     - services/backend/app/services/nanobot_client.py
     - services/backend/app/services/mcp_tool_service.py
     - services/backend/app/services/project_archive_service.py
+    - services/backend/app/services/github_service.py
+    - services/backend/app/services/latex_compiler.py
+    - services/backend/app/services/skill_marketplace_service.py
+    - services/backend/app/services/skill_npx_installer.py
+    - services/local-agent-host/server.mjs
     - services/frontend/src/features/right-panel/TeamTab.tsx
     - services/frontend/src/pages/DataProjectPage.tsx
     - services/frontend/src/features/latex-editor/LatexEditor.tsx
@@ -165,6 +172,42 @@ rules:
           - services/frontend/src/stores/settingsStore.ts
         expand_when:
           - provider kinds, model probing, API key handling, or provider UI changes
+      local-agent-host:
+        start_with:
+          - services/local-agent-host/server.mjs
+          - services/local-agent-host/README.md
+          - services/local-agent-host/package.json
+          - services/local-agent-host/superleaf-tools.mjs
+          - services/local-agent-host/backend-mcp-client.mjs
+          - services/backend/app/api/native_agents.py
+          - services/frontend/src/features/right-panel/TeamTab.tsx
+          - services/frontend/src/stores/nativeAgentStore.ts
+        expand_when:
+          - Codex, Claude, Nanobot, MCP, or browser bridge behavior changes
+          - Local Agent Host package/download/update metadata changes
+          - user-machine localhost connectivity, CORS, origin, or startup scripts change
+          - reports confuse host packaging with server-side host execution
+      all-in-one-image:
+        start_with:
+          - services/all-in-one/Dockerfile
+          - services/all-in-one/entrypoint.sh
+          - services/all-in-one/nginx.conf
+          - services/backend/Dockerfile
+          - services/backend/app/api/native_agents.py
+        expand_when:
+          - Docker packaging, image contents, entrypoint process topology, or Local Agent Host bundle-in-image behavior changes
+      external-io-decoding:
+        start_with:
+          - services/backend/app/services/sse_decode.py
+          - services/backend/app/services/project_archive_service.py
+          - services/backend/app/services/github_service.py
+          - services/backend/app/services/latex_compiler.py
+          - services/backend/app/services/skill_npx_installer.py
+          - services/backend/app/services/skill_marketplace_service.py
+          - services/backend/app/services/mcp_catalog_service.py
+          - services/backend/app/services/native_agent_runner.py
+        expand_when:
+          - UnicodeDecodeError, invalid UTF-8 bytes, 0xA3, subprocess output decoding, SSE decoding, or remote catalog/API decode failures are reported
       secrets:
         start_with:
           - services/backend/app/secrets_vault.py

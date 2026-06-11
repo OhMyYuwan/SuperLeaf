@@ -261,6 +261,10 @@ class TestRenameReturnsFormat:
 
 import io
 import zipfile
+from types import SimpleNamespace
+
+from app.services.agent_registry_service import AgentRegistryService
+from app.services.agent_workspace_service import list_agent_workspace_files
 
 
 def _make_zip(entries: dict[str, bytes]) -> bytes:
@@ -289,3 +293,64 @@ class TestZipImportSplitsByContent:
         svc.replace_from_zip(blob)
         files = {f.name for f in db.query(FileBlob).filter(FileBlob.project_id == project.id)}
         assert "logo.png" in files
+
+    def test_macos_metadata_files_are_ignored(self, db: Session, project: Project) -> None:
+        from app.models import FileBlob
+
+        svc = ProjectFsService(db, project)
+        appledouble = bytes.fromhex(
+            "00051607000200004d6163204f5320582020202020202020"
+            "000200000009000000320000007100000002000000a3"
+        )
+        blob = _make_zip(
+            {
+                "__MACOSX/._main.tex": appledouble,
+                "._main.tex": appledouble,
+                ".DS_Store": appledouble,
+                "main.tex": b"hello",
+            }
+        )
+
+        svc.replace_from_zip(blob)
+
+        docs = {d.name for d in db.query(Doc).filter(Doc.project_id == project.id)}
+        files = {f.name for f in db.query(FileBlob).filter(FileBlob.project_id == project.id)}
+        assert docs == {"main.tex"}
+        assert files == set()
+
+    def test_text_import_ignores_invalid_tail_bytes(self, db: Session, project: Project) -> None:
+        svc = ProjectFsService(db, project)
+        blob = _make_zip({"main.tex": (b"a" * 8192) + b"\xa3 suffix"})
+
+        svc.replace_from_zip(blob)
+
+        doc = db.query(Doc).filter(Doc.project_id == project.id, Doc.name == "main.tex").one()
+        assert doc.content == ("a" * 8192) + " suffix"
+
+
+class TestAgentWorkspaceMetadataFiles:
+    def test_workspace_tree_ignores_macos_metadata_files(self, tmp_path) -> None:
+        root = tmp_path / "agent"
+        skills = root / ".agents" / "skills"
+        skills.mkdir(parents=True)
+        (root / ".agents" / "AGENT.md").write_text("# Agent\n", encoding="utf-8")
+        (root / ".agents" / "._AGENT.md").write_bytes(b"\x00\x05\x16\x07" + (b"0" * 41) + b"\xa3")
+        (skills / "._example.skillref.json").write_bytes(b"\x00\x05\x16\x07" + (b"0" * 41) + b"\xa3")
+
+        paths = {item.path for item in list_agent_workspace_files(root)}
+
+        assert ".agents/AGENT.md" in paths
+        assert ".agents/._AGENT.md" not in paths
+        assert ".agents/skills/._example.skillref.json" not in paths
+
+    def test_agent_registry_ignores_invalid_macos_skillref(self, tmp_path) -> None:
+        skills = tmp_path / ".agents" / "skills"
+        skill = skills / "valid-skill"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: Valid Skill\n---\nBody\n", encoding="utf-8")
+        (skills / "._bad.skillref.json").write_bytes(b"\x00\x05\x16\x07" + (b"0" * 41) + b"\xa3")
+
+        agent = SimpleNamespace(workspace_path=str(tmp_path))
+        blocks = AgentRegistryService(None).skill_blocks_for_native_agent(agent, user_id="u1")
+
+        assert [block.name for block in blocks] == ["Valid Skill"]

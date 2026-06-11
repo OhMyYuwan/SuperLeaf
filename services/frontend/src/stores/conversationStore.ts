@@ -1834,9 +1834,11 @@ function handleMessageEvent(
     const reason = String(data.reason ?? '')
 
     // Resolve conversation context for the annotation
-    const sourceConversationId = conversationId
-    const agentName = String(data.agent_name ?? 'Agent')
-    const workflowId = sourceConversationId
+    const {
+      sourceConversationId,
+      workflowId,
+      agentName,
+    } = resolveSuggestionAnnotationContext(conversationId, data)
 
     const annStore = useAnnotationStore.getState()
     const annotationId = annStore.createFromAgent({
@@ -1855,5 +1857,21 @@ function handleMessageEvent(
     // The actual review happens in the annotation panel
     // eslint-disable-next-line no-console
     console.log('[conversationStore] Created suggestion annotation:', annotationId)
+  }
+}
+
+export function resolveSuggestionAnnotationContext(
+  conversationId: string,
+  data: Record<string, unknown> = {},
+): { sourceConversationId: string; workflowId: string; agentName: string } {
+  const conv = useConversationStore.getState().conversations[conversationId]
+  const workflowIdFromEvent = String(data.workflow_id ?? '').trim()
+  const workflowId = workflowIdFromEvent || conv?.workflow_id || conversationId
+  const workflow = useWorkflowStore.getState().workflows.find((item) => item.id === workflowId)
+  const agentNameFromEvent = String(data.agent_name ?? '').trim()
+  return {
+    sourceConversationId: conversationId,
+    workflowId,
+    agentName: agentNameFromEvent || workflow?.name || 'Agent',
   }
 }

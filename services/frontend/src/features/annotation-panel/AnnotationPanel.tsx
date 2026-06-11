@@ -26,6 +26,7 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useUserStore } from '../../stores/userStore'
 import { useDocumentStore } from '../../stores/documentStore'
+import { useConversationStore } from '../../stores/conversationStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
 import { EvaluationPanel } from './EvaluationPanel'
@@ -358,10 +359,15 @@ function AnnotationCard({
   const runWorkflow = useWorkflowStore((s) => s.run)
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
-  const isRunning = useWorkflowStore((s) => s.running[item.workflowId])
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
   const documentFormat = useDocumentStore((s) => s.documents[item.documentId]?.format)
+  const conversationWorkflowId = useConversationStore((s) =>
+    item.conversationId ? s.conversations[item.conversationId]?.workflow_id ?? '' : '',
+  )
+  const directAgent = agents.find((a) => a.id === item.workflowId)
+  const effectiveWorkflowId = directAgent ? item.workflowId : (conversationWorkflowId || item.workflowId)
+  const isRunning = useWorkflowStore((s) => s.running[effectiveWorkflowId])
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -405,11 +411,11 @@ function AnnotationCard({
   }
 
   const handleEnableAgent = async () => {
-    if (!item.workflowId) return
+    if (!effectiveWorkflowId) return
     const agentName = item.agentName || 'Agent'
     if (!confirm(`重新激活 Agent「${agentName}」？激活后将重新出现在 @mention 列表中。`)) return
     setEnablingAgent(true)
-    await enableWorkflow(item.workflowId)
+    await enableWorkflow(effectiveWorkflowId)
     await loadWorkflows()
     setEnablingAgent(false)
   }
@@ -422,7 +428,7 @@ function AnnotationCard({
     setComposerOpen(false)
 
     // For user comments without agent, just append to thread (self-discussion)
-    if (isUserComment && !item.workflowId) {
+    if (isUserComment && !effectiveWorkflowId) {
       return
     }
 
@@ -457,7 +463,7 @@ function AnnotationCard({
     })
 
     await runWorkflow(
-      item.workflowId,
+      effectiveWorkflowId,
       {
         document_id: item.documentId,
         range_start: item.range.from,
@@ -480,13 +486,13 @@ function AnnotationCard({
   const isOwner = item.userId === currentUserId
   const isPublished = item.isGlobal
   // Check if the agent is still active (not disabled and exists)
-  const agent = agents.find((a) => a.id === item.workflowId)
+  const agent = directAgent ?? agents.find((a) => a.id === effectiveWorkflowId)
   const agentActive = agent && !agent.is_disabled
   const agentDisabled = isOwner && agent && agent.is_disabled
-  const agentDeleted = isOwner && !agent && !!item.workflowId
+  const agentDeleted = isOwner && !agent && !!effectiveWorkflowId
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
-  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!item.workflowId && agentActive))
+  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!effectiveWorkflowId && agentActive))
   const autoReplySuggestion = latestSuggestion(autoReplyRows)
 
   const handleRegenerateAutoReply = async () => {
@@ -622,7 +628,7 @@ function AnnotationCard({
             workflows={workflowCandidatesForCard}
             files={fileCandidatesForCard}
             placeholder={
-              isUserComment && !item.workflowId
+              isUserComment && !effectiveWorkflowId
                 ? '追加评论（自我讨论）'
                 : '向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？'
             }
@@ -655,7 +661,7 @@ function AnnotationCard({
             <Trash2 size={14} />
           </button>
         )}
-        {isOwner && (item.workflowId || item.kind === 'suggestion') && (
+        {isOwner && (effectiveWorkflowId || item.kind === 'suggestion') && (
           <button
             className={`ann-btn publish ${isPublished ? 'active' : ''}`}
             onClick={() => publish(item.id)}
@@ -679,7 +685,7 @@ function AnnotationCard({
             className="ann-btn continue"
             onClick={() => setComposerOpen((v) => !v)}
             disabled={isRunning}
-            title={isUserComment && !item.workflowId ? "追加评论" : "向 Agent 追问"}
+            title={isUserComment && !effectiveWorkflowId ? "追加评论" : "向 Agent 追问"}
           >
             <MessageSquarePlus size={14} />
           </button>

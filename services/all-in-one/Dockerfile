@@ -40,6 +40,8 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 ARG INSTALL_TEXLIVE=true
 ARG APP_UID=10001
 ARG APP_GID=10001
+ARG APT_MIRROR=http://deb.debian.org/debian
+ARG APT_SECURITY_MIRROR=http://deb.debian.org/debian-security
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -62,8 +64,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g; s|http://deb.debian.org/debian|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
       bash \
       ca-certificates \
       curl \
@@ -71,7 +74,7 @@ RUN apt-get update && \
       gosu \
       nginx-light && \
     if [ "${INSTALL_TEXLIVE}" = "true" ]; then \
-      apt-get install -y --no-install-recommends \
+      apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
         latexmk \
         biber \
         ghostscript \

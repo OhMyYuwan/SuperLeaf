@@ -28,6 +28,8 @@ import {
 } from './theme'
 import { spellingFor } from './spelling'
 import { setLatexCompletionDataEffect } from './latex-language'
+import { mathPreview } from './math-preview'
+import './math-preview.css'
 import type {
   LatexCitationCompletion,
   LatexCommandCompletion,
@@ -100,6 +102,7 @@ export interface LatexEditorProps {
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
   themeId?: LatexEditorThemeId
+  mathPreviewEnabled?: boolean
 }
 
 export function LatexEditor({
@@ -126,6 +129,7 @@ export function LatexEditor({
   labelCompletions,
   commandCompletions,
   themeId = DEFAULT_LATEX_EDITOR_THEME_ID,
+  mathPreviewEnabled = false,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -141,6 +145,7 @@ export function LatexEditor({
   const shortcutsCompartment = useMemo(() => new Compartment(), [])
   const spellingCompartment = useMemo(() => new Compartment(), [])
   const themeCompartment = useMemo(() => new Compartment(), [])
+  const mathPreviewCompartment = useMemo(() => new Compartment(), [])
   const completionData = useMemo<LatexCompletionData>(
     () => ({
       citations: citationCompletions ?? [],
@@ -239,6 +244,7 @@ export function LatexEditor({
         languageCompartment.of(languageFor(format, completionData)),
         shortcutsCompartment.of(shortcutKeymapFor(format)),
         spellingCompartment.of(spellingFor(format)),
+        mathPreviewCompartment.of(mathPreviewEnabled ? mathPreview() : []),
         annotationDecorationsExtension({
           onPick: (id) => onDecorationClickRef.current?.(id),
         }),
@@ -320,6 +326,14 @@ export function LatexEditor({
       effects: themeCompartment.reconfigure(latexEditorTheme(themeId)),
     })
   }, [themeCompartment, themeId])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: mathPreviewCompartment.reconfigure(mathPreviewEnabled ? mathPreview() : []),
+    })
+  }, [mathPreviewCompartment, mathPreviewEnabled])
 
   useEffect(() => {
     if (!collaborating || !yText) return

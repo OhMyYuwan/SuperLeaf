@@ -54,6 +54,7 @@ def doc_format_for_name(name: str) -> str:
 
 
 _TEXT_SNIFF_BYTES = 8192
+_IGNORED_METADATA_NAMES = {".DS_Store", "Thumbs.db"}
 
 
 def is_text_payload(payload: bytes) -> bool:
@@ -611,7 +612,7 @@ class ProjectFsService:
             if not file_path.is_file():
                 continue
             rel = file_path.relative_to(root)
-            if ".git" in rel.parts:
+            if _is_ignored_import_path(rel):
                 continue
             for part in rel.parts:
                 validate_project_entry_name(part, field="import entry name")
@@ -653,7 +654,7 @@ class ProjectFsService:
             byte_count += len(payload)
             parent = ensure_folder(rel.parent)
             if is_text_payload(payload):
-                content = payload.decode("utf-8")
+                content = payload.decode("utf-8", errors="ignore")
                 self.db.add(
                     Doc(
                         project_id=self.project.id,
@@ -840,11 +841,15 @@ def _safe_zip_member_path(name: str) -> Path | None:
 
 
 def _is_ignored_zip_member(path: Path) -> bool:
+    return _is_ignored_import_path(path)
+
+
+def _is_ignored_import_path(path: Path) -> bool:
     parts = path.parts
     return (
         "__MACOSX" in parts
         or ".git" in parts
-        or path.name in {".DS_Store", "Thumbs.db"}
+        or any(part in _IGNORED_METADATA_NAMES or part.startswith("._") for part in parts)
     )
 
 

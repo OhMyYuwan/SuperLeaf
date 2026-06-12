@@ -398,7 +398,7 @@ export function ProjectArchiveTab() {
         <div className="archive-section-head">
           <div>
             <h3><Archive size={14} /> 项目大版本</h3>
-            <p>编辑数据库是工作源；这里把整个项目树保存为服务器端归档快照。</p>
+            <p>编辑数据库是工作源；这里把整个项目树保存为服务器端归档快照。大型项目操作可能需要几分钟，超时限制为 5 分钟。</p>
           </div>
           <button className="small-btn" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} 刷新
@@ -440,7 +440,7 @@ export function ProjectArchiveTab() {
         <div className="archive-section-head">
           <div>
             <h3><GitBranch size={14} /> GitHub 大版本仓库</h3>
-            <p>只保存用户提供的仓库链接；上传时把服务器端归档 branch 推送过去。</p>
+            <p>只保存用户提供的仓库链接；上传时把服务器端归档 branch 推送过去。大型仓库操作可能需要几分钟，超时限制为 5 分钟。</p>
           </div>
         </div>
         <div className="archive-github-grid">

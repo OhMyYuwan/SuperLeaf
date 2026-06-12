@@ -14,6 +14,7 @@ project:
     - services/backend
     - services/frontend
     - services/collab-server
+    - services/local-agent-host
   branch_strategy:
     personal: YuwanZ
     team: develop
@@ -26,6 +27,8 @@ project:
     - yuwanlab.db
     - yuwanlab-archive
     - yuwanlab runtime/lab identifiers
+  local_agent_host_rule: services/local-agent-host is a downloadable user-machine bridge for Codex/Claude/Nanobot. Images may copy it so backend APIs can package it, but all-in-one runtime must not be assumed to auto-start it unless an explicit topology change is approved.
+  external_io_decoding_rule: external command output and remote catalog/API bytes should be decoded as UTF-8 with replacement at integration boundaries so invalid bytes surface as U+FFFD rather than raw UnicodeDecodeError crashes.
 
 modules:
   # ── ACP governance ──────────────────────────────────────────────
@@ -228,6 +231,37 @@ modules:
       - services/backend/WORKFLOW_COMPLETE_TEST_REPORT.md
       - services/backend/WORKFLOW_TEST_RESULTS.md
 
+  - id: local-agent-host
+    path: services/local-agent-host
+    kind: user-machine-agent-bridge
+    description: Downloadable localhost bridge that runs on the user's machine and connects SuperLeaf browser/backend flows to user-local Codex, Claude, Nanobot, SuperLeaf MCP tools, and browser-executed tool calls.
+    entry_files:
+      - services/local-agent-host/server.mjs
+      - services/local-agent-host/backend-mcp-client.mjs
+      - services/local-agent-host/superleaf-tools.mjs
+      - services/local-agent-host/package.json
+      - services/local-agent-host/README.md
+      - services/local-agent-host/start-local-agent-host.sh
+      - services/local-agent-host/start-local-agent-host.command
+      - services/local-agent-host/start-local-agent-host.cmd
+      - services/local-agent-host/start-local-agent-host.ps1
+      - services/local-agent-host/scripts/package.mjs
+    owning_runtime:
+      - services/backend/app/api/native_agents.py
+      - services/backend/app/services/mcp_tool_service.py
+      - services/frontend/src/features/right-panel/TeamTab.tsx
+      - services/frontend/src/stores/nativeAgentStore.ts
+
+  - id: all-in-one-image
+    path: services/all-in-one
+    kind: deploy-image
+    description: Docker image that serves frontend, backend, and collab-server together. It copies Local Agent Host source for packaging/download support but entrypoint starts backend, collab, and nginx only.
+    entry_files:
+      - services/all-in-one/Dockerfile
+      - services/all-in-one/entrypoint.sh
+      - services/all-in-one/nginx.conf
+    topology_note: Local Agent Host is not a resident all-in-one process; changing that is a topology/security boundary change.
+
   # ── Frontend application ────────────────────────────────────────
   - id: frontend-app
     path: services/frontend
@@ -269,7 +303,10 @@ modules:
   - id: frontend-page-data-project
     path: services/frontend/src/pages
     kind: product-page
-    description: Data Project labeling and packaging surface: source rules, record queue, record inspector, label schema/settings panel, sync/export actions, and compact save toasts.
+    description: >
+      Data Project labeling and packaging surface: source rules, record queue,
+      record inspector, label schema/settings panel, sync/export actions, and
+      compact save toasts.
     entry_files:
       - services/frontend/src/pages/DataProjectPage.tsx
       - services/frontend/src/pages/data-project.css
@@ -361,7 +398,7 @@ modules:
   - id: frontend-feature-latex-editor
     path: services/frontend/src/features/latex-editor
     kind: feature-module
-    description: CodeMirror 6 LaTeX editor, search panel, spell checking, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, and annotation decorations.
+    description: CodeMirror 6 LaTeX editor, search panel, spell checking, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, annotation decorations, and cursor-triggered MathJax v3 formula preview tooltip.
     entry_files:
       - services/frontend/src/features/latex-editor/LatexEditor.tsx
       - services/frontend/src/features/latex-editor/SelectionToolbar.tsx
@@ -375,6 +412,9 @@ modules:
       - services/frontend/src/features/latex-editor/collaboration-extensions.ts
       - services/frontend/src/features/latex-editor/annotation-decorations.ts
       - services/frontend/src/features/latex-editor/theme.ts
+      - services/frontend/src/features/latex-editor/math-preview.ts
+      - services/frontend/src/features/latex-editor/math-detection.ts
+      - services/frontend/src/features/latex-editor/mathjax-loader.ts
 
   - id: frontend-feature-workspace-center
     path: services/frontend/src/features/workspace-center
@@ -663,6 +703,7 @@ capability_routes:
     supporting_modules:
       - frontend-feature-workspace-center
       - frontend-feature-history
+      - frontend-feature-settings
       - frontend-stores
       - frontend-services
 

@@ -126,7 +126,17 @@ function dispatch(evt: ProjectEvent, currentUserId: string): void {
     case 'annotation.updated': {
       const raw = p.annotation as AnnotationDto | undefined
       if (!raw || !raw.id) return
-      useAnnotationStore.getState().applyRemoteAnnotationUpsert(annotationFromDto(raw))
+      const incoming = annotationFromDto(raw)
+      const annotationState = useAnnotationStore.getState()
+      const collabDocId = useCollaborationStore.getState().currentDocId
+      if (
+        evt.type === 'annotation.updated' &&
+        collabDocId === incoming.documentId &&
+        isRangeOnlyAnnotationUpdate(annotationState.items[incoming.id], incoming)
+      ) {
+        return
+      }
+      annotationState.applyRemoteAnnotationUpsert(incoming)
       if (raw.doc_id) void useAnnotationAgentSuggestionStore.getState().hydrateForDoc(raw.doc_id)
       return
     }
@@ -159,6 +169,37 @@ function dispatch(evt: ProjectEvent, currentUserId: string): void {
       // Unknown event types are ignored; the server may add more.
       return
   }
+}
+
+export function isRangeOnlyAnnotationUpdate(
+  current: AnnotationItem | undefined,
+  incoming: AnnotationItem,
+): boolean {
+  if (!current) return false
+  const rangeChanged =
+    current.range.from !== incoming.range.from || current.range.to !== incoming.range.to
+  if (!rangeChanged) return false
+  return (
+    current.id === incoming.id &&
+    current.documentId === incoming.documentId &&
+    current.userId === incoming.userId &&
+    current.isGlobal === incoming.isGlobal &&
+    current.workflowId === incoming.workflowId &&
+    current.agentName === incoming.agentName &&
+    current.kind === incoming.kind &&
+    current.status === incoming.status &&
+    current.targetText === incoming.targetText &&
+    current.content === incoming.content &&
+    current.severity === incoming.severity &&
+    (current.original ?? '') === (incoming.original ?? '') &&
+    (current.proposed ?? '') === (incoming.proposed ?? '') &&
+    (current.reason ?? '') === (incoming.reason ?? '') &&
+    (current.riskType ?? '') === (incoming.riskType ?? '') &&
+    (current.mitigation ?? '') === (incoming.mitigation ?? '') &&
+    (current.conversationId ?? '') === (incoming.conversationId ?? '') &&
+    JSON.stringify(current.thread) === JSON.stringify(incoming.thread) &&
+    JSON.stringify(current.attachedFiles ?? []) === JSON.stringify(incoming.attachedFiles ?? [])
+  )
 }
 
 function scheduleTreeReload(): void {

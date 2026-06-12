@@ -96,3 +96,7 @@ docs/superpowers/
 services/frontend/src/__tests__/
 services/backend/test/
 docs/analysis/
+deploy/package-local.sh
+.gitignore
+deploy/upload-release.sh
+deploy/update-server.sh

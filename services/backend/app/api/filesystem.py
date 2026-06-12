@@ -439,7 +439,7 @@ async def upload_file(
     # Text-like uploads (decodable, no null bytes) go into `docs` so they can
     # be opened in the editor. Everything else stays a binary FileBlob.
     if is_text_payload(blob):
-        content = blob.decode("utf-8")
+        content = blob.decode("utf-8", errors="ignore")
         fmt = doc_format_for_name(name)
         try:
             d = svc.create_doc(folder_id=folder_id, name=name, format=fmt, content=content)

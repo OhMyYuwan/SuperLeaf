@@ -260,7 +260,7 @@ def _read_json_url(url: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except HTTPError as exc:
         raise McpCatalogError(f"Failed to read MCP catalog URL {url}: HTTP {exc.code}") from exc
     except Exception as exc:  # noqa: BLE001

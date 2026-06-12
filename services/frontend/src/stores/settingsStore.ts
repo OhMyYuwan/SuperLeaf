@@ -15,6 +15,7 @@ import {
 
 const PROJECT_LIST_GROUPING_KEY = 'yuwanlab.projectListGrouping'
 const LATEX_EDITOR_THEME_KEY = 'yuwanlab.latexEditorTheme'
+const MATH_PREVIEW_KEY = 'yuwanlab.mathPreview'
 
 export type ProjectListGrouping = 'grouped' | 'mixed'
 
@@ -29,10 +30,16 @@ function readInitialLatexEditorTheme(): LatexEditorThemeId {
   return isLatexEditorThemeId(stored) ? stored : DEFAULT_LATEX_EDITOR_THEME_ID
 }
 
+function readInitialMathPreview(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(MATH_PREVIEW_KEY) === 'true'
+}
+
 interface SettingsState {
   providers: Provider[]
   projectListGrouping: ProjectListGrouping
   latexEditorTheme: LatexEditorThemeId
+  mathPreview: boolean
   loading: boolean
   loaded: boolean
   error: string | null
@@ -47,6 +54,7 @@ interface SettingsState {
   getActive: () => Provider | null
   setProjectListGrouping: (grouping: ProjectListGrouping) => void
   setLatexEditorTheme: (theme: LatexEditorThemeId) => void
+  setMathPreview: (enabled: boolean) => void
   reset: () => void
 }
 
@@ -54,6 +62,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
   projectListGrouping: readInitialProjectListGrouping(),
   latexEditorTheme: readInitialLatexEditorTheme(),
+  mathPreview: readInitialMathPreview(),
   loading: false,
   loaded: false,
   error: null,
@@ -142,6 +151,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       window.localStorage.setItem(LATEX_EDITOR_THEME_KEY, theme)
     }
     set({ latexEditorTheme: theme })
+  },
+
+  setMathPreview: (enabled) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(MATH_PREVIEW_KEY, enabled ? 'true' : 'false')
+    }
+    set({ mathPreview: enabled })
   },
 
   reset: () => set({ providers: [], loaded: false, error: null }),

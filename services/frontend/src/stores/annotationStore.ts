@@ -19,7 +19,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Annotation, Risk, Suggestion } from '../types/agent'
 import type { ParsedAgentOutput } from '../services/outputParser'
-import { mapRange, mapRangeThrough, type DocChange } from '../services/rangeTracker'
+import { mapRangeThrough, type DocChange } from '../services/rangeTracker'
 import type { AttachedFile } from '../services/mentions'
 import { operationApi } from '../services/operationApi'
 import {
@@ -37,6 +37,10 @@ import { createUserScopedStorage } from './_userScopedStorage'
 import { showToast } from '../features/shared/toast'
 import { BackendError } from '../services/backendApi'
 import { projectEventStream } from '../services/projectEventStream'
+import {
+  recoverAnnotationRange,
+  type AnnotationRangeRecoveryResult,
+} from '../services/annotationRangeRecovery'
 
 let _getUserId: (() => string) | null = null
 export function registerUserIdGetter(fn: () => string) { _getUserId = fn }
@@ -44,27 +48,6 @@ function getCurrentUserId(): string { return _getUserId?.() ?? '' }
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
-}
-
-function shouldPersistMappedRange(
-  range: { from: number; to: number },
-  changes: DocChange[],
-): boolean {
-  let current = range
-  for (const change of changes) {
-    const overlapsRange = change.from < current.to && change.to > current.from
-    const insertsInsideRange =
-      change.from === change.to && change.from > current.from && change.from < current.to
-    const touchesCollapsedAnchor =
-      current.to <= current.from && change.from <= current.from && change.to >= current.from
-    const next = mapRange(current, change)
-    const collapsedByChange = next.to <= next.from && (next.from !== current.from || next.to !== current.to)
-    if (overlapsRange || insertsInsideRange || touchesCollapsedAnchor || collapsedByChange) {
-      return true
-    }
-    current = next
-  }
-  return false
 }
 
 function threadToDto(thread: ThreadMessage[]): AnnotationThreadMessageDto[] {
@@ -244,6 +227,14 @@ export interface AnnotationItem {
   archivedAt?: Date
 }
 
+export interface AnnotationRangeRecoverySummary {
+  total: number
+  stable: number
+  recovered: number
+  needsReview: number
+  results: Record<string, AnnotationRangeRecoveryResult>
+}
+
 interface AnnotationState {
   items: Record<string, AnnotationItem>
   // Track which workflow run produced which cards (used to clear/replace on re-run).
@@ -295,6 +286,7 @@ interface AnnotationState {
   restore: (id: string) => void
   publish: (id: string) => void
   applyDocumentChange: (documentId: string, changes: DocChange[]) => void
+  recoverRangesForDocument: (documentId: string, currentText: string) => AnnotationRangeRecoverySummary
   appendThread: (id: string, message: Omit<ThreadMessage, 'id' | 'createdAt'>) => void
   setConversationId: (id: string, conversationId: string) => void
 
@@ -621,19 +613,15 @@ export const useAnnotationStore = create<AnnotationState>()(
         const newRange = mapRangeThrough(item.range, changes)
         if (newRange.from !== item.range.from || newRange.to !== item.range.to) {
           items[id] = { ...item, range: newRange }
-          if (shouldPersistMappedRange(item.range, changes)) {
-            rangePatches.push({ id, from: newRange.from, to: newRange.to })
-          }
+          rangePatches.push({ id, from: newRange.from, to: newRange.to })
           changed = true
         }
       }
       return changed ? { items } : state
     })
-    // Range offsets are computed on-the-fly by other clients via
-    // mapRangeThrough as they receive doc.updated events; we don't push pure
-    // before-range typing offsets to the server. Edits that touch the annotated
-    // text itself are durable range changes, so persist them without changing
-    // card status.
+    // Persist every mapped offset shift. Yjs snapshots write only document
+    // text back to the backend; without these range-only patches, reloads and
+    // collaborators can see highlights drift after edits before a range.
     for (const patch of rangePatches) {
       patchAnnotationRemote(
         patch.id,
@@ -641,6 +629,52 @@ export const useAnnotationStore = create<AnnotationState>()(
         '同步批注位置',
       )
     }
+  },
+
+  recoverRangesForDocument: (documentId, currentText) => {
+    const rangePatches: Array<{ id: string; from: number; to: number }> = []
+    const results: Record<string, AnnotationRangeRecoveryResult> = {}
+    const summary: AnnotationRangeRecoverySummary = {
+      total: 0,
+      stable: 0,
+      recovered: 0,
+      needsReview: 0,
+      results,
+    }
+
+    set((state) => {
+      const items = { ...state.items }
+      let changed = false
+      for (const [id, item] of Object.entries(items)) {
+        if (item.documentId !== documentId) continue
+        if (item.status === 'deleted' || item.status === 'superseded') continue
+        const recovery = recoverAnnotationRange(item, currentText)
+        results[id] = recovery
+        summary.total += 1
+        if (recovery.status === 'stable') summary.stable += 1
+        else if (recovery.status === 'recovered') summary.recovered += 1
+        else summary.needsReview += 1
+
+        if (
+          recovery.status === 'recovered' &&
+          (recovery.range.from !== item.range.from || recovery.range.to !== item.range.to)
+        ) {
+          items[id] = { ...item, range: recovery.range }
+          rangePatches.push({ id, from: recovery.range.from, to: recovery.range.to })
+          changed = true
+        }
+      }
+      return changed ? { items } : state
+    })
+
+    for (const patch of rangePatches) {
+      patchAnnotationRemote(
+        patch.id,
+        { range_from: patch.from, range_to: patch.to },
+        '修复批注位置',
+      )
+    }
+    return summary
   },
 
   appendThread: (id, message) => {

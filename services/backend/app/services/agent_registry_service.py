@@ -63,6 +63,8 @@ class AgentRegistryService:
         out: list[NativeSkillBlock] = []
         seen: set[str] = set()
         for item in sorted(skills_dir.iterdir()):
+            if _is_macos_metadata_file(item):
+                continue
             # Direct skill folder with SKILL.md
             if item.is_dir() and (item / "SKILL.md").is_file():
                 folder_name = item.name
@@ -86,8 +88,8 @@ class AgentRegistryService:
             # .skillref.json pointing to a project skill cache
             elif item.is_file() and item.suffix == ".json" and item.stem.endswith(".skillref"):
                 try:
-                    ref = json.loads(item.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
+                    ref = json.loads(item.read_text(encoding="utf-8", errors="replace"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                     continue
                 target = ref.get("target_path", "")
                 folder_name = ref.get("folder_name", item.stem.replace(".skillref", ""))
@@ -167,10 +169,10 @@ def _read_skill_meta(folder: Path) -> dict:
     yaml_path = folder / "skill.yaml"
     if yaml_path.is_file():
         try:
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8", errors="replace"))
             if isinstance(data, dict):
                 return _normalize_meta(data)
-        except (OSError, yaml.YAMLError):
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
             pass
 
     # 2) Fall back to SKILL.md front matter
@@ -191,6 +193,10 @@ def _read_skill_meta(folder: Path) -> dict:
 
     logging.getLogger(__name__).warning("No metadata found for skill folder: %s", folder.name)
     return {}
+
+
+def _is_macos_metadata_file(path: Path) -> bool:
+    return path.name == ".DS_Store" or path.name.startswith("._")
 
 
 def _normalize_meta(data: dict) -> dict:

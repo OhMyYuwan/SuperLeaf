@@ -127,6 +127,7 @@ export function WorkspacePage() {
   const loadProviders = useSettingsStore((s) => s.load)
   const activeProvider = useSettingsStore((s) => s.providers.find((p) => p.is_active) ?? null)
   const latexEditorTheme = useSettingsStore((s) => s.latexEditorTheme)
+  const mathPreviewEnabled = useSettingsStore((s) => s.mathPreview)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const workflowError = useWorkflowStore((s) => s.error)
@@ -730,9 +731,26 @@ export function WorkspacePage() {
   }
 
   const handlePreviewSourceJump = (jump: SourceJump) => {
-    if (!activeDocumentId) return
     const to = jump.selectText ? jump.pos + jump.selectText.length : undefined
-    setEditorScrollTo({ documentId: activeDocumentId, pos: jump.pos, to, seq: Date.now() })
+    const fallbackDocumentId = activeDocumentId
+    const targetDocumentId = jump.documentId ?? fallbackDocumentId
+    if (!targetDocumentId) return
+    const applyJump = () => {
+      useDocumentStore.getState().setActive(targetDocumentId)
+      setEditorScrollTo({ documentId: targetDocumentId, pos: jump.pos, to, seq: Date.now() })
+    }
+
+    if (documents[targetDocumentId]) {
+      applyJump()
+      return
+    }
+
+    void loadBackendDoc(targetDocumentId)
+      .then(applyJump)
+      .catch(() => {
+        if (!fallbackDocumentId || fallbackDocumentId !== targetDocumentId) return
+        setEditorScrollTo({ documentId: fallbackDocumentId, pos: jump.pos, to, seq: Date.now() })
+      })
   }
 
   const handleSyncCodeToPdf = () => {
@@ -919,6 +937,7 @@ export function WorkspacePage() {
                           labelCompletions={labelCompletions}
                           commandCompletions={commandCompletions}
                           themeId={latexEditorTheme}
+                          mathPreviewEnabled={mathPreviewEnabled}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}

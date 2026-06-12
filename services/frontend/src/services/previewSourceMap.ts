@@ -1,4 +1,5 @@
 export interface SourceJump {
+  documentId?: string
   pos: number
   selectText?: string
 }

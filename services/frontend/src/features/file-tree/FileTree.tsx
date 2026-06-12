@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -19,6 +19,15 @@ import {
 } from 'lucide-react'
 import { filesystemApi, type ProjectTree, type TreeFolder, type TreeDoc, type TreeFile } from '../../services/filesystemApi'
 import { useProjectStore } from '../../stores/projectStore'
+import {
+  FOLDER_DRAG_EXPAND_DELAY_MS,
+  getDroppedFileReplaceConflicts,
+  getLocalDragPayloadKind,
+  getLocalDroppedFiles,
+  hasLocalFileDrag,
+  type LocalDragPayloadKind,
+  shouldAutoExpandFolderOnDrag,
+} from './dropUtils'
 
 // Helper function to get file icon based on format/extension
 function getFileIcon(name: string, format?: string) {
@@ -251,6 +260,16 @@ function FolderNode({
   const folderId = isRoot ? null : folder.id
 
   const [dragOver, setDragOver] = useState(false)
+  const [localDragPayloadKind, setLocalDragPayloadKind] = useState<LocalDragPayloadKind>(null)
+  const expandTimerRef = useRef<number | null>(null)
+
+  const clearExpandTimer = () => {
+    if (expandTimerRef.current === null) return
+    window.clearTimeout(expandTimerRef.current)
+    expandTimerRef.current = null
+  }
+
+  useEffect(() => clearExpandTimer, [])
 
   const handleDragStart = (
     e: React.DragEvent,
@@ -284,6 +303,21 @@ function FolderNode({
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
+    setLocalDragPayloadKind(null)
+    clearExpandTimer()
+    const localFiles = getLocalDroppedFiles(e.dataTransfer)
+    if (localFiles.length > 0) {
+      const conflicts = getDroppedFileReplaceConflicts(folder, localFiles)
+      if (conflicts.length > 0 && !confirmDroppedUploadReplace(conflicts)) return
+      try {
+        for (const file of localFiles) {
+          await onUploadFile(file, folderId)
+        }
+      } catch (err) {
+        console.error('upload dropped files failed', err)
+      }
+      return
+    }
     const payload = readDragPayload(e)
     if (!payload) return
     // No-op when dropping a folder onto itself.
@@ -296,11 +330,28 @@ function FolderNode({
   }
 
   const handleDragOverFolder = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes('application/x-ylw-entity')) return
+    const hasInternalEntity = e.dataTransfer.types.includes('application/x-ylw-entity')
+    const localPayloadKind = getLocalDragPayloadKind(e.dataTransfer)
+    const hasLocalFiles = localPayloadKind !== null || hasLocalFileDrag(e.dataTransfer)
+    if (!hasInternalEntity && !hasLocalFiles) return
     e.preventDefault()
     e.stopPropagation()
-    e.dataTransfer.dropEffect = 'move'
+    e.dataTransfer.dropEffect = hasLocalFiles ? 'copy' : 'move'
     if (!dragOver) setDragOver(true)
+    if (localDragPayloadKind !== localPayloadKind) setLocalDragPayloadKind(localPayloadKind)
+    if (
+      shouldAutoExpandFolderOnDrag({
+        canAcceptDrop: true,
+        expanded,
+        isRoot,
+      }) &&
+      expandTimerRef.current === null
+    ) {
+      expandTimerRef.current = window.setTimeout(() => {
+        expandTimerRef.current = null
+        onToggleFolder(folder.id)
+      }, FOLDER_DRAG_EXPAND_DELAY_MS)
+    }
   }
 
   const handleDragLeaveFolder = (e: React.DragEvent) => {
@@ -308,6 +359,8 @@ function FolderNode({
     const related = e.relatedTarget as Node | null
     if (related && e.currentTarget.contains(related)) return
     setDragOver(false)
+    setLocalDragPayloadKind(null)
+    clearExpandTimer()
   }
 
   const handleCreateSubFolder = async () => {
@@ -493,10 +546,10 @@ function FolderNode({
 
   if (isRoot) {
     return (
-      <div className={`tree-folder-block root ${dragOver ? 'drag-over' : ''}`}>
+      <div className={`tree-folder-block root ${dragOver ? 'drag-over' : ''} ${localDragPayloadKind === 'folder' ? 'drag-over-folder' : ''}`}>
         <div
           className="tree-root-drop-target"
-          title="拖到这里移动到项目根目录"
+          title="拖到这里上传到项目根目录，或移动项目内文件"
           onDragOver={handleDragOverFolder}
           onDragLeave={handleDragLeaveFolder}
           onDrop={handleDropOnFolder}
@@ -511,17 +564,16 @@ function FolderNode({
   }
 
   return (
-    <div
-      className={`tree-folder-block ${dragOver ? 'drag-over' : ''}`}
-      onDragOver={handleDragOverFolder}
-      onDragLeave={handleDragLeaveFolder}
-      onDrop={handleDropOnFolder}
-    >
+    <div className="tree-folder-block">
       <div
-        className="file-item tree-folder-row"
+        className={`file-item tree-folder-row ${dragOver ? 'drag-over' : ''} ${localDragPayloadKind === 'folder' ? 'drag-over-folder' : ''}`}
         style={{ paddingLeft: leftPad }}
+        title="拖本地文件到这里上传，或拖项目内文件到这里移动"
         draggable
         onDragStart={(e) => handleDragStart(e, 'folder', folder.id)}
+        onDragOver={handleDragOverFolder}
+        onDragLeave={handleDragLeaveFolder}
+        onDrop={handleDropOnFolder}
       >
         <button className="tree-toggle-btn" onClick={() => onToggleFolder(folder.id)}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -600,6 +652,15 @@ function confirmReplaceExisting(folder: TreeFolder, name: string, currentId?: st
 
 function confirmFolderUploadReplace(): boolean {
   return confirm('上传文件夹时，如果目标目录中已有同名文件，将会被替换。是否继续？')
+}
+
+function confirmDroppedUploadReplace(names: string[]): boolean {
+  if (names.length === 1) {
+    return confirm(`「${names[0]}」已存在。继续操作会替换现有文件，是否继续？`)
+  }
+  const preview = names.slice(0, 8).map((name) => `- ${name}`).join('\n')
+  const extra = names.length > 8 ? `\n等 ${names.length} 个文件` : ''
+  return confirm(`目标目录中已有同名文件：\n${preview}${extra}\n继续操作会替换现有文件，是否继续？`)
 }
 
 function inferFormat(name: string): 'tex' | 'md' | 'txt' {

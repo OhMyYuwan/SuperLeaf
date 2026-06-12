@@ -20,13 +20,15 @@ from .nanobot_client import NanobotClient
 from .native_agent_tool_kernel import (
     BROWSER_SUPERLEAF_TOOL_NAMES,
     NativeAgentToolContext,
-    NativeAgentToolResult as _ToolExecutionResult,
     browser_superleaf_tools,
     execute_native_agent_db_tool,
     execute_native_agent_local_tool,
     native_agent_project_context_tools,
     native_agent_skill_tools,
     native_agent_workspace_tools,
+)
+from .native_agent_tool_kernel import (
+    NativeAgentToolResult as _ToolExecutionResult,
 )
 
 
@@ -98,6 +100,7 @@ class NativeRunPayload:
     context_files: list[dict[str, Any]] = field(default_factory=list)
     prior_messages: list[dict[str, Any]] = field(default_factory=list)
     allow_project_context: bool = False
+    multimodal_attachments: list[Any] = field(default_factory=list)  # ResolvedAttachment from multimodal_attachments module
 
 
 class NativeAgentRunner:
@@ -105,13 +108,17 @@ class NativeAgentRunner:
         self.config = config
 
     async def stream(self, payload: NativeRunPayload) -> AsyncIterator[dict[str, Any]]:
+        # run_streaming itself uses timeout=None for the SSE channel; this value
+        # only affects probe()/list_models() and any future non-streaming calls.
+        # Keep it generous so a slow Local Agent Host bootstrap doesn't surface
+        # as a misleading network error.
         client = NanobotClient(
             endpoint=self.config.provider_endpoint,
             api_key=self.config.api_key,
-            timeout=30.0,
+            timeout=60.0,
         )
         system_prompt = self._system_prompt(payload)
-        user_prompt = self._user_prompt(payload)
+        user_message = self._build_user_message(payload)
         in_workflow_chat = bool(payload.prior_messages)
         allow_project_context = _payload_allows_project_context(payload)
         session_id = None if in_workflow_chat else (payload.conversation_id or None)
@@ -127,11 +134,13 @@ class NativeAgentRunner:
             },
         }
 
-        if self.config.workspace_root and (not in_workflow_chat or allow_project_context or self.config.skills):
+        if self.config.workspace_root and (
+            not in_workflow_chat or allow_project_context or self.config.skills
+        ):
             async for evt in self._stream_with_workspace_tools(
                 client,
                 system_prompt,
-                user_prompt,
+                user_message,
                 session_id,
                 payload,
                 project_context_only=in_workflow_chat and allow_project_context,
@@ -140,13 +149,19 @@ class NativeAgentRunner:
                 yield evt
             return
 
+        # Build messages list with proper content format
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            *payload.prior_messages,
+        ]
+        if isinstance(user_message, dict):
+            messages.append(user_message)
+        else:
+            messages.append({"role": "user", "content": user_message})
+
         async for evt in client.run_streaming(
             model=self.config.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *payload.prior_messages,
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             session_id=session_id,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -306,7 +321,8 @@ class NativeAgentRunner:
                     ),
                     (
                         "Annotation tool: when the user EXPLICITLY asks to create an annotation, "
-                        "suggestion card, or persistent note, call create_suggestion(original_text, content). "
+                        "suggestion card, or persistent note, call "
+                        "create_suggestion(original_text, content). "
                         "This creates a durable annotation in the annotation panel (saved to database). "
                         "Do NOT use create_suggestion for normal editing requests — use propose_doc_edit. "
                         "Only use create_suggestion when the user says things like "
@@ -465,7 +481,15 @@ class NativeAgentRunner:
             )
         return "\n".join(part for part in parts if part is not None).strip()
 
-    def _user_prompt(self, payload: NativeRunPayload) -> str:
+    def _build_user_message(self, payload: NativeRunPayload) -> dict[str, Any] | str:
+        """Build user message content for OpenAI Chat Completions.
+
+        Returns either:
+        - Plain string when no multimodal attachments
+        - {"role": "user", "content": [text_part, ...image_parts]} when multimodal
+        """
+        from .multimodal_attachments import to_openai_chat_content_parts
+
         inputs = payload.inputs or {}
         selection_text = str(inputs.get("target_text") or payload.query or "").strip()
         instruction = str(inputs.get("instruction") or payload.query or "").strip()
@@ -514,13 +538,37 @@ class NativeAgentRunner:
         file_block = render_attached_files_block(attached_files)
         if file_block:
             parts.extend(["", file_block])
-        return "\n".join(parts).strip()
+
+        text_content = "\n".join(parts).strip()
+
+        # If no multimodal attachments, return plain string (backward compat)
+        if not payload.multimodal_attachments:
+            return text_content
+
+        # Build OpenAI content parts: text + multimodal
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_content}]
+        multimodal_parts = to_openai_chat_content_parts(payload.multimodal_attachments)
+        content_parts.extend(multimodal_parts)
+
+        return {"role": "user", "content": content_parts}
+
+    def _user_prompt(self, payload: NativeRunPayload) -> str:
+        """Legacy wrapper for _build_user_message when only text is needed."""
+        msg = self._build_user_message(payload)
+        if isinstance(msg, str):
+            return msg
+        # Extract text from content parts
+        if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            for part in msg["content"]:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    return str(part.get("text", ""))
+        return ""
 
     async def _stream_with_workspace_tools(
         self,
         client: NanobotClient,
         system_prompt: str,
-        user_prompt: str,
+        user_message: dict[str, Any] | str,
         session_id: str | None,
         payload: NativeRunPayload,
         *,
@@ -530,9 +578,17 @@ class NativeAgentRunner:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *payload.prior_messages,
-            {"role": "user", "content": user_prompt},
         ]
-        mcp_refs = [] if project_context_only or skill_only else await discover_mcp_tools(self.config.runtime_config)
+        if isinstance(user_message, dict):
+            messages.append(user_message)
+        else:
+            messages.append({"role": "user", "content": user_message})
+
+        mcp_refs = (
+            []
+            if project_context_only or skill_only
+            else await discover_mcp_tools(self.config.runtime_config)
+        )
         mcp_tool_map = {ref.function_name: ref for ref in mcp_refs}
         if skill_only:
             base_tools = native_agent_skill_tools()
@@ -649,10 +705,11 @@ class NativeAgentRunner:
                 try:
                     result = await call_mcp_tool(ref, args)
                 except Exception as exc:  # noqa: BLE001
+                    detail = _format_tool_exception(exc)
                     return _mcp_failure_result(
                         ref,
-                        error_type=_mcp_error_type(f"{type(exc).__name__}: {exc}"),
-                        detail=f"{type(exc).__name__}: {exc}",
+                        error_type=_mcp_error_type(detail),
+                        detail=detail,
                     )
                 if _mcp_result_is_error(result):
                     detail = _mcp_error_detail(result)
@@ -664,7 +721,7 @@ class NativeAgentRunner:
                     )
                 return _ToolExecutionResult(result, tool_kind="mcp")
         except Exception as exc:  # noqa: BLE001
-            return _ToolExecutionResult(f"ERROR: {type(exc).__name__}: {exc}")
+            return _tool_exception_result(exc, failed_function_name=name)
         return _ToolExecutionResult(f"ERROR: unknown tool {name}")
 
     def _tool_context(self, payload: NativeRunPayload | None) -> NativeAgentToolContext:
@@ -677,6 +734,24 @@ class NativeAgentRunner:
             workspace_root=self.config.workspace_root,
             skills=self.config.skills,
         )
+
+
+def _tool_exception_result(exc: Exception, *, failed_function_name: str = "") -> _ToolExecutionResult:
+    return _ToolExecutionResult(
+        f"ERROR: {_format_tool_exception(exc)}",
+        failed=True,
+        failed_function_name=failed_function_name,
+    )
+
+
+def _format_tool_exception(exc: Exception) -> str:
+    if isinstance(exc, UnicodeDecodeError):
+        return (
+            "file content includes invalid UTF-8 bytes and this tool could not "
+            "recover automatically"
+        )
+    return f"{type(exc).__name__}: {exc}"
+
 
 def _mcp_failure_result(
     ref: McpToolRef,
@@ -830,7 +905,10 @@ def browser_nanobot_system_prompt() -> str:
         [
             "You are a local Nanobot Agent collaborating inside SuperLeaf.",
             "The browser is your transport; SuperLeaf backend executes project tools after authorization.",
-            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "Use project_read_doc, project_grep, project_outline, or project_list_docs "
+                "when you need SuperLeaf document context."
+            ),
             (
                 "Do not use your own local filesystem or shell as a substitute for SuperLeaf project tools. "
                 "SuperLeaf project context exists only through the tools listed in this prompt."
@@ -868,8 +946,15 @@ def browser_codex_system_prompt() -> str:
         [
             "You are a local Codex Agent collaborating inside SuperLeaf.",
             "You may use your normal local code and repository capabilities when relevant.",
-            "SuperLeaf project documents, comments, selections, and edit proposals are not your local filesystem; access them through the SuperLeaf tools listed in this prompt.",
-            "Use project_read_doc, project_grep, project_outline, or project_list_docs when you need SuperLeaf document context.",
+            (
+                "SuperLeaf project documents, comments, selections, and edit proposals "
+                "are not your local filesystem; access them through the SuperLeaf tools "
+                "listed in this prompt."
+            ),
+            (
+                "Use project_read_doc, project_grep, project_outline, or project_list_docs "
+                "when you need SuperLeaf document context."
+            ),
             (
                 "If native MCP/function tools are available, call the SuperLeaf tool directly. "
                 "Only if no direct tool channel is available, request one SuperLeaf tool by replying "
@@ -878,7 +963,8 @@ def browser_codex_system_prompt() -> str:
                 "Replace name and arguments as needed."
             ),
             (
-                "When the user asks you to modify a SuperLeaf document, first read the relevant text if needed, "
+                "When the user asks you to modify a SuperLeaf document, "
+                "first read the relevant text if needed, "
                 "then call propose_doc_edit with original_text copied verbatim from project_read_doc, "
                 "range_start/range_end as hints, replacement new_text, and a short reason."
             ),

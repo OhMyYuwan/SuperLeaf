@@ -242,7 +242,7 @@ class SkillMarketplaceService:
             raise SkillMarketplaceError(f"Skill marketplace request failed: HTTP {exc.code}") from exc
         except Exception as exc:  # pragma: no cover - runtime/network path
             raise SkillMarketplaceError(f"Skill marketplace request failed: {exc}") from exc
-        return raw.decode("utf-8")
+        return raw.decode("utf-8", errors="replace")
 
     def _entry_from_raw(self, raw: dict) -> MarketplaceEntry:
         path = str(raw.get("path") or "").strip()

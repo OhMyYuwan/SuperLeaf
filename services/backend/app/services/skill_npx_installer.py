@@ -71,6 +71,8 @@ class SkillNpxInstaller:
                     cwd=tmp_path,
                     env=env,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     capture_output=True,
                     timeout=180,
                     check=False,

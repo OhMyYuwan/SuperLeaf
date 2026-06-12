@@ -8,6 +8,42 @@ nav_order: 99
 
 这个文件记录短时间内不进入第一版、但未来需要继续推进的能力。
 
+## 上线前安全加固
+
+这些项在本地/小团队部署阶段风险可控，**正式公网上线前需要补上**。
+
+### 登录端点速率限制（优先）
+
+**现状**：`/api/auth/login`（`services/backend/app/api/auth.py`）对任何人开放，没有速率限制、失败计数或账户锁定。攻击者无需注册，只要知道一个已注册邮箱（如管理员邮箱）就能无限次尝试密码。
+
+**为什么现阶段可以暂缓**：注册已强制邀请码（`public_registration` 默认 `False`），密码用 bcrypt 12 rounds 哈希，单次尝试本身较慢，本地/可信网络部署下爆破窗口有限。注意：邀请码只挡注册，挡不住对已有账号的密码爆破，这是两件独立的事。
+
+**上线前要做**：
+- 接入 `slowapi` 或等价中间件，对 `/login` 按 IP + 邮箱做速率限制
+- 增加失败计数与临时账户锁定（如连续 N 次失败后指数退避）
+- 可选：登录失败统一返回相同错误信息，避免用户枚举（当前已是 "Invalid email or password"，保持即可）
+
+### 项目归档并发兜底（低优先）
+
+**现状**：归档端点已限制为 owner-only（`archives.py` 的 `_require_owner`），消除了多人同时归档的场景。但同一 owner 自己并发触发仍有竞态——两个标签页同时点、或快速双击，会让两个请求并发跑 `_export_project_tree()`（`services/backend/app/services/project_archive_service.py`），互相 `rmtree` 删文件、git add/commit 干扰。
+
+**为什么现阶段可以暂缓**：单用户/小团队触发概率低。
+
+**上线前要做（择一即可）**：
+- 前端：归档按钮在请求进行中禁用 + loading 态
+- 后端：给 `ProjectArchiveSnapshot.commit_sha` 加唯一约束，挡住重复提交
+- 更彻底：归档入口加 `asyncio.Lock` 或数据库行级锁（`SELECT ... FOR UPDATE`）
+
+### MCP 沙箱补完（中优先）
+
+详见安全审阅结论，两处部分修复待补：
+- **环境变量注入**：`services/backend/app/services/mcp_tool_service.py` 的 stdio MCP 允许用户配置任意 env，可注入 `PATH`/`LD_LIBRARY_PATH`/`PYTHONPATH` 绕过命令白名单。需加危险变量黑名单。
+- **DNS rebinding（TOCTOU）**：`mcp_policy.py` 的 `validate_remote_endpoint` 只在配置时解析校验一次，实际请求时二次 DNS 解析可被改指向私网。需在请求时锁定已验证 IP（httpx custom transport）。
+
+### CORS 收紧（上线前确认）
+
+`services/backend/app/settings.py` 的 `cors_origin_regex` 默认放行整个私有网段（`10/8`、`172.16/12`、`192.168/16`）用于开发便利。公网或共享网络部署前必须通过环境配置覆盖为显式前端域名白名单。
+
 ## SuperLeaf MCP 架构迭代
 
 详细方案见 [SuperLeaf MCP 构建方案](./superleaf-mcp-architecture-plan.html)。

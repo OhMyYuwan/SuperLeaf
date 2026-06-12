@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from .services.project_entry_name import validate_project_entry_name
 
 
 class ProviderIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    kind: str = Field(pattern="^(dify-local|dify-cloud|claude-direct|claude-local|nanobot|native|codex-local)$")
+    kind: str = Field(
+        pattern="^(dify-local|dify-cloud|claude-direct|claude-local|nanobot|native|codex-local)$"
+    )
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1, max_length=1024)
     activate: bool = False
@@ -19,8 +23,14 @@ class ProviderIn(BaseModel):
     codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
     codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
     codex_service_tier: str | None = Field(default=None, max_length=64)
-    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
-    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_sandbox: str | None = Field(
+        default=None,
+        pattern="^(read-only|workspace-write|danger-full-access)$",
+    )
+    codex_approval_policy: str | None = Field(
+        default=None,
+        pattern="^(never|untrusted|on-request|on-failure)$",
+    )
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
     codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
     codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
@@ -39,8 +49,14 @@ class ProviderUpdate(BaseModel):
     codex_effort: str | None = Field(default=None, pattern="^(none|minimal|low|medium|high|xhigh)$")
     codex_summary: str | None = Field(default=None, pattern="^(none|auto|concise|detailed)$")
     codex_service_tier: str | None = Field(default=None, max_length=64)
-    codex_sandbox: str | None = Field(default=None, pattern="^(read-only|workspace-write|danger-full-access)$")
-    codex_approval_policy: str | None = Field(default=None, pattern="^(never|untrusted|on-request|on-failure)$")
+    codex_sandbox: str | None = Field(
+        default=None,
+        pattern="^(read-only|workspace-write|danger-full-access)$",
+    )
+    codex_approval_policy: str | None = Field(
+        default=None,
+        pattern="^(never|untrusted|on-request|on-failure)$",
+    )
     codex_prompt_mode: str | None = Field(default=None, pattern="^(fast-edit|full-agent)$")
     codex_tool_mode: str | None = Field(default=None, pattern="^(mcp-first|browser-preflight|marker-only)$")
     codex_context_mode: str | None = Field(default=None, pattern="^(legacy-blocks|lease)$")
@@ -925,6 +941,11 @@ class FolderCreateIn(BaseModel):
     parent_folder_id: str | None = None
     name: str = Field(min_length=1, max_length=256)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
+
 
 class FolderOut(BaseModel):
     id: str
@@ -943,6 +964,11 @@ class DocCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     format: str = Field(pattern="^(tex|md|txt)$")
     content: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_project_entry_name(value)
 
 
 class DocUpdateIn(BaseModel):
@@ -1041,6 +1067,20 @@ class CompileSyncToPdfOut(BaseModel):
     height: float | None = None
     line: int
     column: int
+
+
+class CompileSyncFromPdfIn(BaseModel):
+    page: int
+    x: float
+    y: float
+
+
+class CompileSyncFromPdfOut(BaseModel):
+    document_id: str
+    offset: int
+    line: int
+    column: int
+    source_path: str
 
 
 class ProjectCompileSettingsIn(BaseModel):
@@ -1629,3 +1669,101 @@ class NotificationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# MCP access tokens (IDE/CLI clients)
+# ---------------------------------------------------------------------------
+
+
+class McpTokenCreateIn(BaseModel):
+    name: str = Field(default="", max_length=128)
+    # 'read' | 'write'
+    scope: str = Field(default="read")
+    # Days until expiry; 0 / None means no expiry.
+    expires_in_days: int | None = Field(default=30, ge=0, le=365)
+
+    @field_validator("scope")
+    @classmethod
+    def _check_scope(cls, value: str) -> str:
+        normalized = (value or "read").strip().lower()
+        if normalized not in {"read", "write"}:
+            raise ValueError("scope must be 'read' or 'write'")
+        return normalized
+
+
+class McpTokenOut(BaseModel):
+    id: str
+    name: str
+    scope: str
+    token_hint: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class McpTokenCreateOut(BaseModel):
+    """Returned exactly once on creation; carries the plaintext token."""
+
+    token: McpTokenOut
+    plaintext: str
+
+
+class McpProjectOut(BaseModel):
+    id: str
+    name: str
+    project_type: str
+    my_role: str
+    main_doc_id: str = ""
+    updated_at: datetime
+
+
+class McpDocOut(BaseModel):
+    id: str
+    name: str
+    format: str
+    folder_id: str = ""
+    updated_at: datetime | None = None
+
+
+class McpDocContentOut(BaseModel):
+    doc_id: str
+    name: str
+    format: str
+    total_length: int
+    range_start: int
+    range_end: int
+    content: str
+    truncated: bool
+
+
+class McpGrepHit(BaseModel):
+    doc_id: str
+    doc_name: str
+    format: str
+    offset: int
+    line: int
+    preview: str
+
+
+class McpGrepOut(BaseModel):
+    hits: list[McpGrepHit]
+    truncated: bool
+
+
+class McpOutlineSection(BaseModel):
+    level: int
+    title: str
+    offset: int
+
+
+class McpOutlineOut(BaseModel):
+    doc_id: str
+    name: str
+    format: str
+    sections: list[McpOutlineSection]

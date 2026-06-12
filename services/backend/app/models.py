@@ -92,6 +92,37 @@ class RegistrationInvite(Base):
     note: Mapped[str] = mapped_column(Text, default="")
 
 
+class McpToken(Base):
+    """Long-lived MCP access token for IDE/CLI clients.
+
+    Unlike the browser session cookie, this token lets an external MCP client
+    (Codex, Claude Code, VS Code, etc.) authenticate directly against the
+    backend without a browser context. Only the SHA-256 hash is persisted; the
+    plaintext is shown to the user exactly once at creation/rotation time, so a
+    leaked database backup cannot be replayed as a working token.
+
+    Scope is intentionally coarse for now: ``read`` allows project/doc listing,
+    reading, grep, and outline; ``write`` additionally allows suggestion/edit
+    tools. Revocation flips ``revoked_at`` rather than deleting the row so the
+    user keeps an audit trail in the tokens UI.
+    """
+
+    __tablename__ = "mcp_tokens"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hint: Mapped[str] = mapped_column(String(16), default="")
+    # 'read' | 'write'
+    scope: Mapped[str] = mapped_column(String(16), default="read")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_ip: Mapped[str] = mapped_column(String(64), default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class GitHubAccount(Base):
     """User-scoped GitHub authorization.
 

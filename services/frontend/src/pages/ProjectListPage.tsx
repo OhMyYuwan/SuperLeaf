@@ -455,6 +455,9 @@ function GitHubImportDialog({
       onOpenChange={onOpenChange}
     >
       <form onSubmit={handleSubmit} className="project-form">
+        <div className="project-form-note">
+          大型仓库导入可能需要几分钟，超时限制为 5 分钟。
+        </div>
         <label className="project-form-label">
           GitHub 仓库链接
           <input

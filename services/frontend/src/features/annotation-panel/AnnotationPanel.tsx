@@ -26,6 +26,7 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
 import { useUserStore } from '../../stores/userStore'
 import { useDocumentStore } from '../../stores/documentStore'
+import { useConversationStore } from '../../stores/conversationStore'
 import type { CachedWorkflow } from '../../services/backendApi'
 import { CommentComposer } from './CommentComposer'
 import { EvaluationPanel } from './EvaluationPanel'
@@ -46,6 +47,7 @@ import {
 import { MentionInput, type MentionInputHandle } from '../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
+import { showToast } from '../shared/toast'
 import './annotation-panel.css'
 
 interface AnnotationPanelProps {
@@ -93,6 +95,7 @@ export function AnnotationPanel({
 }: AnnotationPanelProps) {
   const itemsById = useAnnotationStore((s) => s.items)
   const createUserComment = useAnnotationStore((s) => s.createUserComment)
+  const recoverRangesForDocument = useAnnotationStore((s) => s.recoverRangesForDocument)
   const runWorkflow = useWorkflowStore((s) => s.run)
   const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const definitions = useWorkflowStore((s) => s.definitions)
@@ -100,6 +103,7 @@ export function AnnotationPanel({
   const documents = useDocumentStore((s) => s.documents)
   const [showArchived, setShowArchived] = useState(false)
   const [compareCluster, setCompareCluster] = useState<AnnotationItem[] | null>(null)
+  const [recoveringRanges, setRecoveringRanges] = useState(false)
 
   const fileCandidates = useMemo(() => flattenFileCandidates(tree), [tree])
   // Pin the currently-open document to the top of the file list (marked
@@ -146,6 +150,28 @@ export function AnnotationPanel({
         return bTime - aTime
       })
   }, [itemsById, documentId])
+
+  const handleRecoverRanges = () => {
+    if (!documentId) return
+    const currentText = documents[documentId]?.content ?? ''
+    setRecoveringRanges(true)
+    try {
+      const summary = recoverRangesForDocument(documentId, currentText)
+      if (summary.total === 0) {
+        showToast('当前文档没有可修复的批注', { level: 'info' })
+      } else if (summary.recovered > 0 && summary.needsReview > 0) {
+        showToast(`已修复 ${summary.recovered} 个批注位置；${summary.needsReview} 个需要人工确认`, { level: 'warning' })
+      } else if (summary.recovered > 0) {
+        showToast(`已修复 ${summary.recovered} 个批注位置`, { level: 'success' })
+      } else if (summary.needsReview > 0) {
+        showToast(`${summary.needsReview} 个批注位置需要人工确认`, { level: 'warning' })
+      } else {
+        showToast('批注位置正常', { level: 'success' })
+      }
+    } finally {
+      setRecoveringRanges(false)
+    }
+  }
 
   const handleSubmitComment = async ({
     content,
@@ -272,14 +298,27 @@ export function AnnotationPanel({
         />
       )}
 
-      {archivedItems.length > 0 && (
-        <button
-          className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
-          onClick={() => setShowArchived((v) => !v)}
-        >
-          <Archive size={13} />
-          已归档 ({archivedItems.length})
-        </button>
+      {(items.length > 0 || archivedItems.length > 0) && (
+        <div className="ann-panel-actions">
+          <button
+            className="ann-panel-tool"
+            onClick={handleRecoverRanges}
+            disabled={recoveringRanges}
+            title="根据当前文档重新定位漂移的批注"
+          >
+            <RotateCcw size={13} />
+            {recoveringRanges ? '修复中' : '修复位置'}
+          </button>
+          {archivedItems.length > 0 && (
+            <button
+              className={`ann-archive-toggle ${showArchived ? 'active' : ''}`}
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              <Archive size={13} />
+              已归档 ({archivedItems.length})
+            </button>
+          )}
+        </div>
       )}
 
       {showArchived ? (
@@ -358,10 +397,15 @@ function AnnotationCard({
   const runWorkflow = useWorkflowStore((s) => s.run)
   const enableWorkflow = useWorkflowStore((s) => s.enableWorkflow)
   const loadWorkflows = useWorkflowStore((s) => s.load)
-  const isRunning = useWorkflowStore((s) => s.running[item.workflowId])
   const tree = useFilesystemStore((s) => s.tree)
   const definitions = useWorkflowStore((s) => s.definitions)
   const documentFormat = useDocumentStore((s) => s.documents[item.documentId]?.format)
+  const conversationWorkflowId = useConversationStore((s) =>
+    item.conversationId ? s.conversations[item.conversationId]?.workflow_id ?? '' : '',
+  )
+  const directAgent = agents.find((a) => a.id === item.workflowId)
+  const effectiveWorkflowId = directAgent ? item.workflowId : (conversationWorkflowId || item.workflowId)
+  const isRunning = useWorkflowStore((s) => s.running[effectiveWorkflowId])
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -405,11 +449,11 @@ function AnnotationCard({
   }
 
   const handleEnableAgent = async () => {
-    if (!item.workflowId) return
+    if (!effectiveWorkflowId) return
     const agentName = item.agentName || 'Agent'
     if (!confirm(`重新激活 Agent「${agentName}」？激活后将重新出现在 @mention 列表中。`)) return
     setEnablingAgent(true)
-    await enableWorkflow(item.workflowId)
+    await enableWorkflow(effectiveWorkflowId)
     await loadWorkflows()
     setEnablingAgent(false)
   }
@@ -422,7 +466,7 @@ function AnnotationCard({
     setComposerOpen(false)
 
     // For user comments without agent, just append to thread (self-discussion)
-    if (isUserComment && !item.workflowId) {
+    if (isUserComment && !effectiveWorkflowId) {
       return
     }
 
@@ -457,7 +501,7 @@ function AnnotationCard({
     })
 
     await runWorkflow(
-      item.workflowId,
+      effectiveWorkflowId,
       {
         document_id: item.documentId,
         range_start: item.range.from,
@@ -480,13 +524,13 @@ function AnnotationCard({
   const isOwner = item.userId === currentUserId
   const isPublished = item.isGlobal
   // Check if the agent is still active (not disabled and exists)
-  const agent = agents.find((a) => a.id === item.workflowId)
+  const agent = directAgent ?? agents.find((a) => a.id === effectiveWorkflowId)
   const agentActive = agent && !agent.is_disabled
   const agentDisabled = isOwner && agent && agent.is_disabled
-  const agentDeleted = isOwner && !agent && !!item.workflowId
+  const agentDeleted = isOwner && !agent && !!effectiveWorkflowId
   // User comments can always add follow-up comments (self-discussion)
   // Agent cards can follow up only if the agent is still active
-  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!item.workflowId && agentActive))
+  const canFollowUp = isOwner && (isUserComment || item.kind === 'suggestion' || (!!effectiveWorkflowId && agentActive))
   const autoReplySuggestion = latestSuggestion(autoReplyRows)
 
   const handleRegenerateAutoReply = async () => {
@@ -622,7 +666,7 @@ function AnnotationCard({
             workflows={workflowCandidatesForCard}
             files={fileCandidatesForCard}
             placeholder={
-              isUserComment && !item.workflowId
+              isUserComment && !effectiveWorkflowId
                 ? '追加评论（自我讨论）'
                 : '向 Agent 追问，比如：再举一个例子 / 这里语气可以更弱吗？'
             }
@@ -655,7 +699,7 @@ function AnnotationCard({
             <Trash2 size={14} />
           </button>
         )}
-        {isOwner && (item.workflowId || item.kind === 'suggestion') && (
+        {isOwner && (effectiveWorkflowId || item.kind === 'suggestion') && (
           <button
             className={`ann-btn publish ${isPublished ? 'active' : ''}`}
             onClick={() => publish(item.id)}
@@ -679,7 +723,7 @@ function AnnotationCard({
             className="ann-btn continue"
             onClick={() => setComposerOpen((v) => !v)}
             disabled={isRunning}
-            title={isUserComment && !item.workflowId ? "追加评论" : "向 Agent 追问"}
+            title={isUserComment && !effectiveWorkflowId ? "追加评论" : "向 Agent 追问"}
           >
             <MessageSquarePlus size={14} />
           </button>

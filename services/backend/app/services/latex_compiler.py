@@ -32,6 +32,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, load_only
 
 from ..models import Doc, FileBlob, Folder, Project
+from .project_entry_name import ProjectEntryNameError, validate_project_entry_name
 
 # All known TeX Live / MacTeX binaries we'll try to detect.
 KNOWN_COMPILERS = ("latexmk", "pdflatex", "xelatex", "lualatex")
@@ -164,9 +165,22 @@ class LatexCompilerService:
         # Write project tree to temp dir and compile.
         with tempfile.TemporaryDirectory(prefix="ylw-tex-") as tmp:
             tmpdir = Path(tmp)
-            main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
-                db, project_id, tmpdir, main_doc
-            )
+            try:
+                main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
+                    db, project_id, tmpdir, main_doc
+                )
+            except ProjectEntryNameError as exc:
+                result = CompileResult(
+                    ok=False,
+                    pdf=None,
+                    synctex=None,
+                    log="",
+                    error=str(exc),
+                    compiler=chosen_compiler,
+                    duration_ms=int((time.time() - started) * 1000),
+                )
+                self._pdf_cache[project_id] = result
+                return result
 
             result = await self._run_compiler(
                 tmpdir=tmpdir,
@@ -222,9 +236,28 @@ class LatexCompilerService:
         """Write all docs + files of the project into tmpdir, preserving folder
         structure. Returns the relative path of the main doc within tmpdir."""
 
-        folders = (
-            db.query(Folder).filter(Folder.project_id == project_id).all()
+        folders = db.query(Folder).filter(Folder.project_id == project_id).all()
+        docs = db.query(Doc).filter(Doc.project_id == project_id).all()
+        file_metadata = (
+            db.query(FileBlob)
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                )
+            )
+            .filter(FileBlob.project_id == project_id)
+            .all()
         )
+        for folder in folders:
+            validate_project_entry_name(folder.name, field="folder name")
+        for doc in docs:
+            validate_project_entry_name(doc.name, field="document name")
+        for file in file_metadata:
+            validate_project_entry_name(file.name, field="file name")
+        validate_project_entry_name(main_doc.name, field="document name")
+
         folder_paths: dict[str, Path] = {}
 
         def resolve_folder_path(folder_id: str | None) -> Path:
@@ -246,19 +279,6 @@ class LatexCompilerService:
         for path in folder_paths.values():
             path.mkdir(parents=True, exist_ok=True)
 
-        docs = db.query(Doc).filter(Doc.project_id == project_id).all()
-        file_metadata = (
-            db.query(FileBlob)
-            .options(
-                load_only(
-                    FileBlob.id,
-                    FileBlob.folder_id,
-                    FileBlob.name,
-                )
-            )
-            .filter(FileBlob.project_id == project_id)
-            .all()
-        )
         existing_paths: set[str] = set()
 
         def add_existing(path: Path) -> None:
@@ -632,6 +652,8 @@ class LatexCompilerService:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=10,
                     check=False,
                 )
@@ -648,6 +670,76 @@ class LatexCompilerService:
         parsed["column"] = column
         return parsed
 
+    def sync_from_pdf(
+        self,
+        db: Session,
+        project_id: str,
+        *,
+        page: int,
+        x: float,
+        y: float,
+    ) -> dict[str, int | str] | None:
+        cached = self._pdf_cache.get(project_id)
+        if cached is None or not cached.ok or cached.pdf is None or cached.synctex is None:
+            return None
+
+        with tempfile.TemporaryDirectory(prefix="ylw-synctex-") as tmp:
+            tmpdir = Path(tmp)
+            pdf_path = tmpdir / "output.pdf"
+            synctex_path = tmpdir / "output.synctex.gz"
+            pdf_path.write_bytes(cached.pdf)
+            synctex_path.write_bytes(cached.synctex)
+
+            try:
+                proc = subprocess.run(
+                    [
+                        "synctex",
+                        "edit",
+                        "-o",
+                        f"{page}:{x}:{y}:{pdf_path}",
+                    ],
+                    cwd=tmpdir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                return None
+
+            if proc.returncode != 0:
+                return None
+
+            parsed = self._parse_synctex_edit_output(proc.stdout)
+            if parsed is None:
+                return None
+
+            match = self._match_synctex_source_path(
+                str(parsed["source_path"]),
+                cached.source_paths,
+                tmpdir,
+            )
+            if match is None:
+                return None
+            document_id, source_path = match
+
+        doc = db.get(Doc, document_id)
+        if doc is None or doc.project_id != project_id:
+            return None
+
+        line = int(parsed["line"])
+        column = int(parsed["column"])
+        return {
+            "document_id": document_id,
+            "offset": self._offset_from_line_column(doc.content or "", line, column),
+            "line": line,
+            "column": column,
+            "source_path": source_path,
+        }
+
     @staticmethod
     def _line_column_from_offset(source: str, offset: int) -> tuple[int, int]:
         safe_offset = max(0, min(offset, len(source)))
@@ -656,6 +748,29 @@ class LatexCompilerService:
         last_newline = prefix.rfind("\n")
         column = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
         return line, column
+
+    @staticmethod
+    def _offset_from_line_column(source: str, line: int, column: int) -> int:
+        if line <= 1:
+            line_start = 0
+        else:
+            current_line = 1
+            line_start = len(source)
+            for index, char in enumerate(source):
+                if char != "\n":
+                    continue
+                current_line += 1
+                if current_line == line:
+                    line_start = index + 1
+                    break
+
+        if column < 0:
+            return line_start
+
+        line_end = source.find("\n", line_start)
+        if line_end < 0:
+            line_end = len(source)
+        return max(0, min(line_start + column, line_end, len(source)))
 
     @staticmethod
     def _parse_synctex_view_output(output: str) -> dict[str, int | float | None] | None:
@@ -684,6 +799,87 @@ class LatexCompilerService:
             "width": values.get("W"),
             "height": values.get("H"),
         }
+
+    @staticmethod
+    def _parse_synctex_edit_output(output: str) -> dict[str, int | str] | None:
+        source_path: str | None = None
+        line: int | None = None
+        column = -1
+        for raw_line in output.splitlines():
+            if ":" not in raw_line:
+                continue
+            key, raw_value = raw_line.split(":", 1)
+            key = key.strip()
+            value = raw_value.strip()
+            if key == "Input":
+                source_path = value
+            elif key == "Line":
+                try:
+                    line = int(value)
+                except ValueError:
+                    return None
+            elif key == "Column":
+                try:
+                    column = int(value)
+                except ValueError:
+                    column = -1
+
+        if not source_path or line is None:
+            return None
+        return {
+            "source_path": source_path,
+            "line": line,
+            "column": column,
+        }
+
+    @classmethod
+    def _match_synctex_source_path(
+        cls,
+        input_path: str,
+        source_paths: dict[str, str],
+        tmpdir: Path | None = None,
+    ) -> tuple[str, str] | None:
+        normalized_input = cls._normalize_synctex_path(input_path, tmpdir)
+        matches: list[tuple[str, str]] = []
+
+        for document_id, source_path in source_paths.items():
+            for candidate in cls._source_path_candidates(source_path):
+                if normalized_input == candidate or normalized_input.endswith(f"/{candidate}"):
+                    matches.append((document_id, source_path))
+                    break
+
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    @staticmethod
+    def _normalize_synctex_path(path: str, tmpdir: Path | None = None) -> str:
+        normalized = path.strip().replace("\\", "/")
+        if tmpdir is not None:
+            raw_path = Path(normalized)
+            if raw_path.is_absolute():
+                resolved = raw_path.resolve(strict=False).as_posix()
+                tmp_resolved = tmpdir.resolve(strict=False).as_posix()
+                if resolved == tmp_resolved:
+                    normalized = "."
+                elif resolved.startswith(f"{tmp_resolved}/"):
+                    normalized = resolved[len(tmp_resolved) + 1 :]
+        normalized = posixpath.normpath(normalized)
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized
+
+    @classmethod
+    def _source_path_candidates(cls, source_path: str) -> set[str]:
+        normalized = cls._normalize_synctex_path(source_path)
+        candidates = {normalized}
+        stripped = normalized
+        while stripped.startswith("../"):
+            stripped = stripped[3:]
+            candidates.add(stripped)
+        if stripped.startswith("./"):
+            candidates.add(stripped[2:])
+        return {candidate for candidate in candidates if candidate and candidate != "."}
 
     @staticmethod
     def _extract_first_error(log: str) -> str:

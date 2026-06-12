@@ -39,6 +39,7 @@ SAFE_TEXT_SUFFIXES = {
     ".tsx",
 }
 FORBIDDEN_DIRS = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
+IGNORED_METADATA_NAMES = {".DS_Store", "Thumbs.db"}
 MAX_FILE_BYTES = 120_000
 MAX_TREE_FILES = 160
 
@@ -275,8 +276,9 @@ def resolve_inside_agents(root: Path, rel_path: str) -> Path:
 def find_installed_skill_folder(search_root: Path, preferred_skill_name: str = "") -> Path:
     candidates: list[Path] = []
     for skill_md in search_root.rglob("SKILL.md"):
-        rel_parts = set(skill_md.relative_to(search_root).parts)
-        if rel_parts & FORBIDDEN_DIRS:
+        rel = skill_md.relative_to(search_root)
+        rel_parts = set(rel.parts)
+        if rel_parts & FORBIDDEN_DIRS or _is_macos_metadata_path(rel):
             continue
         candidates.append(skill_md.parent)
     if not candidates:
@@ -304,7 +306,12 @@ def _ignore_unsafe_files(directory: str, names: list[str]) -> set[str]:
     base = Path(directory)
     for name in names:
         path = base / name
-        if name in FORBIDDEN_DIRS or name.startswith(".") and name not in {".agents"}:
+        if (
+            name in FORBIDDEN_DIRS
+            or name in IGNORED_METADATA_NAMES
+            or name.startswith("._")
+            or name.startswith(".") and name not in {".agents"}
+        ):
             ignored.add(name)
             continue
         if path.is_file() and (not _is_safe_text_file(path) or path.stat().st_size > MAX_FILE_BYTES):
@@ -313,13 +320,19 @@ def _ignore_unsafe_files(directory: str, names: list[str]) -> set[str]:
 
 
 def _is_unsafe_path(path: Path) -> bool:
-    return any(part in FORBIDDEN_DIRS or part == ".." for part in path.parts)
+    return any(part in FORBIDDEN_DIRS or part == ".." for part in path.parts) or _is_macos_metadata_path(path)
 
 
 def _is_safe_text_file(path: Path) -> bool:
+    if path.name.startswith("._") or path.name in IGNORED_METADATA_NAMES:
+        return False
     if path.name == "SKILL.md":
         return True
     return path.suffix.lower() in SAFE_TEXT_SUFFIXES
+
+
+def _is_macos_metadata_path(path: Path) -> bool:
+    return any(part == "__MACOSX" or part in IGNORED_METADATA_NAMES or part.startswith("._") for part in path.parts)
 
 
 def _safe_segment(value: str) -> str:

@@ -39,7 +39,7 @@ primary_capabilities:
   - workflow-orchestration
   - real-time-editing
   - build-tooling
-agent_hint: repository root uses services/{frontend,backend,collab-server}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. Data Project routes through backend/app/api/datasets.py, DatasetService, DataProjectPage, and backendApi; source_text is captured as a workflow/native-agent run snapshot and must not be reconstructed from Doc ranges during record listing/export. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator for boundary.
+agent_hint: repository root uses services/{frontend,backend,collab-server,local-agent-host}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. Local Agent Host is packaged/downloaded by the backend and runs on the user's machine to reach local Codex/Claude/Nanobot; the all-in-one image may include its source for packaging but must not be assumed to auto-start it as a server-side process. Data Project routes through backend/app/api/datasets.py, DatasetService, DataProjectPage, and backendApi; source_text is captured as a workflow/native-agent run snapshot and must not be reconstructed from Doc ranges during record listing/export. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator and CHANGE_POLICY.high_risk.local_agent_host_topology for boundaries.
 ```
 
 # SuperLeaf Agent Guide
@@ -113,6 +113,17 @@ surface plus a multi-Agent review/polishing/workflow layer.
   Skills. Skill sources include private upload, server-shared local Skills,
   and official marketplace entries from
   `OhMyYuwan/SuperLeaf.Skills/main/marketplace.json`.
+- **Local Agent Host**: `services/local-agent-host` is the downloadable bridge
+  for user-local Codex / Claude / Nanobot. Backend APIs expose metadata,
+  package, update, and download endpoints, but the host itself is expected to
+  run on the user's machine so browser-local tools and local Agent installs are
+  reachable. The all-in-one/backend images copy the host source for packaging;
+  they do not start it as part of the server runtime.
+- **External I/O decoding**: Agent and project integrations must tolerate
+  non-UTF-8 bytes from external command output or remote catalog/API payloads.
+  Prefer UTF-8 decoding with replacement (`errors="replace"`) at external I/O
+  boundaries. The replacement character is `�` (`U+FFFD`), meaning a bad byte
+  was preserved as a visible placeholder instead of crashing the turn.
 
 ## Working Rules
 
@@ -146,6 +157,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
 ├── supports/
 │   └── SuperLeaf.MCPs/                 (MCP catalog presets, golden tests, contributor docs)
 └── services/
+    ├── local-agent-host/                    (downloaded user-machine bridge for Codex/Claude/Nanobot + SuperLeaf MCP/browser tool bridge)
     ├── collab-server/                       (Node.js Yjs WebSocket server)
     │   ├── package.json                     (yjs, y-protocols, y-leveldb, ws)
     │   ├── tsconfig.json
@@ -165,7 +177,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │       │   ├── health.py
     │       │   ├── auth.py                  (register/login/logout/me/verify/collab-token)
     │       │   ├── providers.py
-    │       │   ├── native_agents.py         (native Agent credentials/skills/agents/marketplace)
+    │       │   ├── native_agents.py         (native Agent credentials/skills/agents/marketplace + Local Agent Host package/download metadata)
     │       │   ├── github.py / archives.py  (GitHub account + project archive)
     │       │   ├── workflows.py             (cached + runs + definitions + execute)
     │       │   ├── filesystem.py            (project tree + upload + internal doc content)
@@ -177,13 +189,13 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │           ├── provider_service.py
     │           ├── native_agent_service.py  (native Agent + Skill CRUD)
     │           ├── native_agent_runner.py   (provider-backed native Agent runtime)
-    │           ├── mcp_tool_service.py      (on-demand stdio MCP bridge)
+    │           ├── mcp_tool_service.py      (on-demand stdio/remote MCP bridge)
     │           ├── mcp_catalog_service.py   (remote SuperLeaf.MCPs catalog loader + probe)
     │           ├── skill_marketplace_service.py / skill_content_crypto.py
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
-    │           ├── project_archive_service.py / github_service.py
+    │           ├── project_archive_service.py / github_service.py (Git/archive subprocess output uses tolerant UTF-8 decoding)
     │           ├── project_fs_service.py    (SQLite file tree)
-    │           ├── latex_compiler.py        (latexmk subprocess)
+    │           ├── latex_compiler.py        (latexmk + SyncTeX subprocesses; external output uses tolerant UTF-8 decoding)
     │           ├── attached_files.py        (@ file normalization)
     │           └── collab_snapshot_service.py (periodic Yjs → DB snapshots)
     └── frontend/
@@ -217,7 +229,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
             │   └── seedData.ts
             ├── types/                       (8-layer domain types)
             └── features/
-                ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions)
+                ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions + math-preview)
                 ├── settings/                (SettingsDialog)
                 ├── topbar/                  (Topbar + ViewControl + notifications + presence)
                 ├── file-tree/               (FileTree + OutlineList)
@@ -255,7 +267,7 @@ Services are organized under `services/`:
   of historical `frontend-workspace/agent-panel`.
 - **frontend-conversations** — doc-scoped chat (UI + store + backend).
 - **frontend-mention-system** — @-mention infrastructure (parser + input component + backend contract). Shared by annotations + discussion.
-- **latex-editor** — self-contained editor module.
+- **latex-editor** — self-contained editor module. Includes cursor-triggered MathJax v3 formula preview (math-preview slice; toggle in Settings).
 - **latex-compile** — latexmk → PDF pipeline (backend + frontend).
 - **domain-model** — TypeScript contracts across 8 layers.
 - **backend-service** — FastAPI + SQLite core.

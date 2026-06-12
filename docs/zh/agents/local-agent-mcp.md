@@ -27,6 +27,9 @@ http://127.0.0.1:8787  Local Agent Host
 
 它默认只绑定 `127.0.0.1`，不需要公网访问，也不应该暴露到公网。Local Host 自己不持有 SuperLeaf cookie；真正读取项目、创建修改提案和批注时，仍然由浏览器里的 SuperLeaf Bridge 使用当前登录态去调用后端授权 API。
 
+{: .note }
+除了这里讲的浏览器 Bridge 模式，Local Host `/mcp` 还支持 **MCP Token 直连模式**：外部 IDE / CLI 带上 `Authorization: Bearer slmcp_...` 头时，工具调用会直接转发到后端，不需要打开浏览器。两种模式由同一个端点按是否带 token 自动分流，互不影响。详见 [MCP Token 直连模式（IDE / CLI）](mcp-token-mode.html)。
+
 ## 借鉴的工业实现
 
 这一版没有凭空发明一套私有协议，而是把几个已经被 MCP 生态验证过的做法收敛进 SuperLeaf Local Agent Host：

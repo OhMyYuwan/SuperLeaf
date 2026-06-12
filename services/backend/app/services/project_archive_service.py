@@ -316,15 +316,24 @@ class ProjectArchiveService:
     def _git(self, repo_path: Path, *args: str, check: bool = True):
         env = os.environ.copy()
         env.setdefault("LC_ALL", "C")
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repo_path,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_path,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=300,  # 5 minutes
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ArchiveError(
+                f"Git operation timed out after 5 minutes. This usually means a network issue or "
+                f"the archive repository is very large. Command: git {' '.join(args)}"
+            ) from exc
         if check and result.returncode != 0:
             raise ArchiveError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
@@ -332,14 +341,21 @@ class ProjectArchiveService:
     def _git_bytes(self, repo_path: Path, *args: str, check: bool = True):
         env = os.environ.copy()
         env.setdefault("LC_ALL", "C")
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repo_path,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_path,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=300,  # 5 minutes
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ArchiveError(
+                f"Git operation timed out after 5 minutes. This usually means a network issue or "
+                f"the archive repository is very large. Command: git {' '.join(args)}"
+            ) from exc
         if check and result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
             raise ArchiveError(stderr or f"git {' '.join(args)} failed")

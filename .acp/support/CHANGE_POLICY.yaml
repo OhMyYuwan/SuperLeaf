@@ -71,6 +71,27 @@ auto_allow:
       - supports/SuperLeaf.MCPs/golden-tests/**/*.json
       - supports/SuperLeaf.MCPs/reports/**/*.json
 
+  # Routine Local Agent Host bridge work. Topology changes that move the host
+  # into a server-side resident process are high-risk below.
+  - operation: edit
+    paths:
+      - services/local-agent-host/**/*.mjs
+      - services/local-agent-host/**/*.md
+      - services/local-agent-host/**/*.sh
+      - services/local-agent-host/**/*.command
+      - services/local-agent-host/**/*.cmd
+      - services/local-agent-host/**/*.ps1
+      - services/local-agent-host/package.json
+
+  - operation: create
+    paths:
+      - services/local-agent-host/**/*.mjs
+      - services/local-agent-host/**/*.md
+      - services/local-agent-host/**/*.sh
+      - services/local-agent-host/**/*.command
+      - services/local-agent-host/**/*.cmd
+      - services/local-agent-host/**/*.ps1
+
 require_confirmation:
   # Editing protected support / governance files.
   - operation: edit
@@ -188,6 +209,35 @@ high_risk:
     paths:
       - ../scripts/dify.sh
     reason: Dify launcher is the only sanctioned path to start the agentic backend; regressions block the whole stack.
+
+  # Changing where Local Agent Host runs changes the trust and network model.
+  - operation: local_agent_host_topology
+    paths:
+      - services/all-in-one/Dockerfile
+      - services/all-in-one/entrypoint.sh
+      - services/backend/Dockerfile
+      - services/backend/app/api/native_agents.py
+      - services/local-agent-host/**/*
+    description: |
+      Local Agent Host is a user-machine localhost bridge for Codex, Claude,
+      Nanobot, and SuperLeaf MCP/browser tools. It may be copied into Docker
+      images to support packaging/download endpoints, but starting it inside
+      the server/all-in-one runtime changes the architecture.
+    boundary: |
+      Acceptable routine work:
+        - package/download/update metadata
+        - startup scripts for user machines
+        - CORS/origin fixes for browser-to-localhost access
+        - Codex/Claude/Nanobot bridge improvements
+      Requires explicit high-risk confirmation:
+        - auto-starting Local Agent Host in all-in-one/backend containers
+        - exposing user-local Agent bridge over public/server networks
+        - treating server-side host execution as equivalent to user-machine
+          localhost execution
+    reason: |
+      Running Local Agent Host server-side would break the assumption that it
+      can see the user's local Codex/Claude/Nanobot installs and would expand
+      the trust, network, and permission boundary.
 
   # Extending the self-hosted orchestrator (V2.2 acknowledgement).
   - operation: extend_self_hosted_orchestrator

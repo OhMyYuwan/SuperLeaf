@@ -1,0 +1,58 @@
+/**
+ * Styles for LaTeX math preview tooltip.
+ *
+ * The tooltip floats above the cursor when it enters a math environment.
+ *
+ * CodeMirror wraps every tooltip in an outer `.cm-tooltip` element, which the
+ * editor theme styles with its own background/border/radius/color. For the math
+ * preview we don't want that outer chrome (it would double-box our own card and
+ * tint the text grey), so we neutralise the wrapper and render a single white
+ * card with black text.
+ */
+
+/* Strip the editor's default tooltip chrome when it wraps the math preview,
+   so we don't get a box-inside-a-box. */
+.cm-tooltip:has(.ylw-cm-math-tooltip-container) {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  color: inherit !important;
+}
+
+.ylw-cm-math-tooltip-container {
+  position: relative;
+  z-index: 100;
+}
+
+.ylw-cm-math-tooltip {
+  display: flex;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  max-height: 200px;
+  max-width: 800px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  font-size: 14px;
+  line-height: 1.5;
+  /* White card → black text. MathJax SVG fills with currentColor, so this also
+     drives the rendered formula colour. */
+  color: #1a1a1a;
+}
+
+.ylw-cm-math-tooltip svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  color: #1a1a1a;
+}
+
+/* MathJax SVG output appends an accessibility MathML node alongside the <svg>.
+   Its visual-hiding CSS ships in MathJax's own stylesheet, which we don't load
+   for the SVG bundle, so without this the formula renders twice (once as SVG,
+   once as the assistive MathML text). Hide it inside the preview. */
+.ylw-cm-math-tooltip mjx-assistive-mml {
+  display: none !important;
+}

@@ -30,6 +30,7 @@ from ..schemas import (
     ProjectCompileSettingsOut,
 )
 from ..services.latex_compiler import get_compiler_service
+from .collab_consistency import flush_project_collab_or_503
 from .deps import get_current_project, get_project_from_path, require_write_access
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
@@ -68,6 +69,7 @@ async def compile_project(
     compiler = body.compiler or project.compiler or None
     requested_main_doc_id = body.main_doc_id if body.main_doc_id is not None else project.main_doc_id
     main_doc_id = _validate_main_doc_id(db, project, requested_main_doc_id)
+    await flush_project_collab_or_503(project)
 
     svc = get_compiler_service()
     result = await svc.compile_project(

@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Palette, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Palette, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft, ProviderModel } from '../../services/backendApi'
 import {
   BACKEND_BASE,
@@ -122,7 +122,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             )}
 
             {activeTab === 'editor' && (
-              <EditorAppearanceSettings />
+              <>
+                <EditorAppearanceSettings />
+                <MathPreviewSettings />
+              </>
             )}
 
             {activeTab === 'mcp-tokens' && (
@@ -188,6 +191,42 @@ function EditorAppearanceSettings() {
             {preset.label}
           </button>
         ))}
+      </div>
+    </section>
+  )
+}
+
+function MathPreviewSettings() {
+  const mathPreview = useSettingsStore((s) => s.mathPreview)
+  const setMathPreview = useSettingsStore((s) => s.setMathPreview)
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <div>
+          <h3><Sparkles size={14} /> 公式预览</h3>
+          <p>光标进入公式时在上方浮窗显示渲染结果（MathJax v3）。</p>
+        </div>
+      </div>
+      <div className="settings-segmented" role="radiogroup" aria-label="公式预览">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mathPreview}
+          className={mathPreview ? 'active' : ''}
+          onClick={() => setMathPreview(true)}
+        >
+          开启
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!mathPreview}
+          className={!mathPreview ? 'active' : ''}
+          onClick={() => setMathPreview(false)}
+        >
+          关闭
+        </button>
       </div>
     </section>
   )

@@ -229,7 +229,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
             │   └── seedData.ts
             ├── types/                       (8-layer domain types)
             └── features/
-                ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions)
+                ├── latex-editor/            (CM6 + annotation-decorations + collab-extensions + math-preview)
                 ├── settings/                (SettingsDialog)
                 ├── topbar/                  (Topbar + ViewControl + notifications + presence)
                 ├── file-tree/               (FileTree + OutlineList)
@@ -267,7 +267,7 @@ Services are organized under `services/`:
   of historical `frontend-workspace/agent-panel`.
 - **frontend-conversations** — doc-scoped chat (UI + store + backend).
 - **frontend-mention-system** — @-mention infrastructure (parser + input component + backend contract). Shared by annotations + discussion.
-- **latex-editor** — self-contained editor module.
+- **latex-editor** — self-contained editor module. Includes cursor-triggered MathJax v3 formula preview (math-preview slice; toggle in Settings).
 - **latex-compile** — latexmk → PDF pipeline (backend + frontend).
 - **domain-model** — TypeScript contracts across 8 layers.
 - **backend-service** — FastAPI + SQLite core.

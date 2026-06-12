@@ -387,6 +387,19 @@ rules:
           - services/frontend/src/App.css
         expand_when:
           - annotation decoration style, mapping, or click behavior changes
+      math-preview:
+        start_with:
+          - services/frontend/src/features/latex-editor/math-preview.ts
+          - services/frontend/src/features/latex-editor/math-detection.ts
+          - services/frontend/src/features/latex-editor/mathjax-loader.ts
+          - services/frontend/src/features/latex-editor/math-preview.css
+          - services/frontend/src/types/mathjax.d.ts
+          - services/frontend/src/features/latex-editor/LatexEditor.tsx
+          - services/frontend/src/stores/settingsStore.ts
+          - services/frontend/src/features/settings/SettingsDialog.tsx
+          - services/frontend/src/__tests__/mathPreview.test.ts
+        expand_when:
+          - in-editor formula detection, macro extraction, MathJax loader config, tooltip rendering, or the math-preview enable toggle changes
       collaboration-binding:
         start_with:
           - services/frontend/src/features/latex-editor/collaboration-extensions.ts

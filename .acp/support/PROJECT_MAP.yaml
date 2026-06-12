@@ -398,7 +398,7 @@ modules:
   - id: frontend-feature-latex-editor
     path: services/frontend/src/features/latex-editor
     kind: feature-module
-    description: CodeMirror 6 LaTeX editor, search panel, spell checking, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, and annotation decorations.
+    description: CodeMirror 6 LaTeX editor, search panel, spell checking, selection toolbar, language snippets/completions/folding, Yjs collaboration extension, theme, annotation decorations, and cursor-triggered MathJax v3 formula preview tooltip.
     entry_files:
       - services/frontend/src/features/latex-editor/LatexEditor.tsx
       - services/frontend/src/features/latex-editor/SelectionToolbar.tsx
@@ -412,6 +412,9 @@ modules:
       - services/frontend/src/features/latex-editor/collaboration-extensions.ts
       - services/frontend/src/features/latex-editor/annotation-decorations.ts
       - services/frontend/src/features/latex-editor/theme.ts
+      - services/frontend/src/features/latex-editor/math-preview.ts
+      - services/frontend/src/features/latex-editor/math-detection.ts
+      - services/frontend/src/features/latex-editor/mathjax-loader.ts
 
   - id: frontend-feature-workspace-center
     path: services/frontend/src/features/workspace-center
@@ -700,6 +703,7 @@ capability_routes:
     supporting_modules:
       - frontend-feature-workspace-center
       - frontend-feature-history
+      - frontend-feature-settings
       - frontend-stores
       - frontend-services
 

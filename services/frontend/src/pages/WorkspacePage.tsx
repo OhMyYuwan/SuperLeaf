@@ -127,6 +127,7 @@ export function WorkspacePage() {
   const loadProviders = useSettingsStore((s) => s.load)
   const activeProvider = useSettingsStore((s) => s.providers.find((p) => p.is_active) ?? null)
   const latexEditorTheme = useSettingsStore((s) => s.latexEditorTheme)
+  const mathPreviewEnabled = useSettingsStore((s) => s.mathPreview)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const workflowError = useWorkflowStore((s) => s.error)
@@ -936,6 +937,7 @@ export function WorkspacePage() {
                           labelCompletions={labelCompletions}
                           commandCompletions={commandCompletions}
                           themeId={latexEditorTheme}
+                          mathPreviewEnabled={mathPreviewEnabled}
                           onChange={handleEditorChange}
                           onSelectionChange={handleSelectionChange}
                           onDocChange={handleDocChange}

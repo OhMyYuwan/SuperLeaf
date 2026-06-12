@@ -44,6 +44,7 @@ interface EditorColumnProps {
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
   themeId: LatexEditorThemeId
+  mathPreviewEnabled: boolean
   onAddComment?: (params: {
     range: { from: number; to: number }
     targetText: string
@@ -67,6 +68,7 @@ export function EditorColumn({
   labelCompletions,
   commandCompletions,
   themeId,
+  mathPreviewEnabled,
   onAddComment,
 }: EditorColumnProps) {
   const [toolbar, setToolbar] = useState<{
@@ -121,6 +123,7 @@ export function EditorColumn({
             labelCompletions={labelCompletions}
             commandCompletions={commandCompletions}
             themeId={themeId}
+            mathPreviewEnabled={mathPreviewEnabled}
             toolbar={toolbar}
             onAddComment={onAddComment ? handleToolbarAddComment : undefined}
           />
@@ -149,6 +152,7 @@ function EditorWithCollab({
   labelCompletions,
   commandCompletions,
   themeId,
+  mathPreviewEnabled,
   toolbar,
   onAddComment,
 }: {
@@ -168,6 +172,7 @@ function EditorWithCollab({
   labelCompletions?: LatexLabelCompletion[]
   commandCompletions?: LatexCommandCompletion[]
   themeId: LatexEditorThemeId
+  mathPreviewEnabled: boolean
   toolbar: { x: number; y: number } | null
   onAddComment?: () => void
 }) {
@@ -197,6 +202,7 @@ function EditorWithCollab({
       labelCompletions={labelCompletions}
       commandCompletions={commandCompletions}
       themeId={themeId}
+      mathPreviewEnabled={mathPreviewEnabled}
       scrollTo={scrollTo}
       yText={isCollab ? provider!.yText : undefined}
       awareness={isCollab ? provider!.awareness : undefined}

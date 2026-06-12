@@ -434,6 +434,33 @@ capabilities:
         bridge_when: New decoration kinds require paired annotationStore updates.
         primary_paths:
           - frontend/src/features/latex-editor/annotation-decorations.ts
+      - id: math-preview
+        summary: |
+          Cursor-triggered formula preview tooltip. When the caret enters a math
+          environment ($..$, $$..$$, \[..\], \(..\), or equation/align/gather/...
+          environments) a tooltip floats above and renders the formula via lazy-
+          loaded MathJax v3 (tex-svg-full SVG bundle). Document-wide \newcommand /
+          \def / \newenvironment macros are extracted and fed to MathJax first so
+          custom commands resolve. Toggled by the settingsStore `mathPreview` flag
+          (persisted to localStorage), surfaced in SettingsDialog, threaded through
+          EditorColumn → LatexEditor via a CodeMirror Compartment. Esc hides the
+          active tooltip.
+        route_here_when: Work changes in-editor math detection, macro extraction, MathJax loader config, tooltip rendering/styling, or the math-preview enable toggle and its wiring.
+        bridge_when: Markdown/PDF preview math rendering — see frontend-preview. Editor mount/Compartment contract — see latex-editor/shell. Settings persistence schema — see frontend-stores/settings.
+        invariants:
+          - MathJax is lazy-loaded once (single promise) and code-split out of the main bundle; it must not load until the feature is enabled AND the caret first enters a formula.
+          - enableAssistiveMml is false and mjx-assistive-mml is hidden — leaving the parallel MathML on renders every formula twice (no MathJax stylesheet is loaded for the SVG bundle).
+          - safe mode / loader / menu config is NOT used — the tex-svg-full bundle ships no loader; rendering trusted user-document math needs none. await startup.promise before tex2svgPromise.
+        primary_paths:
+          - frontend/src/features/latex-editor/math-preview.ts
+          - frontend/src/features/latex-editor/math-detection.ts
+          - frontend/src/features/latex-editor/mathjax-loader.ts
+          - frontend/src/features/latex-editor/math-preview.css
+          - frontend/src/types/mathjax.d.ts
+          - frontend/src/features/latex-editor/LatexEditor.tsx
+          - frontend/src/stores/settingsStore.ts
+          - frontend/src/features/settings/SettingsDialog.tsx
+          - frontend/src/__tests__/mathPreview.test.ts
 
   - id: latex-compile
     name: LaTeX Compile

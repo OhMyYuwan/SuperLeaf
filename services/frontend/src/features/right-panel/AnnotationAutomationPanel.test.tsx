@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CachedWorkflow } from '../../services/backendApi'
-import { formatAutomationTargetName } from './AnnotationAutomationPanel'
+import { formatAutomationTargetName } from './automationTargetLabels'
 
 describe('AnnotationAutomationPanel Agent picker', () => {
   it('shows Agent options as Agent name followed by provider name', () => {

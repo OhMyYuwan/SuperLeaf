@@ -26,6 +26,7 @@ export interface AnnotationAgentSuggestion {
 export interface AnnotationAgentSuggestionRunIn {
   doc_id: string
   agent_id: string
+  target_kind?: 'agent' | 'workflow'
   include_stale?: boolean
   scope?: 'current_doc'
 }

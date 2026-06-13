@@ -138,6 +138,7 @@ class AnnotationOut(BaseModel):
 class AnnotationAgentSuggestionRunIn(BaseModel):
     doc_id: str = Field(min_length=1, max_length=64)
     agent_id: str = Field(min_length=1, max_length=128)
+    target_kind: str = Field(default="agent", pattern="^(agent|workflow)$")
     include_stale: bool = True
     scope: str = Field(default="current_doc", pattern="^current_doc$")
 

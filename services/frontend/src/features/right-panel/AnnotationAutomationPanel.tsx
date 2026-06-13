@@ -10,10 +10,9 @@ import {
   sortFilesCurrentFirst,
   type MentionCandidate,
 } from '../../services/mentions'
-import type { CachedWorkflow, WorkflowDefinition } from '../../services/backendApi'
 import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
-import { formatAgentDisplayName } from './discussion/format'
+import { formatAutomationTargetName } from './automationTargetLabels'
 
 export function AnnotationAutomationPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
@@ -221,15 +220,4 @@ export function AnnotationAutomationPanel() {
       </div>
     </>
   )
-}
-
-export function formatAutomationTargetName(
-  targetKind: 'agent' | 'workflow',
-  target: Pick<CachedWorkflow, 'id' | 'provider_id' | 'name'> | Pick<WorkflowDefinition, 'name'>,
-  providerNamesById: ReadonlyMap<string, string>,
-): string {
-  if (targetKind === 'agent' && 'id' in target && 'provider_id' in target) {
-    return formatAgentDisplayName(target, providerNamesById)
-  }
-  return target.name
 }

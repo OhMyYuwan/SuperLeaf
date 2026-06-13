@@ -28,7 +28,7 @@ http://127.0.0.1:8787  Local Agent Host
 它默认只绑定 `127.0.0.1`，不需要公网访问，也不应该暴露到公网。Local Host 自己不持有 SuperLeaf cookie；真正读取项目、创建修改提案和批注时，仍然由浏览器里的 SuperLeaf Bridge 使用当前登录态去调用后端授权 API。
 
 {: .note }
-除了这里讲的浏览器 Bridge 模式，Local Host `/mcp` 还支持 **MCP Token 直连模式**：外部 IDE / CLI 带上 `Authorization: Bearer slmcp_...` 头时，工具调用会直接转发到后端，不需要打开浏览器。两种模式由同一个端点按是否带 token 自动分流，互不影响。详见 [MCP Token 直连模式（IDE / CLI）](mcp-token-mode.html)。
+这里讲的 Local Host `/mcp` 是浏览器 Bridge 模式。外部 IDE / CLI 如果已经有 `slmcp_...` token，应直接连接后端原生 MCP，例如 `http://127.0.0.1:8000/mcp`，并带上 `Authorization: Bearer slmcp_...`。Local Host 的 token 代理只作为兼容开关保留，默认关闭。详见 [MCP Token 直连模式（IDE / CLI）](mcp-token-mode.html)。
 
 ## 借鉴的工业实现
 
@@ -45,14 +45,18 @@ http://127.0.0.1:8787  Local Agent Host
 
 ## 当前暴露的 SuperLeaf 工具
 
-Local Host 的 `/mcp` 当前暴露 6 个 SuperLeaf 工具，定义来自共享注册表 `services/shared/superleaf-tools.json`：
+Local Host 的 `/mcp` 当前暴露 10 个 SuperLeaf 工具，定义来自共享注册表 `services/shared/superleaf-tools.json`：
 
 | 工具 | 用途 |
 |---|---|
+| `superleaf_list_projects` | 列出 token 用户可访问的项目；浏览器 Bridge 模式一般不需要 |
+| `superleaf_select_project` | 设置当前 MCP session 的活跃项目；浏览器 Bridge 模式一般不需要 |
 | `project_list_docs` | 列出当前 SuperLeaf 项目里的文档 |
 | `project_read_doc` | 按 `doc_id` 读取文档内容或片段 |
 | `project_grep` | 在项目文档中搜索正则表达式 |
 | `project_outline` | 读取文档标题结构 |
+| `project_write_text_file` | 在项目里新建文本文件，拒绝覆盖 |
+| `project_create_text_file` | `project_write_text_file` 的别名 |
 | `propose_doc_edit` | 创建文档修改提案，等待用户在 SuperLeaf 中接受 |
 | `create_suggestion` | 创建持久批注或 suggestion 卡片 |
 
@@ -67,6 +71,7 @@ Resources:
 | `superleaf://tool-kernel/instructions` | SuperLeaf MCP 工具使用边界 |
 | `superleaf://tool-kernel/tools` | JSON 格式的工具、resource、prompt 目录 |
 | `superleaf://browser-bridge/contract` | Browser Bridge 如何代理授权工具调用 |
+| `superleaf://context/current` | 当前浏览器 Bridge context 摘要 |
 
 Prompts:
 
@@ -355,8 +360,12 @@ Invoke-RestMethod http://127.0.0.1:8787/health
   "status": "ok",
   "service": "superleaf-local-agent-host",
   "superleaf_mcp_url": "http://127.0.0.1:8787/mcp",
-  "superleaf_mcp_tool_count": 6,
-  "superleaf_mcp_resource_count": 3,
+  "backend_native_mcp_recommended": true,
+  "backend_mcp_url": "http://127.0.0.1:8000/mcp",
+  "local_bridge_mcp_url": "http://127.0.0.1:8787/mcp",
+  "backend_mcp_proxy_enabled": false,
+  "superleaf_mcp_tool_count": 10,
+  "superleaf_mcp_resource_count": 4,
   "superleaf_mcp_prompt_count": 3,
   "codex_auto_mcp": true,
   "mcp_sessions": 0,
@@ -903,10 +912,10 @@ http://127.0.0.1:8787
 其他支持 HTTP MCP 的本地 Agent 可以直接配置：
 
 ```text
-http://127.0.0.1:8787/mcp
+http://127.0.0.1:8000/mcp
 ```
 
-如果某个 Agent 不能直接连 HTTP MCP，优先在 Local Agent Host 里加 adapter；不要为它重写一套 SuperLeaf 工具协议。
+并在客户端里配置 `Authorization: Bearer slmcp_...`。如果某个 Agent 不能直接连 HTTP MCP，优先在 Local Agent Host 里加 adapter；不要为它重写一套 SuperLeaf 工具协议。需要浏览器登录态/当前选区上下文的 SuperLeaf 托管本地 Agent，仍然使用 Local Host `http://127.0.0.1:8787/mcp`。
 
 ## 安全边界
 

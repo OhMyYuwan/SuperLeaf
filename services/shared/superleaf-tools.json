@@ -117,7 +117,12 @@
       "description": "List all SuperLeaf projects the authenticated user can access. Returns project id, name, type, role, and updated_at. Use this first in token-authenticated mode to discover available projects, then call superleaf_select_project to set the active one.",
       "inputSchema": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          }
+        }
       }
     },
     {
@@ -148,6 +153,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
           "doc_id": {
             "type": "string"
           },
@@ -171,6 +180,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
           "pattern": {
             "type": "string",
             "description": "Regular expression pattern."
@@ -195,6 +208,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
           "doc_id": {
             "type": "string"
           }
@@ -210,6 +227,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
           "path": {
             "type": "string",
             "description": "Relative project path, for example references/paper-style.md or examples/rule.txt."
@@ -240,6 +261,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
           "path": {
             "type": "string"
           },
@@ -267,6 +292,14 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
+          "doc_id": {
+            "type": "string",
+            "description": "Target SuperLeaf document id. Required for backend-native token-authenticated MCP clients."
+          },
           "original_text": {
             "type": "string",
             "description": "Exact text to replace, copied verbatim from project_read_doc when possible."
@@ -289,6 +322,7 @@
           }
         },
         "required": [
+          "doc_id",
           "range_start",
           "range_end",
           "new_text"
@@ -301,6 +335,14 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id. If omitted, the active MCP project selected by superleaf_select_project is used."
+          },
+          "doc_id": {
+            "type": "string",
+            "description": "Target SuperLeaf document id. Required for backend-native token-authenticated MCP clients."
+          },
           "original_text": {
             "type": "string",
             "description": "Exact text the annotation refers to, copied verbatim from project_read_doc."
@@ -327,6 +369,7 @@
           }
         },
         "required": [
+          "doc_id",
           "original_text",
           "content"
         ]

@@ -166,12 +166,10 @@ function tryMatchBracketMath(doc: string, pos: number): MathRange | null {
   const start = doc.lastIndexOf('\\[', pos)
   if (start === -1) return null
 
-  // Find closing \]
-  const end = doc.indexOf('\\]', Math.max(pos, start + 2))
-  if (end === -1 || end <= start) return null
-
-  // Check pos is in range
-  if (pos < start || pos > end + 2) return null
+  // Always search for \] from right after the opener, not from pos.
+  // If the first \] found is before pos, the cursor is outside a closed formula.
+  const end = doc.indexOf('\\]', start + 2)
+  if (end === -1 || pos <= start || pos >= end) return null
 
   return {
     from: start,
@@ -186,11 +184,10 @@ function tryMatchParenMath(doc: string, pos: number): MathRange | null {
   const start = doc.lastIndexOf('\\(', pos)
   if (start === -1) return null
 
-  // Find closing \)
-  const end = doc.indexOf('\\)', Math.max(pos, start + 2))
-  if (end === -1 || end <= start) return null
-
-  if (pos < start || pos > end + 2) return null
+  // Always search for \) from right after the opener, not from pos.
+  // If the first \) found is before pos, the cursor is outside a closed formula.
+  const end = doc.indexOf('\\)', start + 2)
+  if (end === -1 || pos <= start || pos >= end) return null
 
   return {
     from: start,

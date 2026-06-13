@@ -6,16 +6,25 @@ import {
   useAnnotationAgentSuggestionStore,
 } from '../../stores/annotationAgentSuggestionStore'
 import { useDocumentStore } from '../../stores/documentStore'
-import { useNativeAgentStore } from '../../stores/nativeAgentStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { useWorkflowStore } from '../../stores/workflowStore'
 import { showToast } from '../shared/toast'
+import { formatAutomationTargetName } from './automationTargetLabels'
+
+type AutoReplyTargetKind = 'agent' | 'workflow'
 
 export function AnnotationAutoReplyPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const annotationsById = useAnnotationStore((s) => s.items)
-  const nativeAgents = useNativeAgentStore((s) => s.agents)
-  const nativeLoaded = useNativeAgentStore((s) => s.loaded)
-  const nativeError = useNativeAgentStore((s) => s.error)
-  const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
+  const providers = useSettingsStore((s) => s.providers)
+  const workflows = useWorkflowStore((s) => s.workflows)
+  const workflowsLoaded = useWorkflowStore((s) => s.loaded)
+  const workflowsError = useWorkflowStore((s) => s.error)
+  const loadWorkflows = useWorkflowStore((s) => s.load)
+  const definitions = useWorkflowStore((s) => s.definitions)
+  const definitionsLoaded = useWorkflowStore((s) => s.definitionsLoaded)
+  const definitionsError = useWorkflowStore((s) => s.definitionsError)
+  const loadDefinitions = useWorkflowStore((s) => s.loadDefinitions)
   const suggestionsByAnnotation = useAnnotationAgentSuggestionStore((s) => s.suggestionsByAnnotation)
   const runningByDoc = useAnnotationAgentSuggestionStore((s) => s.runningByDoc)
   const lastRunByDoc = useAnnotationAgentSuggestionStore((s) => s.lastRunByDoc)
@@ -23,14 +32,17 @@ export function AnnotationAutoReplyPanel() {
   const hydrateSuggestions = useAnnotationAgentSuggestionStore((s) => s.hydrateForDoc)
 
   const [agentId, setAgentId] = useState('')
+  const [targetKind, setTargetKind] = useState<AutoReplyTargetKind>('agent')
   const [includeStale, setIncludeStale] = useState(true)
 
   const activeDocId = activeDoc?.id
-  const availableAgents = useMemo(
-    () => nativeAgents.filter((agent) => agent.is_enabled),
-    [nativeAgents],
+  const availableAgents = useMemo(() => workflows.filter((workflow) => !workflow.is_disabled), [workflows])
+  const availableTargets = targetKind === 'agent' ? availableAgents : definitions
+  const providerNamesById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider.name])),
+    [providers],
   )
-  const selectedAgentId = agentId || availableAgents[0]?.id || ''
+  const selectedAgentId = agentId || availableTargets[0]?.id || ''
   const annotations = useMemo(() => {
     if (!activeDoc) return []
     return Object.values(annotationsById).filter(
@@ -53,10 +65,17 @@ export function AnnotationAutoReplyPanel() {
   ).length
   const running = activeDoc ? Boolean(runningByDoc[activeDoc.id]) : false
   const lastRun = activeDoc ? lastRunByDoc[activeDoc.id] : undefined
+  const targetError = workflowsError || definitionsError
 
   useEffect(() => {
-    if (!nativeLoaded) void loadNativeAgents()
-  }, [nativeLoaded, loadNativeAgents])
+    if (!workflowsLoaded) void loadWorkflows()
+    if (!definitionsLoaded) void loadDefinitions()
+  }, [workflowsLoaded, definitionsLoaded, loadWorkflows, loadDefinitions])
+
+  useEffect(() => {
+    if (agentId || availableTargets.length === 0) return
+    setAgentId(availableTargets[0].id)
+  }, [agentId, availableTargets])
 
   useEffect(() => {
     if (!activeDocId) return
@@ -65,7 +84,7 @@ export function AnnotationAutoReplyPanel() {
 
   const handleRun = async () => {
     if (!activeDoc || !selectedAgentId) return
-    const result = await runAutoReply(activeDoc.id, selectedAgentId, { includeStale })
+    const result = await runAutoReply(activeDoc.id, selectedAgentId, { includeStale, targetKind })
     if (!result) return
     showToast(
       `自动回复完成：生成 ${result.processed} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条。`,
@@ -109,16 +128,30 @@ export function AnnotationAutoReplyPanel() {
 
       <div className="automation-control-grid">
         <label>
-          <span>Agent</span>
+          <span>目标类型</span>
+          <select
+            value={targetKind}
+            onChange={(event) => {
+              setTargetKind(event.target.value as AutoReplyTargetKind)
+              setAgentId('')
+            }}
+            disabled={running}
+          >
+            <option value="agent">Agent</option>
+            <option value="workflow">Workflow</option>
+          </select>
+        </label>
+        <label>
+          <span>{targetKind === 'agent' ? 'Agent' : 'Workflow'}</span>
           <select
             value={selectedAgentId}
             onChange={(event) => setAgentId(event.target.value)}
-            disabled={running || availableAgents.length === 0}
+            disabled={running || availableTargets.length === 0}
           >
-            {availableAgents.length === 0 && <option value="">暂无可用原生 Agent</option>}
-            {availableAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
+            {availableTargets.length === 0 && <option value="">暂无可用目标</option>}
+            {availableTargets.map((target) => (
+              <option key={target.id} value={target.id}>
+                {formatAutomationTargetName(targetKind, target, providerNamesById)}
               </option>
             ))}
           </select>
@@ -140,7 +173,7 @@ export function AnnotationAutoReplyPanel() {
           上次生成 {lastRun.processed} 条，跳过 {lastRun.skipped} 条，失败 {lastRun.failed} 条。
         </div>
       )}
-      {nativeError && <div className="automation-error">{nativeError}</div>}
+      {targetError && <div className="automation-error">{targetError}</div>}
 
       <div className="automation-actions">
         <button

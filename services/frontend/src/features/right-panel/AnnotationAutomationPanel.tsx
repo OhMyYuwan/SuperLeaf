@@ -3,6 +3,7 @@ import { FileText, Play, Square, Workflow } from 'lucide-react'
 import { countAutomationReviewTargets, useAutomationStore } from '../../stores/automationStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import {
   flattenFileCandidates,
@@ -11,11 +12,13 @@ import {
 } from '../../services/mentions'
 import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { formatAutomationTargetName } from './automationTargetLabels'
 
 export function AnnotationAutomationPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const tree = useFilesystemStore((s) => s.tree)
   const loadTree = useFilesystemStore((s) => s.loadTree)
+  const providers = useSettingsStore((s) => s.providers)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -47,6 +50,10 @@ export function AnnotationAutomationPanel() {
 
   const availableAgents = workflows.filter((workflow) => !workflow.is_disabled)
   const availableTargets = targetKind === 'agent' ? availableAgents : definitions
+  const providerNamesById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider.name])),
+    [providers],
+  )
   const paragraphCount = activeDoc ? countAutomationReviewTargets(activeDoc) : 0
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0
   const fileCandidates = useMemo(
@@ -132,7 +139,7 @@ export function AnnotationAutomationPanel() {
             {availableTargets.length === 0 && <option value="">暂无可用目标</option>}
             {availableTargets.map((target) => (
               <option key={target.id} value={target.id}>
-                {target.name}
+                {formatAutomationTargetName(targetKind, target, providerNamesById)}
               </option>
             ))}
           </select>

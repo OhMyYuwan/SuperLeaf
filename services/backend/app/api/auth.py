@@ -157,6 +157,11 @@ def verify_token(
             raise HTTPException(404, "doc not found")
         if not member_svc.can_write(doc.project_id, user.id):
             raise HTTPException(403, "Read-only access")
+        return {
+            "user_id": user.id,
+            "display_name": user.display_name,
+            "collab_generation": doc.collab_generation,
+        }
     return {"user_id": user.id, "display_name": user.display_name}
 
 
@@ -178,4 +183,8 @@ def get_collab_token(
     if not member_svc.can_write(doc.project_id, user.id):
         raise HTTPException(403, "Read-only access")
     token, expires_in = AuthService(db).issue_collab_token(user_id=user.id, doc_id=doc.id)
-    return {"token": token, "expires_in": expires_in}
+    return {
+        "token": token,
+        "expires_in": expires_in,
+        "collab_generation": doc.collab_generation,
+    }

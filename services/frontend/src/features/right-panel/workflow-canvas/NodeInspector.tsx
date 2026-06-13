@@ -6,6 +6,9 @@
  */
 
 import { useWorkflowStore } from '../../../stores/workflowStore'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import type { CachedWorkflow } from '../../../services/backendApi'
+import { formatAgentDisplayName } from '../discussion/format'
 import type { FlowNode, FlowNodeData } from './graphConversion'
 
 interface NodeInspectorProps {
@@ -15,13 +18,10 @@ interface NodeInspectorProps {
   onClose: () => void
 }
 
-function formatAgentOption(name: string, id: string): string {
-  const shortId = id.length > 10 ? `${id.slice(0, 8)}…` : id
-  return `${name} · ${shortId}`
-}
-
 export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspectorProps) {
   const allWorkflows = useWorkflowStore((s) => s.workflows)
+  const providers = useSettingsStore((s) => s.providers)
+  const providerNamesById = new Map(providers.map((provider) => [provider.id, provider.name]))
   if (!node) {
     return (
       <aside className="wf-inspector">
@@ -91,7 +91,7 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
                 <option value="">— 未选择 Agent —</option>
                 {activeAgents.map((w) => (
                   <option key={w.id} value={w.id}>
-                    {formatAgentOption(w.name, w.id)}
+                    {formatWorkflowAgentOption(w, providerNamesById)}
                   </option>
                 ))}
                 {/*
@@ -103,7 +103,7 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
                   <optgroup label="— 已禁用（不可选）—">
                     {disabledAgents.map((w) => (
                       <option key={w.id} value={w.id} disabled className="option-disabled">
-                        {formatAgentOption(w.name, w.id)}（已禁用）
+                        {formatWorkflowAgentOption(w, providerNamesById)}（已禁用）
                       </option>
                     ))}
                   </optgroup>
@@ -210,6 +210,13 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
       )}
     </aside>
   )
+}
+
+export function formatWorkflowAgentOption(
+  agent: Pick<CachedWorkflow, 'id' | 'provider_id' | 'name'>,
+  providerNamesById: ReadonlyMap<string, string>,
+): string {
+  return formatAgentDisplayName(agent, providerNamesById)
 }
 
 function readAgentId(config: Record<string, unknown>): string {

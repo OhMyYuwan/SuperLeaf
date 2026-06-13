@@ -136,13 +136,24 @@ function fuzzyCandidates(
     anchorLength + lengthDelta,
   ])
 
+  // Optimize: normalize anchor once instead of on every iteration
+  const normalizedAnchor = normalizeText(shortenedAnchor)
+  if (!normalizedAnchor) return []
+
+  // Optimize: increase step size to reduce iterations (10% of anchor length, min 1)
+  const step = Math.max(1, Math.floor(anchorLength * 0.1))
+
   const candidates: AnnotationRangeRecoveryCandidate[] = []
-  for (let pos = searchStart; pos < searchEnd; pos += 1) {
+  let consecutiveMisses = 0
+  const MAX_CONSECUTIVE_MISSES = 20 // Skip ahead if no matches in this range
+
+  for (let pos = searchStart; pos < searchEnd; pos += step) {
+    let foundMatch = false
     for (const length of lengths) {
       const to = Math.min(currentText.length, pos + length)
       if (to <= pos) continue
       const slice = currentText.slice(pos, to)
-      const textScore = textSimilarity(shortenedAnchor, slice)
+      const textScore = textSimilarityWithNormalized(normalizedAnchor, slice)
       if (textScore < FUZZY_TEXT_THRESHOLD) continue
       const proximity = proximityScore(pos, oldRange.from)
       const confidence = (textScore * 0.65) + (proximity * 0.35)
@@ -152,6 +163,18 @@ function fuzzyCandidates(
         matchType: 'fuzzy',
         preview: slice,
       })
+      foundMatch = true
+    }
+
+    // Prune: if too many consecutive positions have no matches, skip ahead
+    if (foundMatch) {
+      consecutiveMisses = 0
+    } else {
+      consecutiveMisses += 1
+      if (consecutiveMisses >= MAX_CONSECUTIVE_MISSES) {
+        pos += anchorLength // Jump ahead by anchor length
+        consecutiveMisses = 0
+      }
     }
   }
 
@@ -161,13 +184,13 @@ function fuzzyCandidates(
     .slice(0, 5)
 }
 
-function textSimilarity(a: string, b: string): number {
-  const left = normalizeText(a)
+// Optimized text similarity that accepts pre-normalized left string
+function textSimilarityWithNormalized(normalizedLeft: string, b: string): number {
   const right = normalizeText(b)
-  if (!left || !right) return 0
-  if (left === right) return 1
-  const affix = affixSimilarity(left, right)
-  const dice = bigramDice(left, right)
+  if (!right) return 0
+  if (normalizedLeft === right) return 1
+  const affix = affixSimilarity(normalizedLeft, right)
+  const dice = bigramDice(normalizedLeft, right)
   return Math.max(affix, dice)
 }
 

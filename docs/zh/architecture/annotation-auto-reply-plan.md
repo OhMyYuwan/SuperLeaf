@@ -314,7 +314,7 @@ after: range_to 后 800 字
 
 ```text
 services/backend/app/models.py
-services/backend/app/schemas.py
+services/backend/app/schemas/annotation.py
 services/backend/app/migrations.py
 ```
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { FileText, Pen, Play, Square } from 'lucide-react'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import {
   countPolishableParagraphs,
@@ -15,6 +16,7 @@ import {
 } from '../../services/mentions'
 import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { formatAutomationTargetName } from './automationTargetLabels'
 
 const WRITE_MODE_OPTIONS: Array<{ value: WritingMode; label: string; detail: string }> = [
   { value: 'draft', label: '全文起草', detail: '整体替换 / 起草到空白' },
@@ -26,6 +28,7 @@ export function WritingAutomationPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const tree = useFilesystemStore((s) => s.tree)
   const loadTree = useFilesystemStore((s) => s.loadTree)
+  const providers = useSettingsStore((s) => s.providers)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -53,6 +56,10 @@ export function WritingAutomationPanel() {
 
   const availableAgents = workflows.filter((wf) => !wf.is_disabled)
   const availableTargets = targetKind === 'agent' ? availableAgents : definitions
+  const providerNamesById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider.name])),
+    [providers],
+  )
   const fileCandidates = useMemo(
     () => sortFilesCurrentFirst(flattenFileCandidates(tree), activeDoc?.id ?? null),
     [tree, activeDoc?.id],
@@ -132,7 +139,7 @@ export function WritingAutomationPanel() {
             {availableTargets.length === 0 && <option value="">暂无可用目标</option>}
             {availableTargets.map((target) => (
               <option key={target.id} value={target.id}>
-                {target.name}
+                {formatAutomationTargetName(targetKind, target, providerNamesById)}
               </option>
             ))}
           </select>

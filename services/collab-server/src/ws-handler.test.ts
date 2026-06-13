@@ -13,6 +13,7 @@ const MSG_SYNC = 0
 class FakeSocket {
   readyState = 1
   sent: Uint8Array[] = []
+  closed: { code?: number; reason?: string } | null = null
   private listeners = new Map<string, Array<(data?: unknown) => void>>()
 
   on(event: string, fn: (data?: unknown) => void): void {
@@ -23,6 +24,12 @@ class FakeSocket {
 
   send(data: Uint8Array): void {
     this.sent.push(data)
+  }
+
+  close(code?: number, reason?: string): void {
+    this.closed = { code, reason }
+    this.readyState = 3
+    this.emit('close')
   }
 
   emit(event: string, data?: unknown): void {
@@ -63,6 +70,71 @@ test('setupWSConnection replies to client sync step1 sent before room load finis
   } finally {
     ws?.emit('close')
     globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('replaceDocText updates active room text and notifies clients', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ content: 'server text' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    persistence.initPersistence()
+    const { setupWSConnection, getLoadedDocText, replaceDocText } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-replace-active',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+    )
+
+    await waitFor(() => getLoadedDocText('doc-replace-active') === 'server text')
+    const sentBeforeReplace = ws.sent.length
+
+    const result = await replaceDocText('doc-replace-active', 'restored text')
+
+    assert.deepEqual(result, { active: true, length: 13, connectionsClosed: 1 })
+    assert.equal(getLoadedDocText('doc-replace-active'), 'restored text')
+    assert.ok(ws.sent.length > sentBeforeReplace)
+    assert.deepEqual(ws.closed, { code: 4009, reason: 'collab_doc_replaced' })
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('setupWSConnection rejects stale collaboration generation before loading room', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const persistence = await import('./persistence.js')
+  try {
+    persistence.initPersistence()
+    const { setupWSConnection, getActiveDocIds } = await import('./ws-handler.js')
+    const ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-stale-generation',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+      { clientGeneration: 1, authoritativeGeneration: 2 },
+    )
+
+    assert.deepEqual(ws.closed, { code: 4009, reason: 'collab_doc_replaced' })
+    assert.deepEqual(getActiveDocIds(), [])
+  } finally {
     await persistence.getPersistence().destroy()
     await rm(dataDir, { recursive: true, force: true })
   }

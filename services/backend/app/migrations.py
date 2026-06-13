@@ -69,6 +69,7 @@ def run_migrations(engine: Engine) -> None:
         _rebuild_native_mcp_servers_table(conn)
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
+        _add_doc_collab_generation(conn)
         _add_conversation_user_renamed(conn)
         _add_archived_at_to_annotations(conn)
         _create_annotation_agent_suggestion_table(conn)
@@ -118,6 +119,19 @@ def _ensure_bootstrap_project(conn) -> str:
             {"name": "我的项目", "id": pid},
         )
     return pid
+
+
+def _add_doc_collab_generation(conn) -> None:
+    if not _table_exists(conn, "docs"):
+        return
+    if not _column_exists(conn, "docs", "collab_generation"):
+        conn.execute(text("ALTER TABLE docs ADD COLUMN collab_generation INTEGER DEFAULT 1"))
+    conn.execute(
+        text(
+            "UPDATE docs SET collab_generation = 1 "
+            "WHERE collab_generation IS NULL OR collab_generation < 1"
+        )
+    )
 
 
 def _add_project_id_columns(conn, fallback_pid: str) -> None:

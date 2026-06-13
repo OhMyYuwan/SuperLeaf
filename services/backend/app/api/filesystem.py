@@ -26,11 +26,22 @@ from ..schemas import (
 )
 from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
+from ..services.collab_audit_log import record_collab_event
 from ..services.event_bus import bus
 from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
-from ..services.project_fs_service import DocVersionConflictError, ProjectFsService, doc_format_for_name, is_text_payload
+from ..services.project_fs_service import (
+    DocVersionConflictError,
+    ProjectFsService,
+    doc_format_for_name,
+    is_text_payload,
+)
 from ..services.project_member_service import ProjectMemberService
-from .collab_consistency import flush_project_collab_or_503, flush_project_collab_or_503_sync
+from .collab_consistency import (
+    flush_project_collab_or_503,
+    flush_project_collab_or_503_sync,
+    invalidate_collab_docs_or_503,
+    sync_project_collab_from_db_or_503,
+)
 from .deps import (
     get_current_project,
     get_current_user,
@@ -206,6 +217,19 @@ def update_doc(
         )
     except DocVersionConflictError as exc:
         current = DocOut.model_validate(exc.current)
+        record_collab_event(
+            "doc_version_conflict",
+            level="warning",
+            project_id=project.id,
+            doc_id=exc.current.id,
+            operation=origin,
+            code="doc_version_conflict",
+            details={
+                "expected_version": body.base_version,
+                "current_version": exc.current.version,
+                "client_id": x_client_id,
+            },
+        )
         raise HTTPException(
             status_code=409,
             detail={
@@ -241,6 +265,16 @@ async def flush_collab_doc(
     try:
         doc = await collab_snapshot_service.snapshot_doc_from_collab(doc_id)
     except collab_snapshot_service.CollabSnapshotError as exc:
+        record_collab_event(
+            "collab_doc_flush_failed",
+            level="error",
+            project_id=project.id,
+            doc_id=doc_id,
+            operation="collab_flush",
+            code="collab_flush_failed",
+            message=str(exc),
+            details={"client_id": x_client_id},
+        )
         raise HTTPException(
             status_code=503,
             detail={
@@ -249,6 +283,15 @@ async def flush_collab_doc(
             },
         ) from exc
     if doc is None:
+        record_collab_event(
+            "collab_doc_not_ready",
+            level="warning",
+            project_id=project.id,
+            doc_id=doc_id,
+            operation="collab_flush",
+            code="collab_doc_not_ready",
+            details={"client_id": x_client_id},
+        )
         raise HTTPException(
             status_code=503,
             detail={
@@ -260,6 +303,13 @@ async def flush_collab_doc(
         raise HTTPException(404, "doc not found")
 
     out = DocOut.model_validate(doc)
+    record_collab_event(
+        "collab_doc_flush_succeeded",
+        project_id=project.id,
+        doc_id=doc.id,
+        operation="collab_flush",
+        details={"version": doc.version, "client_id": x_client_id},
+    )
     bus.publish(
         project.id,
         "doc.updated",
@@ -400,13 +450,30 @@ async def import_project_zip(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> dict:
     blob = await file.read()
-    await flush_project_collab_or_503(project)
+    flushed_doc_ids = await flush_project_collab_or_503(project)
+    db.expire_all()
     try:
         doc_count, file_count, byte_count = ProjectFsService(db, project).replace_from_zip(
             blob
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    db.expire_all()
+    await sync_project_collab_from_db_or_503(
+        db,
+        project,
+        operation="project_import_zip",
+    )
+    current_doc_ids = {
+        str(row[0])
+        for row in db.query(Doc.id).filter(Doc.project_id == project.id).all()
+    }
+    stale_doc_ids = [doc_id for doc_id in flushed_doc_ids if doc_id not in current_doc_ids]
+    await invalidate_collab_docs_or_503(
+        project,
+        stale_doc_ids,
+        operation="project_import_zip_stale_doc",
+    )
     _publish_tree_changed(
         project,
         "project.imported_zip",
@@ -612,6 +679,7 @@ def export_zip(
     project: Project = Depends(get_project_from_path),
 ) -> Response:
     flush_project_collab_or_503_sync(project)
+    db.expire_all()
     try:
         data = ProjectFsService(db, project).export_zip()
     except ProjectEntryNameError as e:

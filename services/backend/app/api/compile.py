@@ -70,6 +70,7 @@ async def compile_project(
     requested_main_doc_id = body.main_doc_id if body.main_doc_id is not None else project.main_doc_id
     main_doc_id = _validate_main_doc_id(db, project, requested_main_doc_id)
     await flush_project_collab_or_503(project)
+    db.expire_all()
 
     svc = get_compiler_service()
     result = await svc.compile_project(

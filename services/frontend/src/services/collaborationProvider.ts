@@ -16,6 +16,9 @@ export interface PeerInfo {
 
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
 const COLLAB_TOKEN_PROTOCOL_PREFIX = 'superleaf-collab-token.'
+const COLLAB_GENERATION_PROTOCOL_PREFIX = 'superleaf-collab-generation.'
+const DOC_REPLACED_CLOSE_CODE = 4009
+const DOC_REPLACED_CLOSE_REASON = 'collab_doc_replaced'
 
 function getCollabWsUrl(): string {
   const runtimeWsUrl = getRuntimeConfigValue('collabWsUrl')
@@ -38,20 +41,24 @@ export class CollaborationProvider {
   readonly yText: Y.Text
   readonly awareness: Awareness
   readonly provider: WebsocketProvider
+  readonly docGeneration: number
 
   private readonly projectId: string
   private readonly docId: string
   private _status: ConnectionStatus = 'disconnected'
   private _listeners = new Set<(status: ConnectionStatus) => void>()
+  private _resetListeners = new Set<() => void>()
 
   constructor(
     projectId: string,
     docId: string,
     token: string,
+    docGeneration: number,
     userInfo: { id: string; name: string; color: string },
   ) {
     this.projectId = projectId
     this.docId = docId
+    this.docGeneration = docGeneration
     this.doc = new Y.Doc()
     this.yText = this.doc.getText('content')
     this.provider = new WebsocketProvider(
@@ -60,7 +67,7 @@ export class CollaborationProvider {
       this.doc,
       {
         connect: true,
-        protocols: [`${COLLAB_TOKEN_PROTOCOL_PREFIX}${token}`],
+        protocols: this._protocolsForToken(token),
       },
     )
     this.awareness = this.provider.awareness
@@ -87,6 +94,15 @@ export class CollaborationProvider {
     this.provider.on('sync', (synced: boolean) => {
       if (synced) this._setStatus('synced')
     })
+
+    this.provider.on('connection-close', (event: CloseEvent | null) => {
+      if (
+        event?.code === DOC_REPLACED_CLOSE_CODE
+        || event?.reason === DOC_REPLACED_CLOSE_REASON
+      ) {
+        this._emitResetRequired()
+      }
+    })
   }
 
   get status(): ConnectionStatus {
@@ -100,6 +116,11 @@ export class CollaborationProvider {
   onStatusChange(fn: (status: ConnectionStatus) => void): () => void {
     this._listeners.add(fn)
     return () => { this._listeners.delete(fn) }
+  }
+
+  onResetRequired(fn: () => void): () => void {
+    this._resetListeners.add(fn)
+    return () => { this._resetListeners.delete(fn) }
   }
 
   getPeers(): PeerInfo[] {
@@ -116,7 +137,7 @@ export class CollaborationProvider {
   }
 
   refreshToken(token: string): void {
-    this.provider.protocols = [`${COLLAB_TOKEN_PROTOCOL_PREFIX}${token}`]
+    this.provider.protocols = this._protocolsForToken(token)
     this.provider.disconnect()
     this.provider.connect()
     this._setStatus('connecting')
@@ -127,11 +148,23 @@ export class CollaborationProvider {
     this.provider.destroy()
     this.doc.destroy()
     this._listeners.clear()
+    this._resetListeners.clear()
+  }
+
+  private _protocolsForToken(token: string): string[] {
+    return [
+      `${COLLAB_TOKEN_PROTOCOL_PREFIX}${token}`,
+      `${COLLAB_GENERATION_PROTOCOL_PREFIX}${this.docGeneration}`,
+    ]
   }
 
   private _setStatus(s: ConnectionStatus): void {
     if (this._status === s) return
     this._status = s
     for (const fn of this._listeners) fn(s)
+  }
+
+  private _emitResetRequired(): void {
+    for (const fn of this._resetListeners) fn()
   }
 }

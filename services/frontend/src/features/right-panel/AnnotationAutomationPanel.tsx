@@ -3,19 +3,23 @@ import { FileText, Play, Square, Workflow } from 'lucide-react'
 import { countAutomationReviewTargets, useAutomationStore } from '../../stores/automationStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import {
   flattenFileCandidates,
   sortFilesCurrentFirst,
   type MentionCandidate,
 } from '../../services/mentions'
+import type { CachedWorkflow, WorkflowDefinition } from '../../services/backendApi'
 import { MentionCodeMirrorInput } from '../shared/MentionCodeMirrorInput'
 import { confirmLargeFileAttachment } from '../shared/fileSizeGate'
+import { formatAgentDisplayName } from './discussion/format'
 
 export function AnnotationAutomationPanel() {
   const activeDoc = useDocumentStore((s) => s.getActive())
   const tree = useFilesystemStore((s) => s.tree)
   const loadTree = useFilesystemStore((s) => s.loadTree)
+  const providers = useSettingsStore((s) => s.providers)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflowsLoaded = useWorkflowStore((s) => s.loaded)
   const loadWorkflows = useWorkflowStore((s) => s.load)
@@ -47,6 +51,10 @@ export function AnnotationAutomationPanel() {
 
   const availableAgents = workflows.filter((workflow) => !workflow.is_disabled)
   const availableTargets = targetKind === 'agent' ? availableAgents : definitions
+  const providerNamesById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider.name])),
+    [providers],
+  )
   const paragraphCount = activeDoc ? countAutomationReviewTargets(activeDoc) : 0
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0
   const fileCandidates = useMemo(
@@ -132,7 +140,7 @@ export function AnnotationAutomationPanel() {
             {availableTargets.length === 0 && <option value="">暂无可用目标</option>}
             {availableTargets.map((target) => (
               <option key={target.id} value={target.id}>
-                {target.name}
+                {formatAutomationTargetName(targetKind, target, providerNamesById)}
               </option>
             ))}
           </select>
@@ -213,4 +221,15 @@ export function AnnotationAutomationPanel() {
       </div>
     </>
   )
+}
+
+export function formatAutomationTargetName(
+  targetKind: 'agent' | 'workflow',
+  target: Pick<CachedWorkflow, 'id' | 'provider_id' | 'name'> | Pick<WorkflowDefinition, 'name'>,
+  providerNamesById: ReadonlyMap<string, string>,
+): string {
+  if (targetKind === 'agent' && 'id' in target && 'provider_id' in target) {
+    return formatAgentDisplayName(target, providerNamesById)
+  }
+  return target.name
 }

@@ -9,7 +9,6 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -138,7 +137,11 @@ class ProjectArchiveService:
         binding = self.ensure_binding()
         account = GitHubService(self.db, self.user).account()
         binding.github_account_id = account.id if account else binding.github_account_id
-        binding.github_repo_url = repo_url.strip() or (f"https://github.com/{owner.strip()}/{repo.strip()}" if owner.strip() and repo.strip() else "")
+        binding.github_repo_url = repo_url.strip() or (
+            f"https://github.com/{owner.strip()}/{repo.strip()}"
+            if owner.strip() and repo.strip()
+            else ""
+        )
         binding.github_owner = owner.strip()
         binding.github_repo = repo.strip()
         binding.github_branch = branch.strip() or "yuwanlab-archive"
@@ -204,7 +207,10 @@ class ProjectArchiveService:
             .all()
         )
 
-    def push_to_github(self, message: str | None = None) -> tuple[ProjectArchiveBinding, ProjectArchiveSnapshot, str]:
+    def push_to_github(
+        self,
+        message: str | None = None,
+    ) -> tuple[ProjectArchiveBinding, ProjectArchiveSnapshot, str]:
         binding = self.ensure_binding()
         if not binding.github_repo_url and not (binding.github_owner and binding.github_repo):
             raise ArchiveError("请先填写 GitHub 仓库链接")
@@ -286,7 +292,7 @@ class ProjectArchiveService:
             f"# {self.project.name}\n\n"
             "This branch is maintained by SuperLeaf as project-level archive snapshots.\n"
             "The editor database remains the working source of truth.\n"
-        ).encode("utf-8")
+        ).encode()
         _write_file(repo_path / "SUPERLEAF_ARCHIVE.md", readme)
         byte_count += len(readme)
         return ExportStats(doc_count=len(docs), file_count=len(files), byte_count=byte_count)
@@ -324,8 +330,7 @@ class ProjectArchiveService:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=False,
                 timeout=300,  # 5 minutes
             )
@@ -346,8 +351,7 @@ class ProjectArchiveService:
                 ["git", *args],
                 cwd=repo_path,
                 env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=False,
                 timeout=300,  # 5 minutes
             )
@@ -648,7 +652,11 @@ class ProjectArchiveService:
         short_sha = commit_sha[:7]
 
         if message is None or not message.strip():
-            message = f"Restore from {short_sha}: {orig_message}" if orig_message else f"Restore from {short_sha}"
+            message = (
+                f"Restore from {short_sha}: {orig_message}"
+                if orig_message
+                else f"Restore from {short_sha}"
+            )
 
         # List files in target commit
         files = self.list_commit_files(commit_sha)
@@ -717,6 +725,7 @@ class ProjectArchiveService:
                 if doc.content != text_content:
                     doc.content = text_content
                     doc.version += 1
+                    doc.collab_generation += 1
                     doc.updated_at = datetime.utcnow()
                     # Trigger version snapshot for Layer 1 history
                     version_service.snapshot(

@@ -10,17 +10,15 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
-
 from ..database import SessionLocal
 from ..models import Doc, Project
 from ..settings import settings
+from .collab_gateway import CollabGateway, CollabGatewayError
 from .project_fs_service import ProjectFsService
 
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
-_COLLAB_INTERNAL_TOKEN_HEADER = "X-SuperLeaf-Internal-Token"
 
 
 class CollabSnapshotError(RuntimeError):
@@ -76,7 +74,7 @@ async def snapshot_project_from_collab(
     resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
     try:
         active_doc_ids = await _fetch_active_doc_ids(resolved_base_url)
-    except httpx.HTTPError as exc:
+    except CollabGatewayError as exc:
         raise CollabSnapshotError("failed to list active collaboration docs") from exc
 
     if not active_doc_ids:
@@ -104,42 +102,21 @@ async def snapshot_project_from_collab(
 
 
 async def _fetch_active_doc_ids(base_url: str) -> list[str]:
-    url = f"{base_url.rstrip('/')}/docs/active"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url, headers=_collab_internal_headers())
-        resp.raise_for_status()
-        data = resp.json()
-    ids = data.get("doc_ids", [])
-    if not isinstance(ids, list):
-        return []
-    return [str(doc_id) for doc_id in ids if doc_id is not None and str(doc_id)]
+    return await CollabGateway(base_url=base_url).get_active_doc_ids()
 
 
 async def snapshot_doc_from_collab(doc_id: str, *, base_url: str | None = None) -> Doc | None:
     resolved_base_url = (base_url or settings.collab_server_url).rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{resolved_base_url}/docs/{doc_id}/text",
-                headers=_collab_internal_headers(),
-            )
-    except httpx.HTTPError as exc:
+        collab_text = await CollabGateway(base_url=resolved_base_url).get_doc_text(doc_id)
+    except CollabGatewayError as exc:
         logger.debug("[collab-snapshot] failed to fetch doc %s", doc_id)
         raise CollabSnapshotError(f"failed to fetch collab doc {doc_id}") from exc
 
-    if resp.status_code != 200:
-        raise CollabSnapshotError(
-            f"collab doc {doc_id} text endpoint returned HTTP {resp.status_code}"
-        )
-    data = resp.json()
-    if data.get("initialized") is False:
+    if collab_text is None:
         logger.debug("[collab-snapshot] skipped uninitialized collab doc %s", doc_id)
         return None
-    new_text = data.get("text")
-    if new_text is None:
-        return None
-    if not isinstance(new_text, str):
-        new_text = str(new_text)
+    new_text = collab_text.text
 
     db = SessionLocal()
     try:
@@ -168,10 +145,3 @@ async def snapshot_doc_from_collab(doc_id: str, *, base_url: str | None = None) 
         return updated
     finally:
         db.close()
-
-
-def _collab_internal_headers() -> dict[str, str]:
-    token = settings.collab_internal_token.strip()
-    if not token:
-        return {}
-    return {_COLLAB_INTERNAL_TOKEN_HEADER: token}

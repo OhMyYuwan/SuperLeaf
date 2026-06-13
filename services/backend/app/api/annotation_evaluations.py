@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Annotation, Doc, Project, User
+from ..models import Annotation, Doc, Project, User, WorkflowDefinition
 from ..schemas import (
     AnnotationAgentSuggestionOut,
     AnnotationAgentSuggestionPatchIn,
@@ -33,6 +33,7 @@ from ..schemas import (
 )
 from ..secrets_vault import decrypt
 from ..services import annotation_agent_suggestion_service, annotation_service, evaluation_service
+from ..services.agent_orchestrator import WorkflowOrchestrator
 from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
 from ..services.event_bus import bus
 from ..services.nanobot_client import NanobotClient
@@ -501,18 +502,33 @@ async def run_agent_suggestions(
     user: User = Depends(get_current_user),
 ) -> AnnotationAgentSuggestionRunOut:
     doc = _ensure_doc(db, project, body.doc_id)
-    workflow_id = _canonical_native_agent_id(body.agent_id)
-    resolved = AgentRegistryService(db).resolve(
-        workflow_id,
-        project_id=project.id,
-        user_id=user.id,
-        require_enabled=True,
-    )
-    if resolved is None or resolved.native_agent is None:
-        raise HTTPException(404, "native agent not found")
-    provider = resolved.provider
-    if provider.kind != "native":
-        raise HTTPException(400, "auto-reply currently supports native agents only")
+    target_kind = body.target_kind or "agent"
+    workflow_id = body.agent_id
+    resolved = None
+    provider = None
+    workflow_def = None
+    if target_kind == "workflow":
+        workflow_def = db.get(WorkflowDefinition, body.agent_id)
+        if (
+            workflow_def is None
+            or workflow_def.project_id != project.id
+            or workflow_def.user_id != user.id
+            or not workflow_def.is_active
+        ):
+            raise HTTPException(404, "workflow definition not found")
+    else:
+        workflow_id = _canonical_native_agent_id(body.agent_id)
+        resolved = AgentRegistryService(db).resolve(
+            workflow_id,
+            project_id=project.id,
+            user_id=user.id,
+            require_enabled=True,
+        )
+        if resolved is None or resolved.native_agent is None:
+            raise HTTPException(404, "native agent not found")
+        provider = resolved.provider
+        if provider.kind != "native":
+            raise HTTPException(400, "auto-reply currently supports native agents only")
 
     annotations = [
         row
@@ -542,15 +558,29 @@ async def run_agent_suggestions(
             skipped += 1
             continue
         try:
-            suggestions, meta = await _generate_annotation_auto_reply(
-                provider_endpoint=provider.endpoint,
-                api_key=decrypt(provider.api_key_enc) if provider.api_key_enc else "",
-                model=resolved.native_agent.model,
-                agent_name=resolved.native_agent.name,
-                agent_instructions=resolved.native_agent.instructions,
-                doc=doc,
-                annotation=annotation,
-            )
+            if target_kind == "workflow":
+                if workflow_def is None:
+                    raise ValueError("workflow definition unavailable")
+                suggestions, meta = await _generate_annotation_auto_reply_workflow(
+                    db=db,
+                    workflow_def=workflow_def,
+                    project=project,
+                    user=user,
+                    doc=doc,
+                    annotation=annotation,
+                )
+            else:
+                if provider is None or resolved is None or resolved.native_agent is None:
+                    raise ValueError("native agent unavailable")
+                suggestions, meta = await _generate_annotation_auto_reply(
+                    provider_endpoint=provider.endpoint,
+                    api_key=decrypt(provider.api_key_enc) if provider.api_key_enc else "",
+                    model=resolved.native_agent.model,
+                    agent_name=resolved.native_agent.name,
+                    agent_instructions=resolved.native_agent.instructions,
+                    doc=doc,
+                    annotation=annotation,
+                )
             row = annotation_agent_suggestion_service.upsert_generated(
                 db,
                 project_id=project.id,
@@ -676,6 +706,72 @@ async def _generate_annotation_auto_reply(
         "raw_preview": raw[:1000],
         "prompt_version": 1,
     }
+
+
+async def _generate_annotation_auto_reply_workflow(
+    *,
+    db: Session,
+    workflow_def: WorkflowDefinition,
+    project: Project,
+    user: User,
+    doc: Doc,
+    annotation: Annotation,
+) -> tuple[list[str], dict]:
+    prompt = "\n\n".join([
+        _annotation_auto_reply_system_prompt(
+            agent_name=workflow_def.name,
+            agent_instructions=workflow_def.description or "",
+        ),
+        _annotation_auto_reply_user_prompt(doc, annotation),
+    ])
+    final_outputs: Any = None
+    async for event in WorkflowOrchestrator(db).execute_workflow(
+        workflow_def_id=workflow_def.id,
+        project_id=project.id,
+        user_id=user.id,
+        document_id=doc.id,
+        target_text=annotation.target_text or annotation.content or "",
+        range_start=int(annotation.range_from or 0),
+        range_end=int(annotation.range_to or annotation.range_from or 0),
+        user_instruction=prompt,
+        context_files=[],
+    ):
+        if event.get("event") == "workflow.completed":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            final_outputs = data.get("outputs")
+    raw = _workflow_outputs_text(final_outputs)
+    suggestions = _parse_auto_reply_suggestions(raw)
+    if not suggestions:
+        raise ValueError("workflow returned no suggestions")
+    return suggestions, {
+        "mode": "annotation_auto_reply_workflow",
+        "workflow_definition_id": workflow_def.id,
+        "workflow_definition_name": workflow_def.name,
+        "raw_preview": raw[:1000],
+        "prompt_version": 1,
+    }
+
+
+def _workflow_outputs_text(outputs: Any) -> str:
+    if isinstance(outputs, str):
+        return outputs
+    if isinstance(outputs, dict):
+        suggestions = outputs.get("suggestions")
+        if isinstance(suggestions, list):
+            return json.dumps({"suggestions": suggestions}, ensure_ascii=False)
+        for key in ("text", "answer", "result", "output"):
+            value = outputs.get(key)
+            if isinstance(value, str):
+                return value
+        nested = outputs.get("outputs")
+        if isinstance(nested, dict):
+            nested_text = _workflow_outputs_text(nested)
+            if nested_text:
+                return nested_text
+        return json.dumps(outputs, ensure_ascii=False)
+    if isinstance(outputs, list):
+        return "\n".join(_workflow_outputs_text(item) for item in outputs)
+    return str(outputs or "")
 
 
 def _annotation_auto_reply_system_prompt(*, agent_name: str, agent_instructions: str) -> str:

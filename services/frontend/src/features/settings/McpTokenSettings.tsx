@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { Copy, Eye, EyeOff, Key, Plus, Trash2, Check } from 'lucide-react'
-import { mcpTokenApi, type McpToken, type McpTokenCreateIn } from '../../services/backendApi'
+import { BACKEND_BASE, mcpTokenApi, type McpToken, type McpTokenCreateIn } from '../../services/backendApi'
 
 export function McpTokenSettings() {
   const [tokens, setTokens] = useState<McpToken[]>([])
@@ -49,7 +49,10 @@ export function McpTokenSettings() {
     <div>
       <div className="settings-section-title">MCP Token</div>
       <p className="settings-hint">
-        为 Codex、Claude Code、VS Code 等 IDE 创建长效 token。这些 token 让外部客户端可以直接访问项目，无需浏览器。
+        为 Codex、Claude Code、VS Code 等 IDE 创建长效 token。这些 token 让外部客户端直接连接后端 MCP，无需浏览器或 Local Host。
+      </p>
+      <p className="settings-hint">
+        MCP endpoint: <code>{BACKEND_BASE}/mcp</code> · Header: <code>Authorization: Bearer slmcp_...</code>
       </p>
 
       {error && <div className="error-bar">{error}</div>}
@@ -172,6 +175,9 @@ function McpTokenForm({ onClose, onCreated }: McpTokenFormProps) {
           <h3>Token 创建成功</h3>
           <p className="warning-text">
             ⚠️ 请立即复制保存此 token。关闭后将无法再次查看完整内容。
+          </p>
+          <p className="settings-hint">
+            MCP endpoint: <code>{BACKEND_BASE}/mcp</code>
           </p>
           <div className="token-display">
             <code className={showToken ? 'visible' : 'hidden'}>

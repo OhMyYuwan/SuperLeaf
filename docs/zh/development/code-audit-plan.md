@@ -138,7 +138,7 @@
 状态：已确认  
 涉及文件：
 
-- `services/backend/app/schemas.py`
+- `services/backend/app/schemas/` 包（原 `schemas.py` 已于 2026-06-13 拆分为领域子模块；文件名校验相关 schema 现位于 `schemas/filesystem.py`）
 - `services/backend/app/api/filesystem.py`
 - `services/backend/app/services/project_fs_service.py`
 - `services/backend/app/services/latex_compiler.py`
@@ -359,13 +359,13 @@
 ### AUDIT-012：前端大文件和 API helper 过大，重构风险高
 
 严重程度：P2  
-状态：可维护性项  
+状态：部分完成（TeamTab.tsx、backendApi.ts 已拆分，2026-06-13）  
 涉及区域：
 
-- `services/frontend/src/features/right-panel/TeamTab.tsx`
+- `services/frontend/src/features/right-panel/TeamTab.tsx` — ✅ 已拆分为 `team-tab/` 目录（主容器 `index.tsx` + 16 个子模块）
 - `services/frontend/src/pages/DataProjectPage.tsx`
 - `services/frontend/src/stores/conversationStore.ts`
-- `services/frontend/src/services/backendApi.ts`
+- `services/frontend/src/services/backendApi.ts` — ✅ 已拆分为 `backendApi/` 目录（11 个资源模块 + barrel）
 - `services/frontend/src/features/right-panel/DiscussionTab.tsx`
 - `services/frontend/src/stores/annotationStore.ts`
 - `services/frontend/src/pages/WorkspacePage.tsx`
@@ -379,13 +379,11 @@
 修改方案：
 
 1. 不做一次性大重构，按功能区渐进拆分。
-2. `backendApi.ts` 拆成：
-   - 基础 HTTP client。
-   - project/filesystem API。
-   - collaboration/auth API。
-   - agents/workflows API。
-   - datasets API。
-3. `TeamTab.tsx` 拆成 Provider、MCP、Skill、Native Agent、Workflow 子面板。
+2. ✅ `backendApi.ts` 已拆成 `backendApi/` 目录（11 个资源模块 + `index.ts` barrel）：
+   - 基础 HTTP client（`client.ts`）。
+   - providers / native-agents / workflows / conversations / compile / archives / github / project-members / mcp-tokens / health。
+   - `index.ts` 用 `export *` 重导出全部符号，保留旧导入路径，53 处调用点零改动；`tsc -b`/`eslint`/`npm run build` 通过。
+3. ✅ `TeamTab.tsx` 已拆成 Provider、MCP、Skill、Native Agent、Workflow 子面板（`team-tab/` 目录，主容器 434 行 + 16 个子模块），`tsc -b`/`npm run build` 通过。
 4. 拆分前先补行为测试或至少补 smoke tests，确保 UI 状态不漂移。
 5. 权限修复后同步增加只读状态 UI：禁用按钮、隐藏危险动作、保留清晰 tooltip。
 

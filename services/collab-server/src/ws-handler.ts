@@ -5,10 +5,14 @@ import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
 import type { WebSocket } from 'ws'
 import type { AuthUser } from './index.js'
-import { loadOrCreateDoc, storeUpdate } from './persistence.js'
+import { errorMessage, recordCollabServerEvent } from './audit-log.js'
+import { getPersistence, loadOrCreateDoc, storeUpdate } from './persistence.js'
 
 const MSG_SYNC = 0
 const MSG_AWARENESS = 1
+const SERVER_REPLACE_ORIGIN = Symbol('server_replace')
+export const DOC_REPLACED_CLOSE_CODE = 4009
+export const DOC_REPLACED_CLOSE_REASON = 'collab_doc_replaced'
 
 interface DocRoom {
   doc: Y.Doc
@@ -17,6 +21,23 @@ interface DocRoom {
 }
 
 const rooms = new Map<string, DocRoom>()
+
+export interface ReplaceDocTextResult {
+  active: boolean
+  length: number
+  connectionsClosed: number
+}
+
+export interface InvalidateDocResult {
+  active: boolean
+  connectionsClosed: number
+  cleared: boolean
+}
+
+export interface ConnectionGenerationOptions {
+  clientGeneration?: number | null
+  authoritativeGeneration?: number | null
+}
 
 // Track which docs have active connections (for snapshot service).
 export function getActiveDocIds(): string[] {
@@ -29,6 +50,51 @@ export function getLoadedDocText(docId: string): string | null {
   const room = rooms.get(docId)
   if (!room) return null
   return room.doc.getText('content').toString()
+}
+
+export async function replaceDocText(docId: string, text: string): Promise<ReplaceDocTextResult> {
+  const room = rooms.get(docId)
+  if (room) {
+    replaceYText(room.doc, text)
+    await storeUpdate(docId, Y.encodeStateAsUpdate(room.doc))
+    const connectionsClosed = closeRoomConnections(room, docId, 'doc_replace')
+    void recordCollabServerEvent('doc_text_replaced', {
+      docId,
+      operation: 'doc_replace',
+      details: { active: true, length: text.length, connections_closed: connectionsClosed },
+    })
+    return { active: true, length: text.length, connectionsClosed }
+  }
+
+  const doc = await getPersistence().getYDoc(docId)
+  try {
+    replaceYText(doc, text)
+    await storeUpdate(docId, Y.encodeStateAsUpdate(doc))
+    void recordCollabServerEvent('doc_text_replaced', {
+      docId,
+      operation: 'doc_replace',
+      details: { active: false, length: text.length },
+    })
+    return { active: false, length: text.length, connectionsClosed: 0 }
+  } finally {
+    doc.destroy()
+  }
+}
+
+export async function invalidateDoc(docId: string): Promise<InvalidateDocResult> {
+  const room = rooms.get(docId)
+  const connectionsClosed = room
+    ? closeRoomConnections(room, docId, 'doc_invalidate')
+    : 0
+  await (getPersistence() as unknown as {
+    clearDocument: (name: string) => Promise<void>
+  }).clearDocument(docId)
+  void recordCollabServerEvent('doc_invalidated', {
+    docId,
+    operation: 'doc_invalidate',
+    details: { active: Boolean(room), connections_closed: connectionsClosed, cleared: true },
+  })
+  return { active: Boolean(room), connectionsClosed, cleared: true }
 }
 
 async function getOrCreateRoom(docId: string, token?: string): Promise<DocRoom> {
@@ -68,15 +134,54 @@ async function getOrCreateRoom(docId: string, token?: string): Promise<DocRoom> 
       if (conn !== origin && conn.readyState === 1) conn.send(msg)
     }
     // Persist the update.
-    void storeUpdate(docId, update)
+    if (origin !== SERVER_REPLACE_ORIGIN) {
+      void storeUpdate(docId, update).catch((err: unknown) => {
+        void recordCollabServerEvent('update_persist_failed', {
+          level: 'error',
+          docId,
+          operation: 'store_update',
+          code: 'update_persist_failed',
+          message: errorMessage(err),
+          details: { update_bytes: update.byteLength },
+        })
+      })
+    }
   })
 
   room = { doc, awareness, conns: new Map() }
   rooms.set(docId, room)
+  void recordCollabServerEvent('room_created', {
+    docId,
+    operation: 'room_create',
+  })
   return room
 }
 
-export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, token: string): void {
+export function setupWSConnection(
+  ws: WebSocket,
+  docId: string,
+  user: AuthUser,
+  token: string,
+  generationOptions: ConnectionGenerationOptions = {},
+): void {
+  if (!isCurrentGeneration(generationOptions)) {
+    void recordCollabServerEvent('stale_generation_rejected', {
+      level: 'warning',
+      docId,
+      userId: user.id,
+      operation: 'websocket_connect',
+      code: 'stale_collab_generation',
+      details: {
+        client_generation: generationOptions.clientGeneration,
+        authoritative_generation: generationOptions.authoritativeGeneration,
+      },
+    })
+    if (ws.readyState === 1) {
+      ws.close(DOC_REPLACED_CLOSE_CODE, DOC_REPLACED_CLOSE_REASON)
+    }
+    return
+  }
+
   let room: DocRoom | null = null
   let closed = false
   const pendingMessages: Uint8Array[] = []
@@ -87,7 +192,19 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
       pendingMessages.push(buf)
       return
     }
-    handleMessage(room, ws, buf)
+    try {
+      handleMessage(room, ws, buf, docId)
+    } catch (err) {
+      void recordCollabServerEvent('message_handling_failed', {
+        level: 'error',
+        docId,
+        userId: user.id,
+        operation: 'message',
+        code: 'message_handling_failed',
+        message: errorMessage(err),
+        details: { bytes: buf.byteLength },
+      })
+    }
   })
 
   ws.on('close', () => {
@@ -96,12 +213,34 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
   })
 
   void (async () => {
-    const loadedRoom = await getOrCreateRoom(docId, token)
+    let loadedRoom: DocRoom
+    try {
+      loadedRoom = await getOrCreateRoom(docId, token)
+    } catch (err) {
+      void recordCollabServerEvent('room_load_failed', {
+        level: 'error',
+        docId,
+        userId: user.id,
+        operation: 'room_load',
+        code: 'room_load_failed',
+        message: errorMessage(err),
+      })
+      if (ws.readyState === 1) {
+        ws.close(1011, 'failed to load collaboration document')
+      }
+      return
+    }
     if (closed) return
     room = loadedRoom
     const { doc, awareness } = room
 
     room.conns.set(ws, new Set())
+    void recordCollabServerEvent('client_connected', {
+      docId,
+      userId: user.id,
+      operation: 'websocket_connect',
+      details: { connection_count: room.conns.size },
+    })
 
     // Send sync step 1.
     const syncEncoder = encoding.createEncoder()
@@ -125,12 +264,50 @@ export function setupWSConnection(ws: WebSocket, docId: string, user: AuthUser, 
     }
 
     for (const pending of pendingMessages.splice(0)) {
-      handleMessage(room, ws, pending)
+      try {
+        handleMessage(room, ws, pending, docId)
+      } catch (err) {
+        void recordCollabServerEvent('message_handling_failed', {
+          level: 'error',
+          docId,
+          userId: user.id,
+          operation: 'message',
+          code: 'message_handling_failed',
+          message: errorMessage(err),
+          details: { bytes: pending.byteLength, queued: true },
+        })
+      }
     }
   })()
 }
 
-function handleMessage(room: DocRoom, ws: WebSocket, buf: Uint8Array): void {
+function isCurrentGeneration(options: ConnectionGenerationOptions): boolean {
+  if (options.authoritativeGeneration === undefined || options.authoritativeGeneration === null) {
+    return true
+  }
+  return Number.isSafeInteger(options.clientGeneration)
+    && options.clientGeneration === options.authoritativeGeneration
+}
+
+function closeRoomConnections(room: DocRoom, docId: string, operation: string): number {
+  let closed = 0
+  for (const [conn] of room.conns) {
+    if (conn.readyState === 1) {
+      conn.close(DOC_REPLACED_CLOSE_CODE, DOC_REPLACED_CLOSE_REASON)
+      closed += 1
+    }
+  }
+  if (closed > 0) {
+    void recordCollabServerEvent('room_connections_reset', {
+      docId,
+      operation,
+      details: { connections_closed: closed },
+    })
+  }
+  return closed
+}
+
+function handleMessage(room: DocRoom, ws: WebSocket, buf: Uint8Array, docId: string): void {
   const { doc, awareness } = room
   const decoder = decoding.createDecoder(buf)
   const msgType = decoding.readVarUint(decoder)
@@ -161,6 +338,14 @@ function handleMessage(room: DocRoom, ws: WebSocket, buf: Uint8Array): void {
       )
       break
     }
+    default:
+      void recordCollabServerEvent('unknown_message_type', {
+        level: 'warning',
+        docId,
+        operation: 'message',
+        code: 'unknown_message_type',
+        details: { message_type: msgType, bytes: buf.byteLength },
+      })
   }
 }
 
@@ -172,6 +357,14 @@ function handleClose(room: DocRoom, ws: WebSocket, docId: string): void {
   if (removeClientIds.length > 0) {
     awarenessProtocol.removeAwarenessStates(awareness, removeClientIds, null)
   }
+  void recordCollabServerEvent('client_disconnected', {
+    docId,
+    operation: 'websocket_disconnect',
+    details: {
+      connection_count: room.conns.size,
+      awareness_clients_removed: removeClientIds.length,
+    },
+  })
 
   // If no more connections, clean up after a delay.
   if (room.conns.size === 0) {
@@ -180,6 +373,10 @@ function handleClose(room: DocRoom, ws: WebSocket, docId: string): void {
       if (current && current.conns.size === 0) {
         current.doc.destroy()
         rooms.delete(docId)
+        void recordCollabServerEvent('room_destroyed', {
+          docId,
+          operation: 'room_cleanup',
+        })
       }
     }, 30_000)
     cleanupTimer.unref()
@@ -196,4 +393,17 @@ function readAwarenessClientIds(update: Uint8Array): number[] {
     decoding.readVarString(decoder) // JSON state
   }
   return clientIds
+}
+
+function replaceYText(doc: Y.Doc, nextText: string): void {
+  const yText = doc.getText('content')
+  if (yText.toString() === nextText) {
+    return
+  }
+  doc.transact(() => {
+    yText.delete(0, yText.length)
+    if (nextText) {
+      yText.insert(0, nextText)
+    }
+  }, SERVER_REPLACE_ORIGIN)
 }

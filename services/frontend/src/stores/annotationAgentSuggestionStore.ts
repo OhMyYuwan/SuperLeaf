@@ -20,7 +20,7 @@ interface AnnotationAgentSuggestionState {
   runAutoReply: (
     docId: string,
     agentId: string,
-    options?: { includeStale?: boolean },
+    options?: { includeStale?: boolean; targetKind?: 'agent' | 'workflow' },
   ) => Promise<AnnotationAgentSuggestionRunOut | null>
   updateSuggestion: (
     id: string,
@@ -60,6 +60,7 @@ export const useAnnotationAgentSuggestionStore = create<AnnotationAgentSuggestio
       const result = await annotationAgentSuggestionApi.run({
         doc_id: docId,
         agent_id: agentId,
+        target_kind: options.targetKind ?? 'agent',
         include_stale: options.includeStale ?? true,
         scope: 'current_doc',
       })

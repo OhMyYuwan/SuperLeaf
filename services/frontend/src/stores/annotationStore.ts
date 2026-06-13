@@ -632,6 +632,25 @@ export const useAnnotationStore = create<AnnotationState>()(
   },
 
   recoverRangesForDocument: (documentId, currentText) => {
+    // Filter active annotations for current document upfront to avoid scanning entire global dictionary
+    const candidateItems = Object.entries(get().items).filter(([, item]) =>
+      item.documentId === documentId &&
+      item.status !== 'deleted' &&
+      item.status !== 'superseded' &&
+      item.status !== 'archived', // Archived annotations don't need position recovery
+    )
+
+    // Fast path: no annotations to recover
+    if (candidateItems.length === 0) {
+      return {
+        total: 0,
+        stable: 0,
+        recovered: 0,
+        needsReview: 0,
+        results: {},
+      }
+    }
+
     const rangePatches: Array<{ id: string; from: number; to: number }> = []
     const results: Record<string, AnnotationRangeRecoveryResult> = {}
     const summary: AnnotationRangeRecoverySummary = {
@@ -645,9 +664,8 @@ export const useAnnotationStore = create<AnnotationState>()(
     set((state) => {
       const items = { ...state.items }
       let changed = false
-      for (const [id, item] of Object.entries(items)) {
-        if (item.documentId !== documentId) continue
-        if (item.status === 'deleted' || item.status === 'superseded') continue
+      // Only iterate through pre-filtered active annotations
+      for (const [id, item] of candidateItems) {
         const recovery = recoverAnnotationRange(item, currentText)
         results[id] = recovery
         summary.total += 1

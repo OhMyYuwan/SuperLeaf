@@ -18,6 +18,10 @@ from ..schemas import DiffOut, DocOut, LabelIn, LabelOut, OperationIn, Operation
 from ..services import operation_service, version_service
 from ..services.diff_service import compute_diff
 from ..services.project_fs_service import ProjectFsService
+from .collab_consistency import (
+    flush_project_collab_or_503_sync,
+    sync_collab_doc_from_db_or_503_sync,
+)
 from .deps import get_current_project, get_current_user, require_write_access
 
 router = APIRouter(prefix="/api/docs", tags=["versions"])
@@ -139,6 +143,11 @@ def get_diff(
 ) -> DiffOut:
     doc = _ensure_doc(db, project, doc_id)
 
+    if to == "current":
+        flush_project_collab_or_503_sync(project)
+        db.expire_all()
+        doc = _ensure_doc(db, project, doc_id)
+
     va = version_service.get_version(db, doc_id, from_)
     if va is None:
         raise HTTPException(404, "version not found")
@@ -195,6 +204,9 @@ def restore_version(
     if blob.string_length is None:
         raise HTTPException(400, "cannot restore a binary version into a text doc")
 
+    flush_project_collab_or_503_sync(project)
+    db.expire_all()
+
     text = _decode_text_blob_lossy(blob)
     actor = user.id
     svc = ProjectFsService(db, project)
@@ -206,6 +218,7 @@ def restore_version(
     )
     if doc is None:
         raise HTTPException(404, "doc not found")
+    doc.collab_generation += 1
 
     operation_service.record(
         db,
@@ -215,6 +228,13 @@ def restore_version(
         actor=actor,
     )
     db.commit()
+
+    sync_collab_doc_from_db_or_503_sync(
+        db,
+        project,
+        doc_id,
+        operation="version_restore",
+    )
 
     return DocOut.model_validate(doc)
 

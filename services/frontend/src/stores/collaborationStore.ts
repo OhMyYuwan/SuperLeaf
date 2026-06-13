@@ -34,11 +34,16 @@ interface CollaborationState {
 
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-async function issueCollabToken(docId: string): Promise<string> {
-  const res = await http<{ token: string; expires_in: number }>(
+interface CollabTokenResponse {
+  token: string
+  expires_in: number
+  collab_generation: number
+}
+
+async function issueCollabToken(docId: string): Promise<CollabTokenResponse> {
+  return await http<CollabTokenResponse>(
     `/api/auth/collab-token?doc_id=${encodeURIComponent(docId)}`,
   )
-  return res.token
 }
 
 export const useCollaborationStore = create<CollaborationState>()((set, get) => ({
@@ -60,7 +65,7 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     set({ provider: null, status: 'connecting', peers: [], currentProjectId: projectId, currentDocId: docId })
 
     // Fetch a short-lived, document-scoped collab token from the backend.
-    let token: string
+    let token: CollabTokenResponse
     try {
       token = await issueCollabToken(docId)
     } catch {
@@ -71,11 +76,25 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
 
     if (get().currentProjectId !== projectId || get().currentDocId !== docId) return
 
-    const provider = new CollaborationProvider(projectId, docId, token, {
+    const provider = new CollaborationProvider(projectId, docId, token.token, token.collab_generation, {
       id: user.id,
       name: user.name,
       color: colorForUser(user.id),
     })
+
+    const reconnectFresh = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      const state = get()
+      if (state.provider !== provider || state.currentProjectId !== projectId || state.currentDocId !== docId) {
+        return
+      }
+      void get().connect(projectId, docId, user)
+    }
+
+    provider.onResetRequired(reconnectFresh)
 
     provider.onStatusChange((status) => {
       if (get().provider !== provider) return
@@ -92,7 +111,11 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
             try {
               const token = await issueCollabToken(docId)
               if (get().provider !== provider || get().currentDocId !== docId) return
-              provider.refreshToken(token)
+              if (token.collab_generation !== provider.docGeneration) {
+                reconnectFresh()
+                return
+              }
+              provider.refreshToken(token.token)
             } catch {
               console.warn('[collaborationStore] failed to refresh collab token')
             }

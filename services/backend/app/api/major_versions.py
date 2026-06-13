@@ -22,7 +22,10 @@ from ..schemas import (
     ProjectArchiveSnapshotOut,
 )
 from ..services.project_archive_service import ArchiveError, ProjectArchiveService
-from .collab_consistency import flush_project_collab_or_503_sync
+from .collab_consistency import (
+    flush_project_collab_or_503_sync,
+    sync_project_collab_from_db_or_503_sync,
+)
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects/{project_id}/major-versions", tags=["major-versions"])
@@ -72,6 +75,7 @@ def create_major_version(
     """Create a new major version (git commit) of the entire project."""
     _require_owner(project, user)
     flush_project_collab_or_503_sync(project)
+    db.expire_all()
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.create_snapshot(body.message)
@@ -136,6 +140,10 @@ def get_major_version_diff(
     db: Session = Depends(get_session),
 ) -> CommitDiffOut:
     """Get diff from an archive commit to the current project tree, or an explicit commit pair."""
+    if against is None:
+        flush_project_collab_or_503_sync(project)
+        db.expire_all()
+
     svc = ProjectArchiveService(db, project, user)
     try:
         diff = svc.get_commit_diff(sha, against=against)
@@ -195,9 +203,16 @@ def restore_major_version(
     """Safely restore project to a specific commit (creates a new commit, no history rewrite)."""
     _require_owner(project, user)
     flush_project_collab_or_503_sync(project)
+    db.expire_all()
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.restore_to_commit(sha, message=body.message)
     except ArchiveError as e:
         raise HTTPException(400, str(e)) from e
+    db.expire_all()
+    sync_project_collab_from_db_or_503_sync(
+        db,
+        project,
+        operation="major_version_restore",
+    )
     return ProjectArchiveSnapshotOut.model_validate(snapshot)

@@ -40,14 +40,18 @@ class CollabGateway:
         self.transport = transport
 
     async def get_active_doc_ids(self) -> list[str]:
-        payload = await self._get_json("/docs/active")
+        payload = await self._request_json("GET", "/docs/active")
         doc_ids = payload.get("doc_ids")
         if not isinstance(doc_ids, list):
             raise CollabGatewayError("collab active-doc response is malformed")
         return [doc_id for doc_id in doc_ids if isinstance(doc_id, str) and doc_id]
 
     async def get_doc_text(self, doc_id: str) -> CollabDocText | None:
-        payload = await self._get_json(f"/docs/{doc_id}/text", none_codes={UNINITIALIZED_DOC_CODE})
+        payload = await self._request_json(
+            "GET",
+            f"/docs/{doc_id}/text",
+            none_codes={UNINITIALIZED_DOC_CODE},
+        )
         if payload is None or payload.get("initialized") is False:
             return None
         text = payload.get("text")
@@ -60,13 +64,60 @@ class CollabGateway:
             source=str(payload.get("source") or "unknown"),
         )
 
-    async def _get_json(self, path: str, *, none_codes: set[str] | None = None) -> dict[str, Any] | None:
+    async def replace_doc_text(
+        self,
+        doc_id: str,
+        text: str,
+        *,
+        collab_generation: int | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"text": text}
+        if collab_generation is not None:
+            body["collab_generation"] = collab_generation
+        payload = await self._request_json("PUT", f"/docs/{doc_id}/text", json=body)
+        if payload is None:
+            raise CollabGatewayError(f"collab replace response for {doc_id} is empty")
+        if payload.get("ok") is not True:
+            raise CollabGatewayError(f"collab replace response for {doc_id} is not ok")
+        return {
+            "doc_id": str(payload.get("doc_id") or doc_id),
+            "length": int(payload.get("length") or 0),
+            "active": bool(payload.get("active", False)),
+            "connections_closed": int(payload.get("connections_closed") or 0),
+        }
+
+    async def invalidate_doc(self, doc_id: str) -> dict[str, Any]:
+        payload = await self._request_json("POST", f"/docs/{doc_id}/invalidate")
+        if payload is None:
+            raise CollabGatewayError(f"collab invalidate response for {doc_id} is empty")
+        if payload.get("ok") is not True:
+            raise CollabGatewayError(f"collab invalidate response for {doc_id} is not ok")
+        return {
+            "doc_id": str(payload.get("doc_id") or doc_id),
+            "active": bool(payload.get("active", False)),
+            "connections_closed": int(payload.get("connections_closed") or 0),
+            "cleared": bool(payload.get("cleared", False)),
+        }
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        none_codes: set[str] | None = None,
+    ) -> dict[str, Any] | None:
         if not self.internal_token:
             raise CollabGatewayError("collab internal token is not configured")
         url = f"{self.base_url}{path}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s, transport=self.transport) as client:
-                resp = await client.get(url, headers={INTERNAL_TOKEN_HEADER: self.internal_token})
+                resp = await client.request(
+                    method,
+                    url,
+                    headers={INTERNAL_TOKEN_HEADER: self.internal_token},
+                    json=json,
+                )
         except httpx.HTTPError as exc:
             raise CollabGatewayError(f"failed to reach collab service at {url}") from exc
 

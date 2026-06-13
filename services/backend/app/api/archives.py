@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Project, User
+from ..models import Doc, Project, User
 from ..schemas import (
     GitHubImportIn,
     GitHubImportOut,
@@ -20,7 +20,11 @@ from ..schemas import (
 )
 from ..services.github_service import GitHubError, GitHubService
 from ..services.project_archive_service import ArchiveError, ProjectArchiveService
-from .collab_consistency import flush_project_collab_or_503_sync
+from .collab_consistency import (
+    flush_project_collab_or_503_sync,
+    invalidate_collab_docs_or_503_sync,
+    sync_project_collab_from_db_or_503_sync,
+)
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects/{project_id}/archive", tags=["archive"])
@@ -82,7 +86,8 @@ def import_github_repository(
     db: Session = Depends(get_session),
 ) -> GitHubImportOut:
     _require_owner(project, user)
-    flush_project_collab_or_503_sync(project)
+    flushed_doc_ids = flush_project_collab_or_503_sync(project)
+    db.expire_all()
     try:
         result = GitHubService(db, user).import_repo_into_project(
             project,
@@ -91,6 +96,22 @@ def import_github_repository(
         )
     except GitHubError as e:
         raise HTTPException(400, str(e)) from e
+    db.expire_all()
+    sync_project_collab_from_db_or_503_sync(
+        db,
+        project,
+        operation="github_import",
+    )
+    current_doc_ids = {
+        str(row[0])
+        for row in db.query(Doc.id).filter(Doc.project_id == project.id).all()
+    }
+    stale_doc_ids = [doc_id for doc_id in flushed_doc_ids if doc_id not in current_doc_ids]
+    invalidate_collab_docs_or_503_sync(
+        project,
+        stale_doc_ids,
+        operation="github_import_stale_doc",
+    )
     return GitHubImportOut(
         project_id=project.id,
         repo_url=result.repo_url,
@@ -110,6 +131,7 @@ def push_github_archive(
 ) -> GitHubPushOut:
     _require_owner(project, user)
     flush_project_collab_or_503_sync(project)
+    db.expire_all()
     svc = ProjectArchiveService(db, project, user)
     try:
         binding, _snapshot, sha = svc.push_to_github(body.message)
@@ -134,6 +156,7 @@ def create_archive_snapshot(
 ) -> ProjectArchiveSnapshotOut:
     _require_owner(project, user)
     flush_project_collab_or_503_sync(project)
+    db.expire_all()
     svc = ProjectArchiveService(db, project, user)
     try:
         snapshot = svc.create_snapshot(body.message)

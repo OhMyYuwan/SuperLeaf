@@ -3,9 +3,11 @@ import type { CachedWorkflow, Conversation } from '../../services/backendApi'
 import {
   conversationScopeKey,
   documentConversationsNewestFirst,
+  discussionComposerMentionCandidates,
   enabledDiscussionAgents,
   resolveDiscussionAgentId,
 } from './discussionAgentSelection'
+import type { FileCandidate, WorkflowCandidate } from '../../services/mentions'
 
 describe('discussion Agent selection', () => {
   const workflows = [
@@ -74,6 +76,30 @@ describe('discussion Agent selection', () => {
 
   it('uses a stable document and Agent scope key for manual conversation focus', () => {
     expect(conversationScopeKey('doc-1', 'wf-other')).toBe('doc-1::wf-other')
+  })
+
+  it('keeps discussion @ mentions scoped to files, not other Agents or Workflows', () => {
+    const files: FileCandidate[] = [
+      {
+        kind: 'file',
+        id: 'doc-a',
+        name: 'main.tex',
+        path: 'main.tex',
+        format: 'doc',
+        size_bytes: 120,
+      },
+    ]
+    const workflowCandidates: WorkflowCandidate[] = [
+      { kind: 'workflow', id: 'flow-a', name: 'Roundtable' },
+    ]
+
+    const candidates = discussionComposerMentionCandidates({
+      agents: workflows,
+      workflows: workflowCandidates,
+      files,
+    })
+
+    expect(candidates).toEqual(files)
   })
 })
 

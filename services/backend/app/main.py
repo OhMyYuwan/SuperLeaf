@@ -40,6 +40,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router)
+    if settings.mcp_server_enabled:
+        from .mcp.router import router as backend_mcp_router
+
+        app.include_router(backend_mcp_router)
     return app
 
 

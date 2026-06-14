@@ -50,7 +50,6 @@ import {
 import { useConversationStore } from '../../stores/conversationStore'
 import type { AgentRunStats, LocalAgentApprovalEntry, ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
-import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { CachedWorkflow, Conversation, Message } from '../../services/backendApi'
@@ -58,16 +57,12 @@ import type { Selection } from '../../types/editor'
 import {
   parseMentions,
   segmentText,
-  stripMentions,
   flattenFileCandidates,
   sortFilesCurrentFirst,
   uniqueMentionedFiles,
-  uniqueMentionedWorkflows,
   resolveAttachedFiles,
-  type AgentCandidate,
   type FileCandidate,
   type MentionCandidate,
-  type WorkflowCandidate,
 } from '../../services/mentions'
 import { MentionInput } from '../shared/MentionInput'
 import { confirmLargeFileAttachment, confirmMultimodalBudget } from '../shared/fileSizeGate'
@@ -75,6 +70,7 @@ import { AgentMarkdown } from '../shared/AgentMarkdown'
 import {
   conversationScopeKey as buildConversationScopeKey,
   documentConversationsNewestFirst,
+  discussionComposerMentionCandidates,
   enabledDiscussionAgents,
   resolveDiscussionAgentId,
   timestampValue,
@@ -124,8 +120,6 @@ export function DiscussionTab({
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
   const stopMessage = useConversationStore((s) => s.stopMessage)
-  const injectMessage = useConversationStore((s) => s.injectMessage)
-  const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const activeDocFormat = useDocumentStore((s) =>
     documentId ? s.documents[documentId]?.format : undefined,
   )
@@ -149,7 +143,6 @@ export function DiscussionTab({
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
-  const definitions = useWorkflowStore((s) => s.definitions)
   const fileCandidates = useMemo(
     () => sortFilesCurrentFirst(flattenFileCandidates(tree), documentId),
     [tree, documentId],
@@ -166,29 +159,14 @@ export function DiscussionTab({
     () => enabledDiscussionAgents(workflows),
     [workflows],
   )
-  const agentCandidates: AgentCandidate[] = useMemo(
+  const discussionMentionCandidates: MentionCandidate[] = useMemo(
     () =>
-      availableWorkflows.map((w) => ({
-        kind: 'agent',
-        id: w.id,
-        name: w.name,
-        displayName: formatAgentDisplayName(w, providerNamesById),
-      })),
-    [availableWorkflows, providerNamesById],
-  )
-  const workflowCandidates: WorkflowCandidate[] = useMemo(
-    () =>
-      definitions.map((d) => ({
-        kind: 'workflow',
-        id: d.id,
-        name: d.name,
-        description: d.description ?? undefined,
-      })),
-    [definitions],
-  )
-  const allCandidates: MentionCandidate[] = useMemo(
-    () => [...agentCandidates, ...workflowCandidates, ...fileCandidates],
-    [agentCandidates, workflowCandidates, fileCandidates],
+      discussionComposerMentionCandidates({
+        agents: availableWorkflows,
+        workflows: [],
+        files: fileCandidates,
+      }),
+    [availableWorkflows, fileCandidates],
   )
   const conversationsReadyForDocument = loadedConversationDocumentId === documentId
   const conversationList = useMemo(
@@ -351,13 +329,12 @@ export function DiscussionTab({
   const handleSend = useCallback(async (rawText: string) => {
     if (!rawText || !effectiveConversationId) return
 
-    const mentions = parseMentions(rawText, allCandidates)
+    const mentions = parseMentions(rawText, discussionMentionCandidates)
     // Keep the raw mention markers in the message body so the bubble can
     // render them with the same colored highlight the input box uses. The
     // backend gets attached_files via inputs separately, so the markers in
     // the text are purely a human-readable trace of what the user invoked.
     const mentionedFiles = uniqueMentionedFiles(mentions)
-    const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
 
     // Check multimodal budget before resolving
     if (!confirmMultimodalBudget(mentionedFiles)) {
@@ -390,27 +367,7 @@ export function DiscussionTab({
     }
 
     await sendMessage(effectiveConversationId, body)
-
-    if (mentionedWorkflows.length > 0 && documentId) {
-      // Workflow dispatch still uses a clean query (no @markers), since the
-      // workflow runner treats the query as a literal instruction.
-      const cleanedQuery = stripMentions(rawText, mentions) || rawText
-      await Promise.all(
-        mentionedWorkflows.map((wf) =>
-          dispatchWorkflowToConversation({
-            workflow: wf,
-            conversationId: effectiveConversationId,
-            documentId,
-            selection: activeSelection,
-            attachedFiles,
-            query: cleanedQuery,
-            executeDefinition,
-            injectMessage,
-          }),
-        ),
-      )
-    }
-  }, [effectiveConversationId, allCandidates, activeSelection, activeDocFormat, sendMessage, documentId, executeDefinition, injectMessage])
+  }, [effectiveConversationId, discussionMentionCandidates, activeSelection, activeDocFormat, sendMessage])
 
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
@@ -669,7 +626,7 @@ export function DiscussionTab({
                         message={msg}
                         agentDisplayName={activeAgentName}
                         runStats={messageRunStats[msg.id]}
-                        allCandidates={allCandidates}
+                        mentionCandidates={discussionMentionCandidates}
                         onJumpToRange={onJumpToRange}
                       />
                       {msgProposals?.map((proposal) => (
@@ -724,9 +681,7 @@ export function DiscussionTab({
                 />
               )}
               <DiscussionComposer
-                allCandidates={allCandidates}
-                agentCandidates={agentCandidates}
-                workflowCandidates={workflowCandidates}
+                mentionCandidates={discussionMentionCandidates}
                 fileCandidates={fileCandidates}
                 activeSelection={activeSelection}
                 isStreaming={isStreaming}
@@ -747,14 +702,12 @@ interface MessageBubbleProps {
   message: Message
   agentDisplayName: string
   runStats?: AgentRunStats
-  allCandidates: MentionCandidate[]
+  mentionCandidates: MentionCandidate[]
   onJumpToRange?: (range: { from: number; to: number }) => void
 }
 
 interface DiscussionComposerProps {
-  allCandidates: MentionCandidate[]
-  agentCandidates: AgentCandidate[]
-  workflowCandidates: WorkflowCandidate[]
+  mentionCandidates: MentionCandidate[]
   fileCandidates: FileCandidate[]
   activeSelection: Selection | null
   isStreaming: boolean
@@ -822,9 +775,7 @@ function LocalApprovalPanel({
 }
 
 const DiscussionComposer = memo(function DiscussionComposer({
-  allCandidates,
-  agentCandidates,
-  workflowCandidates,
+  mentionCandidates,
   fileCandidates,
   activeSelection,
   isStreaming,
@@ -848,12 +799,12 @@ const DiscussionComposer = memo(function DiscussionComposer({
 
   const pendingFileMentions = useMemo(() => {
     if (!inputText.includes('@')) return [] as FileCandidate[]
-    const mentions = parseMentions(inputText, allCandidates)
+    const mentions = parseMentions(inputText, mentionCandidates)
     return uniqueMentionedFiles(mentions)
-  }, [inputText, allCandidates])
+  }, [inputText, mentionCandidates])
 
   const removeFileMention = (fileId: string) => {
-    const mentions = parseMentions(inputText, allCandidates)
+    const mentions = parseMentions(inputText, mentionCandidates)
     const targets = [...mentions]
       .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
       .sort((a, b) => b.start - a.start)
@@ -912,10 +863,10 @@ const DiscussionComposer = memo(function DiscussionComposer({
       <MentionInput
         value={inputText}
         onChange={handleInputChange}
-        agents={agentCandidates}
-        workflows={workflowCandidates}
+        agents={[]}
+        workflows={[]}
         files={fileCandidates}
-        placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
+        placeholder="输入消息，用 @ 引用文件…"
         disabled={isStreaming}
         autoResize
         className="discussion-mention-input"
@@ -1085,7 +1036,7 @@ function MessageBubble({
   message,
   agentDisplayName,
   runStats,
-  allCandidates,
+  mentionCandidates,
   onJumpToRange,
 }: MessageBubbleProps) {
   const hasRange = message.range_start !== null && message.range_end !== null
@@ -1097,7 +1048,10 @@ function MessageBubble({
           <AgentMarkdown source={message.content} className="message-content" />
         </>
       ) : message.role === 'user' ? (
-        <UserMessageContent content={message.content} allCandidates={allCandidates} />
+        <UserMessageContent
+          content={message.content}
+          mentionCandidates={mentionCandidates}
+        />
       ) : (
         <div className="message-content">{message.content}</div>
       )}
@@ -1205,10 +1159,10 @@ function localApprovalStatusLabel(status: LocalAgentApprovalEntry['status']): st
 
 function UserMessageContent({
   content,
-  allCandidates,
+  mentionCandidates,
 }: {
   content: string
-  allCandidates: MentionCandidate[]
+  mentionCandidates: MentionCandidate[]
 }) {
   const [expanded, setExpanded] = useState(false)
   const preview = useMemo(() => createUserMessagePreview(content), [content])
@@ -1218,7 +1172,7 @@ function UserMessageContent({
   const renderText = useCallback(
     (text: string) => {
       if (!text.includes('@')) return text
-      const mentions = parseMentions(text, allCandidates)
+      const mentions = parseMentions(text, mentionCandidates)
       if (mentions.length === 0) return text
       const segments = segmentText(text, mentions)
       return segments.map((seg, i) => {
@@ -1236,7 +1190,7 @@ function UserMessageContent({
         )
       })
     },
-    [allCandidates],
+    [mentionCandidates],
   )
 
   if (!collapsible) {
@@ -1408,69 +1362,4 @@ function formatAgentDisplayName(
 
 function shortAgentId(id: string): string {
   return id.trim().slice(0, 5) || '-----'
-}
-
-/**
- * Run a workflow definition out-of-band and deposit its summary into the
- * active conversation as a synthetic agent message. Failures are captured
- * via the same injection channel so the user can see why the run collapsed
- * without leaving the discussion surface.
- */
-async function dispatchWorkflowToConversation({
-  workflow,
-  conversationId,
-  documentId,
-  selection,
-  attachedFiles,
-  query,
-  executeDefinition,
-  injectMessage,
-}: {
-  workflow: WorkflowCandidate
-  conversationId: string
-  documentId: string
-  selection: Selection | null
-  attachedFiles: Awaited<ReturnType<typeof resolveAttachedFiles>>
-  query: string
-  executeDefinition: ReturnType<typeof useWorkflowStore.getState>['executeDefinition']
-  injectMessage: ReturnType<typeof useConversationStore.getState>['injectMessage']
-}): Promise<void> {
-  const rangeStart = selection && selection.to > selection.from ? selection.from : 0
-  const rangeEnd = selection && selection.to > selection.from ? selection.to : 0
-  const targetText = selection?.text ?? ''
-
-  await executeDefinition(
-    workflow.id,
-    {
-      document_id: documentId,
-      range_start: rangeStart,
-      range_end: rangeEnd,
-      inputs: {
-        target_text: targetText,
-        user_message: query,
-        text: targetText,
-        attached_files: attachedFiles,
-      },
-      query,
-    },
-    {
-      autoIngestToAnnotations: false,
-      onCompleted: async (summary) => {
-        const body = summary && summary.trim() ? summary.trim() : `（${workflow.name} 已运行完毕，未产出摘要文本）`
-        await injectMessage(conversationId, {
-          role: 'agent',
-          content: `【Workflow · ${workflow.name}】\n${body}`,
-          range_start: selection && selection.to > selection.from ? selection.from : undefined,
-          range_end: selection && selection.to > selection.from ? selection.to : undefined,
-        })
-      },
-      onFailed: async (err) => {
-        await injectMessage(conversationId, {
-          role: 'agent',
-          content: `【Workflow · ${workflow.name}】运行失败`,
-          error: err,
-        })
-      },
-    },
-  )
 }

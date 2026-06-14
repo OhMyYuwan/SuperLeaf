@@ -5,8 +5,9 @@
     "mcp": [
       "Use these tools to access the active SuperLeaf project/document context.",
       "Read SuperLeaf documents through project_read_doc/project_grep instead of local files.",
-      "Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content.",
-      "Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection.",
+      "Trusted local Agents may use read tools without extra approval. create_suggestion writes an annotation/suggestion card to the backend database; it does not modify document body text, but it still requires write scope.",
+      "Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly when write scope is granted; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection.",
+      "Existing document body edits must be expressed as proposals. The body mutation happens later through the SuperLeaf editor/Yjs acceptance path, not during the MCP tool call.",
       "Use propose_doc_edit for paper edits and create_suggestion only when the user asks for an annotation/suggestion card."
     ]
   },
@@ -20,7 +21,7 @@
       "name": "SuperLeaf MCP Instructions",
       "description": "Operational guidance for local agents using SuperLeaf tools safely.",
       "mimeType": "text/plain",
-      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion is treated as read-mode annotation because it does not modify document content. Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
+      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion writes an annotation/suggestion card to the backend database; it does not modify document body text, but it still requires write scope. propose_doc_edit writes a pending proposal/annotation record and never applies body text directly; accepted body edits must flow through the SuperLeaf editor/Yjs path. project_write_text_file and project_create_text_file create new backend project documents and refuse overwrites. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
     },
     {
       "uri": "superleaf://tool-kernel/tools",
@@ -115,6 +116,22 @@
     {
       "name": "superleaf_list_projects",
       "description": "List all SuperLeaf projects the authenticated user can access. Returns project id, name, type, role, and updated_at. Use this first in token-authenticated mode to discover available projects, then call superleaf_select_project to set the active one.",
+      "annotations": {
+        "title": "List accessible projects",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "none",
+          "groundTruth": "db",
+          "requiresScope": "read",
+          "bodyMutation": "never",
+          "notes": "Reads project membership visible to the authenticated user."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -123,6 +140,22 @@
     {
       "name": "superleaf_select_project",
       "description": "Set the active project for this MCP session. After calling this, project_list_docs, project_read_doc, project_grep, and project_outline will default to operating on this project. Required in token-authenticated mode before using other project tools.",
+      "annotations": {
+        "title": "Select active project",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "mcp_session",
+          "groundTruth": "session_context",
+          "requiresScope": "read",
+          "bodyMutation": "never",
+          "notes": "Changes only the MCP session's active_project_id; it does not mutate SuperLeaf project data."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -137,6 +170,22 @@
     {
       "name": "project_list_docs",
       "description": "List all documents in the current SuperLeaf project. Returns id, name, format, folder_id, and updated_at. Use this to discover related files before reading or editing.",
+      "annotations": {
+        "title": "List project documents",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "none",
+          "groundTruth": "db_snapshot",
+          "requiresScope": "read",
+          "bodyMutation": "never",
+          "notes": "Reads backend project tree metadata."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -145,6 +194,23 @@
     {
       "name": "project_read_doc",
       "description": "Read the contents of a SuperLeaf project document by id. Optional range_start/range_end character offsets trim the slice. Use this instead of local filesystem reads for SuperLeaf documents.",
+      "annotations": {
+        "title": "Read document text",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "none",
+          "groundTruth": "db_snapshot",
+          "requiresScope": "read",
+          "bodyMutation": "never",
+          "freshness": "May trail an active Yjs editor until the collaboration snapshot is flushed.",
+          "notes": "Use returned text as original_text when creating proposals or suggestions."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -168,6 +234,22 @@
     {
       "name": "project_grep",
       "description": "Search SuperLeaf project documents with a regular expression. Returns matches with surrounding preview. Optionally filter by document format such as tex or md.",
+      "annotations": {
+        "title": "Search project text",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "none",
+          "groundTruth": "db_snapshot",
+          "requiresScope": "read",
+          "bodyMutation": "never",
+          "freshness": "May trail an active Yjs editor until the collaboration snapshot is flushed."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -192,6 +274,21 @@
     {
       "name": "project_outline",
       "description": "Return the heading outline of one SuperLeaf document. Use this to understand a long document before reading the body.",
+      "annotations": {
+        "title": "Read document outline",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "none",
+          "groundTruth": "db_snapshot",
+          "requiresScope": "read",
+          "bodyMutation": "never"
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -207,6 +304,22 @@
     {
       "name": "project_write_text_file",
       "description": "Create a new text document in the current SuperLeaf project by relative path and write its full content. Intermediate folders are created automatically. The tool refuses to overwrite existing documents, files, or folders. Use this when the user explicitly asks to create, write, add, or generate a new project file.",
+      "annotations": {
+        "title": "Create project text file",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "file_tree_db",
+          "groundTruth": "db",
+          "requiresScope": "write",
+          "bodyMutation": "never",
+          "notes": "Creates a new backend Doc/Folder record and publishes project.tree.changed. It refuses overwrites."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -237,6 +350,22 @@
     {
       "name": "project_create_text_file",
       "description": "Alias of project_write_text_file. Create a new text document in the current SuperLeaf project by relative path. The tool refuses to overwrite existing documents, files, or folders.",
+      "annotations": {
+        "title": "Create project text file",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "file_tree_db",
+          "groundTruth": "db",
+          "requiresScope": "write",
+          "bodyMutation": "never",
+          "notes": "Alias of project_write_text_file. Creates a new backend document and refuses overwrites."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -264,6 +393,23 @@
     {
       "name": "propose_doc_edit",
       "description": "Create a SuperLeaf edit proposal for the active document. The edit is not applied until the user accepts it in SuperLeaf. Use this for normal document modification requests. Pass original_text copied from project_read_doc when possible for reliable anchoring.",
+      "annotations": {
+        "title": "Create edit proposal",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "proposal_db",
+          "groundTruth": "annotation_db_with_yjs_accept",
+          "requiresScope": "write",
+          "bodyMutation": "on_user_accept_via_yjs",
+          "anchorPolicy": "resolve_by_original_text",
+          "notes": "Creates a pending Annotation suggestion. The MCP call does not mutate document body text."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -298,6 +444,23 @@
     {
       "name": "create_suggestion",
       "description": "Create a persistent SuperLeaf annotation/suggestion card anchored to the active document. Only use this when the user explicitly asks for an annotation, comment, or suggestion card. Use propose_doc_edit instead for normal editing requests.",
+      "annotations": {
+        "title": "Create suggestion card",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "superleaf": {
+          "writeSurface": "annotation_db",
+          "groundTruth": "annotation_db",
+          "requiresScope": "write",
+          "bodyMutation": "never",
+          "anchorPolicy": "resolve_by_original_text",
+          "notes": "Creates a persistent annotation/suggestion card. Applying the suggestion later is a separate editor/Yjs action."
+        }
+      },
       "inputSchema": {
         "type": "object",
         "properties": {

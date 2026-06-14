@@ -31,6 +31,10 @@ nav_order: 98
 - Local Host 已新增 `npm run gate:mcp-sdk`，参考官方 MCP TypeScript SDK 的 stateful Streamable HTTP transport 与 MCP Inspector 的 Streamable HTTP client/server 测试形状，固定迁移前必须保持的 session header、missing/unknown session、SSE、Last-Event-ID replay 和 DELETE close 语义。当前只判定“可作为 SDK 迁移候选”，没有替换零依赖兼容层。
 - Local Host 已新增 `npm run inspector:config|ui|cli`，生成官方 MCP Inspector `streamable-http` 配置，并可按需通过 `npx @modelcontextprotocol/inspector` 打开 Inspector UI 或 CLI；Inspector 不作为下载包 runtime dependency。
 - 后端 Native Agent 的 workspace/project/skill/browser 工具 schema 与 allowlist 已拆到 `services/backend/app/services/native_agent_tool_kernel.py`；项目文档读写、搜索、outline、edit proposal、suggestion、`.agents` 工作区文件读取和 Skill 激活等执行 handler 已迁入 Tool Kernel 执行层。`NativeAgentRunner` 现在保留模型 streaming、session/messages、tool-call loop、前端事件发射和外部 MCP 调度。
+- 后端原生 MCP 已拆成可选 profile：`services/backend/app/mcp/` 只处理 MCP JSON-RPC/session/router，`services/backend/app/agent_commands/` 承载 Agent 可执行命令并复用后端 Project/FS/Member/Annotation 服务。普通 `./start.sh backend` 默认不挂载 `/mcp`，`./start.sh mcp` 或 `YLW_MCP_SERVER_ENABLED=1` 才启用后端原生 MCP；Local Agent Host 的浏览器 Bridge MCP 仍独立运行在 `services/local-agent-host/`。
+- 后端原生 MCP 已补齐 JSON-RPC batch、`GET /mcp` SSE、动态 `superleaf://context/current` resource、`GET /mcp/status`、工具异常包装、session TTL/数量上限，并让旧 `/api/mcp` 数据路由复用 Agent Command 执行器，避免 grep/read/outline 逻辑分叉。Local Agent Host 的显式 backend proxy 也改为转发后端 `/mcp`，不再调用旧 REST 数据路由。
+- 共享工具注册表已为每个 MCP tool 补充 MCP `annotations` 和 `_meta.superleaf`，标明只读性、写入面、ground truth、scope、正文 mutation 路径和 anchor 策略；后端原生 MCP 与 Local Agent Host 都会透传这些标注。
+- `propose_doc_edit` 与 `create_suggestion` 已复用批注重定位策略：MCP 写入 proposal/annotation DB 前，会用 `original_text` 修正过期 range，并返回 `anchor_status`、`anchor_reason`、`anchor_confidence` 与修正后的范围。
 
 ## 目标
 
@@ -115,9 +119,11 @@ Agent Adapters
 
    Local Agent 通过 MCP 调工具时，Local Agent Host 只负责排队和协议转换。真正执行 SuperLeaf 后端工具的是 Browser Bridge，它拥有当前用户登录态。
 
-3. 写操作默认是 proposal。
+3. 写操作必须按写入面分类。
 
-   `propose_doc_edit`、`create_suggestion` 等写操作默认创建提案或批注，不直接修改数据库或 Yjs 文本。只有用户明确授权的 trusted Agent 才能进入直接写入模式。
+   `propose_doc_edit` 创建 pending proposal/annotation DB 记录；`create_suggestion` 创建批注 DB 记录；`project_write_text_file` 创建新的 Project FS / DB 文档并拒绝覆盖；已有文档正文修改仍必须走 proposal -> 用户接受 -> editor/Yjs 写入路径。不能把这些都称为“直接写正文”或“只读”。
+
+   当前后端原生 MCP 只允许两类写入：创建 suggestion/annotation，以及创建新文本文件且拒绝覆盖。它还没有提供“直接改已有正文”的工具；这个能力需要先定义 Yjs-first 写入路径，避免后端 DB 与协作文档状态分叉。
 
 4. Agent session 只保存 input/output/tool summary。
 

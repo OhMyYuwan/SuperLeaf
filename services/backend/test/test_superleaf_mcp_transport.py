@@ -16,6 +16,7 @@ from app.models import Doc, Project, ProjectMember, User
 from app.services.mcp_token_service import McpTokenService
 from app.services.superleaf_mcp_tools import SuperleafMcpToolContext
 from app.services.superleaf_mcp_transport import (
+    MCP_PROTOCOL_VERSION,
     SuperleafMcpSessionStore,
     handle_superleaf_mcp_rpc,
 )
@@ -99,7 +100,7 @@ def _initialize(
     result = handle_superleaf_mcp_rpc(
         db,
         ctx,
-        _request("initialize", {"protocolVersion": "2024-11-05"}),
+        _request("initialize", {"protocolVersion": MCP_PROTOCOL_VERSION}),
         session_id="",
         store=store,
     )

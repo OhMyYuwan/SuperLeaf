@@ -22,7 +22,7 @@ from ..agent_commands.registry import (
 from .errors import mcp_error, mcp_ok
 from .sessions import McpSessionStore
 
-MCP_PROTOCOL_VERSION = "2024-11-05"
+MCP_PROTOCOL_VERSION = "2025-11-25"
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +54,7 @@ def handle_mcp_request(
         return _ok(
             request_id,
             {
-                "protocolVersion": str(params.get("protocolVersion") or MCP_PROTOCOL_VERSION),
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {
                     "tools": {},
                     "resources": {},

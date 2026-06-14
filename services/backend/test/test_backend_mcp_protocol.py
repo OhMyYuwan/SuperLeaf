@@ -15,6 +15,13 @@ from app.database import Base
 from app.mcp.sessions import McpSessionStore
 from app.mcp.transport import MCP_PROTOCOL_VERSION, handle_mcp_request
 from app.models import Doc, Project, User
+from app.services.mcp_tool_service import (
+    MCP_PROTOCOL_VERSION as CLIENT_MCP_PROTOCOL_VERSION,
+    _McpSession,
+)
+
+
+EXPECTED_MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 @pytest.fixture()
@@ -56,6 +63,11 @@ def _rpc(method: str, params: dict | None = None, *, request_id: int | str = 1) 
     return {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
 
 
+def test_mcp_protocol_version_is_current_and_shared() -> None:
+    assert MCP_PROTOCOL_VERSION == EXPECTED_MCP_PROTOCOL_VERSION
+    assert CLIENT_MCP_PROTOCOL_VERSION == EXPECTED_MCP_PROTOCOL_VERSION
+
+
 def test_mcp_initialize_creates_session(db: Session, seed: dict[str, User | Project | Doc]) -> None:
     owner = seed["owner"]
     assert isinstance(owner, User)
@@ -67,6 +79,58 @@ def test_mcp_initialize_creates_session(db: Session, seed: dict[str, User | Proj
     assert result.status_code == 200
     assert result.session_id.startswith("mcp_")
     assert result.body["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
+
+
+def test_mcp_initialize_selects_server_protocol_when_client_offers_old_version(
+    db: Session,
+    seed: dict[str, User | Project | Doc],
+) -> None:
+    owner = seed["owner"]
+    assert isinstance(owner, User)
+    store = McpSessionStore(ttl_seconds=3600)
+    ctx = AgentCommandContext(source=AgentCommandSource.MCP, user_id=owner.id, token_id="token-a")
+
+    result = handle_mcp_request(
+        db,
+        ctx,
+        _rpc("initialize", {"protocolVersion": "2024-11-05"}),
+        session_id="",
+        store=store,
+    )
+
+    assert result.body["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
+
+
+@pytest.mark.asyncio
+async def test_stdio_mcp_client_initialize_uses_shared_protocol_version() -> None:
+    class FakeStdin:
+        def __init__(self) -> None:
+            self.payloads: list[dict] = []
+
+        def write(self, raw: bytes) -> None:
+            self.payloads.append(json.loads(raw.decode("utf-8")))
+
+        async def drain(self) -> None:
+            return None
+
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.lines = [b'{"jsonrpc":"2.0","id":1,"result":{}}\n']
+
+        async def read(self, _size: int) -> bytes:
+            return self.lines.pop(0) if self.lines else b""
+
+    class FakeProc:
+        def __init__(self) -> None:
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+    proc = FakeProc()
+    await _McpSession(proc).initialize()
+
+    assert proc.stdin.payloads[0]["method"] == "initialize"
+    assert proc.stdin.payloads[0]["params"]["protocolVersion"] == EXPECTED_MCP_PROTOCOL_VERSION
+    assert proc.stdin.payloads[1]["method"] == "notifications/initialized"
 
 
 def test_mcp_tools_call_persists_active_project(db: Session, seed: dict[str, User | Project | Doc]) -> None:

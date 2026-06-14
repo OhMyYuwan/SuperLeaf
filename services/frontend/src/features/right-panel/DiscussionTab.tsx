@@ -34,28 +34,24 @@ import {
 import { useConversationStore } from '../../stores/conversationStore'
 import type { ProposalEntry } from '../../stores/conversationStore'
 import { useFilesystemStore } from '../../stores/filesystemStore'
-import { useWorkflowStore } from '../../stores/workflowStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { CachedWorkflow, Conversation } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import {
   parseMentions,
-  stripMentions,
   flattenFileCandidates,
   sortFilesCurrentFirst,
   uniqueMentionedFiles,
-  uniqueMentionedWorkflows,
   resolveAttachedFiles,
-  type AgentCandidate,
   type MentionCandidate,
-  type WorkflowCandidate,
 } from '../../services/mentions'
 import { confirmMultimodalBudget } from '../shared/fileSizeGate'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
 import {
   conversationScopeKey as buildConversationScopeKey,
   documentConversationsNewestFirst,
+  discussionComposerMentionCandidates,
   enabledDiscussionAgents,
   resolveDiscussionAgentId,
   timestampValue,
@@ -64,7 +60,6 @@ import {
 import { formatAgentDisplayName } from './discussion/format'
 import { AgentRoleLine } from './discussion/AgentRoleLine'
 import { DiscussionComposer } from './discussion/DiscussionComposer'
-import { dispatchWorkflowToConversation } from './discussion/dispatchWorkflow'
 import { EditProposalCard } from './discussion/EditProposalCard'
 import { LocalApprovalPanel } from './discussion/LocalApprovalPanel'
 import { MessageBubble } from './discussion/MessageBubble'
@@ -110,8 +105,6 @@ export function DiscussionTab({
   const loadMessages = useConversationStore((s) => s.loadMessages)
   const sendMessage = useConversationStore((s) => s.sendMessage)
   const stopMessage = useConversationStore((s) => s.stopMessage)
-  const injectMessage = useConversationStore((s) => s.injectMessage)
-  const executeDefinition = useWorkflowStore((s) => s.executeDefinition)
   const activeDocFormat = useDocumentStore((s) =>
     documentId ? s.documents[documentId]?.format : undefined,
   )
@@ -135,7 +128,6 @@ export function DiscussionTab({
   const messageStreamRef = useRef<HTMLDivElement | null>(null)
 
   const tree = useFilesystemStore((s) => s.tree)
-  const definitions = useWorkflowStore((s) => s.definitions)
   const fileCandidates = useMemo(
     () => sortFilesCurrentFirst(flattenFileCandidates(tree), documentId),
     [tree, documentId],
@@ -152,29 +144,14 @@ export function DiscussionTab({
     () => enabledDiscussionAgents(workflows),
     [workflows],
   )
-  const agentCandidates: AgentCandidate[] = useMemo(
+  const discussionMentionCandidates: MentionCandidate[] = useMemo(
     () =>
-      availableWorkflows.map((w) => ({
-        kind: 'agent',
-        id: w.id,
-        name: w.name,
-        displayName: formatAgentDisplayName(w, providerNamesById),
-      })),
-    [availableWorkflows, providerNamesById],
-  )
-  const workflowCandidates: WorkflowCandidate[] = useMemo(
-    () =>
-      definitions.map((d) => ({
-        kind: 'workflow',
-        id: d.id,
-        name: d.name,
-        description: d.description ?? undefined,
-      })),
-    [definitions],
-  )
-  const allCandidates: MentionCandidate[] = useMemo(
-    () => [...agentCandidates, ...workflowCandidates, ...fileCandidates],
-    [agentCandidates, workflowCandidates, fileCandidates],
+      discussionComposerMentionCandidates({
+        agents: availableWorkflows,
+        workflows: [],
+        files: fileCandidates,
+      }),
+    [availableWorkflows, fileCandidates],
   )
   const conversationsReadyForDocument = loadedConversationDocumentId === documentId
   const conversationList = useMemo(
@@ -337,13 +314,12 @@ export function DiscussionTab({
   const handleSend = useCallback(async (rawText: string) => {
     if (!rawText || !effectiveConversationId) return
 
-    const mentions = parseMentions(rawText, allCandidates)
+    const mentions = parseMentions(rawText, discussionMentionCandidates)
     // Keep the raw mention markers in the message body so the bubble can
     // render them with the same colored highlight the input box uses. The
     // backend gets attached_files via inputs separately, so the markers in
     // the text are purely a human-readable trace of what the user invoked.
     const mentionedFiles = uniqueMentionedFiles(mentions)
-    const mentionedWorkflows = uniqueMentionedWorkflows(mentions)
 
     // Check multimodal budget before resolving
     if (!confirmMultimodalBudget(mentionedFiles)) {
@@ -376,27 +352,7 @@ export function DiscussionTab({
     }
 
     await sendMessage(effectiveConversationId, body)
-
-    if (mentionedWorkflows.length > 0 && documentId) {
-      // Workflow dispatch still uses a clean query (no @markers), since the
-      // workflow runner treats the query as a literal instruction.
-      const cleanedQuery = stripMentions(rawText, mentions) || rawText
-      await Promise.all(
-        mentionedWorkflows.map((wf) =>
-          dispatchWorkflowToConversation({
-            workflow: wf,
-            conversationId: effectiveConversationId,
-            documentId,
-            selection: activeSelection,
-            attachedFiles,
-            query: cleanedQuery,
-            executeDefinition,
-            injectMessage,
-          }),
-        ),
-      )
-    }
-  }, [effectiveConversationId, allCandidates, activeSelection, activeDocFormat, sendMessage, documentId, executeDefinition, injectMessage])
+  }, [effectiveConversationId, discussionMentionCandidates, activeSelection, activeDocFormat, sendMessage])
 
   const activeMessages = effectiveConversationId ? messages[effectiveConversationId] ?? [] : []
   const isStreaming = effectiveConversationId ? streaming[effectiveConversationId] ?? false : false
@@ -655,7 +611,7 @@ export function DiscussionTab({
                         message={msg}
                         agentDisplayName={activeAgentName}
                         runStats={messageRunStats[msg.id]}
-                        allCandidates={allCandidates}
+                        allCandidates={discussionMentionCandidates}
                         onJumpToRange={onJumpToRange}
                       />
                       {msgProposals?.map((proposal) => (
@@ -710,9 +666,7 @@ export function DiscussionTab({
                 />
               )}
               <DiscussionComposer
-                allCandidates={allCandidates}
-                agentCandidates={agentCandidates}
-                workflowCandidates={workflowCandidates}
+                mentionCandidates={discussionMentionCandidates}
                 fileCandidates={fileCandidates}
                 activeSelection={activeSelection}
                 isStreaming={isStreaming}

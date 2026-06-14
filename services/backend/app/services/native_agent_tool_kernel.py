@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..agent_commands.anchors import resolve_text_anchor
 from ..database import SessionLocal
 from ..models import Doc, FileBlob, Folder, Project
 from .agent_workspace_service import (
@@ -24,7 +25,6 @@ from .event_bus import bus
 from .project_fs_service import ProjectFsService
 from .project_member_service import ProjectMemberService
 from .superleaf_tool_registry import superleaf_openai_tools
-
 
 _PROJECT_CREATE_CONTENT_LIMIT = 512 * 1024
 _PROJECT_CREATE_MAX_PATH_CHARS = 512
@@ -307,7 +307,11 @@ def _tool_use_skill(
             tool_kind="skill",
         )
     if not context.workspace_root:
-        return NativeAgentToolResult("ERROR: Agent workspace root not available", failed=True, tool_kind="skill")
+        return NativeAgentToolResult(
+            "ERROR: Agent workspace root not available",
+            failed=True,
+            tool_kind="skill",
+        )
     root = Path(context.workspace_root)
     skill_path = root / ".agents" / str(getattr(skill, "folder_path", ""))
     if skill_path.is_file() and skill_path.suffix == ".json":
@@ -316,7 +320,11 @@ def _tool_use_skill(
             target = ref.get("target_path", "")
             folder = Path(target) if target else skill_path.parent
         except (OSError, json.JSONDecodeError):
-            return NativeAgentToolResult("ERROR: cannot resolve skill reference", failed=True, tool_kind="skill")
+            return NativeAgentToolResult(
+                "ERROR: cannot resolve skill reference",
+                failed=True,
+                tool_kind="skill",
+            )
     else:
         folder = skill_path
     skill_md = folder / "SKILL.md"
@@ -465,7 +473,10 @@ def _tool_project_read_doc(
         return NativeAgentToolResult("ERROR: project scope not available", failed=True)
     doc_id = _resolve_active_doc_id(args, context)
     if not doc_id:
-        return NativeAgentToolResult("ERROR: doc_id is required and no active document is available", failed=True)
+        return NativeAgentToolResult(
+            "ERROR: doc_id is required and no active document is available",
+            failed=True,
+        )
     try:
         range_start = int(args.get("range_start") or 0)
         range_end_raw = args.get("range_end")
@@ -566,7 +577,10 @@ def _tool_project_outline(
         return NativeAgentToolResult("ERROR: project scope not available", failed=True)
     doc_id = _resolve_active_doc_id(args, context)
     if not doc_id:
-        return NativeAgentToolResult("ERROR: doc_id is required and no active document is available", failed=True)
+        return NativeAgentToolResult(
+            "ERROR: doc_id is required and no active document is available",
+            failed=True,
+        )
     with SessionLocal() as db:
         doc = db.get(Doc, doc_id)
         if doc is None or doc.project_id != context.project_id:
@@ -848,62 +862,20 @@ def _resolve_text_range(
     ``None``; on failure ``start/end`` are 0 and ``error`` contains the
     error message.
     """
-    anchor = original_text
-    anchor_text: str | None = anchor
-
-    occurrences: list[int] = []
-    pos = 0
-    while True:
-        idx = content.find(anchor, pos)
-        if idx == -1:
-            break
-        occurrences.append(idx)
-        pos = idx + 1
-
-    if len(occurrences) == 1:
-        return occurrences[0], occurrences[0] + len(anchor), anchor_text, None
-    if len(occurrences) > 1:
-        hint = range_start if range_start > 0 else 0
-        if hint > 0:
-            closest = min(occurrences, key=lambda x: abs(x - hint))
-            return closest, closest + len(anchor), anchor_text, None
+    resolution = resolve_text_anchor(content, original_text, range_start, range_end)
+    if resolution.status in {"stable", "recovered"}:
+        return resolution.range_from, resolution.range_to, resolution.anchor_text, None
+    if resolution.reason == "ambiguous_exact_matches":
         return 0, 0, None, (
-            f"ERROR: original_text appears {len(occurrences)} times "
+            f"ERROR: original_text appears {resolution.candidate_count} times "
             f"in the document. Select the target text in the editor "
             f"so the system can disambiguate."
         )
-
-    fuzzy_pos = _fuzzy_find(content, anchor, threshold=0.85)
-    if fuzzy_pos is not None:
-        return fuzzy_pos, fuzzy_pos + len(anchor), anchor_text, None
     return 0, 0, None, (
         "ERROR: original_text not found in document. "
         "The document may have changed. Please call project_read_doc "
         "to re-read the current content and try again."
     )
-
-
-def _fuzzy_find(content: str, anchor: str, threshold: float = 0.85) -> int | None:
-    """Find the position in *content* most similar to *anchor*."""
-    from difflib import SequenceMatcher
-
-    anchor_len = len(anchor)
-    if anchor_len == 0:
-        return None
-    best_ratio = 0.0
-    best_pos: int | None = None
-    step = max(1, anchor_len // 4)
-    for i in range(0, len(content) - anchor_len + 1, step):
-        window = content[i : i + anchor_len]
-        ratio = SequenceMatcher(None, anchor, window).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_pos = i
-            if ratio >= 0.95:
-                break
-    if best_ratio >= threshold and best_pos is not None:
-        return best_pos
-    return None
 
 
 def _normalize_project_create_path(raw_path: str) -> list[str]:

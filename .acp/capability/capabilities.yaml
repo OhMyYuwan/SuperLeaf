@@ -6,6 +6,9 @@
 # Refreshed 2026-06-01 for REQ-0281.
 # Refreshed 2026-06-02 for REQ-0309: Data Project is a first-class capability
 # for dataset source rules, record labeling, source_text snapshots, and exports.
+# Refreshed 2026-06-14 for REQ-0477: backend-native SuperLeaf MCP, Agent
+# Commands, shared tool registry metadata, and anchor repair are first-class
+# routing surfaces.
 # Path convention: primary_paths are semantic shorthand. Expand backend/ to
 # services/backend/ and frontend/ to services/frontend/ when opening files.
 #
@@ -538,7 +541,7 @@ capabilities:
 
   - id: backend-service
     name: Backend Service (FastAPI)
-    summary: FastAPI service with SQLite persistence. Proxies Dify + Nanobot providers; runs self-hosted multi-agent orchestrator; owns native Agent/Skill APIs, project filesystem/archive, conversations, LaTeX compile.
+    summary: FastAPI service with SQLite persistence. Proxies Dify + Nanobot providers; runs self-hosted multi-agent orchestrator; owns native Agent/Skill APIs, optional backend-native MCP, project filesystem/archive, conversations, LaTeX compile.
     slices:
       - id: app-entry
         summary: FastAPI entrypoint, settings, CORS, router aggregation.
@@ -549,7 +552,7 @@ capabilities:
           - backend/app/settings.py
           - backend/app/__init__.py
       - id: api-routes
-        summary: HTTP routes — health, auth/users, providers, native-agent, projects, GitHub/archive, workflows (+runs, definitions, definition-execute), workflow test cases, filesystem (tree + upload), conversations (+messages SSE), compile, versions, annotations/evaluations, notifications.
+        summary: HTTP routes — health, auth/users, providers, native-agent, backend MCP token/admin compatibility, projects, GitHub/archive, workflows (+runs, definitions, definition-execute), workflow test cases, filesystem (tree + upload), conversations (+messages SSE), compile, versions, annotations/evaluations, notifications.
         route_here_when: Work adds, changes, or retires API routes.
         bridge_when: New routes need new services, models, or schemas.
         primary_paths:
@@ -559,6 +562,8 @@ capabilities:
           - backend/app/api/users.py
           - backend/app/api/providers.py
           - backend/app/api/native_agents.py
+          - backend/app/api/mcp.py
+          - backend/app/api/mcp_rpc.py
           - backend/app/api/projects.py
           - backend/app/api/github.py
           - backend/app/api/archives.py
@@ -570,9 +575,23 @@ capabilities:
           - backend/app/api/versions.py
           - backend/app/api/annotation_evaluations.py
           - backend/app/api/notifications.py
+      - id: backend-native-mcp
+        summary: Optional backend-native Streamable HTTP MCP service mounted at /mcp when mcp_server_enabled is true. Handles JSON-RPC POST, GET SSE, DELETE close, session state, resources/prompts, /mcp/status, and token-authenticated tool calls through Agent Commands.
+        route_here_when: Work changes backend /mcp transport behavior, session lifecycle, status reporting, resources/prompts, JSON-RPC batch/error semantics, token-direct Codex/IDE setup, or the start.sh MCP profile.
+        bridge_when: Tool semantics or project operations change — coordinate with native-agent-skills/agent-commands and native-agent-skills/shared-tool-registry. Local Agent Host browser Bridge changes route through native-agent-skills/local-agent-host.
+        primary_paths:
+          - backend/app/mcp/router.py
+          - backend/app/mcp/sessions.py
+          - backend/app/mcp/transport.py
+          - backend/app/main.py
+          - backend/app/settings.py
+          - backend/app/api/mcp.py
+          - backend/app/api/mcp_rpc.py
+          - backend/app/services/mcp_token_service.py
+          - ../start.sh
       - id: services
-        summary: Domain services — DifyClient, NanobotClient, ProviderService, AgentOrchestrator, native Agent/Skill services, GitHub/archive services, ProjectFsService, LatexCompiler, AttachedFiles normalizer.
-        route_here_when: Work changes provider client behavior, native Agent/Skill behavior, orchestration, filesystem/archive service, compile wrapper, or attached-files shape.
+        summary: Domain services — DifyClient, NanobotClient, ProviderService, AgentOrchestrator, native Agent/Skill services, MCP compatibility services, GitHub/archive services, ProjectFsService, LatexCompiler, AttachedFiles normalizer.
+        route_here_when: Work changes provider client behavior, native Agent/Skill behavior, MCP compatibility wrappers, orchestration, filesystem/archive service, compile wrapper, or attached-files shape.
         bridge_when: Cross-cutting changes — see workflow-orchestration / workflow-integration / frontend-mention-system.
         primary_paths:
           - backend/app/services/__init__.py
@@ -583,6 +602,10 @@ capabilities:
           - backend/app/services/agent_orchestrator.py
           - backend/app/services/native_agent_service.py
           - backend/app/services/native_agent_runner.py
+          - backend/app/services/native_agent_tool_kernel.py
+          - backend/app/services/superleaf_mcp_registry.py
+          - backend/app/services/superleaf_mcp_tools.py
+          - backend/app/services/superleaf_mcp_transport.py
           - backend/app/services/skill_content_crypto.py
           - backend/app/services/skill_marketplace_service.py
           - backend/app/services/github_service.py
@@ -669,7 +692,7 @@ capabilities:
   - id: native-agent-skills
     name: Native Agent & Skills
     summary: |
-      Backend-managed native Agents, Skills, and MCP tools. Owns encrypted native Agent
+      Backend-managed native Agents, Skills, and SuperLeaf/MCP tools. Owns encrypted native Agent
       credentials, native Agent CRUD/runtime, local Skill library, Skill
       Marketplace sync/install, Skill content encryption, share visibility, and
       AgentSkill assignment. Also owns the app-side consumption of
@@ -679,7 +702,9 @@ capabilities:
       shared by project membership rather than copied per collaborator.
       At runtime, Skills are loaded by scanning the Agent workspace disk
       (.agents/skills/), not from the database; metadata comes from
-      skill.yaml or SKILL.md front matter.
+      skill.yaml or SKILL.md front matter. SuperLeaf's own backend-native MCP
+      uses Agent Commands and services/shared/superleaf-tools.json; it is
+      separate from Local Agent Host's browser Bridge.
     slices:
       - id: backend-routes
         summary: /api/native-agent routes for credentials, uploaded/private/shared skills, agents, Skill Marketplace install/update/uninstall, and MCP catalog/probe/golden-test endpoints.
@@ -702,6 +727,70 @@ capabilities:
           - backend/app/services/skill_marketplace_service.py
           - backend/app/models.py
           - backend/app/settings.py
+      - id: shared-tool-registry
+        summary: services/shared/superleaf-tools.json is the canonical SuperLeaf tool schema/catalog for backend-native MCP, Local Agent Host, frontend prompts, and backend Native Agent tool definitions. It carries MCP annotations and _meta.superleaf writeSurface/groundTruth/bodyMutation/anchorPolicy metadata.
+        route_here_when: Work changes SuperLeaf tool names, descriptions, inputSchema, resources, prompts, tool metadata, read/write classification, ground-truth labels, or prompt guidance.
+        bridge_when: Execution behavior changes route through agent-commands or backend-native-mcp. Frontend prompt/marker rendering changes route through frontend-management.
+        primary_paths:
+          - ../services/shared/superleaf-tools.json
+          - backend/app/agent_commands/registry.py
+          - backend/app/services/superleaf_tool_registry.py
+          - ../services/local-agent-host/superleaf-tools.mjs
+          - frontend/src/services/superleafTools.ts
+      - id: agent-commands
+        summary: Shared backend execution layer for SuperLeaf MCP/Agent tools. Owns AgentCommandContext, dispatcher, shared registry loading, project list/read/grep/outline, new-file Project FS writes, proposal/suggestion DB writes, write-scope enforcement, and text-anchor repair for annotations/proposals.
+        route_here_when: Work changes SuperLeaf MCP tool execution, project selection, read/search/outline behavior, project_write_text_file/project_create_text_file behavior, propose_doc_edit/create_suggestion behavior, anchor_status results, or Agent write-scope enforcement.
+        bridge_when: Protocol/session changes route through backend-native-mcp. Existing document body mutation is high-risk and must be designed with real-time-editing/Yjs.
+        primary_paths:
+          - backend/app/agent_commands/context.py
+          - backend/app/agent_commands/executor.py
+          - backend/app/agent_commands/registry.py
+          - backend/app/agent_commands/project.py
+          - backend/app/agent_commands/files.py
+          - backend/app/agent_commands/suggestions.py
+          - backend/app/agent_commands/anchors.py
+          - backend/app/services/native_agent_tool_kernel.py
+          - backend/test/test_agent_command_project.py
+          - backend/test/test_agent_command_registry.py
+          - backend/test/test_agent_command_write.py
+          - backend/test/test_superleaf_mcp_write_tools.py
+      - id: backend-native-mcp
+        summary: |
+          Token-direct SuperLeaf MCP server mounted by the backend optional
+          profile. It is used by Codex/IDE/CLI clients via /mcp with
+          Authorization bearer tokens (`slmcp_...`) and delegates real tool
+          execution to Agent Commands.
+        route_here_when: Work changes backend MCP protocol, token session state, /mcp/status, JSON-RPC batch/SSE/DELETE behavior, resources/prompts/current context, graceful tool errors, or Codex/IDE installation docs.
+        bridge_when: Local browser Bridge behavior is local-agent-host. Tool schema and metadata are shared-tool-registry. Tool execution is agent-commands.
+        primary_paths:
+          - backend/app/mcp/router.py
+          - backend/app/mcp/sessions.py
+          - backend/app/mcp/transport.py
+          - backend/app/api/mcp.py
+          - backend/app/api/mcp_rpc.py
+          - backend/app/services/superleaf_mcp_registry.py
+          - backend/app/services/superleaf_mcp_tools.py
+          - backend/app/services/superleaf_mcp_transport.py
+          - backend/app/services/mcp_token_service.py
+          - backend/test/test_backend_mcp_mount_policy.py
+          - backend/test/test_backend_mcp_protocol.py
+          - backend/test/test_backend_mcp_rpc.py
+          - backend/test/test_superleaf_mcp_registry.py
+          - backend/test/test_superleaf_mcp_tools.py
+          - backend/test/test_superleaf_mcp_transport.py
+          - ../docs/zh/agents/mcp-token-mode.md
+          - ../docs/zh/superleaf-mcp-architecture-plan.md
+      - id: local-agent-host
+        summary: User-machine localhost bridge for SuperLeaf page -> Local Agent -> browser-authorized SuperLeaf tools. It shares the tool registry and can proxy backend /mcp for compatibility, but it is not the token-direct backend MCP server.
+        route_here_when: Work changes Local Agent Host server.mjs, Codex/Claude/Nanobot bridge behavior, browser Bridge context/pending calls, backend-mcp-client proxying, package scripts, or docs explaining Local Host vs backend MCP topology.
+        bridge_when: Backend token-direct MCP protocol changes route through backend-native-mcp. Moving Local Agent Host into server runtime is high-risk.
+        primary_paths:
+          - ../services/local-agent-host/server.mjs
+          - ../services/local-agent-host/backend-mcp-client.mjs
+          - ../services/local-agent-host/superleaf-tools.mjs
+          - ../services/local-agent-host/README.md
+          - ../docs/zh/agents/local-agent-mcp.md
+          - backend/app/api/native_agents.py
       - id: project-skill-cache
         summary: |
           Skill Project cache lifecycle: README.md/SKILL.md project templates,
@@ -737,8 +826,8 @@ capabilities:
           - frontend/src/stores/nativeAgentStore.ts
           - frontend/src/services/backendApi.ts
       - id: mcp-catalog
-        summary: Maintained MCP support catalog under supports/SuperLeaf.MCPs plus app-side catalog loader/probe/golden-test integration.
-        route_here_when: Work adds, verifies, downgrades, documents, or removes an MCP preset; changes preset schema fields; edits MCP golden tests; or changes how the app consumes the catalog.
+        summary: Maintained third-party MCP support catalog under supports/SuperLeaf.MCPs plus app-side catalog loader/probe/golden-test integration. This is not SuperLeaf's own backend-native MCP server.
+        route_here_when: Work adds, verifies, downgrades, documents, or removes a third-party MCP preset; changes preset schema fields; edits MCP golden tests; or changes how the app consumes the catalog.
         bridge_when: A catalog change needs new frontend controls or backend transport behavior — coordinate with frontend-management and backend-services in the same Request.
         primary_paths:
           - supports/SuperLeaf.MCPs/README.md

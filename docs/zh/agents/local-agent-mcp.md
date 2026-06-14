@@ -28,7 +28,29 @@ http://127.0.0.1:8787  Local Agent Host
 它默认只绑定 `127.0.0.1`，不需要公网访问，也不应该暴露到公网。Local Host 自己不持有 SuperLeaf cookie；真正读取项目、创建修改提案和批注时，仍然由浏览器里的 SuperLeaf Bridge 使用当前登录态去调用后端授权 API。
 
 {: .note }
-这里讲的 Local Host `/mcp` 是浏览器 Bridge 模式。外部 IDE / CLI 如果已经有 `slmcp_...` token，应直接连接后端原生 MCP，例如 `http://127.0.0.1:8000/mcp`，并带上 `Authorization: Bearer slmcp_...`。Local Host 的 token 代理只作为兼容开关保留，默认关闭。详见 [MCP Token 直连模式（IDE / CLI）](mcp-token-mode.html)。
+这里讲的 Local Host `/mcp` 是浏览器 Bridge 模式。外部 IDE / CLI 如果已经有 `slmcp_...` token，应直接连接后端原生 MCP，例如 `http://127.0.0.1:8000/mcp`，并带上 `Authorization: Bearer slmcp_...`。详见 [MCP Token 直连模式（IDE / CLI）](mcp-token-mode.html)。
+
+## 和后端原生 MCP 的边界
+
+SuperLeaf 现在有两条 MCP 路线，名字相近但职责不同：
+
+```text
+SuperLeaf 页面 -> local-agent-host :8787/mcp -> 本机 Codex / Claude
+  用途：浏览器 Bridge。它依赖当前打开的页面、项目 context、选区和浏览器登录态。
+
+Codex / IDE / CLI -> backend :8000/mcp -> Agent Command Executor -> Backend Services
+  用途：Token 直连。它不依赖浏览器，不经过 Local Agent Host。
+```
+
+因此：
+
+- `./start.sh local-agent-host` 启动浏览器 Bridge 网关。
+- `./start.sh backend-mcp` 启动带后端原生 `/mcp` 的 backend profile；`./start.sh mcp` 只是兼容别名。
+- 普通 `./start.sh backend` 默认不挂载 `/mcp`，除非显式设置 `YLW_MCP_SERVER_ENABLED=1`。
+
+后端原生 MCP 的实现入口在 `services/backend/app/mcp/`，真实工具能力在 `services/backend/app/agent_commands/`。Local Agent Host 的实现仍在 `services/local-agent-host/`，两者共享工具注册表，但不是同一个服务。后端原生 MCP 支持 `POST /mcp`、`GET /mcp` SSE、`DELETE /mcp`，并提供 `GET /mcp/status` 诊断端点，用 MCP token 查看当前协议版本、工具数量和 session 状态。
+
+Local Agent Host 里的 `SL_LOCAL_AGENT_HOST_BACKEND_MCP_PROXY=1` 只是兼容测试开关。启用后它会转发到后端 `/mcp` JSON-RPC，而不是旧的 `/api/mcp` 数据路由。新 IDE / CLI 仍建议直接连接后端 `/mcp`。
 
 ## 借鉴的工业实现
 
@@ -45,20 +67,22 @@ http://127.0.0.1:8787  Local Agent Host
 
 ## 当前暴露的 SuperLeaf 工具
 
-Local Host 的 `/mcp` 当前暴露 10 个 SuperLeaf 工具，定义来自共享注册表 `services/shared/superleaf-tools.json`：
+Local Host 和后端原生 `/mcp` 都从共享注册表 `services/shared/superleaf-tools.json` 暴露同一批 SuperLeaf 工具。`tools/list` 会保留每个工具的 MCP `annotations` 与 SuperLeaf `_meta.superleaf` 标注，用于说明只读/写入面、ground truth、所需 scope、是否会改正文，以及批注锚点策略。
 
-| 工具 | 用途 |
-|---|---|
-| `superleaf_list_projects` | 列出 token 用户可访问的项目；浏览器 Bridge 模式一般不需要 |
-| `superleaf_select_project` | 设置当前 MCP session 的活跃项目；浏览器 Bridge 模式一般不需要 |
-| `project_list_docs` | 列出当前 SuperLeaf 项目里的文档 |
-| `project_read_doc` | 按 `doc_id` 读取文档内容或片段 |
-| `project_grep` | 在项目文档中搜索正则表达式 |
-| `project_outline` | 读取文档标题结构 |
-| `project_write_text_file` | 在项目里新建文本文件，拒绝覆盖 |
-| `project_create_text_file` | `project_write_text_file` 的别名 |
-| `propose_doc_edit` | 创建文档修改提案，等待用户在 SuperLeaf 中接受 |
-| `create_suggestion` | 创建持久批注或 suggestion 卡片 |
+| 工具 | 用途 | 写入面 |
+|---|---|---|
+| `superleaf_list_projects` | Token 直连模式下列出当前用户可访问的项目 | 无 |
+| `superleaf_select_project` | Token 直连模式下设置本 MCP session 的活跃项目 | MCP session |
+| `project_list_docs` | 列出当前 SuperLeaf 项目里的文档 | 无 |
+| `project_read_doc` | 按 `doc_id` 读取文档内容或片段 | 无 |
+| `project_grep` | 在项目文档中搜索正则表达式 | 无 |
+| `project_outline` | 读取文档标题结构 | 无 |
+| `project_write_text_file` | 创建新的项目文本文件，拒绝覆盖已有条目 | Project FS / DB |
+| `project_create_text_file` | `project_write_text_file` 的别名 | Project FS / DB |
+| `propose_doc_edit` | 创建文档修改提案，等待用户在 SuperLeaf 中接受 | Proposal / annotation DB |
+| `create_suggestion` | 创建持久批注或 suggestion 卡片 | Annotation DB |
+
+`propose_doc_edit` 和 `create_suggestion` 会用 `original_text` 进行后端锚点修复。range 正确时状态是 `stable`；range 过期但文本能定位时状态是 `recovered`；文本无法可靠定位时状态是 `needs_review`。这只修正批注/提案锚点，不代表 MCP 已经修改正文。
 
 ## 当前暴露的 MCP resources / prompts
 
@@ -70,8 +94,8 @@ Resources:
 |---|---|
 | `superleaf://tool-kernel/instructions` | SuperLeaf MCP 工具使用边界 |
 | `superleaf://tool-kernel/tools` | JSON 格式的工具、resource、prompt 目录 |
+| `superleaf://context/current` | 当前 MCP session 的上下文摘要 |
 | `superleaf://browser-bridge/contract` | Browser Bridge 如何代理授权工具调用 |
-| `superleaf://context/current` | 当前浏览器 Bridge context 摘要 |
 
 Prompts:
 
@@ -164,7 +188,7 @@ GET http://127.0.0.1:8787/superleaf/install/status
 成功时卡片会显示：
 
 - `Host ok`
-- `MCP tools 6`
+- `MCP tools 10`
 - 当前 browser bridge contexts 数量
 - pending tool calls 数量
 - start-at-login 是否已安装

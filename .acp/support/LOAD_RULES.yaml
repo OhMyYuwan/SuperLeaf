@@ -5,6 +5,8 @@
 # Refreshed 2026-06-01 for REQ-0281.
 # Refreshed 2026-06-02 for REQ-0309 to add Data Project routing and
 # source_text snapshot load rules.
+# Refreshed 2026-06-14 for REQ-0477 to add backend-native MCP, Agent Command,
+# shared tool registry, anchor repair, and Local Agent Host boundary routing.
 
 bootstrap:
   entrypoint: .acp/version.yaml
@@ -61,6 +63,7 @@ rules:
     - .acp/capability/capabilities.yaml
     - .gitignore
     - start.sh
+    - services/shared/superleaf-tools.json
     - services/backend/pyproject.toml
     - services/backend/uv.lock
     - services/backend/app/settings.py
@@ -86,6 +89,17 @@ rules:
     - services/backend/app/services/attached_files.py
     - services/backend/app/services/nanobot_client.py
     - services/backend/app/services/mcp_tool_service.py
+    - services/backend/app/services/superleaf_mcp_registry.py
+    - services/backend/app/services/superleaf_mcp_tools.py
+    - services/backend/app/services/superleaf_mcp_transport.py
+    - services/backend/app/agent_commands/registry.py
+    - services/backend/app/agent_commands/executor.py
+    - services/backend/app/agent_commands/anchors.py
+    - services/backend/app/agent_commands/suggestions.py
+    - services/backend/app/mcp/router.py
+    - services/backend/app/mcp/sessions.py
+    - services/backend/app/mcp/transport.py
+    - services/shared/superleaf-tools.json
     - services/backend/app/services/project_archive_service.py
     - services/backend/app/services/github_service.py
     - services/backend/app/services/latex_compiler.py
@@ -125,6 +139,9 @@ rules:
           - docs/zh/providers/README.md
           - docs/zh/agents/README.md
           - docs/zh/troubleshooting/README.md
+          - docs/zh/agents/local-agent-mcp.md
+          - docs/zh/agents/mcp-token-mode.md
+          - docs/zh/superleaf-mcp-architecture-plan.md
         expand_when:
           - user-facing docs or GitHub Pages navigation changes
           - feature behavior needs handbook documentation
@@ -144,6 +161,33 @@ rules:
           - services/backend/app/api/__init__.py
         expand_when:
           - middleware, CORS, lifespan, router aggregation, or env defaults change
+          - enabling, mounting, or diagnosing backend-native /mcp changes
+      backend-native-mcp:
+        start_with:
+          - services/backend/app/mcp/router.py
+          - services/backend/app/mcp/sessions.py
+          - services/backend/app/mcp/transport.py
+          - services/backend/app/main.py
+          - services/backend/app/settings.py
+          - services/backend/app/api/mcp.py
+          - services/backend/app/api/mcp_rpc.py
+          - services/backend/app/services/mcp_token_service.py
+          - services/backend/app/services/superleaf_mcp_registry.py
+          - services/backend/app/services/superleaf_mcp_tools.py
+          - services/backend/app/services/superleaf_mcp_transport.py
+          - services/backend/test/test_backend_mcp_mount_policy.py
+          - services/backend/test/test_backend_mcp_protocol.py
+          - services/backend/test/test_backend_mcp_rpc.py
+          - services/backend/test/test_superleaf_mcp_registry.py
+          - services/backend/test/test_superleaf_mcp_tools.py
+          - services/backend/test/test_superleaf_mcp_transport.py
+          - services/backend/test/test_superleaf_mcp_write_tools.py
+          - docs/zh/agents/mcp-token-mode.md
+          - docs/zh/superleaf-mcp-architecture-plan.md
+          - start.sh
+        expand_when:
+          - backend-native MCP /mcp mount, status, session, SSE, JSON-RPC, resources/prompts, token auth, graceful tool errors, or protocol compatibility changes
+          - Codex/IDE/CLI token-direct MCP behavior changes
       models-and-schemas:
         start_with:
           - services/backend/app/models.py
@@ -179,14 +223,18 @@ rules:
           - services/local-agent-host/package.json
           - services/local-agent-host/superleaf-tools.mjs
           - services/local-agent-host/backend-mcp-client.mjs
+          - services/shared/superleaf-tools.json
           - services/backend/app/api/native_agents.py
           - services/frontend/src/features/right-panel/TeamTab.tsx
           - services/frontend/src/stores/nativeAgentStore.ts
+          - docs/zh/agents/local-agent-mcp.md
+          - docs/zh/agents/mcp-token-mode.md
         expand_when:
           - Codex, Claude, Nanobot, MCP, or browser bridge behavior changes
           - Local Agent Host package/download/update metadata changes
           - user-machine localhost connectivity, CORS, origin, or startup scripts change
           - reports confuse host packaging with server-side host execution
+          - reports confuse Local Agent Host browser Bridge MCP with backend-native token-direct MCP
       all-in-one-image:
         start_with:
           - services/all-in-one/Dockerfile
@@ -452,10 +500,16 @@ rules:
       backend-persistence:
         start_with:
           - services/backend/app/services/annotation_service.py
+          - services/backend/app/agent_commands/anchors.py
+          - services/backend/app/agent_commands/suggestions.py
           - services/backend/app/api/conversations.py
           - services/backend/app/services/operation_service.py
+          - services/frontend/src/services/annotationRangeRecovery.ts
+          - services/frontend/src/stores/conversationStore.ts
+          - services/frontend/src/stores/annotationStore.ts
         expand_when:
           - annotation persistence, conversation-origin annotations, or operation audit changes
+          - annotation/suggestion anchor repair, re-location, original_text matching, stale proposal handling, or accept-time Yjs/body write checks change
 
     frontend-mention-system:
       parser:
@@ -599,25 +653,79 @@ rules:
           - GitHub auth, device flow, import, push, or repo URL parsing changes
 
     native-agent-skills:
+      shared-tool-registry:
+        start_with:
+          - services/shared/superleaf-tools.json
+          - services/backend/app/agent_commands/registry.py
+          - services/backend/app/services/superleaf_tool_registry.py
+          - services/local-agent-host/superleaf-tools.mjs
+          - services/frontend/src/services/superleafTools.ts
+          - services/backend/test/test_agent_command_registry.py
+          - services/backend/test/test_superleaf_mcp_registry.py
+        expand_when:
+          - SuperLeaf MCP tool schema, description, annotations, _meta.superleaf writeSurface/groundTruth/bodyMutation/anchorPolicy, resources, prompts, or tool guide behavior changes
+      agent-commands:
+        start_with:
+          - services/backend/app/agent_commands/context.py
+          - services/backend/app/agent_commands/executor.py
+          - services/backend/app/agent_commands/registry.py
+          - services/backend/app/agent_commands/project.py
+          - services/backend/app/agent_commands/files.py
+          - services/backend/app/agent_commands/suggestions.py
+          - services/backend/app/agent_commands/anchors.py
+          - services/backend/app/services/native_agent_tool_kernel.py
+          - services/backend/test/test_agent_command_project.py
+          - services/backend/test/test_agent_command_registry.py
+          - services/backend/test/test_agent_command_write.py
+          - services/backend/test/test_superleaf_mcp_write_tools.py
+        expand_when:
+          - SuperLeaf Agent tool execution changes, project read/search/outline behavior, write-scope enforcement, project_create_text_file/project_write_text_file semantics, propose_doc_edit/create_suggestion semantics, anchor repair, or shared command reuse changes
+      backend-native-mcp:
+        start_with:
+          - services/backend/app/mcp/router.py
+          - services/backend/app/mcp/sessions.py
+          - services/backend/app/mcp/transport.py
+          - services/backend/app/api/mcp.py
+          - services/backend/app/api/mcp_rpc.py
+          - services/backend/app/services/superleaf_mcp_registry.py
+          - services/backend/app/services/superleaf_mcp_tools.py
+          - services/backend/app/services/superleaf_mcp_transport.py
+          - services/backend/app/services/mcp_token_service.py
+          - services/backend/app/agent_commands/
+          - services/shared/superleaf-tools.json
+          - services/backend/test/test_backend_mcp_protocol.py
+          - services/backend/test/test_backend_mcp_rpc.py
+          - services/backend/test/test_superleaf_mcp_transport.py
+          - services/backend/test/test_superleaf_mcp_tools.py
+          - services/backend/test/test_superleaf_mcp_write_tools.py
+          - docs/zh/agents/mcp-token-mode.md
+        expand_when:
+          - backend-native MCP protocol, token auth, tools/list, tools/call, resources/prompts, current context, status endpoint, session limits, or direct Codex/IDE setup changes
       backend-routes:
         start_with:
           - services/backend/app/api/native_agents.py
+          - services/backend/app/api/mcp.py
           - services/backend/app/schemas.py
         expand_when:
           - native Agent credentials, uploaded/private/shared Skills, Agent, marketplace, MCP, or official badge API changes
+          - MCP token management, /api/mcp compatibility routes, or token-direct project list/read/search compatibility changes
       backend-services:
         start_with:
           - services/backend/app/services/native_agent_service.py
           - services/backend/app/services/native_agent_runner.py
+          - services/backend/app/services/native_agent_tool_kernel.py
           - services/backend/app/services/agent_registry_service.py
           - services/backend/app/services/agent_workspace_service.py
           - services/backend/app/services/skill_content_crypto.py
           - services/backend/app/services/skill_marketplace_service.py
           - services/backend/app/services/skill_npx_installer.py
           - services/backend/app/services/skill_recipe_metadata.py
+          - services/backend/app/services/superleaf_mcp_registry.py
+          - services/backend/app/services/superleaf_mcp_tools.py
+          - services/backend/app/services/superleaf_mcp_transport.py
           - services/backend/app/models.py
         expand_when:
-          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, registry behavior, marketplace Skill install/update, non-project Skill visibility changes, or disk-based Skill loading from .agents/skills/ (skill.yaml / SKILL.md front matter metadata extraction, use_skill returning SKILL.md + file tree)
+          - native Agent runtime, Skill install/sync, encrypted Skill content, workspace file access, registry behavior, marketplace Skill install/update, non-project Skill visibility changes, SuperLeaf MCP compatibility wrappers, or disk-based Skill loading from .agents/skills/ (skill.yaml / SKILL.md front matter metadata extraction, use_skill returning SKILL.md + file tree)
       frontend-management:
         start_with:
           - services/frontend/src/features/right-panel/TeamTab.tsx
@@ -670,6 +778,7 @@ rules:
           - services/frontend/src/stores/nativeAgentStore.ts
         expand_when:
           - adding/revising MCP presets, env schema, transport config, connectivity/functionality tests, or tool-call behavior
+          - support/SuperLeaf.MCPs catalog changes; for SuperLeaf's own backend-native MCP server use native-agent-skills/backend-native-mcp and native-agent-skills/agent-commands instead
 
     collaboration:
       project-members:

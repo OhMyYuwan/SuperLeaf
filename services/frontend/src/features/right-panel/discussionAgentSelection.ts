@@ -1,4 +1,5 @@
 import type { CachedWorkflow, Conversation } from '../../services/backendApi'
+import type { FileCandidate, MentionCandidate, WorkflowCandidate } from '../../services/mentions'
 
 export type SelectedAgentByDocument = Record<string, string>
 
@@ -12,6 +13,16 @@ interface ResolveDiscussionAgentArgs {
 
 export function enabledDiscussionAgents(workflows: CachedWorkflow[]): CachedWorkflow[] {
   return workflows.filter((workflow) => !workflow.is_disabled)
+}
+
+export function discussionComposerMentionCandidates({
+  files,
+}: {
+  agents: readonly CachedWorkflow[]
+  workflows: readonly WorkflowCandidate[]
+  files: readonly FileCandidate[]
+}): MentionCandidate[] {
+  return [...files]
 }
 
 export function conversationScopeKey(documentId: string | null, workflowId: string | null): string {

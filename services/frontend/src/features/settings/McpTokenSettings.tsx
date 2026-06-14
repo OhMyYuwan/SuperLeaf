@@ -46,14 +46,13 @@ export function McpTokenSettings() {
   }
 
   return (
-    <div>
+    <div className="mcp-token-panel">
       <div className="settings-section-title">MCP Token</div>
-      <p className="settings-hint">
-        为 Codex、Claude Code、VS Code 等 IDE 创建长效 token。这些 token 让外部客户端直接连接后端 MCP，无需浏览器或 Local Host。
-      </p>
-      <p className="settings-hint">
-        MCP endpoint: <code>{BACKEND_BASE}/mcp</code> · Header: <code>Authorization: Bearer slmcp_...</code>
-      </p>
+      <div className="mcp-token-hint">
+        <span>为 Codex、Claude Code、VS Code 等 IDE 创建后端 MCP token。</span>
+        <code>{BACKEND_BASE}/mcp</code>
+        <code>Authorization: Bearer slmcp_...</code>
+      </div>
 
       {error && <div className="error-bar">{error}</div>}
 
@@ -62,7 +61,7 @@ export function McpTokenSettings() {
       ) : tokens.length === 0 && !showForm ? (
         <div className="empty-providers">还没有创建 MCP token。点击下方按钮创建第一个。</div>
       ) : (
-        <ul className="provider-list">
+        <ul className="mcp-token-list">
           {tokens.map((token) => (
             <McpTokenRow key={token.id} token={token} onRevoke={handleRevoke} />
           ))}
@@ -90,25 +89,25 @@ function McpTokenRow({ token, onRevoke }: McpTokenRowProps) {
   const inactive = token.revoked_at !== null || isExpired
 
   return (
-    <li className={`provider-item ${inactive ? 'inactive' : ''}`}>
-      <div className="provider-icon">
+    <li className={`mcp-token-row ${inactive ? 'inactive' : ''}`}>
+      <div className="mcp-token-icon">
         <Key size={16} />
       </div>
-      <div className="provider-details">
-        <div className="provider-name">
-          {token.name || '(未命名)'}
+      <div className="mcp-token-main">
+        <div className="mcp-token-title">
+          <span className="mcp-token-name">{token.name || '(未命名)'}</span>
           <span className="token-hint">...{token.token_hint}</span>
         </div>
-        <div className="provider-meta">
+        <div className="mcp-token-meta">
           <span className={`scope-badge scope-${token.scope}`}>{token.scope}</span>
           {token.revoked_at && <span className="status-badge revoked">已撤销</span>}
           {!token.revoked_at && isExpired && <span className="status-badge expired">已过期</span>}
           {!token.revoked_at && !isExpired && <span className="status-badge active">有效</span>}
-          <span className="provider-meta-item">
+          <span className="mcp-token-date">
             创建于 {new Date(token.created_at).toLocaleDateString('zh-CN')}
           </span>
           {token.last_used_at && (
-            <span className="provider-meta-item">
+            <span className="mcp-token-date">
               最后使用 {new Date(token.last_used_at).toLocaleDateString('zh-CN')}
             </span>
           )}

@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Download, LayoutGrid, List, Plus, UserRound, X } from 'lucide-react'
+import { Download, LayoutGrid, List, Plus, X } from 'lucide-react'
 import { useProjectStore } from '../stores/projectStore'
 import type { ProjectType } from '../stores/projectStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -23,7 +23,6 @@ import { ProjectTableRow } from './components/ProjectTableRow'
 import { ProjectFormDialog } from './components/ProjectFormDialog'
 import { DeleteProjectDialog } from './components/DeleteProjectDialog'
 import { ProjectSettingsDialog } from '../features/settings/ProjectSettingsDialog'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { NotificationBell } from '../features/topbar/NotificationBell'
 import { UserMenu } from '../features/topbar/UserMenu'
 import './project-list.css'
@@ -55,7 +54,6 @@ export function ProjectListPage() {
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [github, setGithub] = useState<GitHubAccountStatus | null>(null)
-  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const sortedProjects = useMemo(() => sortProjectsByUpdated(projects), [projects])
   const paperProjects = useMemo(
     () => sortedProjects.filter((project) => normalizedProjectType(project) === 'paper'),
@@ -77,10 +75,6 @@ export function ProjectListPage() {
   useEffect(() => {
     githubApi.account().then(setGithub).catch(() => setGithub(null))
   }, [])
-
-  const refreshGithubAccount = () => {
-    githubApi.account().then(setGithub).catch(() => setGithub(null))
-  }
 
   const closeDialog = () => {
     setDialog({ kind: 'closed' })
@@ -187,15 +181,8 @@ export function ProjectListPage() {
           >
             <Download size={14} /> GitHub 导入
           </button>
-          <button
-            className="secondary-btn"
-            onClick={() => setPersonalPanelOpen(true)}
-            title="打开个人面板，连接 GitHub 账户"
-          >
-            <UserRound size={14} /> 个人面板
-          </button>
           <NotificationBell />
-          <UserMenu onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
+          <UserMenu />
         </div>
       </header>
 
@@ -290,13 +277,6 @@ export function ProjectListPage() {
         open={dialog.kind === 'settings'}
         projectId={dialog.kind === 'settings' ? dialog.target.id : ''}
         onOpenChange={(o) => { if (!o) closeDialog() }}
-      />
-      <SettingsDialog
-        open={personalPanelOpen}
-        onOpenChange={(open) => {
-          setPersonalPanelOpen(open)
-          if (!open) refreshGithubAccount()
-        }}
       />
     </div>
   )

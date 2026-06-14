@@ -119,7 +119,7 @@ COPY --from=frontend-build /app/frontend/dist /usr/share/superleaf/html
 COPY services/all-in-one/nginx.conf /etc/nginx/conf.d/default.conf
 COPY services/all-in-one/entrypoint.sh /usr/local/bin/superleaf-all-in-one
 
-RUN mkdir -p /data/backend /data/collab /data/home /data/cache /run/nginx /var/log/nginx /tmp && \
+RUN mkdir -p /data/backend /data/collab /data/home /data/cache /data/logs /run/nginx /var/log/nginx /tmp && \
     chown -R appuser:appuser /data /app /usr/share/superleaf/html && \
     chmod 1777 /tmp && \
     chmod +x /usr/local/bin/superleaf-all-in-one

@@ -10,6 +10,7 @@ export BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8000}"
 export COLLAB_HOST="${COLLAB_HOST:-127.0.0.1}"
 export COLLAB_PORT="${COLLAB_PORT:-4444}"
 export COLLAB_DATA_DIR="${COLLAB_DATA_DIR:-/data/collab}"
+export COLLAB_LOG_DIR="${COLLAB_LOG_DIR:-/data/logs}"
 export COLLAB_WS_PATH_PREFIX="${COLLAB_WS_PATH_PREFIX:-/collab}"
 export HOME="${HOME:-/data/home}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/data/cache}"
@@ -54,17 +55,21 @@ prepare_runtime_dirs() {
     "$XDG_CACHE_HOME" \
     "$UV_CACHE_DIR" \
     "$NPM_CONFIG_CACHE" \
+    "$COLLAB_LOG_DIR" \
     /run/nginx \
     /var/log/nginx \
     /tmp
 
-  chown -R "$APP_USER:$APP_USER" \
+  chown "$APP_USER:$APP_USER" \
     "$YLW_DATA_DIR" \
     "$COLLAB_DATA_DIR" \
+    "$COLLAB_LOG_DIR" \
     "$HOME" \
     "$XDG_CACHE_HOME" \
-    /app \
-    /usr/share/superleaf/html
+    "$UV_CACHE_DIR" \
+    "$NPM_CONFIG_CACHE" \
+    /run/nginx \
+    /var/log/nginx || true
 }
 
 terminate() {

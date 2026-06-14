@@ -113,6 +113,23 @@ direct_container_name() {
   echo "${project}_app"
 }
 
+runtime_dir() {
+  local dir
+  dir="$(read_env_value "SUPERLEAF_RUNTIME_DIR" | tr -d '[:space:]')"
+  dir="${dir%/}"
+  if [ -z "$dir" ]; then
+    dir="$ROOT/data/runtime"
+  fi
+  case "$dir" in
+    /*)
+      echo "$dir"
+      ;;
+    *)
+      echo "$ROOT/$dir"
+      ;;
+  esac
+}
+
 direct_docker_up() {
   local force_recreate=0
   local arg
@@ -128,10 +145,12 @@ direct_docker_up() {
   local image
   local bind_addr
   local http_port
+  local runtime
   name="$(direct_container_name)"
   image="$(read_env_value "SUPERLEAF_IMAGE" | tr -d '[:space:]')"
   bind_addr="$(read_env_value "SUPERLEAF_BIND_ADDR" | tr -d '[:space:]')"
   http_port="$(read_env_value "SUPERLEAF_HTTP_PORT" | tr -d '[:space:]')"
+  runtime="$(runtime_dir)"
   image="${image:-ghcr.io/ohmyyuwan/superleaf:latest}"
   bind_addr="${bind_addr:-127.0.0.1}"
   http_port="${http_port:-8080}"
@@ -155,12 +174,20 @@ direct_docker_up() {
     -e COLLAB_HOST=127.0.0.1 \
     -e COLLAB_PORT=4444 \
     -e COLLAB_DATA_DIR=/data/collab \
+    -e COLLAB_LOG_DIR=/data/logs \
     -e COLLAB_WS_PATH_PREFIX=/collab \
     -e COLLAB_INTERNAL_TOKEN="$(read_env_value "YLW_COLLAB_INTERNAL_TOKEN")" \
     -e SUPERLEAF_BROWSER_BACKEND_URL= \
     -e SUPERLEAF_BROWSER_COLLAB_WS_URL=/collab \
     -v "$ROOT/data/backend:/data/backend" \
     -v "$ROOT/data/collab:/data/collab" \
+    -v "$runtime/tmp:/tmp" \
+    -v "$runtime/cache:/data/cache" \
+    -v "$runtime/home:/data/home" \
+    -v "$runtime/run-nginx:/run/nginx" \
+    -v "$runtime/log-nginx:/var/log/nginx" \
+    -v "$runtime/logs:/data/logs" \
+    -v "$runtime/superleaf-config.js:/usr/share/superleaf/html/superleaf-config.js" \
     -p "$bind_addr:$http_port:8080" \
     --restart unless-stopped \
     --health-cmd "curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1" \
@@ -354,7 +381,23 @@ init_env() {
 }
 
 ensure_dirs() {
-  mkdir -p "$ROOT/data/backend" "$ROOT/data/collab" "$ROOT/backups"
+  local runtime
+  runtime="$(runtime_dir)"
+
+  mkdir -p \
+    "$ROOT/data/backend" \
+    "$ROOT/data/collab" \
+    "$ROOT/backups" \
+    "$runtime/tmp" \
+    "$runtime/cache" \
+    "$runtime/home" \
+    "$runtime/run-nginx" \
+    "$runtime/log-nginx" \
+    "$runtime/logs"
+  touch "$runtime/superleaf-config.js"
+  chmod 1777 "$runtime/tmp" "$runtime/logs" 2>/dev/null || true
+  chmod 666 "$runtime/superleaf-config.js" 2>/dev/null || true
+
   if [ "$(id -u 2>/dev/null || echo 1)" = "0" ] && command -v chown >/dev/null 2>&1; then
     local uid
     local gid
@@ -362,6 +405,13 @@ ensure_dirs() {
     gid="$(read_env_value "SUPERLEAF_RUNTIME_GID" | tr -d '[:space:]')"
     if [ -n "$uid" ] && [ -n "$gid" ]; then
       chown -R "$uid:$gid" "$ROOT/data/backend" "$ROOT/data/collab"
+      chown "$uid:$gid" \
+        "$runtime/cache" \
+        "$runtime/home" \
+        "$runtime/run-nginx" \
+        "$runtime/log-nginx" \
+        "$runtime/logs" \
+        "$runtime/superleaf-config.js" 2>/dev/null || true
     fi
   fi
 }

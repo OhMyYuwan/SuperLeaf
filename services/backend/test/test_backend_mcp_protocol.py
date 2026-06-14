@@ -14,7 +14,7 @@ from app.agent_commands.context import AgentCommandContext, AgentCommandSource
 from app.database import Base
 from app.mcp.sessions import McpSessionStore
 from app.mcp.transport import MCP_PROTOCOL_VERSION, handle_mcp_request
-from app.models import Doc, Project, User
+from app.models import Annotation, Doc, Project, User
 from app.services.mcp_tool_service import (
     MCP_PROTOCOL_VERSION as CLIENT_MCP_PROTOCOL_VERSION,
     _McpSession,
@@ -159,6 +159,61 @@ def test_mcp_tools_call_persists_active_project(db: Session, seed: dict[str, Use
     )
     payload = json.loads(listed.body["result"]["content"][0]["text"])
     assert [doc["name"] for doc in payload["docs"]] == ["main.tex"]
+
+
+def test_mcp_client_info_labels_created_suggestion_as_codex(
+    db: Session,
+    seed: dict[str, User | Project | Doc],
+) -> None:
+    owner = seed["owner"]
+    assert isinstance(owner, User)
+    store = McpSessionStore(ttl_seconds=3600)
+    ctx = AgentCommandContext(
+        source=AgentCommandSource.MCP,
+        user_id=owner.id,
+        token_id="token-a",
+        token_scope="write",
+    )
+    initialized = handle_mcp_request(
+        db,
+        ctx,
+        _rpc(
+            "initialize",
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "clientInfo": {"name": "codex-cli", "version": "0"},
+            },
+        ),
+        session_id="",
+        store=store,
+    )
+    sid = initialized.session_id
+
+    created = handle_mcp_request(
+        db,
+        ctx,
+        _rpc(
+            "tools/call",
+            {
+                "name": "create_suggestion",
+                "arguments": {
+                    "project_id": "project-a",
+                    "doc_id": "doc-a",
+                    "original_text": "Hello",
+                    "content": "Please clarify this line.",
+                },
+            },
+        ),
+        session_id=sid,
+        store=store,
+    )
+
+    assert created.body["result"]["isError"] is False
+    payload = json.loads(created.body["result"]["content"][0]["text"])
+    annotation = db.get(Annotation, payload["suggestion_id"])
+    assert annotation is not None
+    assert annotation.user_id == owner.id
+    assert annotation.agent_name == "Codex"
 
 
 def test_mcp_tool_unexpected_exceptions_are_tool_errors(

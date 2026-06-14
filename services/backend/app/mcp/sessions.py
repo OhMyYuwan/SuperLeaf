@@ -11,6 +11,9 @@ from datetime import UTC, datetime, timedelta
 class McpSession:
     id: str
     active_project_id: str = ""
+    client_name: str = ""
+    client_title: str = ""
+    client_version: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
     expires_at: datetime | None = None

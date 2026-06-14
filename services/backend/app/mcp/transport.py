@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,7 +20,7 @@ from ..agent_commands.registry import (
     render_agent_command_prompt,
 )
 from .errors import mcp_error, mcp_ok
-from .sessions import McpSessionStore
+from .sessions import McpSession, McpSessionStore
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ def handle_mcp_request(
 
     if method == "initialize":
         session = store.create()
+        _attach_client_info(session, params.get("clientInfo"))
         return _ok(
             request_id,
             {
@@ -74,7 +75,7 @@ def handle_mcp_request(
     if session is None:
         return _error(request_id, -32002, "Unknown or expired MCP session", status_code=404)
 
-    ctx = ctx.with_active_project(session.active_project_id)
+    ctx = _context_for_session(ctx, session)
     if method == "ping":
         return _ok(request_id, {}, session_id=session.id)
     if method == "tools/list":
@@ -126,6 +127,31 @@ def handle_mcp_request(
 
 def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _attach_client_info(session: McpSession, value: Any) -> None:
+    if not isinstance(value, dict):
+        return
+    session.client_name = _clean_client_info_value(value.get("name"))
+    session.client_title = _clean_client_info_value(value.get("title"))
+    session.client_version = _clean_client_info_value(value.get("version"))
+
+
+def _context_for_session(ctx: AgentCommandContext, session: McpSession) -> AgentCommandContext:
+    metadata = dict(ctx.metadata)
+    if session.client_name:
+        metadata["client_name"] = session.client_name
+    if session.client_title:
+        metadata["client_title"] = session.client_title
+    if session.client_version:
+        metadata["client_version"] = session.client_version
+    return replace(ctx, active_project_id=session.active_project_id, metadata=metadata)
+
+
+def _clean_client_info_value(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.strip().split())[:120]
 
 
 def _ok(request_id: Any, result: dict[str, Any], *, session_id: str) -> McpResponse:

@@ -62,6 +62,24 @@ def test_agent_command_registry_preserves_tool_semantics_metadata() -> None:
     assert catalog_tools["create_suggestion"]["_meta"]["superleaf"]["writeSurface"] == "annotation_db"
 
 
+def test_edit_proposal_schema_uses_minimal_replacement_contract() -> None:
+    tools = {tool["name"]: tool for tool in get_agent_command_tools()}
+
+    proposal_schema = tools["propose_doc_edit"]["inputSchema"]
+    proposal_props = proposal_schema["properties"]
+    assert "proposed_text" in proposal_props
+    assert "new_text" not in proposal_props
+    assert "reason" not in proposal_props
+    assert proposal_schema["required"] == ["doc_id", "original_text", "proposed_text"]
+
+    suggestion_schema = tools["create_suggestion"]["inputSchema"]
+    suggestion_props = suggestion_schema["properties"]
+    assert "content" in suggestion_props
+    assert "proposed_text" in suggestion_props
+    assert "reason" not in suggestion_props
+    assert suggestion_schema["required"] == ["doc_id", "original_text", "content"]
+
+
 def test_agent_command_registry_exposes_resources_and_prompts() -> None:
     resources = get_agent_command_resources()
     prompts = get_agent_command_prompts()

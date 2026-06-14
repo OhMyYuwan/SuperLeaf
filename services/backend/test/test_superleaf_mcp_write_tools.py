@@ -118,7 +118,7 @@ def test_propose_doc_edit_creates_pending_annotation_without_mutating_doc(
             "original_text": "Hello world",
             "range_start": 16,
             "range_end": 27,
-            "new_text": "Hello, world!",
+            "proposed_text": "Hello, world!",
             "reason": "Add punctuation.",
         },
     )
@@ -130,7 +130,8 @@ def test_propose_doc_edit_creates_pending_annotation_without_mutating_doc(
     assert annotation.status == "pending"
     assert annotation.original == "Hello world"
     assert annotation.proposed == "Hello, world!"
-    assert annotation.reason == "Add punctuation."
+    assert annotation.reason == ""
+    assert annotation.content == ""
     assert annotation.target_text == "Hello world"
     assert body["range_start"] == 16
     assert body["range_end"] == 27

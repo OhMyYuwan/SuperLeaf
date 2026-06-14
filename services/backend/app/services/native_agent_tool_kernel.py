@@ -98,6 +98,7 @@ NATIVE_DB_BACKED_TOOL_NAMES = frozenset(
 class NativeAgentToolContext:
     project_id: str = ""
     user_id: str = ""
+    agent_name: str = ""
     active_document_id: str = ""
     active_range_start: int = 0
     active_range_end: int = 0
@@ -723,10 +724,11 @@ def _tool_propose_doc_edit(
         return NativeAgentToolResult(
             "ERROR: range_start and range_end must be integers", failed=True
         )
-    new_text = args.get("new_text")
-    if not isinstance(new_text, str):
-        return NativeAgentToolResult("ERROR: new_text must be a string", failed=True)
-    reason = str(args.get("reason") or "").strip()
+    proposed_text = args.get("proposed_text")
+    if not isinstance(proposed_text, str):
+        proposed_text = args.get("new_text")
+    if not isinstance(proposed_text, str):
+        return NativeAgentToolResult("ERROR: proposed_text must be a string", failed=True)
     original_text_arg = args.get("original_text")
 
     with SessionLocal() as db:
@@ -761,9 +763,11 @@ def _tool_propose_doc_edit(
         "range_start": start,
         "range_end": end,
         "original_text": original_text,
-        "new_text": new_text,
-        "reason": reason,
+        "new_text": proposed_text,
+        "proposed_text": proposed_text,
+        "reason": "",
         "anchor_text": anchor_text,
+        "agent_name": context.agent_name,
     }
 
     tool_reply = {
@@ -803,7 +807,6 @@ def _tool_create_suggestion(
     if not isinstance(content_arg, str) or not content_arg.strip():
         return NativeAgentToolResult("ERROR: content is required", failed=True)
     proposed_text = str(args.get("proposed_text") or "")
-    reason = str(args.get("reason") or "").strip()
 
     try:
         range_start = int(args.get("range_start") or 0)
@@ -836,8 +839,9 @@ def _tool_create_suggestion(
         "original_text": original_text,
         "proposed_text": proposed_text,
         "content": content_arg,
-        "reason": reason,
+        "reason": "",
         "anchor_text": anchor_text,
+        "agent_name": context.agent_name,
     }
 
     return NativeAgentToolResult(

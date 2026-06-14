@@ -100,10 +100,20 @@ GET /mcp/status
 | `project_write_text_file` | 创建新的项目文本文件，拒绝覆盖 | write | Project FS / DB | 创建新文档，不改已有正文 |
 | `project_create_text_file` | `project_write_text_file` 的别名 | write | Project FS / DB | 创建新文档，不改已有正文 |
 
+编辑与批注工具的参数契约刻意分开：
+
+- `propose_doc_edit`：用于正文修改提案。传 `doc_id`、`original_text`、`proposed_text`，可选 `range_start` / `range_end` 作为定位提示。不要传解释字段；提案卡只表达“把这段原文替换成这段新文本”。
+- `create_suggestion`：用于用户明确要求批注、评论或 suggestion card。传 `doc_id`、`original_text`、`content`，可选 `proposed_text`。批注说明写在 `content` 里。
+
 {: .note }
 `superleaf_list_projects` 和 `superleaf_select_project` 是 Token 模式专用的。浏览器 Bridge 模式下活跃项目由页面 context 决定，不需要显式选择。Token 模式因为没有浏览器 context，必须先 `superleaf_select_project`，后续 `project_*` 工具才知道操作哪个项目。
 
 写工具需要 `write` scope token，并且当前用户必须是项目 owner/editor。
+
+写入后的批注归属要区分两层：
+
+- `annotations.user_id` 仍然是 MCP token 所属用户，用于项目权限、私有批注可见性和事件过滤。
+- UI 展示的创建者来自 MCP `initialize.params.clientInfo`，写入 `annotations.agent_name`。Codex / codex-cli / Codex App 等客户端会归一化显示为 `Codex`，所以不会显示成“我的批注”。
 
 `propose_doc_edit` 和 `create_suggestion` 会用传入的 `original_text` 修正锚点：如果 `range_start/range_end` 已经过期，但当前文档里能找到唯一或可由 range hint 消歧的原文，后端会把批注/提案保存到修正后的范围，并在工具结果中返回 `anchor_status`、`anchor_reason`、`anchor_confidence`、`range_start` 和 `range_end`。如果无法可靠定位，会返回 `needs_review` 状态并保留安全范围，调用方应重新读取文档后再尝试。
 

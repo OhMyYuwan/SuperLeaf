@@ -5,10 +5,10 @@
     "mcp": [
       "Use these tools to access the active SuperLeaf project/document context.",
       "Read SuperLeaf documents through project_read_doc/project_grep instead of local files.",
-      "Trusted local Agents may use read tools without extra approval. create_suggestion writes an annotation/suggestion card to the backend database; it does not modify document body text, but it still requires write scope.",
+      "Trusted local Agents may use read tools without extra approval. create_suggestion writes an explicit annotation/comment card to the backend database; it does not modify document body text, but it still requires write scope.",
       "Trusted local Agents may use propose_doc_edit, project_write_text_file, and project_create_text_file directly when write scope is granted; these are controlled SuperLeaf operations with proposal cards, history, or overwrite protection.",
       "Existing document body edits must be expressed as proposals. The body mutation happens later through the SuperLeaf editor/Yjs acceptance path, not during the MCP tool call.",
-      "Use propose_doc_edit for paper edits and create_suggestion only when the user asks for an annotation/suggestion card."
+      "Use propose_doc_edit for normal paper edits: pass original_text and proposed_text only. Use create_suggestion only when the user asks for an annotation/comment/suggestion card: pass content as the card text."
     ]
   },
   "examples": {
@@ -21,7 +21,7 @@
       "name": "SuperLeaf MCP Instructions",
       "description": "Operational guidance for local agents using SuperLeaf tools safely.",
       "mimeType": "text/plain",
-      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion writes an annotation/suggestion card to the backend database; it does not modify document body text, but it still requires write scope. propose_doc_edit writes a pending proposal/annotation record and never applies body text directly; accepted body edits must flow through the SuperLeaf editor/Yjs path. project_write_text_file and project_create_text_file create new backend project documents and refuse overwrites. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
+      "text": "Use SuperLeaf MCP tools to access the active project and document context. Read project documents through project_read_doc or project_grep instead of local filesystem reads. Trusted local Agents may use read tools without extra approval. create_suggestion writes an explicit annotation/comment card to the backend database; it does not modify document body text, but it still requires write scope. propose_doc_edit writes a pending edit proposal and never applies body text directly; accepted body edits must flow through the SuperLeaf editor/Yjs path. For propose_doc_edit, pass original_text and proposed_text; do not include explanations or hidden reasoning. project_write_text_file and project_create_text_file create new backend project documents and refuse overwrites. Local Agent Host does not receive SuperLeaf cookies; browser bridge authorization executes the actual project operations."
     },
     {
       "uri": "superleaf://tool-kernel/tools",
@@ -86,7 +86,7 @@
           "role": "user",
           "content": {
             "type": "text",
-            "text": "Paper editing task: {{task}}\n\nIf doc_id is provided, read it first with project_read_doc: {{doc_id}}\nUse project_grep or project_outline when you need surrounding context. For changes, call propose_doc_edit with exact original_text when available. Do not directly rewrite local files as a substitute for SuperLeaf proposals."
+            "text": "Paper editing task: {{task}}\n\nIf doc_id is provided, read it first with project_read_doc: {{doc_id}}\nUse project_grep or project_outline when you need surrounding context. For changes, call propose_doc_edit with exact original_text and proposed_text. Do not add a reason field and do not directly rewrite local files as a substitute for SuperLeaf proposals."
           }
         }
       ]
@@ -106,7 +106,7 @@
           "role": "user",
           "content": {
             "type": "text",
-            "text": "Annotation task: {{task}}\n\nOnly use create_suggestion when the user explicitly asks for a comment, annotation, or suggestion card. Read the relevant text through project_read_doc or project_grep first and anchor the suggestion with exact original_text."
+            "text": "Annotation task: {{task}}\n\nOnly use create_suggestion when the user explicitly asks for a comment, annotation, or suggestion card. Read the relevant text through project_read_doc or project_grep first and anchor the suggestion with exact original_text. Put the card text in content; do not add a reason field."
           }
         }
       ]
@@ -417,7 +417,7 @@
     },
     {
       "name": "propose_doc_edit",
-      "description": "Create a SuperLeaf edit proposal for the active document. The edit is not applied until the user accepts it in SuperLeaf. Use this for normal document modification requests. Pass original_text copied from project_read_doc when possible for reliable anchoring.",
+      "description": "Create a SuperLeaf edit proposal for the active document. The edit is not applied until the user accepts it in SuperLeaf. Use this for normal document modification requests. Pass original_text copied from project_read_doc and proposed_text containing only the replacement text.",
       "annotations": {
         "title": "Create edit proposal",
         "readOnlyHint": false,
@@ -458,26 +458,21 @@
             "type": "integer",
             "description": "Character offset where the replacement ends, exclusive."
           },
-          "new_text": {
+          "proposed_text": {
             "type": "string",
-            "description": "Replacement text. May be empty to delete the matched text."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Short human-readable explanation of the proposed change."
+            "description": "Replacement text. May be empty to delete the matched text. Do not include explanations."
           }
         },
         "required": [
           "doc_id",
-          "range_start",
-          "range_end",
-          "new_text"
+          "original_text",
+          "proposed_text"
         ]
       }
     },
     {
       "name": "create_suggestion",
-      "description": "Create a persistent SuperLeaf annotation/suggestion card anchored to the active document. Only use this when the user explicitly asks for an annotation, comment, or suggestion card. Use propose_doc_edit instead for normal editing requests.",
+      "description": "Create a persistent SuperLeaf annotation/comment card anchored to the active document. Only use this when the user explicitly asks for an annotation, comment, or suggestion card. Use propose_doc_edit instead for normal editing requests.",
       "annotations": {
         "title": "Create suggestion card",
         "readOnlyHint": false,
@@ -516,11 +511,7 @@
           },
           "content": {
             "type": "string",
-            "description": "Annotation content shown on the suggestion card."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Short reason for the suggestion."
+            "description": "Annotation or comment text shown on the card. Put explanations here instead of using a reason field."
           },
           "range_start": {
             "type": "integer",

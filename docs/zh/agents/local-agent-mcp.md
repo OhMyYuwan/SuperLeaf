@@ -82,7 +82,14 @@ Local Host 和后端原生 `/mcp` 都从共享注册表 `services/shared/superle
 | `propose_doc_edit` | 创建文档修改提案，等待用户在 SuperLeaf 中接受 | Proposal / annotation DB |
 | `create_suggestion` | 创建持久批注或 suggestion 卡片 | Annotation DB |
 
+编辑与批注工具的边界：
+
+- `propose_doc_edit` 只做正文修改提案：`original_text` 是被替换的原文，`proposed_text` 是替换文本，`range_start` / `range_end` 只是可选定位提示。
+- `create_suggestion` 只做批注/评论卡：`content` 是卡片正文，`proposed_text` 只是可选建议替换文本。
+
 `propose_doc_edit` 和 `create_suggestion` 会用 `original_text` 进行后端锚点修复。range 正确时状态是 `stable`；range 过期但文本能定位时状态是 `recovered`；文本无法可靠定位时状态是 `needs_review`。这只修正批注/提案锚点，不代表 MCP 已经修改正文。
+
+Local Host 会把 MCP `initialize.params.clientInfo` 里的客户端身份随工具请求传给浏览器 Bridge。Codex / codex-cli / Codex App 会归一化成 `Codex` 并写入批注事件的 `agent_name`；`user_id` 仍然保持为当前登录用户，因为它承担权限校验和私有批注可见性，不代表 UI 上的发言角色。
 
 ## 当前暴露的 MCP resources / prompts
 

@@ -3,12 +3,18 @@
  *
  * Lets users create long-lived bearer tokens for external MCP clients (Codex,
  * Claude Code, VS Code). Tokens are shown in plaintext exactly once on creation;
- * afterwards only the hint is visible. Revoked tokens are grayed out.
+ * afterwards only the hint is visible. Revoked tokens are hidden from management.
  */
 
 import { useEffect, useState } from 'react'
 import { Copy, Eye, EyeOff, Key, Plus, Trash2, Check } from 'lucide-react'
 import { BACKEND_BASE, mcpTokenApi, type McpToken, type McpTokenCreateIn } from '../../services/backendApi'
+
+function sortVisibleTokens(tokens: McpToken[]) {
+  return tokens
+    .filter((token) => token.revoked_at === null)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+}
 
 export function McpTokenSettings() {
   const [tokens, setTokens] = useState<McpToken[]>([])
@@ -24,7 +30,7 @@ export function McpTokenSettings() {
     setLoading(true)
     try {
       const data = await mcpTokenApi.list()
-      setTokens(data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()))
+      setTokens(sortVisibleTokens(data))
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -39,7 +45,7 @@ export function McpTokenSettings() {
     }
     try {
       await mcpTokenApi.revoke(tokenId)
-      await loadTokens()
+      setTokens((current) => current.filter((token) => token.id !== tokenId))
     } catch (err) {
       alert(`撤销失败: ${err instanceof Error ? err.message : String(err)}`)
     }

@@ -142,6 +142,18 @@ def test_revoked_token_stops_working(db: Session, seed: SeedData) -> None:
         assert client.get("/api/mcp/whoami", headers=headers).status_code == 401
 
 
+def test_revoked_tokens_are_hidden_from_management_list(db: Session, seed: SeedData) -> None:
+    _mint(db, seed.owner)
+    with make_client(db, seed.owner) as client:
+        token_id = client.get("/api/mcp/tokens").json()[0]["id"]
+        assert client.delete(f"/api/mcp/tokens/{token_id}").status_code == 204
+
+        resp = client.get("/api/mcp/tokens")
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
 # ---- token-authenticated data routes --------------------------------------
 
 

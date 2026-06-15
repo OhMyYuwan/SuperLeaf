@@ -7,6 +7,7 @@ can be edited from the settings UI without restarting the process.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,9 +28,12 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
         ]
     )
-    # Dev convenience: match any loopback / private-LAN origin on the Vite
-    # dev port range so `vite --host` on a LAN IP still passes CORS.
-    cors_origin_regex: str = (
+    # Optional explicit CORS regex for trusted deployments that need patterns.
+    cors_origin_regex: str = ""
+    # Local/LAN dev convenience is intentionally opt-in because CORS allows
+    # credentials and broad private origins can read authenticated responses.
+    dev_cors_private_origins_enabled: bool = False
+    dev_cors_private_origin_regex: ClassVar[str] = (
         r"^http://("
         r"localhost|127\.0\.0\.1|"
         r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
@@ -86,6 +90,11 @@ class Settings(BaseSettings):
     mcp_inline_config_enabled: bool = False
     mcp_remote_private_networks_enabled: bool = False
 
+    # Provider endpoints are normally called by backend HTTP clients, so public
+    # deployments reject localhost/private network targets by default. Trusted
+    # self-hosted deployments can opt in explicitly for local Dify/Nanobot.
+    provider_private_networks_enabled: bool = False
+
     # Backend-native MCP server. This is an optional Agent command protocol
     # entrypoint mounted at /mcp; the normal backend API does not expose it by
     # default so Local Agent Host and Backend MCP stay separate lifecycles.
@@ -104,6 +113,13 @@ class Settings(BaseSettings):
             return self.database_url
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{self.data_dir / 'yuwanlab.db'}"
+
+    def resolved_cors_origin_regex(self) -> str | None:
+        if self.cors_origin_regex.strip():
+            return self.cors_origin_regex.strip()
+        if self.dev_cors_private_origins_enabled:
+            return self.dev_cors_private_origin_regex
+        return None
 
     def resolved_secrets_key_path(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)

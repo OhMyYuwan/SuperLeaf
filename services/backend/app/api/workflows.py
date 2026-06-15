@@ -12,10 +12,20 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_session
-from ..models import CachedWorkflow, NativeAgent, Project, Provider, User, WorkflowDefinition, WorkflowRun
+from ..models import (
+    CachedWorkflow,
+    Doc,
+    NativeAgent,
+    Project,
+    Provider,
+    User,
+    WorkflowDefinition,
+    WorkflowRun,
+)
 from ..schemas import CachedWorkflowOut, WorkflowDefinitionIn, WorkflowDefinitionOut, WorkflowRunOut
+from ..secrets_vault import decrypt
 from ..services.agent_orchestrator import WorkflowOrchestrator
-from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
+from ..services.agent_registry_service import NATIVE_WORKFLOW_PREFIX, AgentRegistryService
 from ..services.agent_workspace_service import AgentWorkspaceService
 from ..services.attached_files import (
     collect_image_attachments,
@@ -31,7 +41,6 @@ from ..services.native_agent_runner import (
     NativeRunPayload,
 )
 from ..services.provider_service import ProviderService
-from ..secrets_vault import decrypt
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -274,6 +283,11 @@ async def run_workflow(
     db.refresh(run)
 
     client = svc.make_client(provider)
+    run_mode = (
+        provider.kind
+        if provider.kind == "nanobot"
+        else (provider.meta or {}).get("mode") or cw.kind or "workflow"
+    )
 
     async def event_gen():
         yield {
@@ -282,7 +296,7 @@ async def run_workflow(
                 {
                     "run_id": run.id,
                     "workflow_id": workflow_id,
-                    "mode": provider.kind if provider.kind == "nanobot" else (provider.meta or {}).get("mode") or cw.kind or "workflow",
+                    "mode": run_mode,
                     "parent_run_id": body.parent_run_id,
                 }
             ),
@@ -378,7 +392,7 @@ async def run_workflow(
                     "run_id": run.id,
                     "outputs": outputs,
                     "conversation_id": conversation_id,
-                    "mode": provider.kind if provider.kind == "nanobot" else (provider.meta or {}).get("mode") or cw.kind or "workflow",
+                    "mode": run_mode,
                 }
             ),
         }
@@ -421,6 +435,15 @@ def _source_text_from_run_body(body: RunBody) -> str:
         if isinstance(value, str) and value.strip():
             return value
     return ""
+
+
+def _ensure_run_document(db: Session, project: Project, document_id: str) -> Doc | None:
+    if not document_id:
+        return None
+    doc = db.get(Doc, document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+    return doc
 
 
 def _nanobot_delta_text(evt: dict) -> str:
@@ -690,7 +713,7 @@ def list_workflow_definitions(
     rows = (
         db.query(WorkflowDefinition)
         .filter(
-            WorkflowDefinition.is_active == True,
+            WorkflowDefinition.is_active.is_(True),
             WorkflowDefinition.project_id == project.id,
             WorkflowDefinition.user_id == user.id,
         )
@@ -817,6 +840,7 @@ async def execute_workflow_definition(
 
     target_text = _source_text_from_run_body(body)
     context_files = [cf.model_dump() for cf in body.context_files]
+    _ensure_run_document(db, project, body.document_id)
 
     orchestrator = WorkflowOrchestrator(db)
 

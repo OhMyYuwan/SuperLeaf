@@ -17,6 +17,7 @@ from ..models import CachedWorkflow, Provider
 from ..secrets_vault import decrypt, encrypt
 from .dify_client import DifyClient, DifyError
 from .nanobot_client import NanobotClient, NanobotError
+from .provider_endpoint_policy import validate_provider_endpoint
 
 
 class ProviderService:
@@ -99,11 +100,14 @@ class ProviderService:
                     claude_tool_mode=claude_tool_mode,
                 )
             )
+        normalized_endpoint = self._normalize_endpoint(kind, endpoint)
+        if _provider_endpoint_requires_backend_policy(kind, meta):
+            validate_provider_endpoint(normalized_endpoint)
         p = Provider(
             user_id=user_id,
             name=name,
             kind=kind,
-            endpoint=self._normalize_endpoint(kind, endpoint),
+            endpoint=normalized_endpoint,
             api_key_enc=encrypt(api_key),
             meta=meta,
         )
@@ -141,6 +145,11 @@ class ProviderService:
         p = self.get(provider_id, user_id=user_id)
         if p is None:
             return None
+        next_meta = dict(p.meta or {})
+        if transport is not None:
+            if p.kind not in ("nanobot", "codex-local", "claude-local"):
+                raise ValueError("transport can only be set for browser-local providers")
+            next_meta = {**next_meta, "transport": transport}
         if name is not None and name != p.name:
             p.name = name
             # Nanobot: 1 provider = 1 agent, agent name === provider name.
@@ -153,13 +162,16 @@ class ProviderService:
                 ):
                     cw.name = name
         if endpoint is not None:
-            p.endpoint = self._normalize_endpoint(p.kind, endpoint)
+            normalized_endpoint = self._normalize_endpoint(p.kind, endpoint)
+            if _provider_endpoint_requires_backend_policy(p.kind, next_meta):
+                validate_provider_endpoint(normalized_endpoint)
+            p.endpoint = normalized_endpoint
         if api_key:  # only rotate if non-empty
             p.api_key_enc = encrypt(api_key)
         if transport is not None:
-            if p.kind not in ("nanobot", "codex-local", "claude-local"):
-                raise ValueError("transport can only be set for browser-local providers")
-            p.meta = {**(p.meta or {}), "transport": transport}
+            if _provider_endpoint_requires_backend_policy(p.kind, next_meta):
+                validate_provider_endpoint(p.endpoint)
+            p.meta = next_meta
         if workspace_path is not None:
             if p.kind not in ("codex-local", "claude-local"):
                 raise ValueError("workspace_path can only be set for local browser Agent providers")
@@ -382,7 +394,11 @@ class ProviderService:
                             "external_id": provider_id,  # Dify app is 1:1 with the API key, reuse id
                             "name": info.name,
                             "description": info.description,
-                            "kind": info.mode if info.mode in ("workflow", "chatflow", "agent-chat") else "workflow",
+                            "kind": (
+                                info.mode
+                                if info.mode in ("workflow", "chatflow", "agent-chat")
+                                else "workflow"
+                            ),
                             "tags": info.tags,
                             "raw": {"mode": info.mode},
                         }
@@ -682,14 +698,21 @@ class ProviderService:
 
     async def _list_openai_models(self, provider: Provider) -> list:
         api_key = decrypt(provider.api_key_enc)
-        client = NanobotClient(endpoint=provider.endpoint, api_key=api_key, timeout=20.0)
+        endpoint = self.ensure_backend_endpoint_allowed(provider)
+        client = NanobotClient(endpoint=endpoint, api_key=api_key, timeout=20.0)
         return await client.list_models()
 
     def make_client(self, provider: Provider) -> DifyClient | NanobotClient:
         return self._make_client(provider)
 
-    def _make_client(self, provider: Provider) -> DifyClient | NanobotClient:
+    def ensure_backend_endpoint_allowed(self, provider: Provider) -> str:
         endpoint = self._normalize_endpoint(provider.kind, provider.endpoint)
+        if _provider_endpoint_requires_backend_policy(provider.kind, provider.meta or {}):
+            validate_provider_endpoint(endpoint)
+        return endpoint
+
+    def _make_client(self, provider: Provider) -> DifyClient | NanobotClient:
+        endpoint = self.ensure_backend_endpoint_allowed(provider)
         if provider.kind == "native":
             raise ValueError("native provider does not use external workflow probe")
         if provider.kind == "codex-local":
@@ -870,6 +893,14 @@ def _provider_transport(provider: Provider) -> str:
     return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"
 
 
+def _provider_endpoint_requires_backend_policy(kind: str, meta: dict[str, Any]) -> bool:
+    if kind in {"codex-local", "claude-local"}:
+        return False
+    if kind == "nanobot":
+        return str((meta or {}).get("transport") or "backend").strip() != "browser"
+    return kind in {"dify-local", "dify-cloud", "claude-direct", "native"}
+
+
 def _codex_meta_patch(
     *,
     workspace_path: str | None = None,
@@ -914,13 +945,25 @@ def _codex_meta_patch(
     if codex_service_tier is not None:
         patch["codex_service_tier"] = str(codex_service_tier or "").strip()
     if codex_sandbox is not None:
-        patch["codex_sandbox"] = _choice(codex_sandbox, {"read-only", "workspace-write", "danger-full-access"}, "danger-full-access")
+        patch["codex_sandbox"] = _choice(
+            codex_sandbox,
+            {"read-only", "workspace-write", "danger-full-access"},
+            "danger-full-access",
+        )
     if codex_approval_policy is not None:
-        patch["codex_approval_policy"] = _choice(codex_approval_policy, {"never", "untrusted", "on-request", "on-failure"}, "on-request")
+        patch["codex_approval_policy"] = _choice(
+            codex_approval_policy,
+            {"never", "untrusted", "on-request", "on-failure"},
+            "on-request",
+        )
     if codex_prompt_mode is not None:
         patch["codex_prompt_mode"] = _choice(codex_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
     if codex_tool_mode is not None:
-        patch["codex_tool_mode"] = _choice(codex_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
+        patch["codex_tool_mode"] = _choice(
+            codex_tool_mode,
+            {"mcp-first", "browser-preflight", "marker-only"},
+            "mcp-first",
+        )
     if codex_context_mode is not None:
         patch["codex_context_mode"] = _choice(codex_context_mode, {"legacy-blocks", "lease"}, "lease")
     patch.setdefault("codex_effort", "low")
@@ -959,7 +1002,11 @@ def _claude_meta_patch(
     if claude_prompt_mode is not None:
         patch["claude_prompt_mode"] = _choice(claude_prompt_mode, {"fast-edit", "full-agent"}, "fast-edit")
     if claude_tool_mode is not None:
-        patch["claude_tool_mode"] = _choice(claude_tool_mode, {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first")
+        patch["claude_tool_mode"] = _choice(
+            claude_tool_mode,
+            {"mcp-first", "browser-preflight", "marker-only"},
+            "mcp-first",
+        )
     patch.setdefault("claude_prompt_mode", "fast-edit")
     patch.setdefault("claude_tool_mode", "mcp-first")
     return patch

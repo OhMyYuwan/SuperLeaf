@@ -118,7 +118,7 @@ function renderBody(
 
 function FilePreview({ file }: { file: ActivePreviewFile }) {
   const mime = file.mimeType || guessMime(file.name)
-  if (mime.startsWith('image/')) {
+  if (isSafeInlineImageMime(mime)) {
     return (
       <div className="preview-paper file-preview file-preview-image">
         <img src={file.url} alt={file.name} />
@@ -148,9 +148,15 @@ function FilePreview({ file }: { file: ActivePreviewFile }) {
 
 function guessMime(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return `image/${ext === 'jpg' ? 'jpeg' : ext}`
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return `image/${ext === 'jpg' ? 'jpeg' : ext}`
+  if (ext === 'svg') return 'image/svg+xml'
   if (ext === 'pdf') return 'application/pdf'
   return 'application/octet-stream'
+}
+
+function isSafeInlineImageMime(mime: string): boolean {
+  const normalized = mime.split(';', 1)[0].trim().toLowerCase()
+  return ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(normalized)
 }
 
 function pdfPreviewUrl(url: string): string {

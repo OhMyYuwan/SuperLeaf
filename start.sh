@@ -19,10 +19,13 @@ BACKEND_MCP_PATH="/mcp"
 BACKEND_RELOAD="${YLW_BACKEND_RELOAD:-0}"
 BACKEND_MCP_ENABLED="${YLW_MCP_SERVER_ENABLED:-0}"
 COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
-COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-superleaf-local-collab-internal-token}}"
+COLLAB_HOST="${YLW_COLLAB_HOST:-${COLLAB_HOST:-127.0.0.1}}"
+HISTORICAL_COLLAB_INTERNAL_TOKEN="superleaf-local-collab-internal-token"
+COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-}}"
 LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
 LOCAL_AGENT_HOST_PORT="${SL_LOCAL_AGENT_HOST_PORT:-8787}"
-LOCAL_AGENT_HOST_ORIGINS="${SL_LOCAL_AGENT_HOST_ORIGINS:-*}"
+LOCAL_AGENT_HOST_ORIGINS="${SL_LOCAL_AGENT_HOST_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}"
+LOCAL_AGENT_HOST_AUTH_TOKEN="${SL_LOCAL_AGENT_HOST_AUTH_TOKEN:-}"
 LOCAL_AGENT_HOST_NANOBOT_URL="${SL_LOCAL_AGENT_HOST_NANOBOT_URL:-http://127.0.0.1:8900}"
 LOCAL_AGENT_HOST_CODEX_ENABLED="${SL_LOCAL_AGENT_HOST_CODEX_ENABLED:-1}"
 LOCAL_AGENT_HOST_CODEX_BIN="${SL_LOCAL_AGENT_HOST_CODEX_BIN:-codex}"
@@ -52,6 +55,26 @@ log()  { printf "%b%s%b\n" "$BLUE" "▸ $1" "$RESET"; }
 ok()   { printf "%b%s%b\n" "$GREEN" "✓ $1" "$RESET"; }
 warn() { printf "%b%s%b\n" "$YELLOW" "! $1" "$RESET"; }
 err()  { printf "%b%s%b\n" "$RED" "✗ $1" "$RESET"; }
+
+generate_collab_internal_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  else
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+ensure_collab_internal_token() {
+  if [ "${COLLAB_INTERNAL_TOKEN:-}" = "$HISTORICAL_COLLAB_INTERNAL_TOKEN" ]; then
+    err "Refusing historical fixed collab internal token; set YLW_COLLAB_INTERNAL_TOKEN to a new random value or leave it empty for a per-run token."
+    exit 1
+  fi
+  if [ -z "${COLLAB_INTERNAL_TOKEN:-}" ]; then
+    COLLAB_INTERNAL_TOKEN="$(generate_collab_internal_token)"
+  fi
+}
 
 # --- Log / PID infrastructure ------------------------------------------------
 
@@ -201,6 +224,7 @@ stop_all() {
 
 start_backend() {
   local mcp_enabled="${1:-$BACKEND_MCP_ENABLED}"
+  ensure_collab_internal_token
   ensure_backend
   stop_service "backend"
   ensure_log_dir
@@ -302,6 +326,7 @@ start_mcp() {
 }
 
 start_collab() {
+  ensure_collab_internal_token
   ensure_collab
   stop_service "collab"
   ensure_log_dir
@@ -309,10 +334,10 @@ start_collab() {
   [ ! -d "$session_dir" ] && session_dir="$(create_session_dir)"
   local logfile="$session_dir/collab.log"
 
-  log "Starting collab-server on :$COLLAB_PORT → $logfile"
+  log "Starting collab-server on $COLLAB_HOST:$COLLAB_PORT → $logfile"
   (
     cd "$COLLAB_DIR"
-    COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec npx tsx src/index.ts
+    COLLAB_HOST="$COLLAB_HOST" COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec npx tsx src/index.ts
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "collab" "$pid"
@@ -372,10 +397,11 @@ start_local_agent_host() {
     printf -v dir_q "%q" "$LOCAL_AGENT_HOST_DIR"
     printf -v logfile_q "%q" "$logfile"
     printf -v env_cmd \
-      "SL_LOCAL_AGENT_HOST_BIND=%q SL_LOCAL_AGENT_HOST_PORT=%q SL_LOCAL_AGENT_HOST_ORIGINS=%q SL_LOCAL_AGENT_HOST_NANOBOT_URL=%q SL_LOCAL_AGENT_HOST_CODEX_ENABLED=%q SL_LOCAL_AGENT_HOST_CODEX_BIN=%q SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS=%q SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT=%q SL_LOCAL_AGENT_HOST_CODEX_PREWARM=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART=%q SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=%q SL_LOCAL_AGENT_HOST_MCP_URL=%q SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=%q SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=%q SL_LOCAL_AGENT_HOST_DATA_DIR=%q" \
+      "SL_LOCAL_AGENT_HOST_BIND=%q SL_LOCAL_AGENT_HOST_PORT=%q SL_LOCAL_AGENT_HOST_ORIGINS=%q SL_LOCAL_AGENT_HOST_AUTH_TOKEN=%q SL_LOCAL_AGENT_HOST_NANOBOT_URL=%q SL_LOCAL_AGENT_HOST_CODEX_ENABLED=%q SL_LOCAL_AGENT_HOST_CODEX_BIN=%q SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS=%q SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT=%q SL_LOCAL_AGENT_HOST_CODEX_PREWARM=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART=%q SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=%q SL_LOCAL_AGENT_HOST_MCP_URL=%q SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=%q SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=%q SL_LOCAL_AGENT_HOST_DATA_DIR=%q" \
       "$LOCAL_AGENT_HOST_BIND" \
       "$LOCAL_AGENT_HOST_PORT" \
       "$LOCAL_AGENT_HOST_ORIGINS" \
+      "$LOCAL_AGENT_HOST_AUTH_TOKEN" \
       "$LOCAL_AGENT_HOST_NANOBOT_URL" \
       "$LOCAL_AGENT_HOST_CODEX_ENABLED" \
       "$LOCAL_AGENT_HOST_CODEX_BIN" \
@@ -403,6 +429,7 @@ start_local_agent_host() {
       SL_LOCAL_AGENT_HOST_BIND="$LOCAL_AGENT_HOST_BIND" \
         SL_LOCAL_AGENT_HOST_PORT="$LOCAL_AGENT_HOST_PORT" \
         SL_LOCAL_AGENT_HOST_ORIGINS="$LOCAL_AGENT_HOST_ORIGINS" \
+        SL_LOCAL_AGENT_HOST_AUTH_TOKEN="$LOCAL_AGENT_HOST_AUTH_TOKEN" \
         SL_LOCAL_AGENT_HOST_NANOBOT_URL="$LOCAL_AGENT_HOST_NANOBOT_URL" \
         SL_LOCAL_AGENT_HOST_CODEX_ENABLED="$LOCAL_AGENT_HOST_CODEX_ENABLED" \
         SL_LOCAL_AGENT_HOST_CODEX_BIN="$LOCAL_AGENT_HOST_CODEX_BIN" \
@@ -775,12 +802,18 @@ Env:
   YLW_BACKEND_RELOAD=0      Set to 1 to run backend uvicorn with --reload
   YLW_MCP_SERVER_ENABLED=0  Set to 1 to mount backend-native /mcp in backend mode
   YLW_COLLAB_PORT=4444     Collab-server port
+  YLW_COLLAB_HOST=127.0.0.1
+                           Collab-server bind address for local dev
+  YLW_COLLAB_INTERNAL_TOKEN=
+                           Optional collab internal token; generated per run when empty
   SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
                            Local Agent Host bind address
   SL_LOCAL_AGENT_HOST_PORT=8787
                            Local Agent Host port
-  SL_LOCAL_AGENT_HOST_ORIGINS=*
+  SL_LOCAL_AGENT_HOST_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
                            Local Agent Host CORS allow-list
+  SL_LOCAL_AGENT_HOST_AUTH_TOKEN=
+                           Optional local control token; generated in data dir when empty
   SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
                            Local Nanobot base URL proxied by Local Agent Host
   SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=1

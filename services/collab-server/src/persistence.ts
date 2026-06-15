@@ -8,8 +8,14 @@ import { errorMessage, recordCollabServerEvent } from './audit-log.js'
 
 const DATA_DIR = process.env.COLLAB_DATA_DIR ?? path.join(os.homedir(), '.yuwanlab', 'collab-data')
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000'
-const INTERNAL_TOKEN = process.env.COLLAB_INTERNAL_TOKEN?.trim() ?? ''
+const HISTORICAL_DEFAULT_INTERNAL_TOKEN = 'superleaf-local-collab-internal-token'
+const RAW_INTERNAL_TOKEN = process.env.COLLAB_INTERNAL_TOKEN?.trim() ?? ''
+const INTERNAL_TOKEN = RAW_INTERNAL_TOKEN === HISTORICAL_DEFAULT_INTERNAL_TOKEN ? '' : RAW_INTERNAL_TOKEN
 const INTERNAL_TOKEN_HEADER = 'x-superleaf-internal-token'
+
+if (RAW_INTERNAL_TOKEN === HISTORICAL_DEFAULT_INTERNAL_TOKEN) {
+  console.warn('[collab-server] refusing historical default COLLAB_INTERNAL_TOKEN; document text HTTP API is disabled')
+}
 
 let persistence: LeveldbPersistence
 

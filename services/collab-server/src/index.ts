@@ -4,6 +4,7 @@ import { errorMessage, recordCollabServerEvent } from './audit-log.js'
 import {
   DOC_REPLACED_CLOSE_CODE,
   DOC_REPLACED_CLOSE_REASON,
+  COLLAB_WS_MAX_MESSAGE_BYTES,
   getActiveDocIds,
   getLoadedDocText,
   invalidateDoc,
@@ -29,7 +30,10 @@ const server = http.createServer((req, res) => {
   })
 })
 
-const wss = new WebSocketServer({ noServer: true })
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: COLLAB_WS_MAX_MESSAGE_BYTES,
+})
 
 server.on('upgrade', async (req, socket, head) => {
   // URL format: /<docId>
@@ -107,6 +111,14 @@ wss.on(
     setupWSConnection(ws, ctx.docId, ctx.user, ctx.token, {
       clientGeneration: ctx.clientGeneration,
       authoritativeGeneration: ctx.authoritativeGeneration,
+      authorizeMessage: async () => {
+        const session = await verifyToken(ctx.token, BACKEND_URL, ctx.docId)
+        return Boolean(
+          session
+          && session.user.id === ctx.user.id
+          && session.collabGeneration === ctx.authoritativeGeneration
+        )
+      },
     })
   },
 )

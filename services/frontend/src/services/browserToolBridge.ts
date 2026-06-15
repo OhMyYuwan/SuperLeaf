@@ -1,5 +1,7 @@
 import { BACKEND_BASE, type BrowserNanobotToolResult, type NanobotToolCall } from './backendApi'
 
+const DEFAULT_LOCAL_AGENT_HOST_ENDPOINT = 'http://127.0.0.1:8787'
+
 export interface BrowserToolBridgeContextInput {
   contextId?: string
   contextSecret?: string
@@ -363,8 +365,27 @@ export async function submitBrowserToolBridgeApprovalResult(args: {
 }
 
 export function normalizeLocalAgentHostEndpoint(endpoint: string): string {
-  const cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '')
-  return cleaned || 'http://127.0.0.1:8787'
+  const cleaned = endpoint.trim().replace(/\s+/gu, '').replace(/\/+$/u, '') || DEFAULT_LOCAL_AGENT_HOST_ENDPOINT
+  let url: URL
+  try {
+    url = new URL(cleaned)
+  } catch {
+    throw new Error('Local Agent endpoint must be an http(s) localhost or loopback URL.')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Local Agent endpoint must use http(s).')
+  }
+  if (!isLoopbackLocalAgentHost(url.hostname)) {
+    throw new Error('Local Agent endpoint must use localhost or a loopback address.')
+  }
+  url.hash = ''
+  url.search = ''
+  return url.toString().replace(/\/+$/u, '')
+}
+
+function isLoopbackLocalAgentHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, '')
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1'
 }
 
 export function bridgeRequestFromToolCall(
@@ -414,7 +435,7 @@ async function runBrowserToolBridgeLoop(
   // current backoff interval.
   const wake = createWakeSignal(args.signal)
   while (!args.signal.aborted) {
-    let requests: BrowserToolBridgeRequest[] = []
+    let requests: BrowserToolBridgeRequest[]
     try {
       requests = await pollBrowserToolBridgeRequests({
         endpoint: args.endpoint,
@@ -466,7 +487,7 @@ async function runBrowserApprovalBridgeLoop(
   let consecutiveFailures = 0
   const wake = createWakeSignal(args.signal)
   while (!args.signal.aborted) {
-    let requests: BrowserToolBridgeApprovalRequest[] = []
+    let requests: BrowserToolBridgeApprovalRequest[]
     try {
       requests = await pollBrowserToolBridgeApprovalRequests({
         endpoint: args.endpoint,

@@ -452,6 +452,7 @@ function ProjectCollection({
       <thead>
         <tr>
           <SortableHeader label="项目名称" sortKey="name" sort={sort} onSort={onSort} />
+          <th>标签</th>
           <SortableHeader label="最后更新" sortKey="updated" sort={sort} onSort={onSort} />
           <SortableHeader label="创建时间" sortKey="created" sort={sort} onSort={onSort} />
           <th aria-label="操作"></th>

@@ -21,7 +21,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from ..models import WorkflowDefinition, WorkflowRun
+from ..models import Doc, WorkflowDefinition, WorkflowRun
 from ..secrets_vault import decrypt
 from .agent_registry_service import AgentRegistryService
 from .agent_workspace_service import AgentWorkspaceService
@@ -100,6 +100,10 @@ class WorkflowOrchestrator:
             or workflow_def.user_id != user_id
         ):
             raise ValueError(f"Workflow definition {workflow_def_id} not found")
+        if document_id:
+            doc = self.db.get(Doc, document_id)
+            if doc is None or doc.project_id != project_id:
+                raise ValueError(f"Document {document_id} not found")
 
         # Create workflow run record
         workflow_run = WorkflowRun(

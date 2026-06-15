@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import Project, User, WorkflowDefinition, WorkflowRun
+from app.models import Doc, Project, User, WorkflowDefinition, WorkflowRun
 from app.services.agent_orchestrator import WorkflowOrchestrator
 
 
@@ -37,7 +37,16 @@ def seeded(db: Session) -> dict[str, str]:
     victim = User(id="victim", email="victim@example.com", password_hash="hash")
     attacker_project = Project(id="project-a", user_id=attacker.id, name="Project A")
     victim_project = Project(id="project-b", user_id=victim.id, name="Project B")
-    db.add_all([attacker, victim, attacker_project, victim_project])
+    db.add_all(
+        [
+            attacker,
+            victim,
+            attacker_project,
+            victim_project,
+            Doc(id="doc-a", project_id=attacker_project.id, folder_id=None, name="a.tex"),
+            Doc(id="doc-victim", project_id=victim_project.id, folder_id=None, name="b.tex"),
+        ]
+    )
     _add_workflow(db, "victim-wf", project_id=victim_project.id, user_id=victim.id)
     _add_workflow(db, "same-scope-child", project_id=attacker_project.id, user_id=attacker.id)
     _add_workflow(
@@ -145,6 +154,26 @@ async def test_nested_workflow_rejects_definition_from_other_project(
         .all()
     )
     assert victim_runs == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_document_from_other_project(
+    db: Session, seeded: dict[str, str]
+) -> None:
+    orchestrator = WorkflowOrchestrator(db)
+
+    with pytest.raises(ValueError, match="Document doc-victim not found"):
+        await _collect_events(
+            orchestrator.execute_workflow(
+                workflow_def_id="same-scope-child",
+                project_id=seeded["project_id"],
+                user_id=seeded["user_id"],
+                document_id="doc-victim",
+                target_text="selection",
+                range_start=0,
+                range_end=9,
+            )
+        )
 
 
 @pytest.mark.asyncio

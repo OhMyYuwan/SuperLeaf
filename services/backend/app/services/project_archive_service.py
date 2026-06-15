@@ -81,6 +81,9 @@ class ArchiveDownload:
     content: bytes
 
 
+GIT_CONTROL_PATH_NAMES = frozenset({".git", ".gitattributes", ".gitignore", ".gitmodules"})
+
+
 class ProjectArchiveService:
     def __init__(self, db: Session, project: Project, user: User) -> None:
         self.db = db
@@ -279,13 +282,13 @@ class ProjectArchiveService:
         for doc in docs:
             rel = Path(*folder_parts(doc.folder_id), _safe_name(doc.name))
             payload = (doc.content or "").encode("utf-8")
-            _write_file(repo_path / rel, payload)
+            _write_archive_file(repo_path, rel, payload)
             byte_count += len(payload)
 
         for file in files:
             rel = Path(*folder_parts(file.folder_id), _safe_name(file.name))
             payload = file.blob or b""
-            _write_file(repo_path / rel, payload)
+            _write_archive_file(repo_path, rel, payload)
             byte_count += len(payload)
 
         readme = (
@@ -293,7 +296,7 @@ class ProjectArchiveService:
             "This branch is maintained by SuperLeaf as project-level archive snapshots.\n"
             "The editor database remains the working source of truth.\n"
         ).encode()
-        _write_file(repo_path / "SUPERLEAF_ARCHIVE.md", readme)
+        _write_archive_file(repo_path, Path("SUPERLEAF_ARCHIVE.md"), readme)
         byte_count += len(readme)
         return ExportStats(doc_count=len(docs), file_count=len(files), byte_count=byte_count)
 
@@ -747,6 +750,36 @@ class ProjectArchiveService:
 def _safe_name(name: str) -> str:
     cleaned = "".join("_" if ch in '/\\:\0' else ch for ch in name).strip()
     return cleaned or "untitled"
+
+
+def _write_archive_file(repo_path: Path, rel_path: Path, content: bytes) -> None:
+    _validate_archive_rel_path(rel_path)
+    repo_root = repo_path.resolve(strict=False)
+    git_root = (repo_path / ".git").resolve(strict=False)
+    target = repo_path / rel_path
+    resolved_target = target.resolve(strict=False)
+
+    try:
+        resolved_target.relative_to(repo_root)
+    except ValueError as e:
+        raise ArchiveError("Archive export path escapes the repository root") from e
+
+    try:
+        resolved_target.relative_to(git_root)
+    except ValueError:
+        pass
+    else:
+        raise ArchiveError("Git control paths are not allowed in archive exports")
+
+    _write_file(target, content)
+
+
+def _validate_archive_rel_path(rel_path: Path) -> None:
+    if rel_path.is_absolute():
+        raise ArchiveError("Archive export path must be relative")
+    for part in rel_path.parts:
+        if part in {"", ".", ".."} or part.casefold() in GIT_CONTROL_PATH_NAMES:
+            raise ArchiveError("Git control paths are not allowed in archive exports")
 
 
 def _parse_name_status(output: str) -> dict[str, str]:

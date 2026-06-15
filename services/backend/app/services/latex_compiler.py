@@ -44,6 +44,8 @@ COMPILER_CONTROL_FILENAMES = frozenset(
         "texmf.cnf",
     }
 )
+TEX_FILE_ACCESS_POLICY = "p"
+DIRECT_COMPILER_SECURITY_ARGS = ("-no-shell-escape",)
 GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
 INCLUDEGRAPHICS_RE = re.compile(
     r"(?P<command>\\includegraphics(?:\s*\[[^\]]*\])?\s*)\{(?P<target>[^{}]+)\}"
@@ -490,14 +492,7 @@ class LatexCompilerService:
             # Direct compilers do not invoke BibTeX themselves. We run one
             # LaTeX pass to create the .aux, optionally run BibTeX, then run
             # two more LaTeX passes to resolve citations and references.
-            base = [
-                compiler,
-                "-synctex=1",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                "-file-line-error",
-                str(main_rel_path.name),
-            ]
+            base = self._direct_compiler_command(compiler, main_rel_path.name)
             runs = [base]
 
         all_log: list[str] = []
@@ -567,14 +562,7 @@ class LatexCompilerService:
                         duration_ms=0,
                     )
 
-            base = [
-                compiler,
-                "-synctex=1",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                "-file-line-error",
-                str(main_rel_path.name),
-            ]
+            base = self._direct_compiler_command(compiler, main_rel_path.name)
             for _ in range(2):
                 proc_result = await self._run_command(base, cwd=working_dir, env=env)
                 if proc_result[0] in ("missing", "timeout"):
@@ -946,7 +934,21 @@ class LatexCompilerService:
         joined = os.pathsep.join(search_paths)
         for key in ("TEXINPUTS", "BIBINPUTS", "BSTINPUTS"):
             env[key] = joined
+        env["openin_any"] = TEX_FILE_ACCESS_POLICY
+        env["openout_any"] = TEX_FILE_ACCESS_POLICY
         return env
+
+    @staticmethod
+    def _direct_compiler_command(compiler: str, main_name: str) -> list[str]:
+        return [
+            compiler,
+            *DIRECT_COMPILER_SECURITY_ARGS,
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
+            main_name,
+        ]
 
 
 # Module-level singleton. API routes call `get_compiler_service()` to access it.

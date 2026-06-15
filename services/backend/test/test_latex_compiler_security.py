@@ -104,3 +104,50 @@ def test_compile_tree_rejects_latexmk_control_file(
         service._write_project_tree(db, project.id, tmp_path / "compile", main_doc)
 
     assert not (tmp_path / "compile" / ".latexmkrc").exists()
+
+
+def test_compile_env_forces_paranoid_tex_file_policies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("openin_any", "a")
+    monkeypatch.setenv("openout_any", "a")
+
+    env = LatexCompilerService._compile_env(tmp_path, tmp_path / "project")
+
+    assert env["openin_any"] == "p"
+    assert env["openout_any"] == "p"
+
+
+@pytest.mark.asyncio
+async def test_direct_compilers_disable_shell_escape_on_every_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = LatexCompilerService()
+    captured_commands: list[list[str]] = []
+
+    async def fake_run_command(
+        cmd: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+    ) -> tuple[int | str, str]:
+        del env
+        captured_commands.append(cmd)
+        (cwd / "main.pdf").write_bytes(b"%PDF-1.7\n")
+        return 0, "ok"
+
+    monkeypatch.setattr(service, "_run_command", fake_run_command)
+
+    result = await service._run_compiler(
+        tmpdir=tmp_path,
+        main_rel_path=Path("main.tex"),
+        compiler="pdflatex",
+        source_paths={},
+    )
+
+    assert result.ok is True
+    assert len(captured_commands) == 3
+    assert all(cmd[0] == "pdflatex" for cmd in captured_commands)
+    assert all("-no-shell-escape" in cmd for cmd in captured_commands)

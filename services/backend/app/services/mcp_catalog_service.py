@@ -10,7 +10,11 @@ from typing import Any
 from urllib.error import HTTPError
 
 from ..settings import settings
-from .mcp_policy import normalize_mcp_transport, remote_endpoint_from_server
+from .mcp_policy import (
+    normalize_mcp_transport,
+    remote_endpoint_from_server,
+    validate_remote_endpoint,
+)
 from .mcp_tool_service import call_mcp_tool, discover_mcp_tools
 
 
@@ -254,6 +258,10 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_json_url(url: str) -> dict[str, Any]:
+    try:
+        validate_remote_endpoint(url)
+    except ValueError as exc:
+        raise McpCatalogError(f"Blocked MCP catalog URL {url}: {exc}") from exc
     req = urllib.request.Request(
         url,
         headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},

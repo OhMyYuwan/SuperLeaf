@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     mcp_inline_config_enabled: bool = False
     mcp_remote_private_networks_enabled: bool = False
 
+    # Backend-native MCP server. This is an optional Agent command protocol
+    # entrypoint mounted at /mcp; the normal backend API does not expose it by
+    # default so Local Agent Host and Backend MCP stay separate lifecycles.
+    mcp_server_enabled: bool = False
+    mcp_session_ttl_seconds: int = 3600
+    mcp_max_sessions: int = 256
+    mcp_event_ttl_seconds: int = 3600
+    mcp_event_max_per_stream: int = 200
+
     # NPX skill install policy. Public deployments keep this disabled; local /
     # trusted deployments can opt in to allow installing skills via npx recipes.
     skill_npx_install_enabled: bool = False

@@ -6,6 +6,9 @@
 # Skill cache routing was consolidated.
 # Refreshed 2026-06-02 for REQ-0309 to route Data Project dataset labeling,
 # source-rule sync, source_text snapshot capture, and export packaging.
+# Refreshed 2026-06-14 for REQ-0477 to route backend-native MCP, Agent Commands,
+# shared SuperLeaf tool registry metadata, anchor repair, and Local Agent Host
+# topology boundaries.
 
 project:
   name: SuperLeaf
@@ -15,6 +18,7 @@ project:
     - services/frontend
     - services/collab-server
     - services/local-agent-host
+    - services/shared
   branch_strategy:
     personal: YuwanZ
     team: develop
@@ -28,6 +32,9 @@ project:
     - yuwanlab-archive
     - yuwanlab runtime/lab identifiers
   local_agent_host_rule: services/local-agent-host is a downloadable user-machine bridge for Codex/Claude/Nanobot. Images may copy it so backend APIs can package it, but all-in-one runtime must not be assumed to auto-start it unless an explicit topology change is approved.
+  backend_native_mcp_rule: Backend-native SuperLeaf MCP is an optional backend profile served at /mcp on the backend port. Enable with ./start.sh mcp or YLW_MCP_SERVER_ENABLED=1; do not route token-direct IDE/CLI clients through Local Agent Host by default.
+  agent_command_rule: services/backend/app/agent_commands is the shared execution layer for backend-native MCP, legacy /api/mcp compatibility, and backend Agent command reuse. Keep tool schemas in services/shared/superleaf-tools.json and preserve annotations/_meta metadata through every MCP tools/list path.
+  agent_write_surface_rule: Existing document body mutation is not a direct MCP write. propose_doc_edit creates a proposal/annotation DB record; create_suggestion creates an annotation DB record; project_write_text_file creates new Project FS/DB docs and refuses overwrites; accepted body edits must flow through editor/Yjs.
   external_io_decoding_rule: external command output and remote catalog/API bytes should be decoded as UTF-8 with replacement at integration boundaries so invalid bytes surface as U+FFFD rather than raw UnicodeDecodeError crashes.
 
 modules:
@@ -90,6 +97,18 @@ modules:
       - docs/zh/workflows/README.md
       - docs/zh/troubleshooting/README.md
 
+  - id: shared-tool-registry
+    path: services/shared
+    kind: shared-contract
+    description: Shared SuperLeaf tool registry used by backend-native MCP, Local Agent Host, frontend tool guides, and backend Native Agent tool schemas. Preserve MCP annotations and _meta.superleaf semantics.
+    entry_files:
+      - services/shared/superleaf-tools.json
+    owning_runtime:
+      - services/backend/app/agent_commands/registry.py
+      - services/backend/app/services/superleaf_tool_registry.py
+      - services/local-agent-host/superleaf-tools.mjs
+      - services/frontend/src/services/superleafTools.ts
+
   - id: support-mcps
     path: supports/SuperLeaf.MCPs
     kind: external-support-repo
@@ -150,7 +169,7 @@ modules:
   - id: backend-api
     path: services/backend/app/api
     kind: api-routes
-    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, workflows, Data Project datasets, conversations, archive/major versions, document versions, compile, notifications, annotations, and spelling.
+    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, backend MCP token/admin compatibility routes, workflows, Data Project datasets, conversations, archive/major versions, document versions, compile, notifications, annotations, and spelling.
     entry_files:
       - services/backend/app/api/__init__.py
       - services/backend/app/api/health.py
@@ -158,6 +177,8 @@ modules:
       - services/backend/app/api/users.py
       - services/backend/app/api/providers.py
       - services/backend/app/api/native_agents.py
+      - services/backend/app/api/mcp.py
+      - services/backend/app/api/mcp_rpc.py
       - services/backend/app/api/projects.py
       - services/backend/app/api/filesystem.py
       - services/backend/app/api/github.py
@@ -186,10 +207,14 @@ modules:
       - services/backend/app/services/agent_registry_service.py
       - services/backend/app/services/native_agent_service.py
       - services/backend/app/services/native_agent_runner.py
+      - services/backend/app/services/native_agent_tool_kernel.py
       - services/backend/app/services/agent_workspace_service.py
       - services/backend/app/services/mcp_config_service.py
       - services/backend/app/services/mcp_catalog_service.py
       - services/backend/app/services/mcp_tool_service.py
+      - services/backend/app/services/superleaf_mcp_registry.py
+      - services/backend/app/services/superleaf_mcp_tools.py
+      - services/backend/app/services/superleaf_mcp_transport.py
       - services/backend/app/services/skill_content_crypto.py
       - services/backend/app/services/skill_marketplace_service.py
       - services/backend/app/services/skill_npx_installer.py
@@ -216,6 +241,41 @@ modules:
       - services/backend/app/services/stats_service.py
       - services/backend/app/services/spelling_service.py
 
+  - id: backend-agent-commands
+    path: services/backend/app/agent_commands
+    kind: agent-tool-execution
+    description: Shared SuperLeaf Agent Command executor. Reused by backend-native MCP, compatibility MCP services, backend data routes, and native Agent command surfaces. Owns project/doc read/search/outline, new file creation, proposal/suggestion creation, write-scope enforcement, shared registry loading, and text-anchor repair.
+    entry_files:
+      - services/backend/app/agent_commands/context.py
+      - services/backend/app/agent_commands/executor.py
+      - services/backend/app/agent_commands/registry.py
+      - services/backend/app/agent_commands/project.py
+      - services/backend/app/agent_commands/files.py
+      - services/backend/app/agent_commands/suggestions.py
+      - services/backend/app/agent_commands/anchors.py
+    owning_runtime:
+      - services/backend/app/mcp/router.py
+      - services/backend/app/api/mcp.py
+      - services/backend/app/services/superleaf_mcp_tools.py
+      - services/backend/app/services/native_agent_tool_kernel.py
+
+  - id: backend-mcp-protocol
+    path: services/backend/app/mcp
+    kind: mcp-protocol-service
+    description: Backend-native Streamable HTTP MCP protocol layer. Mounted only when mcp_server_enabled is true. Owns /mcp JSON-RPC POST, GET SSE, DELETE close, sessions, status diagnostics, dynamic resources, graceful tool error wrapping, and token-authenticated tool calls through Agent Commands.
+    entry_files:
+      - services/backend/app/mcp/router.py
+      - services/backend/app/mcp/sessions.py
+      - services/backend/app/mcp/transport.py
+      - services/backend/app/main.py
+      - services/backend/app/settings.py
+      - start.sh
+    owning_runtime:
+      - services/backend/app/agent_commands/
+      - services/backend/app/services/mcp_token_service.py
+      - services/backend/app/api/mcp.py
+      - services/local-agent-host/backend-mcp-client.mjs
+
   - id: backend-tests
     path: services/backend/test
     kind: tests
@@ -228,17 +288,28 @@ modules:
       - services/backend/test/test_native_agent_skill_sync.py
       - services/backend/test/test_conversation_history.py
       - services/backend/test/test_dataset_project.py
+      - services/backend/test/test_agent_command_project.py
+      - services/backend/test/test_agent_command_registry.py
+      - services/backend/test/test_agent_command_write.py
+      - services/backend/test/test_backend_mcp_mount_policy.py
+      - services/backend/test/test_backend_mcp_protocol.py
+      - services/backend/test/test_backend_mcp_rpc.py
+      - services/backend/test/test_superleaf_mcp_registry.py
+      - services/backend/test/test_superleaf_mcp_tools.py
+      - services/backend/test/test_superleaf_mcp_transport.py
+      - services/backend/test/test_superleaf_mcp_write_tools.py
       - services/backend/WORKFLOW_COMPLETE_TEST_REPORT.md
       - services/backend/WORKFLOW_TEST_RESULTS.md
 
   - id: local-agent-host
     path: services/local-agent-host
     kind: user-machine-agent-bridge
-    description: Downloadable localhost bridge that runs on the user's machine and connects SuperLeaf browser/backend flows to user-local Codex, Claude, Nanobot, SuperLeaf MCP tools, and browser-executed tool calls.
+    description: Downloadable localhost bridge that runs on the user's machine and connects SuperLeaf browser flows to user-local Codex, Claude, Nanobot, SuperLeaf MCP browser-bridge tools, and browser-executed tool calls. It is topology-separated from backend-native token-direct MCP; backend proxy mode is a compatibility/test path, not the preferred IDE/CLI entry.
     entry_files:
       - services/local-agent-host/server.mjs
       - services/local-agent-host/backend-mcp-client.mjs
       - services/local-agent-host/superleaf-tools.mjs
+      - services/local-agent-host/superleaf-tools.json
       - services/local-agent-host/package.json
       - services/local-agent-host/README.md
       - services/local-agent-host/start-local-agent-host.sh
@@ -567,7 +638,7 @@ modules:
   - id: repo-root
     path: .
     kind: repo-tooling
-    description: Root metadata, launcher, support policy, and default assets.
+    description: Root metadata, launcher, support policy, and default assets. start.sh can start backend/collab/frontend, backend-native MCP profile, and Local Agent Host, and status output includes SERVICE/STATUS/PID/PORT/RUN.
     entry_files:
       - README.md
       - CHANGELOG.md
@@ -631,10 +702,24 @@ capability_routes:
       (name, description, tags) is read from skill.yaml or SKILL.md front
       matter. use_skill returns only SKILL.md content + file tree; the Agent
       reads additional files itself via read_agent_file.
+      Backend-native MCP is separate from Local Agent Host. Token-direct
+      IDE/CLI clients should connect to backend /mcp with Authorization:
+      Bearer slmcp_... after starting ./start.sh mcp. Local Agent Host remains
+      the browser Bridge path for SuperLeaf page -> local Agent -> browser-
+      authorized tool calls. Shared tool metadata lives in
+      services/shared/superleaf-tools.json and must retain annotations/_meta
+      so clients can distinguish read-only tools, session changes, DB-backed
+      annotation/proposal/file writes, and user-accepted Yjs body edits.
+      Agent-created proposals/suggestions use backend Agent Commands and
+      anchors.py to repair stale ranges with original_text before persistence.
     supporting_modules:
+      - shared-tool-registry
+      - backend-agent-commands
+      - backend-mcp-protocol
       - backend-services
       - support-skills
       - support-mcps
+      - local-agent-host
       - public-docs
       - frontend-feature-right-panel
       - frontend-stores

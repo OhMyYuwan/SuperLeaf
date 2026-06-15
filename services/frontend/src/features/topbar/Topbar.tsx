@@ -10,13 +10,7 @@ import { PresenceIndicator } from './PresenceIndicator'
 import { useProjectStore } from '../../stores/projectStore'
 import './topbar.css'
 
-interface TopbarProps {
-  onOpenPersonalPanel?: () => void
-}
-
-export function Topbar({
-  onOpenPersonalPanel,
-}: TopbarProps) {
+export function Topbar() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const currentProject = useProjectStore((s) =>
     currentProjectId ? s.projects.find((p) => p.id === currentProjectId) ?? null : null,
@@ -44,7 +38,7 @@ export function Topbar({
         <PresenceIndicator />
         {!isDataProject && <ViewControl />}
         <NotificationBell />
-        <UserMenu onOpenPersonalPanel={onOpenPersonalPanel} />
+        <UserMenu />
       </div>
     </header>
   )

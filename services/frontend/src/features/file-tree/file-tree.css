@@ -136,6 +136,15 @@
   cursor: pointer;
 }
 
+.file-item > svg,
+.tree-root-drop-target > svg,
+.tree-toggle-btn svg,
+.tree-action-btn svg {
+  flex: 0 0 auto;
+  min-width: 10px;
+  min-height: 10px;
+}
+
 .file-item:hover,
 .outline-item:hover {
   background: rgba(148, 163, 184, 0.12);

@@ -15,6 +15,9 @@ PID_FILE="$LOG_DIR/pids"
 
 FRONTEND_PORT="${YLW_FRONTEND_PORT:-${YLW_PORT:-5173}}"
 BACKEND_PORT="${YLW_BACKEND_PORT:-8000}"
+BACKEND_MCP_PATH="/mcp"
+BACKEND_RELOAD="${YLW_BACKEND_RELOAD:-0}"
+BACKEND_MCP_ENABLED="${YLW_MCP_SERVER_ENABLED:-0}"
 COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
 COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-superleaf-local-collab-internal-token}}"
 LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
@@ -197,31 +200,105 @@ stop_all() {
 # --- Start helpers (daemonized with log files) --------------------------------
 
 start_backend() {
+  local mcp_enabled="${1:-$BACKEND_MCP_ENABLED}"
   ensure_backend
   stop_service "backend"
   ensure_log_dir
   local session_dir; session_dir="$(create_session_dir)"
   local logfile="$session_dir/backend.log"
 
-  log "Starting backend on :$BACKEND_PORT → $logfile"
-  (
-    cd "$BACKEND_DIR"
-    YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
-  ) >> "$logfile" 2>&1 &
-  local pid=$!
-  save_pid "backend" "$pid"
+  local reload_label=""
+  [ "$BACKEND_RELOAD" = "1" ] && reload_label=" with reload"
+  local mcp_label=""
+  [ "$mcp_enabled" = "1" ] && mcp_label=" + backend-native MCP"
+  log "Starting backend$mcp_label on :$BACKEND_PORT$reload_label → $logfile"
+  local pid=""
+  if command -v screen >/dev/null 2>&1; then
+    local screen_name="superleaf-backend-$BACKEND_PORT"
+    local dir_q logfile_q token_q port_q mcp_q reload_arg=""
+    printf -v dir_q "%q" "$BACKEND_DIR"
+    printf -v logfile_q "%q" "$logfile"
+    printf -v token_q "%q" "$COLLAB_INTERNAL_TOKEN"
+    printf -v port_q "%q" "$BACKEND_PORT"
+    printf -v mcp_q "%q" "$mcp_enabled"
+    [ "$BACKEND_RELOAD" = "1" ] && reload_arg=" --reload"
+    screen -S "$screen_name" -X quit >/dev/null 2>&1 || true
+    screen -dmS "$screen_name" bash -lc \
+      "cd $dir_q && YLW_COLLAB_INTERNAL_TOKEN=$token_q YLW_MCP_SERVER_ENABLED=$mcp_q exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $port_q$reload_arg >> $logfile_q 2>&1"
+  else
+    (
+      cd "$BACKEND_DIR"
+      if [ "$BACKEND_RELOAD" = "1" ]; then
+        YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload </dev/null
+      else
+        YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" </dev/null
+      fi
+    ) >> "$logfile" 2>&1 &
+    pid=$!
+  fi
 
   # Wait for health
   local i=0
   while [ $i -lt 10 ]; do
     if curl -s "http://localhost:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
-      ok "Backend ready (pid $pid)"
+      local listen_pid
+      listen_pid="$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+      save_pid "backend" "${listen_pid:-$pid}"
+      ok "Backend ready (pid ${listen_pid:-$pid})"
       return 0
     fi
     sleep 0.4
     i=$((i + 1))
   done
-  warn "Backend did not respond within ~4s (pid $pid, check $logfile)"
+  warn "Backend did not respond within ~4s (pid ${pid:-unknown}, check $logfile)"
+}
+
+mcp_probe_http_status() {
+  curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "http://localhost:$BACKEND_PORT$BACKEND_MCP_PATH" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    2>/dev/null || true
+}
+
+is_mcp_route_ready() {
+  local status_code
+  status_code="$(mcp_probe_http_status)"
+  case "$status_code" in
+    200|400|401) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+start_backend_mcp() {
+  warn "backend-mcp shares the backend uvicorn process on :$BACKEND_PORT and will restart backend with /mcp enabled."
+  start_backend 1
+
+  local mcp_url="http://127.0.0.1:$BACKEND_PORT$BACKEND_MCP_PATH"
+  local status_code
+  status_code="$(mcp_probe_http_status)"
+  case "$status_code" in
+    401)
+      ok "Backend-native MCP ready at $mcp_url (token required)"
+      ;;
+    200|400)
+      ok "Backend-native MCP route responded at $mcp_url (HTTP $status_code)"
+      ;;
+    404)
+      warn "Backend is running, but $mcp_url returned 404. Check that the backend-native /mcp route is installed."
+      ;;
+    000|"")
+      warn "Backend-native MCP did not respond at $mcp_url (check backend log)"
+      ;;
+    *)
+      warn "Backend-native MCP probe returned HTTP $status_code at $mcp_url"
+      ;;
+  esac
+}
+
+start_mcp() {
+  warn "./start.sh mcp is a compatibility alias for ./start.sh backend-mcp."
+  start_backend_mcp
 }
 
 start_collab() {
@@ -483,20 +560,51 @@ start_preview_all() {
 
 # --- Status -------------------------------------------------------------------
 
+service_run_command() {
+  case "$1" in
+    backend) echo "./start.sh backend" ;;
+    collab) echo "./start.sh collab" ;;
+    frontend) echo "./start.sh frontend" ;;
+    backend-mcp) echo "./start.sh backend-mcp" ;;
+    mcp) echo "./start.sh backend-mcp" ;;
+    local-agent-host) echo "./start.sh local-agent-host" ;;
+    *) echo "—" ;;
+  esac
+}
+
 status_all() {
-  printf "%-12s %-10s %-8s %s\n" "SERVICE" "STATUS" "PID" "PORT"
-  printf "%-12s %-10s %-8s %s\n" "-------" "------" "---" "----"
-  for svc in backend collab frontend local-agent-host; do
-    local pid port status_label
+  printf "%-16s %-10s %-8s %-12s %s\n" "SERVICE" "STATUS" "PID" "PORT" "RUN"
+  printf "%-16s %-10s %-8s %-12s %s\n" "-------" "------" "---" "----" "---"
+  for svc in backend collab frontend backend-mcp local-agent-host; do
+    local pid port status_label run_cmd
     pid="$(read_pid "$svc")"
+    run_cmd="$(service_run_command "$svc")"
     case "$svc" in
       backend)  port="$BACKEND_PORT" ;;
       collab)   port="$COLLAB_PORT" ;;
       frontend) port="$FRONTEND_PORT" ;;
+      backend-mcp|mcp) port="$BACKEND_PORT$BACKEND_MCP_PATH" ;;
       local-agent-host) port="$LOCAL_AGENT_HOST_PORT" ;;
     esac
-    # Check both PID and port — uvicorn --reload forks, so PID may not match
-    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+
+    if [ "$svc" = "backend-mcp" ] || [ "$svc" = "mcp" ]; then
+      pid="$(read_pid "backend")"
+      if lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1 && is_mcp_route_ready; then
+        status_label="${GREEN}running${RESET}"
+        if [ -z "$pid" ] || ! is_running "$pid"; then
+          pid="$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+        fi
+      elif lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        status_label="${YELLOW}missing${RESET}"
+        if [ -z "$pid" ] || ! is_running "$pid"; then
+          pid="$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+        fi
+      else
+        status_label="${RED}stopped${RESET}"
+        pid="—"
+      fi
+    # Check both PID and port. The listener is the source of truth.
+    elif lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       status_label="${GREEN}running${RESET}"
       # Update PID from actual listener if our tracked one is dead
       if [ -z "$pid" ] || ! is_running "$pid"; then
@@ -508,9 +616,10 @@ status_all() {
       status_label="${RED}stopped${RESET}"
       pid="—"
     fi
-    printf "%-12s %b  %-8s %s\n" "$svc" "$status_label" "${pid:-—}" ":$port"
+    printf "%-16s %b  %-8s %-12s %s\n" "$svc" "$status_label" "${pid:-—}" ":$port" "$run_cmd"
   done
   echo ""
+  echo "Note: backend-mcp is the backend /mcp route; it shares the backend PID, port, and backend.log."
   echo "Logs: $LOG_DIR/"
 }
 
@@ -522,6 +631,7 @@ print_banner() {
 ${GREEN}┌──────────────────────────────────────────────────────┐
 │   SuperLeaf — Dev Process Manager               │
 │   backend :$BACKEND_PORT  ·  collab :$COLLAB_PORT  ·  frontend :$FRONTEND_PORT   │
+│   backend-mcp :$BACKEND_PORT$BACKEND_MCP_PATH (shared backend process)       │
 └──────────────────────────────────────────────────────┘${RESET}
 
 EOF
@@ -570,6 +680,14 @@ case "${1:-help}" in
   backend)
     require_cmd node
     start_backend
+    ;;
+
+  backend-mcp)
+    start_backend_mcp
+    ;;
+
+  mcp)
+    start_mcp
     ;;
 
   collab)
@@ -632,6 +750,9 @@ Usage:
   ./start.sh status       Show running status of each service
   ./start.sh logs         Tail the latest log files
   ./start.sh backend      Start backend only
+  ./start.sh backend-mcp  Start backend with backend-native /mcp enabled
+                          (same backend process and port)
+  ./start.sh mcp          Compatibility alias for ./start.sh backend-mcp
   ./start.sh collab       Start collab-server only
   ./start.sh frontend     Start frontend only
   ./start.sh local-agent-host
@@ -645,10 +766,14 @@ Usage:
 Process management:
   PIDs are tracked in ./logs/pids
   Logs are written to ./logs/<timestamp>_<service>.log
+  backend-mcp shares the backend PID, port, and backend.log
 
 Env:
   YLW_FRONTEND_PORT=5173   Frontend port
   YLW_BACKEND_PORT=8000    Backend port
+                           Backend-native MCP is served at /mcp on this port
+  YLW_BACKEND_RELOAD=0      Set to 1 to run backend uvicorn with --reload
+  YLW_MCP_SERVER_ENABLED=0  Set to 1 to mount backend-native /mcp in backend mode
   YLW_COLLAB_PORT=4444     Collab-server port
   SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
                            Local Agent Host bind address

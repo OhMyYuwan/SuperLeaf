@@ -16,22 +16,31 @@ export function AutomationTab() {
           type="button"
           className={mode === 'annotate' ? 'active' : ''}
           onClick={() => setMode('annotate')}
+          aria-label="自动批注"
+          title="自动批注"
         >
-          <Bot size={14} /> 自动批注
+          <Bot size={14} aria-hidden="true" />
+          <span className="automation-switch-label" aria-hidden="true">自动批注</span>
         </button>
         <button
           type="button"
           className={mode === 'write' ? 'active' : ''}
           onClick={() => setMode('write')}
+          aria-label="自动写入"
+          title="自动写入"
         >
-          <Pen size={14} /> 自动写入
+          <Pen size={14} aria-hidden="true" />
+          <span className="automation-switch-label" aria-hidden="true">自动写入</span>
         </button>
         <button
           type="button"
           className={mode === 'reply' ? 'active' : ''}
           onClick={() => setMode('reply')}
+          aria-label="自动回复"
+          title="自动回复"
         >
-          <MessageCircle size={14} /> 自动回复
+          <MessageCircle size={14} aria-hidden="true" />
+          <span className="automation-switch-label" aria-hidden="true">自动回复</span>
         </button>
       </div>
 

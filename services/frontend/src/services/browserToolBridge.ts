@@ -44,6 +44,7 @@ export interface BrowserToolBridgeRequest {
   id: string
   name: string
   arguments: Record<string, unknown>
+  agent_name: string
   context_id: string
   project_id: string
   conversation_id: string
@@ -344,6 +345,7 @@ export function bridgeRequestFromToolCall(
     id,
     name,
     arguments: parseToolCallArguments(toolCall.function?.arguments),
+    agent_name: '',
     context_id: context.contextId || `browser_${context.conversationId}`,
     project_id: context.projectId ?? '',
     conversation_id: context.conversationId,
@@ -537,6 +539,7 @@ function normalizeBridgeToolRequest(value: unknown): BrowserToolBridgeRequest | 
     arguments: raw.arguments && typeof raw.arguments === 'object'
       ? raw.arguments as Record<string, unknown>
       : {},
+    agent_name: stringValue(raw.agent_name),
     context_id: contextId,
     project_id: stringValue(raw.project_id),
     conversation_id: stringValue(raw.conversation_id),

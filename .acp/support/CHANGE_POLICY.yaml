@@ -3,6 +3,8 @@
 # Concrete authorization rules for mutation work.
 # Refreshed 2026-08-12 for REQ-0026 (V2.2 governance refresh — orchestrator,
 # multi-provider, mention system, file-tree, conversations, compile surfaces).
+# Refreshed 2026-06-14 for REQ-0477 (backend-native MCP, Agent Commands,
+# shared tool registry, and direct document body mutation boundary).
 #
 # Resolution order: forbidden > high_risk > require_confirmation > auto_allow.
 
@@ -30,6 +32,8 @@ auto_allow:
       - services/frontend/src/types/*.ts
       - services/frontend/src/__tests__/*.ts
       - services/backend/app/api/*.py
+      - services/backend/app/agent_commands/*.py
+      - services/backend/app/mcp/*.py
       - services/backend/app/services/*.py
       - services/backend/app/models.py
       - services/backend/app/schemas.py
@@ -44,6 +48,8 @@ auto_allow:
       - services/frontend/src/services/*.ts
       - services/frontend/src/__tests__/*.ts
       - services/backend/app/api/*.py
+      - services/backend/app/agent_commands/*.py
+      - services/backend/app/mcp/*.py
       - services/backend/app/services/*.py
 
   # Adding new planning docs.
@@ -103,6 +109,11 @@ require_confirmation:
       - .acp/capability/capabilities.yaml
       - .acp/version.yaml
     reason: Support and capability files steer routing for every future Request.
+
+  - operation: edit
+    paths:
+      - services/shared/superleaf-tools.json
+    reason: Shared SuperLeaf MCP tool schemas and annotations feed backend-native MCP, Local Agent Host, frontend prompts, and native Agent tool definitions.
 
   - operation: edit
     paths:
@@ -222,22 +233,56 @@ high_risk:
       Local Agent Host is a user-machine localhost bridge for Codex, Claude,
       Nanobot, and SuperLeaf MCP/browser tools. It may be copied into Docker
       images to support packaging/download endpoints, but starting it inside
-      the server/all-in-one runtime changes the architecture.
+      the server/all-in-one runtime changes the architecture. Backend-native
+      token-direct MCP is a separate optional backend profile and must not be
+      treated as a reason to fuse Local Agent Host into backend runtime.
     boundary: |
       Acceptable routine work:
         - package/download/update metadata
         - startup scripts for user machines
         - CORS/origin fixes for browser-to-localhost access
         - Codex/Claude/Nanobot bridge improvements
+        - compatibility proxying to backend-native /mcp for tests or migration
       Requires explicit high-risk confirmation:
         - auto-starting Local Agent Host in all-in-one/backend containers
         - exposing user-local Agent bridge over public/server networks
         - treating server-side host execution as equivalent to user-machine
           localhost execution
+        - merging backend-native token-direct MCP and Local Agent Host browser
+          Bridge into one long-lived service/process boundary
     reason: |
       Running Local Agent Host server-side would break the assumption that it
       can see the user's local Codex/Claude/Nanobot installs and would expand
       the trust, network, and permission boundary.
+
+  # Existing document body edits must remain editor/Yjs-first until designed.
+  - operation: expose_direct_mcp_document_body_write
+    paths:
+      - services/backend/app/agent_commands/**/*
+      - services/backend/app/mcp/**/*
+      - services/backend/app/services/superleaf_mcp_*.py
+      - services/shared/superleaf-tools.json
+    description: |
+      Adding a tool or code path that directly mutates an existing Doc.content
+      range through MCP/Agent Commands, rather than creating a proposal or
+      using the editor/Yjs acceptance path.
+    boundary: |
+      Acceptable routine work:
+        - read/list/search/outline tools
+        - create_suggestion annotation DB writes
+        - propose_doc_edit proposal DB writes
+        - project_write_text_file/project_create_text_file new-file Project FS
+          writes that refuse overwrites
+        - anchor repair and metadata for proposal/annotation records
+      Requires explicit high-risk confirmation:
+        - direct replace/insert/delete of existing document body text from MCP
+        - accepting a proposal on the backend by writing Doc.content directly
+        - treating DB Doc.content as authoritative while an active Yjs document
+          may hold newer collaborative text
+    reason: |
+      Existing document text has a Yjs/editor realtime source of truth when
+      active. Direct backend body writes can fork DB snapshots from live
+      collaborative state and bypass user-visible acceptance checks.
 
   # Extending the self-hosted orchestrator (V2.2 acknowledgement).
   - operation: extend_self_hosted_orchestrator

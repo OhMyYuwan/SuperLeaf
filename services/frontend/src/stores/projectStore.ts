@@ -44,6 +44,7 @@ interface ProjectState {
   create: (name: string, projectType?: ProjectType) => Promise<ProjectSummary>
   importGithub: (body: GitHubProjectImport) => Promise<ProjectSummary>
   updateSkillCache: (id: string) => Promise<ProjectSkillCacheResult>
+  update: (id: string, patch: { tags?: string[] }) => Promise<ProjectSummary>
   rename: (id: string, name: string) => Promise<void>
   remove: (id: string) => Promise<void>
   setViewMode: (mode: 'table' | 'grid') => void
@@ -112,6 +113,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }))
     useNativeAgentStore.getState().upsertSkill(result.skill)
     return result
+  },
+
+  update: async (id, patch) => {
+    const updated = await projectsApi.update(id, patch)
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? updated : p)),
+      currentProjectRole: s.currentProjectId === id
+        ? updated.my_role
+        : s.currentProjectRole,
+    }))
+    return updated
   },
 
   rename: async (id, name) => {

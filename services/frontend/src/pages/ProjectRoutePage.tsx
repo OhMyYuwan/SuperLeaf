@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { Topbar } from '../features/topbar'
 import { useProjectStore } from '../stores/projectStore'
 import { resetProjectScopedStores } from '../stores/_reset'
@@ -16,7 +15,6 @@ export function ProjectRoutePage() {
   const loading = useProjectStore((s) => s.loading)
   const loadProjects = useProjectStore((s) => s.load)
   const setCurrent = useProjectStore((s) => s.setCurrent)
-  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
 
   useEffect(() => {
     if (!projectId || currentProjectId === projectId) return
@@ -41,8 +39,6 @@ export function ProjectRoutePage() {
       <ProjectRouteShell
         title="正在打开项目"
         detail={project?.name ?? projectId.slice(0, 8)}
-        personalPanelOpen={personalPanelOpen}
-        setPersonalPanelOpen={setPersonalPanelOpen}
       />
     )
   }
@@ -52,8 +48,6 @@ export function ProjectRoutePage() {
       <ProjectRouteShell
         title="没有找到这个项目"
         detail="它可能已经被删除，或者你没有访问权限。"
-        personalPanelOpen={personalPanelOpen}
-        setPersonalPanelOpen={setPersonalPanelOpen}
       >
         <Link className="primary-btn" to="/projects">返回项目列表</Link>
       </ProjectRouteShell>
@@ -71,18 +65,14 @@ function ProjectRouteShell({
   title,
   detail,
   children,
-  personalPanelOpen,
-  setPersonalPanelOpen,
 }: {
   title: string
   detail: string
   children?: ReactNode
-  personalPanelOpen: boolean
-  setPersonalPanelOpen: (open: boolean) => void
 }) {
   return (
     <div className="app-shell">
-      <Topbar onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
+      <Topbar />
       <main className="workspace">
         <div className="project-switch-overlay">
           <div className="project-switch-indicator">
@@ -96,7 +86,6 @@ function ProjectRouteShell({
           </div>
         </div>
       </main>
-      <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
     </div>
   )
 }

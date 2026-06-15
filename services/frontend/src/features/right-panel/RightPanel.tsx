@@ -7,6 +7,7 @@
 
 import { useCallback, useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
+import { GitBranch, History, MessageSquare, Users, Workflow } from 'lucide-react'
 import type { CachedWorkflow, Provider, WorkflowDefinition, WorkflowDefinitionDraft } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
@@ -21,6 +22,14 @@ import { useProjectStore } from '../../stores/projectStore'
 import '../history/history.css'
 import './project-archive.css'
 import './right-panel.css'
+
+const rightPanelTabs = [
+  { value: 'discussion', label: '讨论区', shortLabel: '讨论', Icon: MessageSquare },
+  { value: 'agents', label: '团队管理', shortLabel: '团队', Icon: Users },
+  { value: 'automation', label: '自动化', shortLabel: '自动', Icon: Workflow },
+  { value: 'history', label: '历史', shortLabel: '历史', Icon: History },
+  { value: 'versions', label: '版本', shortLabel: '版本', Icon: GitBranch },
+] as const
 
 interface RightPanelProps {
   workflows: CachedWorkflow[]
@@ -74,25 +83,23 @@ export function RightPanel(props: RightPanelProps) {
     <div className="panel right-panel">
       <Tabs.Root value={selectedTab} onValueChange={onTabChange} className="tabs-root">
         <Tabs.List className="tabs-list">
-          <Tabs.Trigger className="tab-trigger" value="discussion">
-            讨论区
-          </Tabs.Trigger>
-          <Tabs.Trigger className="tab-trigger" value="agents">
-            团队管理
-          </Tabs.Trigger>
-          <Tabs.Trigger className="tab-trigger" value="automation">
-            自动化
-          </Tabs.Trigger>
+          {rightPanelTabs.map(({ value, label, shortLabel, Icon }) => (
+            <Tabs.Trigger
+              key={value}
+              className="tab-trigger"
+              value={value}
+              aria-label={label}
+              title={label}
+            >
+              <Icon size={17} strokeWidth={1.9} aria-hidden="true" />
+              <span className="tab-label" aria-hidden="true">{shortLabel}</span>
+              <span className="sr-only">{label}</span>
+            </Tabs.Trigger>
+          ))}
           {/* 工作流 tab 已集成到团队管理的子标签中 */}
           {/* <Tabs.Trigger className="tab-trigger" value="workflow">
             工作流
           </Tabs.Trigger> */}
-          <Tabs.Trigger className="tab-trigger" value="history">
-            运行
-          </Tabs.Trigger>
-          <Tabs.Trigger className="tab-trigger" value="versions">
-            版本
-          </Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="discussion" className="tab-content">

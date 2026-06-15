@@ -16,7 +16,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { AgentMarkdown } from '../features/shared/AgentMarkdown'
 import { Topbar } from '../features/topbar'
 import {
@@ -112,7 +111,6 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
   const role = useProjectStore((s) => s.currentProjectRole)
   const canWrite = role !== 'viewer'
 
-  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const [sourceRulesOpen, setSourceRulesOpen] = useState(false)
   const [dataset, setDataset] = useState<DatasetProject | null>(null)
   const [rules, setRules] = useState<DatasetSourceRule[]>([])
@@ -422,7 +420,7 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
 
   return (
     <div className="app-shell data-project-shell">
-      <Topbar onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
+      <Topbar />
       {feedback && (
         <div className="data-toast" role="status" aria-live="polite">
           {feedback}
@@ -808,7 +806,6 @@ export function DataProjectPage({ project }: { project: ProjectSummary }) {
           </aside>
         </section>
       </main>
-      <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
     </div>
   )
 }

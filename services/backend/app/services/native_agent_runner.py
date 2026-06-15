@@ -310,8 +310,8 @@ class NativeAgentRunner:
                     ),
                     (
                         "Document edit tool: when the user asks you to change the text of the "
-                        "current document, call propose_doc_edit(range_start, range_end, new_text, reason?). "
-                        "To specify the edit range, also pass the exact text you want to replace as "
+                        "current document, call propose_doc_edit(original_text, proposed_text, range_start?, range_end?). "
+                        "To specify the edit range, pass the exact text you want to replace as "
                         "original_text — the system will locate it automatically and character offsets "
                         "become only a disambiguation hint. Always read the surrounding context first "
                         "(project_read_doc) to get the exact text. "
@@ -728,6 +728,7 @@ class NativeAgentRunner:
         return NativeAgentToolContext(
             project_id=self.config.project_id,
             user_id=self.config.user_id,
+            agent_name=_payload_agent_name(payload) or self.config.agent_name,
             active_document_id=(payload.document_id if payload else ""),
             active_range_start=(payload.range_start if payload else 0),
             active_range_end=(payload.range_end if payload else 0),
@@ -921,8 +922,8 @@ def browser_nanobot_system_prompt() -> str:
             ),
             (
                 "When the user asks you to change the current document, call "
-                "propose_doc_edit with original_text copied from project_read_doc, "
-                "range_start/range_end as hints, replacement new_text, and a short reason."
+                "propose_doc_edit with original_text copied from project_read_doc and "
+                "proposed_text containing only the replacement text. Use range_start/range_end only as hints."
             ),
             (
                 "When the user asks you to create, write, add, or generate a new "
@@ -965,8 +966,8 @@ def browser_codex_system_prompt() -> str:
             (
                 "When the user asks you to modify a SuperLeaf document, "
                 "first read the relevant text if needed, "
-                "then call propose_doc_edit with original_text copied verbatim from project_read_doc, "
-                "range_start/range_end as hints, replacement new_text, and a short reason."
+                "then call propose_doc_edit with original_text copied verbatim from project_read_doc and "
+                "proposed_text containing only the replacement text. Use range_start/range_end only as hints."
             ),
             (
                 "When the user asks you to create, write, add, or generate a new "
@@ -1006,6 +1007,30 @@ def _payload_allows_project_context(payload: NativeRunPayload | None) -> bool:
     if isinstance(raw, str):
         return raw.strip().casefold() in {"1", "true", "yes", "on"}
     return False
+
+
+def _payload_agent_name(payload: NativeRunPayload | None) -> str:
+    if payload is None:
+        return ""
+    inputs = payload.inputs or {}
+    raw = inputs.get("agent_name") or inputs.get("agentName")
+    return _normalize_actor_name(raw)
+
+
+def _normalize_actor_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = " ".join(value.strip().split())
+    if not cleaned:
+        return ""
+    lowered = cleaned.casefold()
+    if "codex" in lowered:
+        return "Codex"
+    if "claude" in lowered:
+        return "Claude"
+    if "nanobot" in lowered:
+        return "Nanobot"
+    return cleaned[:80]
 
 
 def _project_write_summary(content: str) -> dict[str, str] | None:

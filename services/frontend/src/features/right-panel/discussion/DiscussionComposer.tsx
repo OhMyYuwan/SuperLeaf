@@ -2,7 +2,7 @@
  * DiscussionComposer — 讨论面板下方的输入条。
  *
  * 处理：
- * - @-mention（agent / workflow / file），用 MentionInput 渲染候选
+ * - @-mention 文件引用，用 MentionInput 渲染候选
  * - 已附带的选区 chip（点击可跳转回原区间）
  * - 已 mention 的文件 chip 列表（可移除）
  * - 发送/停止按钮（streaming 时切换为停止）
@@ -15,19 +15,15 @@ import { Send, Square, X } from 'lucide-react'
 import {
   parseMentions,
   uniqueMentionedFiles,
-  type AgentCandidate,
   type FileCandidate,
   type MentionCandidate,
-  type WorkflowCandidate,
 } from '../../../services/mentions'
 import { MentionInput } from '../../shared/MentionInput'
 import { confirmLargeFileAttachment } from '../../shared/fileSizeGate'
 import type { Selection } from '../../../types/editor'
 
 interface DiscussionComposerProps {
-  allCandidates: MentionCandidate[]
-  agentCandidates: AgentCandidate[]
-  workflowCandidates: WorkflowCandidate[]
+  mentionCandidates: MentionCandidate[]
   fileCandidates: FileCandidate[]
   activeSelection: Selection | null
   isStreaming: boolean
@@ -43,9 +39,7 @@ interface DiscussionComposerProps {
 }
 
 export const DiscussionComposer = memo(function DiscussionComposer({
-  allCandidates,
-  agentCandidates,
-  workflowCandidates,
+  mentionCandidates,
   fileCandidates,
   activeSelection,
   isStreaming,
@@ -69,12 +63,12 @@ export const DiscussionComposer = memo(function DiscussionComposer({
 
   const pendingFileMentions = useMemo(() => {
     if (!inputText.includes('@')) return [] as FileCandidate[]
-    const mentions = parseMentions(inputText, allCandidates)
+    const mentions = parseMentions(inputText, mentionCandidates)
     return uniqueMentionedFiles(mentions)
-  }, [inputText, allCandidates])
+  }, [inputText, mentionCandidates])
 
   const removeFileMention = (fileId: string) => {
-    const mentions = parseMentions(inputText, allCandidates)
+    const mentions = parseMentions(inputText, mentionCandidates)
     const targets = [...mentions]
       .filter((m) => m.candidate.kind === 'file' && m.candidate.id === fileId)
       .sort((a, b) => b.start - a.start)
@@ -133,10 +127,10 @@ export const DiscussionComposer = memo(function DiscussionComposer({
       <MentionInput
         value={inputText}
         onChange={handleInputChange}
-        agents={agentCandidates}
-        workflows={workflowCandidates}
+        agents={[]}
+        workflows={[]}
         files={fileCandidates}
-        placeholder="输入消息，用 @ 召唤 Agent / Workflow 或引用文件…"
+        placeholder="输入消息，用 @ 引用文件…"
         disabled={isStreaming}
         autoResize
         className="discussion-mention-input"

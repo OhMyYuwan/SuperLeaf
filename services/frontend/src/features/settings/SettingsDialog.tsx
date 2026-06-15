@@ -36,7 +36,14 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type SettingsTab = 'account' | 'editor' | 'providers' | 'mcp-tokens'
+export type PersonalSettingsTab = 'account' | 'editor' | 'providers' | 'mcp-tokens'
+
+const PERSONAL_SETTINGS_TABS: Array<{ value: PersonalSettingsTab; label: string }> = [
+  { value: 'account', label: 'GitHub 账户' },
+  { value: 'editor', label: '编辑器' },
+  { value: 'providers', label: 'Provider' },
+  { value: 'mcp-tokens', label: 'MCP Token' },
+]
 
 const DEFAULT_DIFY_LOCAL_ENDPOINT = 'http://localhost:8080/v1'
 const LOCAL_AGENT_PROVIDER_KINDS = new Set<ProviderDraft['kind']>(['nanobot', 'codex-local', 'claude-local'])
@@ -45,7 +52,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const load = useSettingsStore((s) => s.load)
   const loaded = useSettingsStore((s) => s.loaded)
   const backendReachable = useSettingsStore((s) => s.backendReachable)
-  const providers = useSettingsStore((s) => s.providers)
   const error = useSettingsStore((s) => s.error)
 
   useEffect(() => {
@@ -54,8 +60,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }, [open, loaded, load])
 
-  const [showForm, setShowForm] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('account')
+  const [activeTab, setActiveTab] = useState<PersonalSettingsTab>('account')
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -78,90 +83,92 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           <BackendStatusBar reachable={backendReachable} error={error} onRetry={load} />
 
-          <div className="settings-tabs" role="tablist" aria-label="个人面板设置">
-            <button
-              className={activeTab === 'account' ? 'active' : ''}
-              onClick={() => setActiveTab('account')}
-              role="tab"
-              aria-selected={activeTab === 'account'}
-            >
-              GitHub 账户
-            </button>
-            <button
-              className={activeTab === 'editor' ? 'active' : ''}
-              onClick={() => setActiveTab('editor')}
-              role="tab"
-              aria-selected={activeTab === 'editor'}
-            >
-              编辑器
-            </button>
-            <button
-              className={activeTab === 'providers' ? 'active' : ''}
-              onClick={() => setActiveTab('providers')}
-              role="tab"
-              aria-selected={activeTab === 'providers'}
-            >
-              Agent
-            </button>
-            <button
-              className={activeTab === 'mcp-tokens' ? 'active' : ''}
-              onClick={() => setActiveTab('mcp-tokens')}
-              role="tab"
-              aria-selected={activeTab === 'mcp-tokens'}
-            >
-              MCP Token
-            </button>
-          </div>
-
-          <div className="settings-body">
-            {activeTab === 'account' && (
-              <>
-                <GitHubAccountSettings />
-                <ProjectListSettings />
-              </>
-            )}
-
-            {activeTab === 'editor' && (
-              <>
-                <EditorAppearanceSettings />
-                <MathPreviewSettings />
-              </>
-            )}
-
-            {activeTab === 'mcp-tokens' && (
-              <McpTokenSettings />
-            )}
-
-            {activeTab === 'providers' && (
-              <>
-                <div className="settings-section-title">Provider</div>
-
-                {loaded && providers.length === 0 && !showForm && (
-                  <div className="empty-providers">
-                    还没有配置 provider。点击下方按钮添加第一个。
-                  </div>
-                )}
-
-                <ul className="provider-list">
-                  {providers.map((p) => (
-                    <ProviderRow key={p.id} provider={p} />
-                  ))}
-                </ul>
-
-                {showForm ? (
-                  <ProviderForm onClose={() => setShowForm(false)} />
-                ) : (
-                  <button className="primary-btn" onClick={() => setShowForm(true)}>
-                    <Plus size={14} /> 添加 Provider
-                  </button>
-                )}
-              </>
-            )}
-
-          </div>
+          <PersonalSettingsTabs activeTab={activeTab} onTabChange={setActiveTab} />
+          <PersonalSettingsContent activeTab={activeTab} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+export function PersonalSettingsTabs({
+  activeTab,
+  onTabChange,
+  className = '',
+}: {
+  activeTab: PersonalSettingsTab
+  onTabChange: (tab: PersonalSettingsTab) => void
+  className?: string
+}) {
+  return (
+    <div className={`settings-tabs ${className}`.trim()} role="tablist" aria-label="个人面板设置">
+      {PERSONAL_SETTINGS_TABS.map((tab) => (
+        <button
+          key={tab.value}
+          type="button"
+          className={activeTab === tab.value ? 'active' : ''}
+          onClick={() => onTabChange(tab.value)}
+          role="tab"
+          aria-selected={activeTab === tab.value}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export function PersonalSettingsContent({ activeTab }: { activeTab: PersonalSettingsTab }) {
+  const loaded = useSettingsStore((s) => s.loaded)
+  const providers = useSettingsStore((s) => s.providers)
+  const [showForm, setShowForm] = useState(false)
+
+  return (
+    <div className="settings-body">
+      {activeTab === 'account' && (
+        <>
+          <GitHubAccountSettings />
+          <ProjectListSettings />
+        </>
+      )}
+
+      {activeTab === 'editor' && (
+        <>
+          <EditorAppearanceSettings />
+          <MathPreviewSettings />
+        </>
+      )}
+
+      {activeTab === 'mcp-tokens' && (
+        <McpTokenSettings />
+      )}
+
+      {activeTab === 'providers' && (
+        <>
+          <div className="settings-section-title">Provider</div>
+
+          {loaded && providers.length === 0 && !showForm && (
+            <div className="empty-providers">
+              还没有配置 provider。点击下方按钮添加第一个。
+            </div>
+          )}
+
+          <ul className="provider-list">
+            {providers.map((p) => (
+              <ProviderRow key={p.id} provider={p} />
+            ))}
+          </ul>
+
+          {showForm ? (
+            <ProviderForm onClose={() => setShowForm(false)} />
+          ) : (
+            <button className="primary-btn" onClick={() => setShowForm(true)}>
+              <Plus size={14} /> 添加 Provider
+            </button>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -459,7 +466,7 @@ function GitHubAccountSettings() {
   )
 }
 
-function BackendStatusBar({
+export function BackendStatusBar({
   reachable,
   error,
   onRetry,

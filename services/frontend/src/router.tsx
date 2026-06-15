@@ -5,6 +5,7 @@
  *   /register                  → <RegisterPage />  公开
  *   /                          → redirect /projects
  *   /admin                     → <AdminPage />           (admin protected)
+ *   /account                   → <AccountPage />         (protected)
  *   /projects                  → <ProjectListPage />     (protected)
  *   /projects/:projectId/*     → <ProjectRoutePage />     (protected,
  *                                dispatches data projects to the dataset
@@ -19,6 +20,7 @@ import { ProjectRoutePage } from './pages/ProjectRoutePage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { AdminPage } from './pages/AdminPage'
+import { AccountPage } from './pages/AccountPage'
 import { ProtectedRoute } from './router/ProtectedRoute'
 
 export function AppRouter() {
@@ -32,6 +34,14 @@ export function AppRouter() {
         element={
           <ProtectedRoute requireAdmin>
             <AdminPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/account"
+        element={
+          <ProtectedRoute>
+            <AccountPage />
           </ProtectedRoute>
         }
       />

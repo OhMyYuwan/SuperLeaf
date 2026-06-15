@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from ..mcp.transport import MCP_PROTOCOL_VERSION
 from .mcp_policy import (
     ensure_mcp_transport_allowed,
     normalize_mcp_transport,
@@ -44,7 +45,6 @@ def _env_float(name: str, default: float) -> float:
 # UI renders as a generic "network error".
 MCP_TIMEOUT_SECONDS = _env_float("YLW_MCP_TIMEOUT_SECONDS", 150.0)
 ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3"}
-MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
 class McpToolError(RuntimeError):
@@ -320,7 +320,7 @@ class _McpSession:
         await self._request(
             "initialize",
             {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "SuperLeaf", "version": "0.1.0"},
             },

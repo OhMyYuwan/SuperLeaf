@@ -25,6 +25,7 @@ services:
       COLLAB_HOST: 127.0.0.1
       COLLAB_PORT: 4444
       COLLAB_DATA_DIR: /data/collab
+      COLLAB_LOG_DIR: /data/logs
       COLLAB_WS_PATH_PREFIX: /collab
       COLLAB_INTERNAL_TOKEN: ${YLW_COLLAB_INTERNAL_TOKEN:-}
       SUPERLEAF_BROWSER_BACKEND_URL: ""
@@ -32,6 +33,13 @@ services:
     volumes:
       - ./data/backend:/data/backend
       - ./data/collab:/data/collab
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/tmp:/tmp
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/cache:/data/cache
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/home:/data/home
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/run-nginx:/run/nginx
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/log-nginx:/var/log/nginx
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/logs:/data/logs
+      - ${SUPERLEAF_RUNTIME_DIR:-./data/runtime}/superleaf-config.js:/usr/share/superleaf/html/superleaf-config.js
     healthcheck:
       test:
         [

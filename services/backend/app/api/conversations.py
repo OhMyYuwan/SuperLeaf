@@ -487,7 +487,7 @@ def _browser_codex_runner(
     return NativeAgentRunner(
         NativeAgentRuntimeConfig(
             agent_id=f"browser-codex:{provider.id}",
-            agent_name=provider.name,
+            agent_name="Codex",
             provider_endpoint=provider.endpoint,
             api_key="",
             model=model,

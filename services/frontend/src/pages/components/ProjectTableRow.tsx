@@ -1,16 +1,19 @@
 import { Link } from 'react-router-dom'
 import { Pencil, Settings, Trash2 } from 'lucide-react'
 import type { ProjectSummary } from '../../services/projectsApi'
+import { normalizeProjectTags } from '../projectListUtils'
 
 interface Props {
   project: ProjectSummary
   onRename: (p: ProjectSummary) => void
   onDelete: (p: ProjectSummary) => void
   onSettings?: (p: ProjectSummary) => void
+  onTagClick?: (project: ProjectSummary, tag: string) => void
 }
 
-export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Props) {
+export function ProjectTableRow({ project, onRename, onDelete, onSettings, onTagClick }: Props) {
   const typeBadge = projectTypeBadge(project)
+  const tags = normalizeProjectTags(project.tags)
   return (
     <tr className="project-row">
       <td>
@@ -21,6 +24,20 @@ export function ProjectTableRow({ project, onRename, onDelete, onSettings }: Pro
           <span className={`project-type-badge project-row-badge project-type-badge-${typeBadge.toLowerCase()}`}>
             {typeBadge}
           </span>
+        )}
+        {tags.length > 0 && (
+          <div className="project-row-tags" aria-label="项目标签">
+            {tags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className="project-tag-pill"
+                onClick={() => onTagClick?.(project, tag)}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
         )}
       </td>
       <td className="project-row-meta">{formatDate(project.updated_at)}</td>

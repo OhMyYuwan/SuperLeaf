@@ -45,6 +45,7 @@ export interface BrowserToolBridgeContext {
 
 export interface BrowserToolBridgeRequest {
   id: string
+  lease_secret: string
   name: string
   arguments: Record<string, unknown>
   agent_name: string
@@ -60,6 +61,7 @@ export interface BrowserToolBridgeRequest {
 
 export interface BrowserToolBridgeApprovalRequest {
   id: string
+  approval_secret: string
   method: string
   title: string
   summary: string
@@ -276,6 +278,7 @@ export async function submitBrowserToolBridgeResult(args: {
   endpoint: string
   requestId: string
   contextSecret: string
+  leaseSecret: string
   content: string
   failed: boolean
   name: string
@@ -292,6 +295,7 @@ export async function submitBrowserToolBridgeResult(args: {
     body: JSON.stringify({
       request_id: args.requestId,
       context_secret: args.contextSecret,
+      lease_secret: args.leaseSecret,
       content: args.content,
       failed: args.failed,
       name: args.name,
@@ -337,6 +341,7 @@ export async function submitBrowserToolBridgeApprovalResult(args: {
   endpoint: string
   requestId: string
   contextSecret: string
+  approvalSecret: string
   decision: 'accept' | 'reject'
   signal?: AbortSignal
 }): Promise<void> {
@@ -346,6 +351,7 @@ export async function submitBrowserToolBridgeApprovalResult(args: {
     body: JSON.stringify({
       request_id: args.requestId,
       context_secret: args.contextSecret,
+      approval_secret: args.approvalSecret,
       decision: args.decision,
     }),
     signal: args.signal,
@@ -369,6 +375,7 @@ export function bridgeRequestFromToolCall(
   const name = toolCall.function?.name?.trim() || 'tool'
   return {
     id,
+    lease_secret: '',
     name,
     arguments: parseToolCallArguments(toolCall.function?.arguments),
     agent_name: '',
@@ -529,6 +536,7 @@ async function executeAndSubmitBridgeRequest(
       endpoint: args.endpoint,
       requestId: request.id,
       contextSecret: args.contextSecret,
+      leaseSecret: request.lease_secret,
       content: result.content,
       failed: result.failed,
       name: result.name || request.name,
@@ -549,6 +557,7 @@ async function executeAndSubmitBridgeRequest(
       endpoint: args.endpoint,
       requestId: request.id,
       contextSecret: args.contextSecret,
+      leaseSecret: request.lease_secret,
       content: normalizedError instanceof Error ? normalizedError.message : String(normalizedError),
       failed: true,
       name: request.name,
@@ -580,6 +589,7 @@ function normalizeBridgeToolRequest(value: unknown): BrowserToolBridgeRequest | 
   if (!id || !name || !contextId) return null
   return {
     id,
+    lease_secret: stringValue(raw.lease_secret),
     name,
     arguments: raw.arguments && typeof raw.arguments === 'object'
       ? raw.arguments as Record<string, unknown>
@@ -603,6 +613,7 @@ function normalizeBridgeApprovalRequest(value: unknown): BrowserToolBridgeApprov
   if (!id || !contextId) return null
   return {
     id,
+    approval_secret: stringValue(raw.approval_secret),
     method: stringValue(raw.method),
     title: stringValue(raw.title) || 'Codex 请求确认',
     summary: stringValue(raw.summary),

@@ -533,6 +533,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         endpoint: request.endpoint,
         requestId,
         contextSecret: request.context_secret,
+        approvalSecret: request.approval_secret,
         decision,
       })
       window.setTimeout(() => {

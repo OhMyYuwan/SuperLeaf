@@ -214,6 +214,7 @@ export async function submitBrowserCodexMcpToolResult(args: {
   endpoint: string
   requestId: string
   contextSecret: string
+  leaseSecret: string
   content: string
   failed: boolean
   name: string

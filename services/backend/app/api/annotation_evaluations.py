@@ -34,7 +34,7 @@ from ..schemas import (
 from ..secrets_vault import decrypt
 from ..services import annotation_agent_suggestion_service, annotation_service, evaluation_service
 from ..services.agent_orchestrator import WorkflowOrchestrator
-from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
+from ..services.agent_registry_service import NATIVE_WORKFLOW_PREFIX, AgentRegistryService
 from ..services.event_bus import bus
 from ..services.nanobot_client import NanobotClient
 from ..services.project_member_service import ProjectMemberService
@@ -270,9 +270,10 @@ def list_evaluation_tags(
     doc_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[str]:
     _ensure_doc(db, project, doc_id)
-    return evaluation_service.aggregate_tags_for_doc(db, doc_id)
+    return evaluation_service.aggregate_tags_for_doc(db, doc_id, user_id=user.id)
 
 
 # ---------------------------------------------------------------------------

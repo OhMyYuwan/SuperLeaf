@@ -1321,8 +1321,9 @@ class WorkflowOrchestrator:
         try:
             # Local import to keep orchestrator import-time cheap.
             from . import evaluation_service
+
             entries = evaluation_service.review_summary_for_doc(
-                ctx.db, ctx.document_id
+                ctx.db, ctx.document_id, user_id=ctx.workflow_run.user_id
             )
         except Exception:  # pragma: no cover — never break a workflow on this
             return ""

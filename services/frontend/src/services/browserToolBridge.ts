@@ -1,6 +1,8 @@
 import { BACKEND_BASE, type BrowserNanobotToolResult, type NanobotToolCall } from './backendApi'
 
 export interface BrowserToolBridgeContextInput {
+  contextId?: string
+  contextSecret?: string
   projectId: string
   conversationId: string
   documentId: string
@@ -27,6 +29,7 @@ export interface BrowserToolBridgeContextInput {
 export interface BrowserToolBridgeContext {
   status: string
   context_id: string
+  context_secret: string
   mcp_url: string
   tool_count: number
   resource_count?: number
@@ -63,6 +66,7 @@ export interface BrowserToolBridgeApprovalRequest {
   detail: string
   tool_name: string
   context_id: string
+  context_secret: string
   project_id: string
   conversation_id: string
   document_id: string
@@ -122,6 +126,8 @@ export async function startBrowserToolBridge(
     endpoint: args.endpoint,
     context: args.context,
   })
+  let contextId = context.context_id
+  let contextSecret = context.context_secret
   args.onActivity?.()
 
   const ctl = new AbortController()
@@ -136,10 +142,18 @@ export async function startBrowserToolBridge(
     if (ctl.signal.aborted) return
     registerBrowserToolBridgeContext({
       endpoint: args.endpoint,
-      context: args.context,
+      context: {
+        ...args.context,
+        contextId,
+        contextSecret,
+      },
       signal: ctl.signal,
     })
-      .then(() => args.onActivity?.())
+      .then((refreshed) => {
+        contextId = refreshed.context_id
+        contextSecret = refreshed.context_secret || contextSecret
+        args.onActivity?.()
+      })
       .catch((err) => {
         if (!ctl.signal.aborted) args.onRefreshError?.(err)
       })
@@ -165,13 +179,15 @@ export async function startBrowserToolBridge(
 
   void runBrowserToolBridgeLoop({
     ...args,
-    contextId: context.context_id,
+    contextId,
+    contextSecret,
     signal: ctl.signal,
   })
   if (args.onApprovalRequest) {
     void runBrowserApprovalBridgeLoop({
       ...args,
-      contextId: context.context_id,
+      contextId,
+      contextSecret,
       signal: ctl.signal,
     })
   }
@@ -199,6 +215,8 @@ export async function registerBrowserToolBridgeContext(args: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      context_id: args.context.contextId ?? '',
+      context_secret: args.context.contextSecret ?? '',
       project_id: args.context.projectId,
       conversation_id: args.context.conversationId,
       document_id: args.context.documentId,
@@ -233,11 +251,13 @@ export async function registerBrowserToolBridgeContext(args: {
 export async function pollBrowserToolBridgeRequests(args: {
   endpoint: string
   contextId: string
+  contextSecret: string
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserToolBridgeRequest[]> {
   const url = new URL(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/tool-requests`)
   url.searchParams.set('context_id', args.contextId)
+  url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
@@ -255,6 +275,7 @@ export async function pollBrowserToolBridgeRequests(args: {
 export async function submitBrowserToolBridgeResult(args: {
   endpoint: string
   requestId: string
+  contextSecret: string
   content: string
   failed: boolean
   name: string
@@ -270,6 +291,7 @@ export async function submitBrowserToolBridgeResult(args: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       request_id: args.requestId,
+      context_secret: args.contextSecret,
       content: args.content,
       failed: args.failed,
       name: args.name,
@@ -290,11 +312,13 @@ export async function submitBrowserToolBridgeResult(args: {
 export async function pollBrowserToolBridgeApprovalRequests(args: {
   endpoint: string
   contextId: string
+  contextSecret: string
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserToolBridgeApprovalRequest[]> {
   const url = new URL(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/approval-requests`)
   url.searchParams.set('context_id', args.contextId)
+  url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
@@ -312,6 +336,7 @@ export async function pollBrowserToolBridgeApprovalRequests(args: {
 export async function submitBrowserToolBridgeApprovalResult(args: {
   endpoint: string
   requestId: string
+  contextSecret: string
   decision: 'accept' | 'reject'
   signal?: AbortSignal
 }): Promise<void> {
@@ -320,6 +345,7 @@ export async function submitBrowserToolBridgeApprovalResult(args: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       request_id: args.requestId,
+      context_secret: args.contextSecret,
       decision: args.decision,
     }),
     signal: args.signal,
@@ -369,9 +395,10 @@ export function toolCallFromBridgeRequest(request: BrowserToolBridgeRequest): Na
 }
 
 async function runBrowserToolBridgeLoop(
-  args: StartBrowserToolBridgeArgs & { contextId: string; signal: AbortSignal },
+  args: StartBrowserToolBridgeArgs & { contextId: string; contextSecret: string; signal: AbortSignal },
 ): Promise<void> {
   let contextId = args.contextId
+  let contextSecret = args.contextSecret
   // Backoff state for repeated poll failures (server down, network lost). Reset
   // to 0 on any successful poll so transient blips don't accumulate delay.
   let consecutiveFailures = 0
@@ -385,6 +412,7 @@ async function runBrowserToolBridgeLoop(
       requests = await pollBrowserToolBridgeRequests({
         endpoint: args.endpoint,
         contextId,
+        contextSecret,
         signal: args.signal,
         waitMs: args.waitMs,
       })
@@ -395,10 +423,15 @@ async function runBrowserToolBridgeLoop(
       try {
         const refreshed = await registerBrowserToolBridgeContext({
           endpoint: args.endpoint,
-          context: args.context,
+          context: {
+            ...args.context,
+            contextId,
+            contextSecret,
+          },
           signal: args.signal,
         })
         contextId = refreshed.context_id
+        contextSecret = refreshed.context_secret || contextSecret
         args.onActivity?.()
       } catch (refreshErr) {
         if (!args.signal.aborted) args.onRefreshError?.(refreshErr)
@@ -419,9 +452,10 @@ async function runBrowserToolBridgeLoop(
 }
 
 async function runBrowserApprovalBridgeLoop(
-  args: StartBrowserToolBridgeArgs & { contextId: string; signal: AbortSignal },
+  args: StartBrowserToolBridgeArgs & { contextId: string; contextSecret: string; signal: AbortSignal },
 ): Promise<void> {
   let contextId = args.contextId
+  let contextSecret = args.contextSecret
   let consecutiveFailures = 0
   const wake = createWakeSignal(args.signal)
   while (!args.signal.aborted) {
@@ -430,6 +464,7 @@ async function runBrowserApprovalBridgeLoop(
       requests = await pollBrowserToolBridgeApprovalRequests({
         endpoint: args.endpoint,
         contextId,
+        contextSecret,
         signal: args.signal,
         waitMs: args.waitMs,
       })
@@ -440,10 +475,15 @@ async function runBrowserApprovalBridgeLoop(
       try {
         const refreshed = await registerBrowserToolBridgeContext({
           endpoint: args.endpoint,
-          context: args.context,
+          context: {
+            ...args.context,
+            contextId,
+            contextSecret,
+          },
           signal: args.signal,
         })
         contextId = refreshed.context_id
+        contextSecret = refreshed.context_secret || contextSecret
         args.onActivity?.()
       } catch (refreshErr) {
         if (!args.signal.aborted) args.onRefreshError?.(refreshErr)
@@ -457,7 +497,10 @@ async function runBrowserApprovalBridgeLoop(
     if (requests.length > 0) args.onActivity?.()
     for (const request of requests) {
       if (args.signal.aborted) break
-      args.onApprovalRequest?.(request)
+      args.onApprovalRequest?.({
+        ...request,
+        context_secret: contextSecret,
+      })
     }
     if (requests.length > 0) await sleep(1000)
   }
@@ -465,7 +508,7 @@ async function runBrowserApprovalBridgeLoop(
 }
 
 async function executeAndSubmitBridgeRequest(
-  args: StartBrowserToolBridgeArgs & { signal: AbortSignal },
+  args: StartBrowserToolBridgeArgs & { contextSecret: string; signal: AbortSignal },
   request: BrowserToolBridgeRequest,
 ): Promise<void> {
   const requestTimeoutMs = Math.max(1000, args.requestTimeoutMs ?? 105000)
@@ -485,6 +528,7 @@ async function executeAndSubmitBridgeRequest(
     await submitBrowserToolBridgeResult({
       endpoint: args.endpoint,
       requestId: request.id,
+      contextSecret: args.contextSecret,
       content: result.content,
       failed: result.failed,
       name: result.name || request.name,
@@ -504,6 +548,7 @@ async function executeAndSubmitBridgeRequest(
     await submitBrowserToolBridgeResult({
       endpoint: args.endpoint,
       requestId: request.id,
+      contextSecret: args.contextSecret,
       content: normalizedError instanceof Error ? normalizedError.message : String(normalizedError),
       failed: true,
       name: request.name,
@@ -564,6 +609,7 @@ function normalizeBridgeApprovalRequest(value: unknown): BrowserToolBridgeApprov
     detail: stringValue(raw.detail),
     tool_name: stringValue(raw.tool_name),
     context_id: contextId,
+    context_secret: stringValue(raw.context_secret),
     project_id: stringValue(raw.project_id),
     conversation_id: stringValue(raw.conversation_id),
     document_id: stringValue(raw.document_id),

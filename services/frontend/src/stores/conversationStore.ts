@@ -532,6 +532,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       await submitBrowserToolBridgeApprovalResult({
         endpoint: request.endpoint,
         requestId,
+        contextSecret: request.context_secret,
         decision,
       })
       window.setTimeout(() => {

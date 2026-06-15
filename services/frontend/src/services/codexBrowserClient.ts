@@ -203,6 +203,7 @@ export async function registerBrowserCodexMcpContext(args: {
 export async function pollBrowserCodexMcpToolRequests(args: {
   endpoint: string
   contextId: string
+  contextSecret: string
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserCodexMcpToolRequest[]> {
@@ -212,6 +213,7 @@ export async function pollBrowserCodexMcpToolRequests(args: {
 export async function submitBrowserCodexMcpToolResult(args: {
   endpoint: string
   requestId: string
+  contextSecret: string
   content: string
   failed: boolean
   name: string

@@ -269,7 +269,9 @@ notepad .env
 ```text
 SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
 SL_LOCAL_AGENT_HOST_PORT=8787
-SL_LOCAL_AGENT_HOST_ORIGINS=*
+SL_LOCAL_AGENT_HOST_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
+# 可选；不设置时 Host 会生成 ~/.superleaf-local-agent-host/local-agent-host.token
+# SL_LOCAL_AGENT_HOST_AUTH_TOKEN=sl_lah_replace_with_random_local_token
 SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
 SL_LOCAL_AGENT_HOST_CODEX_ENABLED=1
 SL_LOCAL_AGENT_HOST_CODEX_BIN=codex
@@ -284,6 +286,12 @@ SL_LOCAL_AGENT_HOST_MCP_EVENT_TTL_MS=3600000
 SL_LOCAL_AGENT_HOST_MCP_EVENT_MAX_PER_STREAM=200
 SL_LOCAL_AGENT_HOST_MCP_SSE_HEARTBEAT_MS=25000
 ```
+
+`/codex/*`、`/claude/*`、`/mcp`、`/superleaf/mcp/*`、`/nanobot/tools` 和
+`/v1/chat/completions` 等控制接口需要携带
+`Authorization: Bearer <token>` 或 `X-SuperLeaf-Local-Token: <token>`。
+如果未设置 `SL_LOCAL_AGENT_HOST_AUTH_TOKEN`，token 会保存在同一台机器的
+`~/.superleaf-local-agent-host/local-agent-host.token`。
 
 `SL_LOCAL_AGENT_HOST_CLAUDE_PERMISSION_MODE` 可选值为 `default`、`acceptEdits`、`auto`、`bypassPermissions`、`dontAsk`、`plan`。默认建议保持 `default`，需要更高自动化时再由用户明确调整。
 

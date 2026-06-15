@@ -94,7 +94,11 @@ class WorkflowOrchestrator:
         """Execute a workflow definition and stream events."""
         # Load workflow definition
         workflow_def = self.db.get(WorkflowDefinition, workflow_def_id)
-        if not workflow_def:
+        if (
+            not workflow_def
+            or workflow_def.project_id != project_id
+            or workflow_def.user_id != user_id
+        ):
             raise ValueError(f"Workflow definition {workflow_def_id} not found")
 
         # Create workflow run record
@@ -657,6 +661,7 @@ class WorkflowOrchestrator:
             async for event in nested_orchestrator.execute_workflow(
                 workflow_def_id=nested_workflow_id,
                 project_id=ctx.workflow_run.project_id,
+                user_id=ctx.workflow_run.user_id,
                 document_id=ctx.document_id,
                 target_text=ctx.target_text,
                 range_start=ctx.target_range["from"],

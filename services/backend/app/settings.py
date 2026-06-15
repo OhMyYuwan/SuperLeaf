@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     mcp_inline_config_enabled: bool = False
     mcp_remote_private_networks_enabled: bool = False
 
+    # Provider endpoints are normally called by backend HTTP clients, so public
+    # deployments reject localhost/private network targets by default. Trusted
+    # self-hosted deployments can opt in explicitly for local Dify/Nanobot.
+    provider_private_networks_enabled: bool = False
+
     # Backend-native MCP server. This is an optional Agent command protocol
     # entrypoint mounted at /mcp; the normal backend API does not expose it by
     # default so Local Agent Host and Backend MCP stay separate lifecycles.

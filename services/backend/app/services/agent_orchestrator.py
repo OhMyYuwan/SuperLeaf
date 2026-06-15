@@ -1125,11 +1125,12 @@ class WorkflowOrchestrator:
             user_id=ctx.workflow_def.user_id,
             runtime_config=native_agent.runtime_config or {},
         )
+        provider_endpoint = self.provider_service.ensure_backend_endpoint_allowed(provider)
         runner = NativeAgentRunner(
             NativeAgentRuntimeConfig(
                 agent_id=native_agent.id,
                 agent_name=native_agent.name,
-                provider_endpoint=provider.endpoint,
+                provider_endpoint=provider_endpoint,
                 api_key=decrypt(provider.api_key_enc),
                 model=native_agent.model,
                 instructions=native_agent.instructions,

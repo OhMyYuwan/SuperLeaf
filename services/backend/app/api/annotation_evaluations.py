@@ -337,6 +337,23 @@ def _ensure_annotation_patch_allowed(
     raise HTTPException(404, "annotation not found")
 
 
+def _ensure_annotation_upsert_allowed(
+    db: Session,
+    project: Project,
+    row: Annotation,
+    user: User,
+    body: AnnotationIn,
+) -> None:
+    _ensure_doc(db, project, row.doc_id)
+    if row.project_id != project.id or row.doc_id != body.doc_id:
+        raise HTTPException(404, "annotation not found")
+    if row.user_id == user.id:
+        return
+    if row.is_global and ProjectMemberService(db).can_write(project.id, user.id):
+        return
+    raise HTTPException(404, "annotation not found")
+
+
 @router.get("/by-doc/{doc_id}/items", response_model=list[AnnotationOut])
 def list_annotations(
     doc_id: str,
@@ -359,6 +376,8 @@ def create_annotation(
 ) -> AnnotationOut:
     _ensure_doc(db, project, body.doc_id)
     existing = annotation_service.get(db, body.id)
+    if existing is not None:
+        _ensure_annotation_upsert_allowed(db, project, existing, user, body)
     old_source_hash = (
         annotation_agent_suggestion_service.compute_annotation_source_hash(existing)
         if existing is not None

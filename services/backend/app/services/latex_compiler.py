@@ -36,6 +36,14 @@ from .project_entry_name import ProjectEntryNameError, validate_project_entry_na
 
 # All known TeX Live / MacTeX binaries we'll try to detect.
 KNOWN_COMPILERS = ("latexmk", "pdflatex", "xelatex", "lualatex")
+COMPILER_CONTROL_FILENAMES = frozenset(
+    {
+        ".latexmkrc",
+        "latexmkrc",
+        ".texmf.cnf",
+        "texmf.cnf",
+    }
+)
 GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
 INCLUDEGRAPHICS_RE = re.compile(
     r"(?P<command>\\includegraphics(?:\s*\[[^\]]*\])?\s*)\{(?P<target>[^{}]+)\}"
@@ -251,12 +259,12 @@ class LatexCompilerService:
             .all()
         )
         for folder in folders:
-            validate_project_entry_name(folder.name, field="folder name")
+            _validate_compile_entry_name(folder.name, field="folder name")
         for doc in docs:
-            validate_project_entry_name(doc.name, field="document name")
+            _validate_compile_entry_name(doc.name, field="document name")
         for file in file_metadata:
-            validate_project_entry_name(file.name, field="file name")
-        validate_project_entry_name(main_doc.name, field="document name")
+            _validate_compile_entry_name(file.name, field="file name")
+        _validate_compile_entry_name(main_doc.name, field="document name")
 
         folder_paths: dict[str, Path] = {}
 
@@ -469,6 +477,7 @@ class LatexCompilerService:
             runs = [
                 [
                     "latexmk",
+                    "-norc",
                     "-pdf",
                     "-synctex=1",
                     "-interaction=nonstopmode",
@@ -949,3 +958,10 @@ def get_compiler_service() -> LatexCompilerService:
     if _compiler_service is None:
         _compiler_service = LatexCompilerService()
     return _compiler_service
+
+
+def _validate_compile_entry_name(name: str, *, field: str) -> str:
+    cleaned = validate_project_entry_name(name, field=field)
+    if cleaned.casefold() in COMPILER_CONTROL_FILENAMES:
+        raise ProjectEntryNameError(f"{field} must not be a compiler control file")
+    return cleaned

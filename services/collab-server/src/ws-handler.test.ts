@@ -140,11 +140,96 @@ test('setupWSConnection rejects stale collaboration generation before loading ro
   }
 })
 
+test('setupWSConnection closes revoked sockets before applying client updates', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  let authorized = true
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ content: 'server text' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    persistence.initPersistence()
+    const { setupWSConnection, getLoadedDocText } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-revoked-message',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+      { authorizeMessage: async () => authorized },
+    )
+
+    await waitFor(() => getLoadedDocText('doc-revoked-message') === 'server text')
+    authorized = false
+    ws.emit('message', Buffer.from(clientTextUpdate('revoked text')))
+
+    await waitFor(() => ws?.closed?.reason === 'collab_auth_revoked')
+    assert.equal(getLoadedDocText('doc-revoked-message'), 'server text')
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('setupWSConnection applies client updates while authorization remains valid', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ content: 'server text' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    persistence.initPersistence()
+    const { setupWSConnection, getLoadedDocText } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-authorized-message',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+      { authorizeMessage: async () => true },
+    )
+
+    await waitFor(() => getLoadedDocText('doc-authorized-message') === 'server text')
+    ws.emit('message', Buffer.from(clientTextUpdate('client text')))
+
+    await waitFor(() => getLoadedDocText('doc-authorized-message')?.includes('client text') ?? false)
+    assert.equal(ws.closed, null)
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
 function clientSyncStep1(): Uint8Array {
   const doc = new Y.Doc()
   const encoder = encoding.createEncoder()
   encoding.writeVarUint(encoder, MSG_SYNC)
   syncProtocol.writeSyncStep1(encoder, doc)
+  return encoding.toUint8Array(encoder)
+}
+
+function clientTextUpdate(text: string): Uint8Array {
+  const doc = new Y.Doc()
+  doc.getText('content').insert(0, text)
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, MSG_SYNC)
+  syncProtocol.writeUpdate(encoder, Y.encodeStateAsUpdate(doc))
   return encoding.toUint8Array(encoder)
 }
 

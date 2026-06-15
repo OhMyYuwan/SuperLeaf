@@ -107,6 +107,14 @@ wss.on(
     setupWSConnection(ws, ctx.docId, ctx.user, ctx.token, {
       clientGeneration: ctx.clientGeneration,
       authoritativeGeneration: ctx.authoritativeGeneration,
+      authorizeMessage: async () => {
+        const session = await verifyToken(ctx.token, BACKEND_URL, ctx.docId)
+        return Boolean(
+          session
+          && session.user.id === ctx.user.id
+          && session.collabGeneration === ctx.authoritativeGeneration
+        )
+      },
     })
   },
 )

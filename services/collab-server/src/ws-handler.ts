@@ -13,6 +13,8 @@ const MSG_AWARENESS = 1
 const SERVER_REPLACE_ORIGIN = Symbol('server_replace')
 export const DOC_REPLACED_CLOSE_CODE = 4009
 export const DOC_REPLACED_CLOSE_REASON = 'collab_doc_replaced'
+export const AUTH_REVOKED_CLOSE_CODE = 4008
+export const AUTH_REVOKED_CLOSE_REASON = 'collab_auth_revoked'
 
 interface DocRoom {
   doc: Y.Doc
@@ -37,6 +39,7 @@ export interface InvalidateDocResult {
 export interface ConnectionGenerationOptions {
   clientGeneration?: number | null
   authoritativeGeneration?: number | null
+  authorizeMessage?: () => boolean | Promise<boolean>
 }
 
 // Track which docs have active connections (for snapshot service).
@@ -184,6 +187,7 @@ export function setupWSConnection(
 
   let room: DocRoom | null = null
   let closed = false
+  let messageChain = Promise.resolve()
   const pendingMessages: Uint8Array[] = []
 
   ws.on('message', (data: ArrayBuffer | Buffer) => {
@@ -192,19 +196,17 @@ export function setupWSConnection(
       pendingMessages.push(buf)
       return
     }
-    try {
-      handleMessage(room, ws, buf, docId)
-    } catch (err) {
-      void recordCollabServerEvent('message_handling_failed', {
+    messageChain = messageChain.then(() => processMessage(buf, false)).catch((err: unknown) => {
+      void recordCollabServerEvent('message_processing_failed', {
         level: 'error',
         docId,
         userId: user.id,
         operation: 'message',
-        code: 'message_handling_failed',
+        code: 'message_processing_failed',
         message: errorMessage(err),
-        details: { bytes: buf.byteLength },
+        details: { bytes: buf.byteLength, queued: false },
       })
-    }
+    })
   })
 
   ws.on('close', () => {
@@ -264,21 +266,60 @@ export function setupWSConnection(
     }
 
     for (const pending of pendingMessages.splice(0)) {
-      try {
-        handleMessage(room, ws, pending, docId)
-      } catch (err) {
-        void recordCollabServerEvent('message_handling_failed', {
-          level: 'error',
-          docId,
-          userId: user.id,
-          operation: 'message',
-          code: 'message_handling_failed',
-          message: errorMessage(err),
-          details: { bytes: pending.byteLength, queued: true },
-        })
-      }
+      await processMessage(pending, true)
+      if (closed) break
     }
   })()
+
+  async function processMessage(buf: Uint8Array, queued: boolean): Promise<void> {
+    if (!room || closed || ws.readyState !== 1) return
+    if (!(await authorizeMessage(buf, queued))) return
+    try {
+      handleMessage(room, ws, buf, docId)
+    } catch (err) {
+      void recordCollabServerEvent('message_handling_failed', {
+        level: 'error',
+        docId,
+        userId: user.id,
+        operation: 'message',
+        code: 'message_handling_failed',
+        message: errorMessage(err),
+        details: { bytes: buf.byteLength, queued },
+      })
+    }
+  }
+
+  async function authorizeMessage(buf: Uint8Array, queued: boolean): Promise<boolean> {
+    const check = generationOptions.authorizeMessage
+    if (!check) return true
+    let authorized = false
+    try {
+      authorized = await check()
+    } catch (err) {
+      void recordCollabServerEvent('message_authorization_failed', {
+        level: 'warning',
+        docId,
+        userId: user.id,
+        operation: 'message_auth',
+        code: 'collab_auth_check_failed',
+        message: errorMessage(err),
+        details: { bytes: buf.byteLength, queued },
+      })
+    }
+    if (authorized) return true
+    void recordCollabServerEvent('message_authorization_revoked', {
+      level: 'warning',
+      docId,
+      userId: user.id,
+      operation: 'message_auth',
+      code: 'collab_auth_revoked',
+      details: { bytes: buf.byteLength, queued },
+    })
+    if (ws.readyState === 1) {
+      ws.close(AUTH_REVOKED_CLOSE_CODE, AUTH_REVOKED_CLOSE_REASON)
+    }
+    return false
+  }
 }
 
 function isCurrentGeneration(options: ConnectionGenerationOptions): boolean {

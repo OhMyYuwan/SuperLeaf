@@ -1,16 +1,19 @@
 import { Link } from 'react-router-dom'
 import { Pencil, Settings, Trash2 } from 'lucide-react'
 import type { ProjectSummary } from '../../services/projectsApi'
+import { normalizeProjectTags } from '../projectListUtils'
 
 interface Props {
   project: ProjectSummary
   onRename: (p: ProjectSummary) => void
   onDelete: (p: ProjectSummary) => void
   onSettings?: (p: ProjectSummary) => void
+  onTagClick?: (project: ProjectSummary, tag: string) => void
 }
 
-export function ProjectCard({ project, onRename, onDelete, onSettings }: Props) {
+export function ProjectCard({ project, onRename, onDelete, onSettings, onTagClick }: Props) {
   const typeBadge = projectTypeBadge(project)
+  const tags = normalizeProjectTags(project.tags)
   return (
     <div className="project-card">
       <Link to={`/projects/${project.id}`} className="project-card-body">
@@ -26,6 +29,23 @@ export function ProjectCard({ project, onRename, onDelete, onSettings }: Props) 
           更新于 {formatDate(project.updated_at)}
         </div>
       </Link>
+      {tags.length > 0 && (
+        <div className="project-tag-list" aria-label="项目标签">
+          {tags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              className="project-tag-pill"
+              onClick={(e) => {
+                e.stopPropagation()
+                onTagClick?.(project, tag)
+              }}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="project-card-actions">
         {onSettings && (
           <button

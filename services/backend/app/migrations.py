@@ -60,6 +60,7 @@ def run_migrations(engine: Engine) -> None:
         _add_project_archive_github_columns(conn)
         _add_project_skill_columns(conn)
         _add_project_type_column(conn)
+        _add_project_tags_column(conn)
         _create_dataset_tables(conn)
         _backfill_dataset_record_source_text(conn)
         _rebuild_native_agents_table(conn)
@@ -471,6 +472,14 @@ def _add_project_type_column(conn) -> None:
             )
         )
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_project_type ON projects(project_type)"))
+
+
+def _add_project_tags_column(conn) -> None:
+    if not _table_exists(conn, "projects"):
+        return
+    if not _column_exists(conn, "projects", "tags"):
+        conn.execute(text("ALTER TABLE projects ADD COLUMN tags JSON DEFAULT '[]'"))
+    conn.execute(text("UPDATE projects SET tags = '[]' WHERE tags IS NULL OR tags = ''"))
 
 
 def _create_dataset_tables(conn) -> None:

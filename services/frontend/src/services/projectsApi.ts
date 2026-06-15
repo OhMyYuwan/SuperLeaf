@@ -17,6 +17,7 @@ export interface ProjectSummary {
   compiler: string
   project_type: 'paper' | 'skill' | 'data' | string
   is_skill_project: boolean
+  tags: string[]
   project_skill_id: string
   skill_cache_version: number
   skill_cache_updated_at: string | null
@@ -28,6 +29,7 @@ export interface ProjectSummary {
 export interface ProjectCreate {
   name: string
   project_type?: 'paper' | 'skill' | 'data'
+  tags?: string[]
 }
 
 export interface GitHubProjectImport {
@@ -42,6 +44,7 @@ export interface ProjectUpdate {
   compiler?: string
   is_skill_project?: boolean
   project_type?: 'paper' | 'skill' | 'data'
+  tags?: string[]
 }
 
 export interface ProjectSkillCacheResult {

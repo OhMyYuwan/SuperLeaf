@@ -131,6 +131,66 @@
   gap: 12px;
 }
 
+.project-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.project-settings-section h3 {
+  margin: 0;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.project-settings-section p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.project-tags-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.settings-primary-btn {
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.85);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+}
+
+.settings-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-error-text {
+  font-size: 12px;
+  color: #fca5a5;
+}
+
 .settings-section-title {
   margin-top: 6px;
   font-size: 11px;

@@ -9,6 +9,13 @@ import * as syncProtocol from 'y-protocols/sync'
 import * as Y from 'yjs'
 
 const MSG_SYNC = 0
+const MAX_MESSAGE_BYTES = 256 * 1024
+const MAX_PENDING_BYTES = 512 * 1024
+const MAX_MESSAGES_PER_WINDOW = 120
+const RESOURCE_CLOSE_CODE = 1009
+const MESSAGE_TOO_LARGE_CLOSE_REASON = 'collab_message_too_large'
+const PENDING_QUEUE_CLOSE_REASON = 'collab_pending_queue_exceeded'
+const RATE_LIMIT_CLOSE_REASON = 'collab_rate_limited'
 
 class FakeSocket {
   readyState = 1
@@ -67,6 +74,132 @@ test('setupWSConnection replies to client sync step1 sent before room load finis
     ws.emit('message', Buffer.from(clientSyncStep1()))
 
     await waitFor(() => ws.sent.some(isSyncStep2))
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('setupWSConnection closes oversized messages before decode', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ content: 'server text' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    persistence.initPersistence()
+    const { setupWSConnection, getLoadedDocText } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-oversized-message',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+    )
+
+    await waitFor(() => getLoadedDocText('doc-oversized-message') === 'server text')
+    ws.emit('message', Buffer.alloc(MAX_MESSAGE_BYTES + 1))
+
+    await waitFor(() => ws?.closed?.reason === MESSAGE_TOO_LARGE_CLOSE_REASON)
+    assert.deepEqual(ws.closed, {
+      code: RESOURCE_CLOSE_CODE,
+      reason: MESSAGE_TOO_LARGE_CLOSE_REASON,
+    })
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('setupWSConnection closes when pending message bytes exceed the room-load budget', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  try {
+    globalThis.fetch = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      return new Response(JSON.stringify({ content: 'server text' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    persistence.initPersistence()
+    const { setupWSConnection } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-pending-byte-budget',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+    )
+
+    const chunk = Buffer.alloc(Math.floor(MAX_PENDING_BYTES / 3) + 1)
+    ws.emit('message', chunk)
+    ws.emit('message', chunk)
+    ws.emit('message', chunk)
+
+    await waitFor(() => ws?.closed?.reason === PENDING_QUEUE_CLOSE_REASON)
+    assert.deepEqual(ws.closed, {
+      code: RESOURCE_CLOSE_CODE,
+      reason: PENDING_QUEUE_CLOSE_REASON,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+  } finally {
+    ws?.emit('close')
+    globalThis.fetch = originalFetch
+    await persistence.getPersistence().destroy()
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('setupWSConnection rate-limits bursts of small messages', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'ylw-collab-test-'))
+  process.env.COLLAB_DATA_DIR = dataDir
+  const originalFetch = globalThis.fetch
+  const persistence = await import('./persistence.js')
+  let ws: FakeSocket | null = null
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ content: 'server text' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    persistence.initPersistence()
+    const { setupWSConnection, getLoadedDocText } = await import('./ws-handler.js')
+    ws = new FakeSocket()
+
+    setupWSConnection(
+      ws as never,
+      'doc-rate-limit',
+      { id: 'user-1', name: 'User One' },
+      'token-1',
+    )
+
+    await waitFor(() => getLoadedDocText('doc-rate-limit') === 'server text')
+    const message = Buffer.from(clientSyncStep1())
+    for (let index = 0; index <= MAX_MESSAGES_PER_WINDOW; index += 1) {
+      ws.emit('message', message)
+    }
+
+    await waitFor(() => ws?.closed?.reason === RATE_LIMIT_CLOSE_REASON)
+    assert.deepEqual(ws.closed, {
+      code: RESOURCE_CLOSE_CODE,
+      reason: RATE_LIMIT_CLOSE_REASON,
+    })
   } finally {
     ws?.emit('close')
     globalThis.fetch = originalFetch

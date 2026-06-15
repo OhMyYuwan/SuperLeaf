@@ -129,6 +129,10 @@ def delete_evaluation(db: Session, evaluation: AnnotationEvaluation) -> None:
 # --------------------------------------------------------------------------
 
 
+class ReviewStateScopeError(ValueError):
+    """Raised when an existing review state belongs to a different scope."""
+
+
 def set_review_status(
     db: Session,
     *,
@@ -147,7 +151,8 @@ def set_review_status(
         )
         db.add(row)
     else:
-        row.doc_id = doc_id
+        if row.user_id != user_id or row.doc_id != doc_id:
+            raise ReviewStateScopeError("review state not found")
         row.status = status
         row.updated_at = datetime.utcnow()
     db.flush()

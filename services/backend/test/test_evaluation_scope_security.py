@@ -41,6 +41,7 @@ def seeded(db: Session) -> dict[str, User]:
     viewer = User(id="viewer", email="viewer@example.com", password_hash="hash", display_name="Viewer")
     project = Project(id="project-a", user_id=owner.id, name="Project A")
     doc = Doc(id="doc-a", project_id=project.id, folder_id=None, name="main.tex", content="hello")
+    second_doc = Doc(id="doc-b", project_id=project.id, folder_id=None, name="other.tex", content="world")
     db.add_all(
         [
             owner,
@@ -48,6 +49,7 @@ def seeded(db: Session) -> dict[str, User]:
             project,
             ProjectMember(project_id=project.id, user_id=viewer.id, role="editor"),
             doc,
+            second_doc,
             AnnotationEvaluation(
                 id="eval-owner",
                 annotation_id="ann-owner",
@@ -128,3 +130,55 @@ def test_review_summary_excludes_other_users_evaluations(db: Session, seeded: di
     assert set(by_annotation) == {"ann-viewer"}
     assert by_annotation["ann-viewer"]["review_status"] == "addressed"
     assert by_annotation["ann-viewer"]["evaluations"][0]["reason"] == "viewer scoped reason"
+
+
+def test_review_status_update_rejects_existing_row_owned_by_other_user(
+    db: Session, viewer_client: TestClient
+) -> None:
+    response = viewer_client.patch(
+        "/api/annotations/ann-owner/review-status",
+        headers={"X-Project-Id": "project-a"},
+        json={"doc_id": "doc-a", "status": "addressed"},
+    )
+
+    assert response.status_code == 404
+    row = db.get(AnnotationReviewState, "ann-owner")
+    assert row is not None
+    assert row.user_id == "owner"
+    assert row.doc_id == "doc-a"
+    assert row.status == "dismissed"
+
+
+def test_review_status_update_cannot_move_existing_row_to_different_doc(
+    db: Session, viewer_client: TestClient
+) -> None:
+    response = viewer_client.patch(
+        "/api/annotations/ann-viewer/review-status",
+        headers={"X-Project-Id": "project-a"},
+        json={"doc_id": "doc-b", "status": "dismissed"},
+    )
+
+    assert response.status_code == 404
+    row = db.get(AnnotationReviewState, "ann-viewer")
+    assert row is not None
+    assert row.user_id == "viewer"
+    assert row.doc_id == "doc-a"
+    assert row.status == "addressed"
+
+
+def test_review_status_update_allows_same_user_same_doc(
+    db: Session, viewer_client: TestClient
+) -> None:
+    response = viewer_client.patch(
+        "/api/annotations/ann-viewer/review-status",
+        headers={"X-Project-Id": "project-a"},
+        json={"doc_id": "doc-a", "status": "dismissed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "dismissed"
+    row = db.get(AnnotationReviewState, "ann-viewer")
+    assert row is not None
+    assert row.user_id == "viewer"
+    assert row.doc_id == "doc-a"
+    assert row.status == "dismissed"

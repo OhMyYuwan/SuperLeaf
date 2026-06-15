@@ -211,13 +211,16 @@ def patch_review_status(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> ReviewStateOut:
     _ensure_doc(db, project, body.doc_id)
-    row = evaluation_service.set_review_status(
-        db,
-        annotation_id=annotation_id,
-        doc_id=body.doc_id,
-        status=body.status,
-        user_id=user.id,
-    )
+    try:
+        row = evaluation_service.set_review_status(
+            db,
+            annotation_id=annotation_id,
+            doc_id=body.doc_id,
+            status=body.status,
+            user_id=user.id,
+        )
+    except evaluation_service.ReviewStateScopeError as exc:
+        raise HTTPException(404, "review state not found") from exc
     db.commit()
     out = ReviewStateOut(
         annotation_id=row.annotation_id,

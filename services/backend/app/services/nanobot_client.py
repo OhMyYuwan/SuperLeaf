@@ -12,8 +12,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
+from ..settings import settings
+from .safe_http import safe_async_client
 from .sse_decode import iter_sse_json_events
 
 
@@ -56,7 +56,10 @@ class NanobotClient:
 
     async def probe(self) -> NanobotInfo:
         health_payload: dict[str, Any] = {}
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.get(self._url("/health"), headers=self._headers)
             if resp.status_code not in (200, 404, 405):
                 raise NanobotError(resp.status_code, resp.text[:400])
@@ -113,7 +116,10 @@ class NanobotClient:
             body["tools"] = tools
             body["tool_choice"] = tool_choice or "auto"
 
-        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=None,
+        ) as client:
             async with client.stream(
                 "POST",
                 self._url("/v1/chat/completions"),
@@ -128,7 +134,10 @@ class NanobotClient:
                     yield event
 
     async def _request_json(self, method: str, path: str) -> Any:
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.request(method, self._url(path), headers=self._headers)
             if resp.status_code != 200:
                 raise NanobotError(resp.status_code, resp.text[:400])

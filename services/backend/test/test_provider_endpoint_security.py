@@ -79,6 +79,27 @@ def test_backend_provider_create_rejects_dns_name_resolving_to_private_ip(
         )
 
 
+def test_backend_provider_create_fails_closed_on_dns_resolution_failure(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hostname that does not resolve at registration time must be rejected,
+    # not silently accepted: the legacy gaierror->return path was an SSRF
+    # fail-open (the name could still resolve to an internal address later).
+    def boom(*_args, **_kwargs):
+        raise socket.gaierror("no such host")
+
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+
+    with pytest.raises(ValueError, match="resolve|refus"):
+        ProviderService(db).create(
+            user_id="user-a",
+            name="unresolvable",
+            kind="dify-cloud",
+            endpoint="https://nxdomain.attacker.test/v1",
+            api_key="secret",
+        )
+
+
 def test_backend_provider_create_allows_public_https_endpoint(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

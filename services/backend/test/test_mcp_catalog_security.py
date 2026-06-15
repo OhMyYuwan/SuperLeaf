@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 import json
+import socket
 
 import pytest
 
 from app.services import mcp_catalog_service
 from app.services.mcp_catalog_service import McpCatalogError, McpCatalogService
+
+
+def _resolve_public(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any hostname resolve to a public IP.
+
+    The catalog host (``catalog.example.test``) is not a real name; without
+    this the SSRF policy now fails closed on the unresolvable host before the
+    preset-URL policy under test is ever exercised. Literal-IP preset URLs
+    (127.0.0.1, etc.) are still validated directly and never hit DNS.
+    """
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_a, **_k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+        ],
+    )
 
 
 class JsonResponse:
@@ -25,6 +43,7 @@ class JsonResponse:
 def test_mcp_catalog_rejects_absolute_loopback_preset_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
+    _resolve_public(monkeypatch)
     catalog_url = "https://catalog.example.test/catalog.json"
     private_url = "http://127.0.0.1:8765/private/preset.json"
     requested: list[str] = []
@@ -76,6 +95,7 @@ def test_mcp_catalog_rejects_absolute_private_golden_test_url(
 def test_mcp_catalog_allows_relative_preset_under_same_origin(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
+    _resolve_public(monkeypatch)
     catalog_url = "https://catalog.example.test/catalog.json"
     preset_url = "https://catalog.example.test/presets/demo.json"
     requested: list[str] = []

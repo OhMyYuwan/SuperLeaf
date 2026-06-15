@@ -18,12 +18,14 @@ from typing import Any
 import httpx
 
 from ..mcp.transport import MCP_PROTOCOL_VERSION
+from ..settings import settings
 from .mcp_policy import (
     ensure_mcp_transport_allowed,
     normalize_mcp_transport,
     remote_endpoint_from_server,
     validate_remote_endpoint,
 )
+from .safe_http import safe_async_client
 
 MAX_MCP_RESULT_CHARS = 24_000
 
@@ -248,7 +250,10 @@ class _RemoteMcpSession:
         self.server = server
         self.endpoint = server.endpoint or server.command
         self._next_id = 1
-        self._client = httpx.AsyncClient(timeout=MCP_TIMEOUT_SECONDS)
+        self._client = safe_async_client(
+            allow_private=settings.mcp_remote_private_networks_enabled,
+            timeout=MCP_TIMEOUT_SECONDS,
+        )
         self._session_id = ""
 
     async def initialize(self) -> None:

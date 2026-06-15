@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Skill
 from ..settings import settings
+from .mcp_policy import validate_remote_endpoint
 from .project_fs_service import ProjectFsService
 from .project_service import ProjectService
 from .skill_recipe_metadata import (
@@ -231,6 +232,10 @@ class SkillMarketplaceService:
 
     def _fetch_text(self, url_or_path: str) -> str:
         url = urllib.parse.urljoin(self.catalog_url, url_or_path)
+        try:
+            validate_remote_endpoint(url)
+        except ValueError as exc:
+            raise SkillMarketplaceError(f"Blocked Skill marketplace URL {url}: {exc}") from exc
         req = urllib.request.Request(
             url,
             headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},

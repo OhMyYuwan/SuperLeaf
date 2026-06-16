@@ -237,6 +237,8 @@ async def run_workflow(
     SSE events which we forward under a `nanobot` event name, then collapse into
     `outputs.text` for the existing annotation parser.
     """
+    _ensure_run_document(db, project, body.document_id)
+
     if workflow_id.startswith(NATIVE_WORKFLOW_PREFIX):
         resolved = AgentRegistryService(db).resolve(
             workflow_id,

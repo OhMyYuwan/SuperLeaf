@@ -308,10 +308,28 @@ export function mcpPresetSourceLabel(preset: McpPreset): string {
 
 export function mcpPresetSourceUrl(preset: McpPreset): string {
   const url = preset.source?.url
-  if (typeof url === 'string' && url.trim()) return url.trim()
+  if (typeof url === 'string' && url.trim()) {
+    const safeUrl = safeHttpUrl(url)
+    if (safeUrl) return safeUrl
+  }
   const repo = preset.source?.repo
-  if (typeof repo === 'string' && repo.includes('/')) return `https://github.com/${repo.trim()}`
+  if (typeof repo === 'string') {
+    const cleanRepo = repo.trim()
+    if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(cleanRepo)) {
+      return `https://github.com/${cleanRepo}`
+    }
+  }
   return ''
+}
+
+function safeHttpUrl(value: string): string {
+  const trimmed = value.trim()
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? trimmed : ''
+  } catch {
+    return ''
+  }
 }
 
 export function mcpPresetEnvSummary(preset: McpPreset): string {

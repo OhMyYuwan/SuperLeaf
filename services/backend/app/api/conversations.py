@@ -654,6 +654,13 @@ def _browser_tool_model_content(result: Any, model_visible: dict[str, Any]) -> s
     return json.dumps(model_visible, ensure_ascii=False)
 
 
+def _ensure_conversation_document(db: Session, project: Project, document_id: str) -> Doc:
+    doc = db.get(Doc, document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+    return doc
+
+
 @router.get("", response_model=list[ConversationOut])
 def list_conversations(
     document_id: str | None = None,
@@ -716,6 +723,7 @@ def create_conversation(
     resolved = _resolve_agent(db, body.workflow_id, project=project, user=user)
     if resolved is None:
         raise HTTPException(404, "Agent (workflow) not found")
+    _ensure_conversation_document(db, project, body.document_id)
     conv = Conversation(
         project_id=project.id,
         user_id=user.id,

@@ -4,7 +4,7 @@ import * as awarenessProtocol from 'y-protocols/awareness'
 import * as encoding from 'lib0/encoding'
 import * as decoding from 'lib0/decoding'
 import type { WebSocket } from 'ws'
-import type { AuthUser } from './index.js'
+import type { AuthUser } from './upgrade-auth.js'
 import { errorMessage, recordCollabServerEvent } from './audit-log.js'
 import { getPersistence, loadOrCreateDoc, storeUpdate } from './persistence.js'
 

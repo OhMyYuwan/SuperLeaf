@@ -158,6 +158,72 @@ def test_annotation_upsert_allows_same_user_same_doc_retry(
     assert row.content == "attacker retry content"
 
 
+def test_downgraded_viewer_cannot_patch_own_global_annotation(
+    db: Session, seeded: dict[str, User], attacker_client: TestClient
+) -> None:
+    row = _annotation(
+        "ann-attacker-global-victim-project",
+        doc_id="doc-a",
+        project_id="project-a",
+        user_id=seeded["attacker"].id,
+        is_global=True,
+        content="before downgrade",
+    )
+    db.add(row)
+    member = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == "project-a",
+            ProjectMember.user_id == seeded["attacker"].id,
+        )
+        .one()
+    )
+    member.role = "viewer"
+    db.commit()
+
+    response = attacker_client.patch(
+        "/api/annotations/items/ann-attacker-global-victim-project",
+        headers={"X-Project-Id": "project-a"},
+        json={"content": "patched as viewer"},
+    )
+
+    assert response.status_code == 403
+    db.refresh(row)
+    assert row.content == "before downgrade"
+
+
+def test_downgraded_viewer_cannot_delete_own_global_annotation(
+    db: Session, seeded: dict[str, User], attacker_client: TestClient
+) -> None:
+    row = _annotation(
+        "ann-attacker-global-delete",
+        doc_id="doc-a",
+        project_id="project-a",
+        user_id=seeded["attacker"].id,
+        is_global=True,
+        content="shared content",
+    )
+    db.add(row)
+    member = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == "project-a",
+            ProjectMember.user_id == seeded["attacker"].id,
+        )
+        .one()
+    )
+    member.role = "viewer"
+    db.commit()
+
+    response = attacker_client.delete(
+        "/api/annotations/items/ann-attacker-global-delete",
+        headers={"X-Project-Id": "project-a"},
+    )
+
+    assert response.status_code == 403
+    assert db.get(Annotation, "ann-attacker-global-delete") is not None
+
+
 def _annotation(
     annotation_id: str,
     *,

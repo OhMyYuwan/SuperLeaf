@@ -324,6 +324,10 @@ def _is_range_only_patch(body: AnnotationPatchIn) -> bool:
     return bool(touched) and touched <= _RANGE_PATCH_FIELDS
 
 
+def _annotation_patch_requires_project_write(row: Annotation, body: AnnotationPatchIn) -> bool:
+    return row.is_global or body.publish is not None
+
+
 def _ensure_annotation_patch_allowed(
     db: Session,
     project: Project,
@@ -332,6 +336,10 @@ def _ensure_annotation_patch_allowed(
     body: AnnotationPatchIn,
 ) -> None:
     if row.user_id == user.id:
+        if _annotation_patch_requires_project_write(row, body) and not ProjectMemberService(db).can_write(
+            project.id, user.id
+        ):
+            raise HTTPException(403, "Read-only access")
         return
     if row.is_global and _is_range_only_patch(body):
         if ProjectMemberService(db).can_write(project.id, user.id):
@@ -483,6 +491,8 @@ def delete_annotation(
     if row.user_id and row.user_id != user.id:
         return  # not yours
     _ensure_doc(db, project, row.doc_id)
+    if row.is_global and not ProjectMemberService(db).can_write(project.id, user.id):
+        raise HTTPException(403, "Read-only access")
     doc_id = row.doc_id
     annotation_service.delete(db, row)
     db.commit()

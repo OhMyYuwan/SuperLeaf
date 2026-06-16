@@ -607,9 +607,18 @@ class ProjectFsService:
         if not root.exists() or not root.is_dir():
             raise ValueError("import root not found")
 
+        root_resolved = root.resolve(strict=True)
         importable_paths: list[Path] = []
         for file_path in sorted(root.rglob("*")):
+            if file_path.is_symlink():
+                continue
             if not file_path.is_file():
+                continue
+            try:
+                resolved = file_path.resolve(strict=True)
+            except OSError:
+                continue
+            if not resolved.is_relative_to(root_resolved):
                 continue
             rel = file_path.relative_to(root)
             if _is_ignored_import_path(rel):

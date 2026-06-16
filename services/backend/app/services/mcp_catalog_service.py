@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
+
+import httpx
 
 from ..settings import settings
 from .mcp_policy import (
@@ -16,6 +16,7 @@ from .mcp_policy import (
     validate_remote_endpoint,
 )
 from .mcp_tool_service import call_mcp_tool, discover_mcp_tools
+from .safe_http import SsrfPolicyError, safe_fetch_text
 
 
 class McpCatalogError(RuntimeError):
@@ -262,15 +263,20 @@ def _read_json_url(url: str) -> dict[str, Any]:
         validate_remote_endpoint(url)
     except ValueError as exc:
         raise McpCatalogError(f"Blocked MCP catalog URL {url}: {exc}") from exc
-    req = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except HTTPError as exc:
-        raise McpCatalogError(f"Failed to read MCP catalog URL {url}: HTTP {exc.code}") from exc
+        raw = safe_fetch_text(
+            url,
+            headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},
+            timeout=20,
+            allow_private=settings.mcp_remote_private_networks_enabled,
+        )
+        payload = json.loads(raw)
+    except SsrfPolicyError as exc:
+        raise McpCatalogError(f"Blocked MCP catalog URL {url}: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        raise McpCatalogError(
+            f"Failed to read MCP catalog URL {url}: HTTP {exc.response.status_code}"
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise McpCatalogError(f"Failed to read MCP catalog URL {url}: {exc}") from exc
     if not isinstance(payload, dict):

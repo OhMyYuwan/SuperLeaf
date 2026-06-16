@@ -1,29 +1,16 @@
 from __future__ import annotations
 
+import socket
 from unittest.mock import Mock
 
+import httpx
 import pytest
 
-from app.services import skill_marketplace_service
 from app.services.skill_marketplace_service import (
     MarketplaceEntry,
     SkillMarketplaceError,
     SkillMarketplaceService,
 )
-
-
-class TextResponse:
-    def __init__(self, text: str) -> None:
-        self.payload = text.encode()
-
-    def __enter__(self) -> TextResponse:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self) -> bytes:
-        return self.payload
 
 
 def test_skill_marketplace_rejects_absolute_loopback_entry_url(
@@ -33,13 +20,11 @@ def test_skill_marketplace_rejects_absolute_loopback_entry_url(
     private_url = "http://127.0.0.1:8765/private/SKILL.md"
     requested: list[str] = []
 
-    def fake_urlopen(req, *, timeout: int) -> TextResponse:
-        requested.append(req.full_url)
-        if req.full_url == private_url:
-            return TextResponse("# Private skill\n")
-        raise AssertionError(f"unexpected URL: {req.full_url}")
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        requested.append(str(request.url))
+        raise AssertionError(f"unexpected request: {request.url}")
 
-    monkeypatch.setattr(skill_marketplace_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
 
     service = SkillMarketplaceService(Mock(), catalog_url=catalog_url)
     with pytest.raises(SkillMarketplaceError, match="localhost|private|reserved"):
@@ -55,13 +40,11 @@ def test_skill_marketplace_rejects_absolute_private_readme_url(
     private_url = "http://169.254.169.254/latest/meta-data"
     requested: list[str] = []
 
-    def fake_urlopen(req, *, timeout: int) -> TextResponse:
-        requested.append(req.full_url)
-        if req.full_url == private_url:
-            return TextResponse("instance secret")
-        raise AssertionError(f"unexpected URL: {req.full_url}")
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        requested.append(str(request.url))
+        raise AssertionError(f"unexpected request: {request.url}")
 
-    monkeypatch.setattr(skill_marketplace_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
 
     service = SkillMarketplaceService(Mock(), catalog_url=catalog_url)
     readme = service._clone_readme(
@@ -77,22 +60,63 @@ def test_skill_marketplace_allows_relative_entry_under_catalog_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalog_url = "https://example.com/marketplace.json"
-    entry_url = "https://example.com/skills/demo/SKILL.md"
-    requested: list[str] = []
+    requested: list[tuple[str, str, str]] = []
 
-    def fake_urlopen(req, *, timeout: int) -> TextResponse:
-        requested.append(req.full_url)
-        if req.full_url == entry_url:
-            return TextResponse("# Demo skill\n")
-        raise AssertionError(f"unexpected URL: {req.full_url}")
+    def fake_getaddrinfo(*_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
-    monkeypatch.setattr(skill_marketplace_service.urllib.request, "urlopen", fake_urlopen)
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        requested.append(
+            (
+                request.url.host or "",
+                request.headers.get("Host", ""),
+                request.url.path,
+            )
+        )
+        if request.url.path == "/skills/demo/SKILL.md":
+            return httpx.Response(200, text="# Demo skill\n", request=request)
+        raise AssertionError(f"unexpected request path: {request.url.path}")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
 
     service = SkillMarketplaceService(Mock(), catalog_url=catalog_url)
     content = service._fetch_text("skills/demo/SKILL.md")
 
     assert content == "# Demo skill\n"
-    assert requested == [entry_url]
+    assert requested == [("93.184.216.34", "example.com", "/skills/demo/SKILL.md")]
+
+
+def test_skill_marketplace_fetch_uses_pinned_http_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_url = "https://example.com/marketplace.json"
+    entry_url = "https://example.com/skills/demo/SKILL.md"
+    captured: list[tuple[str, str, str]] = []
+
+    def fake_getaddrinfo(*_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        captured.append(
+            (
+                request.url.host or "",
+                request.headers.get("Host", ""),
+                request.url.path,
+            )
+        )
+        if request.url.path == "/skills/demo/SKILL.md":
+            return httpx.Response(200, text="# Demo skill\n", request=request)
+        raise AssertionError(f"unexpected request path: {request.url.path}")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
+
+    service = SkillMarketplaceService(Mock(), catalog_url=catalog_url)
+    content = service._fetch_text(entry_url)
+
+    assert content == "# Demo skill\n"
+    assert captured == [("93.184.216.34", "example.com", "/skills/demo/SKILL.md")]
 
 
 def _marketplace_entry(**overrides: str) -> MarketplaceEntry:

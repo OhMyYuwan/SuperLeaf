@@ -122,6 +122,67 @@ def make_client(
     return TestClient(app)
 
 
+def make_anonymous_client(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    app = FastAPI()
+    app.include_router(compile_api.router)
+    fake_service = FakeCompilerService()
+    monkeypatch.setattr(compile_api, "get_compiler_service", lambda: fake_service)
+
+    def override_session() -> Iterator[Session]:
+        yield db
+
+    app.dependency_overrides[get_session] = override_session
+    return TestClient(app)
+
+
+def test_compiler_listing_requires_authentication(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with make_anonymous_client(db, monkeypatch) as client:
+        response = client.get("/api/compile/compilers")
+
+    assert response.status_code == 401
+
+
+def test_authenticated_user_can_list_compilers(
+    db: Session,
+    seed: SeedData,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with make_client(db, seed.owner, monkeypatch) as client:
+        response = client.get("/api/compile/compilers")
+
+    assert response.status_code == 200
+    assert response.json() == {"available": ["pdflatex"], "default": "pdflatex"}
+
+
+def test_compiler_rescan_requires_admin(
+    db: Session,
+    seed: SeedData,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with make_client(db, seed.owner, monkeypatch) as client:
+        response = client.post("/api/compile/rescan")
+
+    assert response.status_code == 403
+
+
+def test_admin_can_rescan_compilers(
+    db: Session,
+    seed: SeedData,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed.owner.is_admin = True
+    with make_client(db, seed.owner, monkeypatch) as client:
+        response = client.post("/api/compile/rescan")
+
+    assert response.status_code == 200
+
+
 def test_viewer_cannot_trigger_fresh_compile(
     db: Session,
     seed: SeedData,
@@ -212,6 +273,9 @@ def test_owner_can_store_valid_tex_main_doc(
 
 class FakeCompilerService:
     available_compilers = ["pdflatex"]
+
+    def rescan_compilers(self) -> None:
+        return None
 
     async def compile_project(
         self,

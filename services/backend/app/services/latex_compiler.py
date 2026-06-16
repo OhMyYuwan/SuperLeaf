@@ -22,6 +22,7 @@ import asyncio
 import os
 import posixpath
 import re
+import resource
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +47,10 @@ COMPILER_CONTROL_FILENAMES = frozenset(
 )
 TEX_FILE_ACCESS_POLICY = "p"
 DIRECT_COMPILER_SECURITY_ARGS = ("-no-shell-escape",)
+COMPILE_CPU_LIMIT_SECONDS = 130
+COMPILE_FILE_SIZE_LIMIT_BYTES = 256 * 1024 * 1024
+COMPILE_ADDRESS_SPACE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+COMPILE_PROCESS_LIMIT = 256
 GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
 INCLUDEGRAPHICS_RE = re.compile(
     r"(?P<command>\\includegraphics(?:\s*\[[^\]]*\])?\s*)\{(?P<target>[^{}]+)\}"
@@ -902,6 +907,7 @@ class LatexCompilerService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
+                preexec_fn=LatexCompilerService._apply_compile_resource_limits,
             )
         except FileNotFoundError as e:
             return "missing", str(e)
@@ -915,6 +921,23 @@ class LatexCompilerService:
             return "timeout", ""
         output = stdout.decode("utf-8", errors="replace") if stdout else ""
         return proc.returncode, output
+
+    @staticmethod
+    def _apply_compile_resource_limits() -> None:
+        limits = [
+            ("RLIMIT_CPU", COMPILE_CPU_LIMIT_SECONDS),
+            ("RLIMIT_FSIZE", COMPILE_FILE_SIZE_LIMIT_BYTES),
+            ("RLIMIT_NPROC", COMPILE_PROCESS_LIMIT),
+            ("RLIMIT_AS", COMPILE_ADDRESS_SPACE_LIMIT_BYTES),
+        ]
+        for name, value in limits:
+            limit = getattr(resource, name, None)
+            if limit is None:
+                continue
+            try:
+                _set_child_resource_limit(limit, value)
+            except (OSError, ValueError):
+                continue
 
     @staticmethod
     def _aux_needs_bibtex(aux_path: Path) -> bool:
@@ -960,6 +983,14 @@ def get_compiler_service() -> LatexCompilerService:
     if _compiler_service is None:
         _compiler_service = LatexCompilerService()
     return _compiler_service
+
+
+def _set_child_resource_limit(limit: int, desired: int) -> None:
+    current_soft, current_hard = resource.getrlimit(limit)
+    hard = desired if current_hard == resource.RLIM_INFINITY else min(current_hard, desired)
+    soft = desired if current_soft == resource.RLIM_INFINITY else min(current_soft, desired)
+    soft = min(soft, hard)
+    resource.setrlimit(limit, (soft, hard))
 
 
 def _validate_compile_entry_name(name: str, *, field: str) -> str:

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 
 from ..models import NativeAgent
 from ..settings import settings
@@ -38,6 +37,9 @@ class SkillInstallResult:
     manifest: dict
     install_command: str
     log: str
+
+
+SAFE_NPX_PREFIX_FLAGS = {"--yes", "-y"}
 
 
 class SkillNpxInstaller:
@@ -79,13 +81,19 @@ class SkillNpxInstaller:
                 )
             except subprocess.TimeoutExpired as exc:
                 raise SkillNpxInstallError("npx skills add timed out") from exc
-            log = _clip_log((proc.stdout or "") + ("\n" if proc.stdout and proc.stderr else "") + (proc.stderr or ""))
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+            log = _clip_log(stdout + ("\n" if stdout and stderr else "") + stderr)
             if proc.returncode != 0:
                 raise SkillNpxInstallError(log or f"npx skills add failed with exit code {proc.returncode}")
 
             source_folder = find_installed_skill_folder(tmp_path, preferred_skill_name=skill_name)
             folder_name = _folder_name(recipe, source_folder)
-            dest, manifest = self.workspace.install_skill_folder(agent, source_folder, folder_name=folder_name)
+            dest, manifest = self.workspace.install_skill_folder(
+                agent,
+                source_folder,
+                folder_name=folder_name,
+            )
             return SkillInstallResult(
                 folder_name=dest.name,
                 folder_path=str(dest),
@@ -115,7 +123,11 @@ def _command_from_recipe(recipe: SkillInstallRecipe) -> tuple[list[str], str, st
     if raw_command:
         command, source_url, command_skill_name = _parse_npx_install_command(raw_command)
         skill_name = command_skill_name or _validate_skill_name(recipe.skill_name, required=False)
-        if skill_name and "--skill" not in command and not any(part.startswith("--skill=") for part in command):
+        if (
+            skill_name
+            and "--skill" not in command
+            and not any(part.startswith("--skill=") for part in command)
+        ):
             command.extend(["--skill", skill_name])
         command = _ensure_install_flags(command)
         if not _is_direct_skill_source(source_url):
@@ -145,6 +157,7 @@ def _parse_npx_install_command(command: str) -> tuple[list[str], str, str]:
             break
     if skills_index < 0 or skills_index + 2 >= len(parts):
         raise SkillNpxInstallError("install_command must contain `skills add <source>`")
+    _validate_npx_install_command_parts(parts, skills_index)
     source_url = _validate_source_url(parts[skills_index + 2])
     skill_name = ""
     rest = parts[skills_index + 3 :]
@@ -156,6 +169,45 @@ def _parse_npx_install_command(command: str) -> tuple[list[str], str, str]:
             skill_name = _validate_skill_name(item.split("=", 1)[1], required=False)
             break
     return parts, source_url, skill_name
+
+
+def _validate_npx_install_command_parts(parts: list[str], skills_index: int) -> None:
+    for item in parts[1:skills_index]:
+        if item not in SAFE_NPX_PREFIX_FLAGS:
+            raise SkillNpxInstallError("install_command contains unsupported npx execution flags")
+
+    rest = parts[skills_index + 3 :]
+    idx = 0
+    while idx < len(rest):
+        item = rest[idx]
+        if item in {"--yes", "-y", "--copy"}:
+            idx += 1
+            continue
+        if item == "--skill":
+            if idx + 1 >= len(rest):
+                raise SkillNpxInstallError("install_command --skill requires a value")
+            _validate_skill_name(rest[idx + 1], required=True)
+            idx += 2
+            continue
+        if item.startswith("--skill="):
+            _validate_skill_name(item.split("=", 1)[1], required=True)
+            idx += 1
+            continue
+        if item == "--agent":
+            if idx + 1 >= len(rest):
+                raise SkillNpxInstallError("install_command --agent requires a value")
+            if rest[idx + 1] != "codex":
+                raise SkillNpxInstallError("install_command --agent must be codex")
+            idx += 2
+            continue
+        if item.startswith("--agent="):
+            if item.split("=", 1)[1] != "codex":
+                raise SkillNpxInstallError("install_command --agent must be codex")
+            idx += 1
+            continue
+        if item.startswith("-"):
+            raise SkillNpxInstallError("install_command contains unsupported skills add flags")
+        raise SkillNpxInstallError("install_command contains unexpected extra arguments")
 
 
 def _ensure_install_flags(command: list[str]) -> list[str]:

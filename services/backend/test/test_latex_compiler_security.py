@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models import Doc, Project, User
+from app.services import latex_compiler
 from app.services.latex_compiler import LatexCompilerService
 from app.services.project_entry_name import ProjectEntryNameError
 
@@ -117,6 +118,26 @@ def test_compile_env_forces_paranoid_tex_file_policies(
 
     assert env["openin_any"] == "p"
     assert env["openout_any"] == "p"
+
+
+def test_compile_subprocess_applies_resource_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[int, tuple[int, int]]] = []
+
+    def fake_setrlimit(limit: int, values: tuple[int, int]) -> None:
+        calls.append((limit, values))
+
+    monkeypatch.setattr(latex_compiler.resource, "setrlimit", fake_setrlimit)
+
+    LatexCompilerService._apply_compile_resource_limits()
+
+    limit_names = {
+        getattr(__import__("resource"), "RLIMIT_CPU", None),
+        getattr(__import__("resource"), "RLIMIT_FSIZE", None),
+        getattr(__import__("resource"), "RLIMIT_NPROC", None),
+        getattr(__import__("resource"), "RLIMIT_AS", None),
+    }
+    seen = {limit for limit, _values in calls}
+    assert seen >= {limit for limit in limit_names if limit is not None}
 
 
 @pytest.mark.asyncio

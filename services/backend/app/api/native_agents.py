@@ -6,13 +6,13 @@ left for a follow-up request.
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import os
-from pathlib import Path
 import re
 import zipfile
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -46,15 +46,15 @@ from ..schemas import (
     NativeMcpServerOut,
     NativeMcpServerPatch,
     SkillIn,
-    SkillMarketplaceEntryOut,
     SkillMarketplaceCloneIn,
     SkillMarketplaceCloneOut,
+    SkillMarketplaceEntryOut,
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
-    SkillUsageOut,
     SkillPatch,
     SkillRecipeIn,
+    SkillUsageOut,
 )
 from ..services.agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from ..services.mcp_catalog_service import McpCatalogError, McpCatalogService
@@ -187,6 +187,13 @@ def _skill_export_folder_name(row: Skill) -> str:
     raw_name = (row.name or "skill").strip()
     safe_name = re.sub(r"[\x00-\x1f/\\:]+", "-", raw_name).strip(" .")
     return safe_name[:100] or "skill"
+
+
+def _ensure_npx_skill_install_allowed(user: User) -> None:
+    if not getattr(settings, "skill_npx_install_enabled", True):
+        raise HTTPException(403, "npx skill installation is disabled by server policy")
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(403, "admin privileges are required for npx skill installation")
 
 
 def _skill_export_archive(row: Skill) -> tuple[str, bytes]:
@@ -1022,7 +1029,10 @@ def download_local_agent_host(
         filename, payload = _local_agent_host_package()
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
-    disposition = f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
+    disposition = (
+        'attachment; filename="superleaf-local-agent-host.zip"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
     sha256 = hashlib.sha256(payload).hexdigest()
     return Response(
         content=payload,
@@ -1124,14 +1134,18 @@ def uninstall_marketplace_skill(
     SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
 
 
-@router.post("/skill-marketplace/{skill_id}/clone-to-local", response_model=SkillMarketplaceCloneOut, status_code=201)
+@router.post(
+    "/skill-marketplace/{skill_id}/clone-to-local",
+    response_model=SkillMarketplaceCloneOut,
+    status_code=201,
+)
 def clone_marketplace_skill_to_local(
     skill_id: str,
     body: SkillMarketplaceCloneIn = SkillMarketplaceCloneIn(),
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> SkillMarketplaceCloneOut:
-    """Fetch the marketplace SKILL.md, create an editable local copy, and remove the marketplace installation."""
+    """Fetch marketplace SKILL.md, create an editable local copy, and remove the install."""
     try:
         row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
     except SkillMarketplaceError as exc:
@@ -1164,8 +1178,8 @@ def create_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
-    if body.skill_recipes and not getattr(settings, "skill_npx_install_enabled", True):
-        raise HTTPException(403, "npx skill installation is disabled by server policy")
+    if body.skill_recipes:
+        _ensure_npx_skill_install_allowed(user)
     try:
         row = NativeAgentService(db).create_agent(
             project_id=project.id,
@@ -1210,8 +1224,7 @@ def install_agent_skill_recipe(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentSkillInstallOut:
-    if not getattr(settings, "skill_npx_install_enabled", True):
-        raise HTTPException(403, "NPX skill installation is disabled by backend configuration")
+    _ensure_npx_skill_install_allowed(user)
     try:
         row = NativeAgentService(db).install_agent_skill_recipe(
             agent_id,
@@ -1251,12 +1264,15 @@ def update_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
+    patch = body.model_dump(exclude_unset=True)
+    if patch.get("skill_recipes"):
+        _ensure_npx_skill_install_allowed(user)
     try:
         row = NativeAgentService(db).update_agent(
             agent_id,
             project_id=project.id,
             user_id=user.id,
-            patch=body.model_dump(exclude_unset=True),
+            patch=patch,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

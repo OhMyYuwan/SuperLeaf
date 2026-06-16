@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Doc, Project
+from ..models import Doc, Project, User
 from ..schemas import (
     CompileIn,
     CompileOut,
@@ -31,7 +31,13 @@ from ..schemas import (
 )
 from ..services.latex_compiler import get_compiler_service
 from .collab_consistency import flush_project_collab_or_503
-from .deps import get_current_project, get_project_from_path, require_write_access
+from .deps import (
+    get_current_project,
+    get_current_user,
+    get_project_from_path,
+    require_admin,
+    require_write_access,
+)
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
 
@@ -41,7 +47,11 @@ projects_router = APIRouter(prefix="/api/projects", tags=["compile"])
 
 
 @router.get("/compilers", response_model=CompilerInfoOut)
-def list_compilers() -> CompilerInfoOut:
+def list_compilers(_user: User = Depends(get_current_user)) -> CompilerInfoOut:
+    return _compiler_info()
+
+
+def _compiler_info() -> CompilerInfoOut:
     svc = get_compiler_service()
     available = svc.available_compilers
     default = ""
@@ -53,10 +63,10 @@ def list_compilers() -> CompilerInfoOut:
 
 
 @router.post("/rescan", response_model=CompilerInfoOut)
-def rescan_compilers() -> CompilerInfoOut:
+def rescan_compilers(_admin: User = Depends(require_admin)) -> CompilerInfoOut:
     svc = get_compiler_service()
     svc.rescan_compilers()
-    return list_compilers()
+    return _compiler_info()
 
 
 @router.post("", response_model=CompileOut)

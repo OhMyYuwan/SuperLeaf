@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # - false: allow local HTTP-only development
     cookie_secure: str = "auto"
 
+    # Public deployments keep interactive API docs and raw OpenAPI closed by
+    # default. Trusted local deployments can opt in with YLW_API_DOCS_ENABLED=true.
+    api_docs_enabled: bool = False
+
     # Collaboration server (Node.js y-websocket)
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30

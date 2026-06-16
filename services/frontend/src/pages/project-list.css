@@ -367,6 +367,7 @@
   padding: 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
   color: #e5e7eb;
+  vertical-align: middle;
 }
 
 .project-row:hover td {
@@ -383,11 +384,20 @@
   text-decoration: underline;
 }
 
+.project-row-name-cell {
+  min-width: 220px;
+}
+
+.project-row-tags-cell {
+  width: 240px;
+  max-width: 280px;
+}
+
 .project-row-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 7px;
+  align-items: center;
 }
 
 .project-row-badge {

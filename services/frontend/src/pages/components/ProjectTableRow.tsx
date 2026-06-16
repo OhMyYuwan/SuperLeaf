@@ -16,7 +16,7 @@ export function ProjectTableRow({ project, onRename, onDelete, onSettings, onTag
   const tags = normalizeProjectTags(project.tags)
   return (
     <tr className="project-row">
-      <td>
+      <td className="project-row-name-cell">
         <Link to={`/projects/${project.id}`} className="project-row-name">
           {project.name}
         </Link>
@@ -25,6 +25,8 @@ export function ProjectTableRow({ project, onRename, onDelete, onSettings, onTag
             {typeBadge}
           </span>
         )}
+      </td>
+      <td className="project-row-tags-cell">
         {tags.length > 0 && (
           <div className="project-row-tags" aria-label="项目标签">
             {tags.map((tag) => (

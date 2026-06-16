@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Doc, Project
 from ..services.native_agent_tool_kernel import _extract_outline
+from ..services.project_grep_policy import GREP_MAX_DOC_CHARS, validate_grep_pattern
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import ProjectService
 from .context import AgentCommandContext, AgentCommandResult
@@ -19,8 +20,6 @@ LIST_LIMIT = 500
 GREP_DEFAULT_LIMIT = 50
 GREP_HARD_LIMIT = 200
 GREP_PREVIEW_CHARS = 240
-GREP_MAX_PATTERN_LENGTH = 500
-GREP_MAX_DOC_CHARS = 500_000
 
 
 def list_projects(db: Session, ctx: AgentCommandContext, args: dict[str, Any]) -> AgentCommandResult:
@@ -108,10 +107,8 @@ def grep(db: Session, ctx: AgentCommandContext, args: dict[str, Any]) -> AgentCo
     pattern = str(args.get("pattern") or "")
     if not pattern:
         raise HTTPException(400, "pattern is required")
-    if len(pattern) > GREP_MAX_PATTERN_LENGTH:
-        raise HTTPException(400, f"regex pattern too long (max {GREP_MAX_PATTERN_LENGTH} chars)")
-    if _is_dangerous_regex(pattern):
-        raise HTTPException(400, "regex pattern rejected: potential catastrophic backtracking")
+    if pattern_error := validate_grep_pattern(pattern):
+        raise HTTPException(400, pattern_error)
     try:
         regex = re.compile(pattern, re.MULTILINE)
     except re.error as exc:
@@ -197,13 +194,6 @@ def _project_payload(project: Project, role: str) -> dict[str, Any]:
         "main_doc_id": project.main_doc_id or "",
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
-
-
-def _is_dangerous_regex(pattern: str) -> bool:
-    return bool(
-        re.search(r"\([^)]*[+*?][^)]*\)[+*?]", pattern)
-        or re.search(r"\[[^\]]*[+*?][^\]]*\][+*?]", pattern)
-    )
 
 
 def _int(value: Any, default: int) -> int:

@@ -41,7 +41,7 @@ class McpTokenService:
     def list_tokens(self, *, user_id: str) -> list[McpToken]:
         return (
             self.db.query(McpToken)
-            .filter(McpToken.user_id == user_id)
+            .filter(McpToken.user_id == user_id, McpToken.revoked_at.is_(None))
             .order_by(McpToken.created_at.desc())
             .all()
         )

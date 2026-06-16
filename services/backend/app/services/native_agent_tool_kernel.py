@@ -23,6 +23,7 @@ from .agent_workspace_service import (
 )
 from .event_bus import bus
 from .project_fs_service import ProjectFsService
+from .project_grep_policy import GREP_MAX_DOC_CHARS, validate_grep_pattern
 from .project_member_service import ProjectMemberService
 from .superleaf_tool_registry import superleaf_openai_tools
 
@@ -519,6 +520,8 @@ def _tool_project_grep(
     pattern = str(args.get("pattern") or "").strip()
     if not pattern:
         return NativeAgentToolResult("ERROR: pattern is required", failed=True)
+    if pattern_error := validate_grep_pattern(pattern):
+        return NativeAgentToolResult(f"ERROR: {pattern_error}", failed=True)
     format_filter = str(args.get("format") or "").strip().lower()
     try:
         max_results = int(args.get("max_results") or _PROJECT_GREP_DEFAULT_LIMIT)
@@ -539,6 +542,8 @@ def _tool_project_grep(
     hits: list[dict[str, Any]] = []
     for row in rows:
         content = row.content or ""
+        if len(content) > GREP_MAX_DOC_CHARS:
+            continue
         for m in regex.finditer(content):
             line_start = content.rfind("\n", 0, m.start()) + 1
             line_end = content.find("\n", m.end())

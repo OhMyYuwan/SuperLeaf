@@ -34,7 +34,7 @@ from ..schemas import (
 from ..secrets_vault import decrypt
 from ..services import annotation_agent_suggestion_service, annotation_service, evaluation_service
 from ..services.agent_orchestrator import WorkflowOrchestrator
-from ..services.agent_registry_service import AgentRegistryService, NATIVE_WORKFLOW_PREFIX
+from ..services.agent_registry_service import NATIVE_WORKFLOW_PREFIX, AgentRegistryService
 from ..services.event_bus import bus
 from ..services.nanobot_client import NanobotClient
 from ..services.project_member_service import ProjectMemberService
@@ -211,13 +211,16 @@ def patch_review_status(
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> ReviewStateOut:
     _ensure_doc(db, project, body.doc_id)
-    row = evaluation_service.set_review_status(
-        db,
-        annotation_id=annotation_id,
-        doc_id=body.doc_id,
-        status=body.status,
-        user_id=user.id,
-    )
+    try:
+        row = evaluation_service.set_review_status(
+            db,
+            annotation_id=annotation_id,
+            doc_id=body.doc_id,
+            status=body.status,
+            user_id=user.id,
+        )
+    except evaluation_service.ReviewStateScopeError as exc:
+        raise HTTPException(404, "review state not found") from exc
     db.commit()
     out = ReviewStateOut(
         annotation_id=row.annotation_id,
@@ -270,9 +273,10 @@ def list_evaluation_tags(
     doc_id: str,
     project: Project = Depends(get_current_project),
     db: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[str]:
     _ensure_doc(db, project, doc_id)
-    return evaluation_service.aggregate_tags_for_doc(db, doc_id)
+    return evaluation_service.aggregate_tags_for_doc(db, doc_id, user_id=user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +340,23 @@ def _ensure_annotation_patch_allowed(
     raise HTTPException(404, "annotation not found")
 
 
+def _ensure_annotation_upsert_allowed(
+    db: Session,
+    project: Project,
+    row: Annotation,
+    user: User,
+    body: AnnotationIn,
+) -> None:
+    _ensure_doc(db, project, row.doc_id)
+    if row.project_id != project.id or row.doc_id != body.doc_id:
+        raise HTTPException(404, "annotation not found")
+    if row.user_id == user.id:
+        return
+    if row.is_global and ProjectMemberService(db).can_write(project.id, user.id):
+        return
+    raise HTTPException(404, "annotation not found")
+
+
 @router.get("/by-doc/{doc_id}/items", response_model=list[AnnotationOut])
 def list_annotations(
     doc_id: str,
@@ -358,6 +379,8 @@ def create_annotation(
 ) -> AnnotationOut:
     _ensure_doc(db, project, body.doc_id)
     existing = annotation_service.get(db, body.id)
+    if existing is not None:
+        _ensure_annotation_upsert_allowed(db, project, existing, user, body)
     old_source_hash = (
         annotation_agent_suggestion_service.compute_annotation_source_hash(existing)
         if existing is not None

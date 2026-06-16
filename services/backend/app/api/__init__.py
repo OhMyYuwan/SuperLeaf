@@ -14,7 +14,6 @@ from . import (
     health,
     major_versions,
     mcp,
-    mcp_rpc,
     native_agents,
     notifications,
     projects,
@@ -49,4 +48,3 @@ api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
 api_router.include_router(notifications.router)
 api_router.include_router(mcp.router)
-api_router.include_router(mcp_rpc.router)

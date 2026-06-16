@@ -516,6 +516,7 @@ class Project(Base):
     compiler: Mapped[str] = mapped_column(String(32), default="")
     project_type: Mapped[str] = mapped_column(String(16), default="paper", index=True)
     is_skill_project: Mapped[bool] = mapped_column(Boolean, default=False)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
     project_skill_id: Mapped[str] = mapped_column(String(32), default="")
     skill_cache_version: Mapped[int] = mapped_column(Integer, default=0)
     skill_cache_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

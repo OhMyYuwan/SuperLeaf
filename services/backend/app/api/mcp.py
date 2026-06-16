@@ -17,61 +17,28 @@ agent tool kernel so behavior matches the in-browser tools one-for-one.
 
 from __future__ import annotations
 
-import re
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..agent_commands.context import AgentCommandContext, AgentCommandSource
+from ..agent_commands.executor import AgentCommandExecutor
+from ..agent_commands.project import GREP_DEFAULT_LIMIT, GREP_HARD_LIMIT
 from ..database import get_session
-from ..models import Doc, Project, User
+from ..models import User
 from ..schemas import (
     McpDocContentOut,
     McpDocOut,
-    McpGrepHit,
     McpGrepOut,
     McpOutlineOut,
-    McpOutlineSection,
     McpProjectOut,
     McpTokenCreateIn,
     McpTokenCreateOut,
     McpTokenOut,
 )
 from ..services.mcp_token_service import McpTokenError, McpTokenService, token_is_active
-from ..services.native_agent_tool_kernel import _extract_outline
-from ..services.project_member_service import ProjectMemberService
-from ..services.project_service import ProjectService
 from .deps import McpAuthContext, get_current_user, get_mcp_auth
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
-
-
-def _is_dangerous_regex(pattern: str) -> bool:
-    """Heuristic check for catastrophic backtracking patterns (ReDoS).
-
-    Rejects patterns with nested quantifiers that can cause exponential
-    backtracking on long strings: (a+)+, (a*)+, (a+)*, (a|a)+, etc.
-    This is a conservative heuristic; it may reject some safe patterns.
-    """
-    # Reject nested quantifiers: +/*/? immediately following a closing paren or bracket
-    # that itself contains a quantifier
-    danger_patterns = [
-        r"\([^)]*[+*?][^)]*\)[+*?]",  # (...)+ or (...)* or (...)?*
-        r"\[[^\]]*[+*?][^\]]*\][+*?]",  # [...]+ or ...
-    ]
-    for danger in danger_patterns:
-        if re.search(danger, pattern):
-            return True
-    return False
-
-# Mirror the native agent tool kernel limits so MCP and in-browser tools behave
-# identically.
-_READ_LIMIT = 20_000
-_GREP_DEFAULT_LIMIT = 50
-_GREP_HARD_LIMIT = 200
-_GREP_PREVIEW_CHARS = 240
-_GREP_MAX_PATTERN_LENGTH = 500  # Reject overly complex regex patterns
-_GREP_MAX_DOC_CHARS = 500_000  # Skip documents exceeding this size (ReDoS mitigation)
-_LIST_LIMIT = 500
 
 
 def _token_out(row) -> McpTokenOut:
@@ -148,38 +115,13 @@ def mcp_list_projects(
     db: Session = Depends(get_session),
 ) -> list[McpProjectOut]:
     """List projects the token's owner can access (owned + shared)."""
-    user = ctx.user
-    type_filter = (project_type or "all").strip().lower()
-    svc = ProjectService(db)
-    member_svc = ProjectMemberService(db)
-
-    pairs: list[tuple[Project, str]] = [(p, "owner") for p in svc.list(user_id=user.id)]
-    for project, member in member_svc.list_shared_projects(user.id):
-        pairs.append((project, member.role))
-
-    out: list[McpProjectOut] = []
-    for project, role in pairs:
-        if type_filter not in ("all", "") and (project.project_type or "paper") != type_filter:
-            continue
-        out.append(
-            McpProjectOut(
-                id=project.id,
-                name=project.name,
-                project_type=project.project_type or "paper",
-                my_role=role,
-                main_doc_id=project.main_doc_id or "",
-                updated_at=project.updated_at,
-            )
-        )
-    return out
-
-
-def _require_project_access(db: Session, project_id: str, user_id: str) -> Project:
-    project = db.get(Project, project_id)
-    if project is None or not ProjectMemberService(db).has_access(project_id, user_id):
-        # 404 (not 403) so a token cannot probe foreign project ids.
-        raise HTTPException(404, "Project not found")
-    return project
+    result = _execute_agent_command(
+        db,
+        ctx,
+        "superleaf_list_projects",
+        {"project_type": project_type},
+    )
+    return [McpProjectOut(**item) for item in result["projects"]]
 
 
 @router.get("/projects/{project_id}/docs", response_model=list[McpDocOut])
@@ -188,24 +130,8 @@ def mcp_list_docs(
     ctx: McpAuthContext = Depends(get_mcp_auth),
     db: Session = Depends(get_session),
 ) -> list[McpDocOut]:
-    _require_project_access(db, project_id, ctx.user.id)
-    rows = (
-        db.query(Doc.id, Doc.name, Doc.format, Doc.folder_id, Doc.updated_at)
-        .filter(Doc.project_id == project_id)
-        .order_by(Doc.name.asc())
-        .limit(_LIST_LIMIT)
-        .all()
-    )
-    return [
-        McpDocOut(
-            id=r.id,
-            name=r.name,
-            format=r.format,
-            folder_id=r.folder_id or "",
-            updated_at=r.updated_at,
-        )
-        for r in rows
-    ]
+    result = _execute_agent_command(db, ctx, "project_list_docs", {"project_id": project_id})
+    return [McpDocOut(**item) for item in result["docs"]]
 
 
 @router.get("/projects/{project_id}/docs/{doc_id}", response_model=McpDocContentOut)
@@ -217,26 +143,18 @@ def mcp_read_doc(
     ctx: McpAuthContext = Depends(get_mcp_auth),
     db: Session = Depends(get_session),
 ) -> McpDocContentOut:
-    _require_project_access(db, project_id, ctx.user.id)
-    doc = db.get(Doc, doc_id)
-    if doc is None or doc.project_id != project_id:
-        raise HTTPException(404, "doc not found in this project")
-    content = doc.content or ""
-    total = len(content)
-    start = max(0, min(range_start, total))
-    end = total if range_end is None else max(start, min(range_end, total))
-    if end - start > _READ_LIMIT:
-        end = start + _READ_LIMIT
-    return McpDocContentOut(
-        doc_id=doc.id,
-        name=doc.name,
-        format=doc.format,
-        total_length=total,
-        range_start=start,
-        range_end=end,
-        content=content[start:end],
-        truncated=end < total or start > 0,
+    result = _execute_agent_command(
+        db,
+        ctx,
+        "project_read_doc",
+        {
+            "project_id": project_id,
+            "doc_id": doc_id,
+            "range_start": range_start,
+            "range_end": range_end,
+        },
     )
+    return McpDocContentOut(**result)
 
 
 @router.get("/projects/{project_id}/grep", response_model=McpGrepOut)
@@ -244,62 +162,22 @@ def mcp_grep(
     project_id: str,
     pattern: str = Query(..., min_length=1),
     format: str = Query(default=""),
-    max_results: int = Query(default=_GREP_DEFAULT_LIMIT, ge=1, le=_GREP_HARD_LIMIT),
+    max_results: int = Query(default=GREP_DEFAULT_LIMIT, ge=1, le=GREP_HARD_LIMIT),
     ctx: McpAuthContext = Depends(get_mcp_auth),
     db: Session = Depends(get_session),
 ) -> McpGrepOut:
-    _require_project_access(db, project_id, ctx.user.id)
-
-    # ReDoS mitigation: reject overly long or complex patterns
-    if len(pattern) > _GREP_MAX_PATTERN_LENGTH:
-        raise HTTPException(400, f"regex pattern too long (max {_GREP_MAX_PATTERN_LENGTH} chars)")
-
-    # Heuristic check for catastrophic backtracking patterns
-    if _is_dangerous_regex(pattern):
-        raise HTTPException(400, "regex pattern rejected: potential catastrophic backtracking")
-
-    try:
-        regex = re.compile(pattern, re.MULTILINE)
-    except re.error as exc:
-        raise HTTPException(400, f"invalid regex: {exc}") from exc
-    format_filter = (format or "").strip().lower()
-    q = db.query(Doc.id, Doc.name, Doc.format, Doc.content).filter(
-        Doc.project_id == project_id
+    result = _execute_agent_command(
+        db,
+        ctx,
+        "project_grep",
+        {
+            "project_id": project_id,
+            "pattern": pattern,
+            "format": format,
+            "max_results": max_results,
+        },
     )
-    if format_filter:
-        q = q.filter(Doc.format == format_filter)
-    rows = q.all()
-
-    hits: list[McpGrepHit] = []
-    for row in rows:
-        content = row.content or ""
-        # ReDoS mitigation: skip excessively large documents
-        if len(content) > _GREP_MAX_DOC_CHARS:
-            continue
-        for m in regex.finditer(content):
-            line_start = content.rfind("\n", 0, m.start()) + 1
-            line_end = content.find("\n", m.end())
-            line_end = len(content) if line_end == -1 else line_end
-            line_no = content.count("\n", 0, m.start()) + 1
-            preview = content[line_start:line_end]
-            if len(preview) > _GREP_PREVIEW_CHARS:
-                cut_at = max(0, m.start() - line_start - 60)
-                preview = preview[cut_at : cut_at + _GREP_PREVIEW_CHARS]
-            hits.append(
-                McpGrepHit(
-                    doc_id=row.id,
-                    doc_name=row.name,
-                    format=row.format,
-                    offset=m.start(),
-                    line=line_no,
-                    preview=preview,
-                )
-            )
-            if len(hits) >= max_results:
-                break
-        if len(hits) >= max_results:
-            break
-    return McpGrepOut(hits=hits, truncated=len(hits) >= max_results)
+    return McpGrepOut(**result)
 
 
 @router.get("/projects/{project_id}/docs/{doc_id}/outline", response_model=McpOutlineOut)
@@ -309,22 +187,25 @@ def mcp_outline(
     ctx: McpAuthContext = Depends(get_mcp_auth),
     db: Session = Depends(get_session),
 ) -> McpOutlineOut:
-    _require_project_access(db, project_id, ctx.user.id)
-    doc = db.get(Doc, doc_id)
-    if doc is None or doc.project_id != project_id:
-        raise HTTPException(404, "doc not found in this project")
-    fmt = (doc.format or "").lower()
-    sections = _extract_outline(doc.content or "", fmt)
-    return McpOutlineOut(
-        doc_id=doc.id,
-        name=doc.name,
-        format=fmt,
-        sections=[
-            McpOutlineSection(
-                level=int(s.get("level", 3)),
-                title=str(s.get("title", "")),
-                offset=int(s.get("offset", 0)),
-            )
-            for s in sections
-        ],
+    result = _execute_agent_command(
+        db,
+        ctx,
+        "project_outline",
+        {"project_id": project_id, "doc_id": doc_id},
     )
+    return McpOutlineOut(**result)
+
+
+def _execute_agent_command(
+    db: Session,
+    ctx: McpAuthContext,
+    name: str,
+    args: dict,
+) -> dict:
+    command_ctx = AgentCommandContext(
+        source=AgentCommandSource.MCP,
+        user_id=ctx.user.id,
+        token_id=ctx.token.id,
+        token_scope=ctx.scope,
+    )
+    return AgentCommandExecutor().execute(db, command_ctx, name, args).payload

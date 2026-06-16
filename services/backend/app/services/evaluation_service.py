@@ -20,14 +20,13 @@ later without the frontend having to remember the run id.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from ..models import AnnotationEvaluation, AnnotationReviewState, Operation
-
 
 # --------------------------------------------------------------------------
 # Evaluation CRUD
@@ -130,6 +129,10 @@ def delete_evaluation(db: Session, evaluation: AnnotationEvaluation) -> None:
 # --------------------------------------------------------------------------
 
 
+class ReviewStateScopeError(ValueError):
+    """Raised when an existing review state belongs to a different scope."""
+
+
 def set_review_status(
     db: Session,
     *,
@@ -148,7 +151,8 @@ def set_review_status(
         )
         db.add(row)
     else:
-        row.doc_id = doc_id
+        if row.user_id != user_id or row.doc_id != doc_id:
+            raise ReviewStateScopeError("review state not found")
         row.status = status
         row.updated_at = datetime.utcnow()
     db.flush()
@@ -167,13 +171,16 @@ def list_review_states_by_doc(db: Session, doc_id: str, *, user_id: str = "") ->
 # --------------------------------------------------------------------------
 
 
-def aggregate_tags_for_doc(db: Session, doc_id: str, *, limit: int = 100) -> list[str]:
-    """Distinct tags across this doc's evaluations, frequency desc."""
-    rows = (
-        db.query(AnnotationEvaluation.tags)
-        .filter(AnnotationEvaluation.doc_id == doc_id)
-        .all()
+def aggregate_tags_for_doc(
+    db: Session, doc_id: str, *, user_id: str = "", limit: int = 100
+) -> list[str]:
+    """Distinct tags across this doc's visible evaluations, frequency desc."""
+    q = db.query(AnnotationEvaluation.tags).filter(
+        AnnotationEvaluation.doc_id == doc_id
     )
+    if user_id:
+        q = q.filter(AnnotationEvaluation.user_id == user_id)
+    rows = q.all()
     counts: Counter[str] = Counter()
     for (tags,) in rows:
         if not tags:
@@ -229,7 +236,11 @@ def enrich_context(db: Session, annotation_id: str, context: dict) -> dict:
 
 
 def review_summary_for_doc(
-    db: Session, doc_id: str, *, evaluations_per_annotation: int = 3
+    db: Session,
+    doc_id: str,
+    *,
+    user_id: str = "",
+    evaluations_per_annotation: int = 3,
 ) -> list[dict]:
     """Return a compact summary of review state + recent evaluations per
     annotation, suitable for inclusion in Agent input. Only annotations
@@ -246,17 +257,16 @@ def review_summary_for_doc(
       ]
     """
     states = {
-        s.annotation_id: s.status for s in list_review_states_by_doc(db, doc_id)
+        s.annotation_id: s.status
+        for s in list_review_states_by_doc(db, doc_id, user_id=user_id)
     }
-    evals_rows = (
-        db.query(AnnotationEvaluation)
-        .filter(AnnotationEvaluation.doc_id == doc_id)
-        .order_by(
-            AnnotationEvaluation.annotation_id.asc(),
-            AnnotationEvaluation.created_at.desc(),
-        )
-        .all()
-    )
+    q = db.query(AnnotationEvaluation).filter(AnnotationEvaluation.doc_id == doc_id)
+    if user_id:
+        q = q.filter(AnnotationEvaluation.user_id == user_id)
+    evals_rows = q.order_by(
+        AnnotationEvaluation.annotation_id.asc(),
+        AnnotationEvaluation.created_at.desc(),
+    ).all()
     grouped: dict[str, list[AnnotationEvaluation]] = {}
     for row in evals_rows:
         grouped.setdefault(row.annotation_id, []).append(row)

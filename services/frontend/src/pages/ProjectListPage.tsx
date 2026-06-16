@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Download, LayoutGrid, List, Plus, UserRound, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, LayoutGrid, List, Plus, X } from 'lucide-react'
 import { useProjectStore } from '../stores/projectStore'
 import type { ProjectType } from '../stores/projectStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -23,9 +23,14 @@ import { ProjectTableRow } from './components/ProjectTableRow'
 import { ProjectFormDialog } from './components/ProjectFormDialog'
 import { DeleteProjectDialog } from './components/DeleteProjectDialog'
 import { ProjectSettingsDialog } from '../features/settings/ProjectSettingsDialog'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { NotificationBell } from '../features/topbar/NotificationBell'
 import { UserMenu } from '../features/topbar/UserMenu'
+import {
+  filterProjectsByTag,
+  sortProjects,
+  type ProjectListSort,
+  type ProjectListSortKey,
+} from './projectListUtils'
 import './project-list.css'
 
 type DialogState =
@@ -55,19 +60,33 @@ export function ProjectListPage() {
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [github, setGithub] = useState<GitHubAccountStatus | null>(null)
-  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
-  const sortedProjects = useMemo(() => sortProjectsByUpdated(projects), [projects])
+  const [tagFilters, setTagFilters] = useState<Record<ProjectType, string | null>>({
+    paper: null,
+    skill: null,
+    data: null,
+  })
+  const [sort, setSort] = useState<ProjectListSort>({ key: 'updated', direction: 'desc' })
+  const sortedProjects = useMemo(() => sortProjects(projects, sort), [projects, sort])
   const paperProjects = useMemo(
-    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'paper'),
-    [sortedProjects],
+    () => filterProjectsByTag(
+      sortedProjects.filter((project) => normalizedProjectType(project) === 'paper'),
+      tagFilters.paper,
+    ),
+    [sortedProjects, tagFilters.paper],
   )
   const skillProjects = useMemo(
-    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'skill'),
-    [sortedProjects],
+    () => filterProjectsByTag(
+      sortedProjects.filter((project) => normalizedProjectType(project) === 'skill'),
+      tagFilters.skill,
+    ),
+    [sortedProjects, tagFilters.skill],
   )
   const dataProjects = useMemo(
-    () => sortedProjects.filter((project) => normalizedProjectType(project) === 'data'),
-    [sortedProjects],
+    () => filterProjectsByTag(
+      sortedProjects.filter((project) => normalizedProjectType(project) === 'data'),
+      tagFilters.data,
+    ),
+    [sortedProjects, tagFilters.data],
   )
 
   useEffect(() => {
@@ -77,10 +96,6 @@ export function ProjectListPage() {
   useEffect(() => {
     githubApi.account().then(setGithub).catch(() => setGithub(null))
   }, [])
-
-  const refreshGithubAccount = () => {
-    githubApi.account().then(setGithub).catch(() => setGithub(null))
-  }
 
   const closeDialog = () => {
     setDialog({ kind: 'closed' })
@@ -148,6 +163,22 @@ export function ProjectListPage() {
     }
   }
 
+  const handleTagFilter = (project: ProjectSummary, tag: string) => {
+    const type = normalizedProjectType(project)
+    setTagFilters((current) => ({ ...current, [type]: tag }))
+  }
+
+  const clearTagFilter = (type: ProjectType) => {
+    setTagFilters((current) => ({ ...current, [type]: null }))
+  }
+
+  const handleSort = (key: ProjectListSortKey) => {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }))
+  }
+
   return (
     <div className="project-list-page">
       <header className="project-list-header">
@@ -187,15 +218,8 @@ export function ProjectListPage() {
           >
             <Download size={14} /> GitHub 导入
           </button>
-          <button
-            className="secondary-btn"
-            onClick={() => setPersonalPanelOpen(true)}
-            title="打开个人面板，连接 GitHub 账户"
-          >
-            <UserRound size={14} /> 个人面板
-          </button>
           <NotificationBell />
-          <UserMenu onOpenPersonalPanel={() => setPersonalPanelOpen(true)} />
+          <UserMenu />
         </div>
       </header>
 
@@ -216,6 +240,12 @@ export function ProjectListPage() {
               projects={paperProjects}
               viewMode={viewMode}
               emptyText="还没有 Paper 项目。"
+              activeTag={tagFilters.paper}
+              projectType="paper"
+              sort={sort}
+              onSort={handleSort}
+              onClearTag={clearTagFilter}
+              onTagClick={handleTagFilter}
               onRename={(target) => setDialog({ kind: 'rename', target })}
               onDelete={(target) => setDialog({ kind: 'delete', target })}
               onSettings={(target) => setDialog({ kind: 'settings', target })}
@@ -226,6 +256,12 @@ export function ProjectListPage() {
               projects={skillProjects}
               viewMode={viewMode}
               emptyText="还没有 Skill 项目。"
+              activeTag={tagFilters.skill}
+              projectType="skill"
+              sort={sort}
+              onSort={handleSort}
+              onClearTag={clearTagFilter}
+              onTagClick={handleTagFilter}
               onRename={(target) => setDialog({ kind: 'rename', target })}
               onDelete={(target) => setDialog({ kind: 'delete', target })}
               onSettings={(target) => setDialog({ kind: 'settings', target })}
@@ -236,6 +272,12 @@ export function ProjectListPage() {
               projects={dataProjects}
               viewMode={viewMode}
               emptyText="还没有 Data Project。"
+              activeTag={tagFilters.data}
+              projectType="data"
+              sort={sort}
+              onSort={handleSort}
+              onClearTag={clearTagFilter}
+              onTagClick={handleTagFilter}
               onRename={(target) => setDialog({ kind: 'rename', target })}
               onDelete={(target) => setDialog({ kind: 'delete', target })}
               onSettings={(target) => setDialog({ kind: 'settings', target })}
@@ -247,6 +289,9 @@ export function ProjectListPage() {
           <ProjectCollection
             projects={sortedProjects}
             viewMode={viewMode}
+            sort={sort}
+            onSort={handleSort}
+            onTagClick={handleTagFilter}
             onRename={(target) => setDialog({ kind: 'rename', target })}
             onDelete={(target) => setDialog({ kind: 'delete', target })}
             onSettings={(target) => setDialog({ kind: 'settings', target })}
@@ -291,13 +336,6 @@ export function ProjectListPage() {
         projectId={dialog.kind === 'settings' ? dialog.target.id : ''}
         onOpenChange={(o) => { if (!o) closeDialog() }}
       />
-      <SettingsDialog
-        open={personalPanelOpen}
-        onOpenChange={(open) => {
-          setPersonalPanelOpen(open)
-          if (!open) refreshGithubAccount()
-        }}
-      />
     </div>
   )
 }
@@ -308,6 +346,12 @@ function ProjectSection({
   projects,
   viewMode,
   emptyText,
+  activeTag,
+  projectType,
+  sort,
+  onSort,
+  onClearTag,
+  onTagClick,
   onRename,
   onDelete,
   onSettings,
@@ -317,6 +361,12 @@ function ProjectSection({
   projects: ProjectSummary[]
   viewMode: 'table' | 'grid'
   emptyText: string
+  activeTag: string | null
+  projectType: ProjectType
+  sort: ProjectListSort
+  onSort: (key: ProjectListSortKey) => void
+  onClearTag: (type: ProjectType) => void
+  onTagClick: (project: ProjectSummary, tag: string) => void
   onRename: (p: ProjectSummary) => void
   onDelete: (p: ProjectSummary) => void
   onSettings: (p: ProjectSummary) => void
@@ -328,7 +378,20 @@ function ProjectSection({
           <h2>{title}</h2>
           <span>{description}</span>
         </div>
-        <strong>{projects.length}</strong>
+        <div className="project-section-header-meta">
+          {activeTag && (
+            <button
+              type="button"
+              className="project-active-tag"
+              onClick={() => onClearTag(projectType)}
+              title="取消标签筛选"
+            >
+              {activeTag}
+              <X size={12} />
+            </button>
+          )}
+          <strong>{projects.length}</strong>
+        </div>
       </div>
       {projects.length === 0 ? (
         <div className="project-section-empty">{emptyText}</div>
@@ -336,6 +399,9 @@ function ProjectSection({
         <ProjectCollection
           projects={projects}
           viewMode={viewMode}
+          sort={sort}
+          onSort={onSort}
+          onTagClick={onTagClick}
           onRename={onRename}
           onDelete={onDelete}
           onSettings={onSettings}
@@ -348,12 +414,18 @@ function ProjectSection({
 function ProjectCollection({
   projects,
   viewMode,
+  sort,
+  onSort,
+  onTagClick,
   onRename,
   onDelete,
   onSettings,
 }: {
   projects: ProjectSummary[]
   viewMode: 'table' | 'grid'
+  sort: ProjectListSort
+  onSort: (key: ProjectListSortKey) => void
+  onTagClick: (project: ProjectSummary, tag: string) => void
   onRename: (p: ProjectSummary) => void
   onDelete: (p: ProjectSummary) => void
   onSettings: (p: ProjectSummary) => void
@@ -368,6 +440,7 @@ function ProjectCollection({
             onRename={onRename}
             onDelete={onDelete}
             onSettings={onSettings}
+            onTagClick={onTagClick}
           />
         ))}
       </div>
@@ -378,9 +451,10 @@ function ProjectCollection({
     <table className="project-table">
       <thead>
         <tr>
-          <th>项目名称</th>
-          <th>最后更新</th>
-          <th>创建时间</th>
+          <SortableHeader label="项目名称" sortKey="name" sort={sort} onSort={onSort} />
+          <th>标签</th>
+          <SortableHeader label="最后更新" sortKey="updated" sort={sort} onSort={onSort} />
+          <SortableHeader label="创建时间" sortKey="created" sort={sort} onSort={onSort} />
           <th aria-label="操作"></th>
         </tr>
       </thead>
@@ -392,6 +466,7 @@ function ProjectCollection({
             onRename={onRename}
             onDelete={onDelete}
             onSettings={onSettings}
+            onTagClick={onTagClick}
           />
         ))}
       </tbody>
@@ -399,18 +474,36 @@ function ProjectCollection({
   )
 }
 
-function sortProjectsByUpdated(projects: ProjectSummary[]): ProjectSummary[] {
-  return [...projects].sort((a, b) => {
-    const updated = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-    if (updated !== 0) return updated
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  })
-}
-
 function normalizedProjectType(project: ProjectSummary): 'paper' | 'skill' | 'data' {
   if (project.project_type === 'data') return 'data'
   if (project.project_type === 'skill' || project.is_skill_project) return 'skill'
   return 'paper'
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  label: string
+  sortKey: ProjectListSortKey
+  sort: ProjectListSort
+  onSort: (key: ProjectListSortKey) => void
+}) {
+  const active = sort.key === sortKey
+  return (
+    <th>
+      <button
+        type="button"
+        className={`project-sort-header ${active ? 'active' : ''}`}
+        onClick={() => onSort(sortKey)}
+      >
+        {label}
+        {active && (sort.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+      </button>
+    </th>
+  )
 }
 
 function GitHubImportDialog({

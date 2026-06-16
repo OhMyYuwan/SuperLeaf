@@ -17,12 +17,15 @@ from typing import Any
 
 import httpx
 
+from ..mcp.transport import MCP_PROTOCOL_VERSION
+from ..settings import settings
 from .mcp_policy import (
     ensure_mcp_transport_allowed,
     normalize_mcp_transport,
     remote_endpoint_from_server,
     validate_remote_endpoint,
 )
+from .safe_http import safe_async_client
 
 MAX_MCP_RESULT_CHARS = 24_000
 
@@ -44,7 +47,6 @@ def _env_float(name: str, default: float) -> float:
 # UI renders as a generic "network error".
 MCP_TIMEOUT_SECONDS = _env_float("YLW_MCP_TIMEOUT_SECONDS", 150.0)
 ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3"}
-MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
 class McpToolError(RuntimeError):
@@ -248,7 +250,10 @@ class _RemoteMcpSession:
         self.server = server
         self.endpoint = server.endpoint or server.command
         self._next_id = 1
-        self._client = httpx.AsyncClient(timeout=MCP_TIMEOUT_SECONDS)
+        self._client = safe_async_client(
+            allow_private=settings.mcp_remote_private_networks_enabled,
+            timeout=MCP_TIMEOUT_SECONDS,
+        )
         self._session_id = ""
 
     async def initialize(self) -> None:
@@ -320,7 +325,7 @@ class _McpSession:
         await self._request(
             "initialize",
             {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "SuperLeaf", "version": "0.1.0"},
             },

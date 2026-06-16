@@ -13,6 +13,36 @@ const MSG_AWARENESS = 1
 const SERVER_REPLACE_ORIGIN = Symbol('server_replace')
 export const DOC_REPLACED_CLOSE_CODE = 4009
 export const DOC_REPLACED_CLOSE_REASON = 'collab_doc_replaced'
+export const AUTH_REVOKED_CLOSE_CODE = 4008
+export const AUTH_REVOKED_CLOSE_REASON = 'collab_auth_revoked'
+export const COLLAB_WS_RESOURCE_CLOSE_CODE = 1009
+export const COLLAB_WS_MESSAGE_TOO_LARGE_REASON = 'collab_message_too_large'
+export const COLLAB_WS_PENDING_QUEUE_EXCEEDED_REASON = 'collab_pending_queue_exceeded'
+export const COLLAB_WS_RATE_LIMITED_REASON = 'collab_rate_limited'
+export const COLLAB_WS_MAX_MESSAGE_BYTES = readPositiveIntEnv(
+  'COLLAB_WS_MAX_MESSAGE_BYTES',
+  256 * 1024,
+)
+export const COLLAB_WS_MAX_PENDING_MESSAGES = readPositiveIntEnv(
+  'COLLAB_WS_MAX_PENDING_MESSAGES',
+  64,
+)
+export const COLLAB_WS_MAX_PENDING_BYTES = readPositiveIntEnv(
+  'COLLAB_WS_MAX_PENDING_BYTES',
+  512 * 1024,
+)
+export const COLLAB_WS_RATE_WINDOW_MS = readPositiveIntEnv(
+  'COLLAB_WS_RATE_WINDOW_MS',
+  1000,
+)
+export const COLLAB_WS_MAX_MESSAGES_PER_WINDOW = readPositiveIntEnv(
+  'COLLAB_WS_MAX_MESSAGES_PER_WINDOW',
+  120,
+)
+export const COLLAB_WS_MAX_BYTES_PER_WINDOW = readPositiveIntEnv(
+  'COLLAB_WS_MAX_BYTES_PER_WINDOW',
+  1024 * 1024,
+)
 
 interface DocRoom {
   doc: Y.Doc
@@ -37,6 +67,7 @@ export interface InvalidateDocResult {
 export interface ConnectionGenerationOptions {
   clientGeneration?: number | null
   authoritativeGeneration?: number | null
+  authorizeMessage?: () => boolean | Promise<boolean>
 }
 
 // Track which docs have active connections (for snapshot service).
@@ -184,27 +215,32 @@ export function setupWSConnection(
 
   let room: DocRoom | null = null
   let closed = false
+  let messageChain = Promise.resolve()
   const pendingMessages: Uint8Array[] = []
+  let pendingMessageBytes = 0
+  let rateWindowStartedAt = Date.now()
+  let rateWindowMessages = 0
+  let rateWindowBytes = 0
 
   ws.on('message', (data: ArrayBuffer | Buffer) => {
+    if (closed || ws.readyState !== 1) return
     const buf = data instanceof Buffer ? new Uint8Array(data) : new Uint8Array(data)
+    if (!acceptMessage(buf)) return
     if (!room) {
-      pendingMessages.push(buf)
+      queuePendingMessage(buf)
       return
     }
-    try {
-      handleMessage(room, ws, buf, docId)
-    } catch (err) {
-      void recordCollabServerEvent('message_handling_failed', {
+    messageChain = messageChain.then(() => processMessage(buf, false)).catch((err: unknown) => {
+      void recordCollabServerEvent('message_processing_failed', {
         level: 'error',
         docId,
         userId: user.id,
         operation: 'message',
-        code: 'message_handling_failed',
+        code: 'message_processing_failed',
         message: errorMessage(err),
-        details: { bytes: buf.byteLength },
+        details: { bytes: buf.byteLength, queued: false },
       })
-    }
+    })
   })
 
   ws.on('close', () => {
@@ -263,22 +299,137 @@ export function setupWSConnection(
       ws.send(encoding.toUint8Array(awarenessEncoder))
     }
 
-    for (const pending of pendingMessages.splice(0)) {
-      try {
-        handleMessage(room, ws, pending, docId)
-      } catch (err) {
-        void recordCollabServerEvent('message_handling_failed', {
-          level: 'error',
-          docId,
-          userId: user.id,
-          operation: 'message',
-          code: 'message_handling_failed',
-          message: errorMessage(err),
-          details: { bytes: pending.byteLength, queued: true },
-        })
-      }
+    const queuedMessages = pendingMessages.splice(0)
+    pendingMessageBytes = 0
+    for (const pending of queuedMessages) {
+      await processMessage(pending, true)
+      if (closed) break
     }
   })()
+
+  function acceptMessage(buf: Uint8Array): boolean {
+    if (buf.byteLength > COLLAB_WS_MAX_MESSAGE_BYTES) {
+      closeForResourceLimit(COLLAB_WS_MESSAGE_TOO_LARGE_REASON, {
+        bytes: buf.byteLength,
+        max_bytes: COLLAB_WS_MAX_MESSAGE_BYTES,
+      })
+      return false
+    }
+    return consumeRateBudget(buf)
+  }
+
+  function consumeRateBudget(buf: Uint8Array): boolean {
+    const now = Date.now()
+    if (now - rateWindowStartedAt >= COLLAB_WS_RATE_WINDOW_MS) {
+      rateWindowStartedAt = now
+      rateWindowMessages = 0
+      rateWindowBytes = 0
+    }
+
+    rateWindowMessages += 1
+    rateWindowBytes += buf.byteLength
+    if (
+      rateWindowMessages > COLLAB_WS_MAX_MESSAGES_PER_WINDOW
+      || rateWindowBytes > COLLAB_WS_MAX_BYTES_PER_WINDOW
+    ) {
+      closeForResourceLimit(COLLAB_WS_RATE_LIMITED_REASON, {
+        window_ms: COLLAB_WS_RATE_WINDOW_MS,
+        messages: rateWindowMessages,
+        bytes: rateWindowBytes,
+        max_messages: COLLAB_WS_MAX_MESSAGES_PER_WINDOW,
+        max_bytes: COLLAB_WS_MAX_BYTES_PER_WINDOW,
+      })
+      return false
+    }
+    return true
+  }
+
+  function queuePendingMessage(buf: Uint8Array): boolean {
+    const nextCount = pendingMessages.length + 1
+    const nextBytes = pendingMessageBytes + buf.byteLength
+    if (
+      nextCount > COLLAB_WS_MAX_PENDING_MESSAGES
+      || nextBytes > COLLAB_WS_MAX_PENDING_BYTES
+    ) {
+      closeForResourceLimit(COLLAB_WS_PENDING_QUEUE_EXCEEDED_REASON, {
+        queued_messages: nextCount,
+        queued_bytes: nextBytes,
+        max_messages: COLLAB_WS_MAX_PENDING_MESSAGES,
+        max_bytes: COLLAB_WS_MAX_PENDING_BYTES,
+      })
+      return false
+    }
+    pendingMessages.push(buf)
+    pendingMessageBytes = nextBytes
+    return true
+  }
+
+  function closeForResourceLimit(reason: string, details: Record<string, unknown>): void {
+    closed = true
+    pendingMessages.length = 0
+    pendingMessageBytes = 0
+    void recordCollabServerEvent('websocket_resource_limit_exceeded', {
+      level: 'warning',
+      docId,
+      userId: user.id,
+      operation: 'message',
+      code: reason,
+      details,
+    })
+    if (ws.readyState === 1) {
+      ws.close(COLLAB_WS_RESOURCE_CLOSE_CODE, reason)
+    }
+  }
+
+  async function processMessage(buf: Uint8Array, queued: boolean): Promise<void> {
+    if (!room || closed || ws.readyState !== 1) return
+    if (!(await authorizeMessage(buf, queued))) return
+    try {
+      handleMessage(room, ws, buf, docId)
+    } catch (err) {
+      void recordCollabServerEvent('message_handling_failed', {
+        level: 'error',
+        docId,
+        userId: user.id,
+        operation: 'message',
+        code: 'message_handling_failed',
+        message: errorMessage(err),
+        details: { bytes: buf.byteLength, queued },
+      })
+    }
+  }
+
+  async function authorizeMessage(buf: Uint8Array, queued: boolean): Promise<boolean> {
+    const check = generationOptions.authorizeMessage
+    if (!check) return true
+    let authorized = false
+    try {
+      authorized = await check()
+    } catch (err) {
+      void recordCollabServerEvent('message_authorization_failed', {
+        level: 'warning',
+        docId,
+        userId: user.id,
+        operation: 'message_auth',
+        code: 'collab_auth_check_failed',
+        message: errorMessage(err),
+        details: { bytes: buf.byteLength, queued },
+      })
+    }
+    if (authorized) return true
+    void recordCollabServerEvent('message_authorization_revoked', {
+      level: 'warning',
+      docId,
+      userId: user.id,
+      operation: 'message_auth',
+      code: 'collab_auth_revoked',
+      details: { bytes: buf.byteLength, queued },
+    })
+    if (ws.readyState === 1) {
+      ws.close(AUTH_REVOKED_CLOSE_CODE, AUTH_REVOKED_CLOSE_REASON)
+    }
+    return false
+  }
 }
 
 function isCurrentGeneration(options: ConnectionGenerationOptions): boolean {
@@ -287,6 +438,13 @@ function isCurrentGeneration(options: ConnectionGenerationOptions): boolean {
   }
   return Number.isSafeInteger(options.clientGeneration)
     && options.clientGeneration === options.authoritativeGeneration
+}
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function closeRoomConnections(room: DocRoom, docId: string, operation: string): number {

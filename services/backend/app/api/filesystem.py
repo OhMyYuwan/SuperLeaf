@@ -556,16 +556,12 @@ async def upload_file(
     return {"ok": True, "kind": "file", "id": f.id}
 
 
-_INLINE_MIME_PREFIXES = ("image/", "text/", "audio/", "video/")
-_INLINE_MIME_EXACT = {
+_SAFE_INLINE_MIME_EXACT = {
     "application/pdf",
-    "application/json",
-    "application/xml",
-    "application/x-tex",
-    "application/x-latex",
-    "application/javascript",
-    "application/x-yaml",
-    "application/yaml",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
 }
 
 
@@ -579,6 +575,11 @@ def _guess_mime(name: str, stored: str) -> str:
     return guessed or stored or "application/octet-stream"
 
 
+def _is_safe_inline_mime(mime: str) -> bool:
+    normalized = (mime or "application/octet-stream").split(";", 1)[0].strip().lower()
+    return normalized in _SAFE_INLINE_MIME_EXACT
+
+
 @router.get("/api/files/{file_id}")
 def get_file(
     file_id: str,
@@ -589,7 +590,7 @@ def get_file(
     if f is None or not ProjectMemberService(db).has_access(f.project_id, user.id):
         raise HTTPException(404, "file not found")
     mime = _guess_mime(f.name, f.mime_type)
-    inline = mime.startswith(_INLINE_MIME_PREFIXES) or mime in _INLINE_MIME_EXACT
+    inline = _is_safe_inline_mime(mime)
     disposition = "inline" if inline else "attachment"
     # RFC 5987 filename* for non-ASCII names
     quoted = quote(f.name)
@@ -599,6 +600,7 @@ def get_file(
         headers={
             "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
             "Content-Length": str(len(f.blob or b"")),
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

@@ -31,6 +31,17 @@ YLW_PUBLIC_REGISTRATION=false
 
 Then open `http://172.28.7.26:8080/` from the campus network.
 
+For servers whose Docker writable layer lives on a small or full disk, put
+runtime scratch files on a large mounted filesystem before starting:
+
+```env
+SUPERLEAF_RUNTIME_DIR=/data2/superleaf-runtime
+```
+
+`SUPERLEAF_RUNTIME_DIR` is mounted into the all-in-one container for `/tmp`,
+cache, logs, Nginx runtime files, and the frontend runtime config. This keeps
+large LaTeX temporary files out of Docker's container overlay.
+
 ## HTTPS For Public Deployments
 
 For public or multi-user deployments, use HTTPS and Secure session cookies.

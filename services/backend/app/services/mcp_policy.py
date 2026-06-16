@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..settings import settings
+from .safe_http import SsrfPolicyError, validate_resolved_ip
 
 REMOTE_MCP_TRANSPORTS = {"remote", "http", "https", "sse", "streamable-http", "streamable_http"}
 STDIO_MCP_TRANSPORTS = {"", "stdio", "local", "local-stdio", "local_stdio"}
@@ -59,6 +60,13 @@ def remote_endpoint_from_server(server: dict[str, Any]) -> str:
 
 
 def validate_remote_endpoint(endpoint: str) -> None:
+    """Registration-time fast-fail for a remote MCP endpoint.
+
+    The connection-time guarantee (the validated IP is the IP we connect to)
+    is enforced by :mod:`app.services.safe_http`'s pinned transport, which the
+    MCP HTTP client uses. Both layers share ``validate_resolved_ip`` so they
+    cannot drift.
+    """
     parsed = urlparse(endpoint.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Remote MCP endpoint must be an http(s) URL")
@@ -72,20 +80,33 @@ def validate_remote_endpoint(endpoint: str) -> None:
     except ValueError:
         _validate_resolved_host(host)
         return
-    if not ip.is_global:
-        raise ValueError("Remote MCP endpoint cannot target private or reserved networks by default")
+    try:
+        validate_resolved_ip(ip)
+    except SsrfPolicyError as exc:
+        raise ValueError(
+            "Remote MCP endpoint cannot target private or reserved networks by default"
+        ) from exc
 
 
 def _validate_resolved_host(host: str) -> None:
+    # Fail closed: a name that does not resolve at registration time must not
+    # be silently accepted (the legacy ``return`` was an SSRF fail-open — the
+    # name could still resolve to an internal address at connect time).
     try:
         results = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return
+    except socket.gaierror as exc:
+        raise ValueError(
+            "Remote MCP endpoint could not be resolved; refusing to register it"
+        ) from exc
     for item in results:
         address = item[4][0]
         try:
             ip = ipaddress.ip_address(address)
         except ValueError:
             continue
-        if not ip.is_global:
-            raise ValueError("Remote MCP endpoint cannot resolve to private or reserved networks by default")
+        try:
+            validate_resolved_ip(ip)
+        except SsrfPolicyError as exc:
+            raise ValueError(
+                "Remote MCP endpoint cannot resolve to private or reserved networks by default"
+            ) from exc

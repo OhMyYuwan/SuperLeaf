@@ -39,7 +39,7 @@ primary_capabilities:
   - workflow-orchestration
   - real-time-editing
   - build-tooling
-agent_hint: repository root uses services/{frontend,backend,collab-server,local-agent-host}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. Local Agent Host is packaged/downloaded by the backend and runs on the user's machine to reach local Codex/Claude/Nanobot; the all-in-one image may include its source for packaging but must not be assumed to auto-start it as a server-side process. Data Project routes through backend/app/api/datasets.py, DatasetService, DataProjectPage, and backendApi; source_text is captured as a workflow/native-agent run snapshot and must not be reconstructed from Doc ranges during record listing/export. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator and CHANGE_POLICY.high_risk.local_agent_host_topology for boundaries.
+agent_hint: repository root uses services/{frontend,backend,collab-server,local-agent-host,shared}; never commit .acp/kernel (privacy). Personal work on YuwanZ; promote via develop → main. Always Request → Plan → Change before code edits. Native Agent / Skill / MCP support routes through backend/app/api/native_agents.py, nativeAgentStore, TeamTab's Agent/Skill/MCP panels, and the remote SuperLeaf.MCPs catalog configured by YLW_MCP_CATALOG_URL; local supports/SuperLeaf.MCPs is a dev/offline fallback only. SuperLeaf's own backend-native MCP is separate: start it with ./start.sh mcp, protocol code lives in services/backend/app/mcp, execution lives in services/backend/app/agent_commands, and shared tool schemas/metadata live in services/shared/superleaf-tools.json. Local Agent Host is packaged/downloaded by the backend and runs on the user's machine to reach local Codex/Claude/Nanobot; it is the browser Bridge path, not the token-direct backend MCP server. Agent write surfaces: propose_doc_edit writes proposal/annotation DB records, create_suggestion writes annotation DB records, project_write_text_file creates new Project FS/DB docs; existing document body mutation must stay proposal/user-accept/editor/Yjs-first until explicitly redesigned. Data Project routes through backend/app/api/datasets.py, DatasetService, DataProjectPage, and backendApi; source_text is captured as a workflow/native-agent run snapshot and must not be reconstructed from Doc ranges during record listing/export. V2.2 posture: agent_orchestrator.py is the canonical self-hosted multi-agent runner; Dify / Nanobot clients supply single-agent execution. Real-time collaborative editing via Yjs (collab-server :4444). Refer to CHANGE_POLICY.high_risk.extend_self_hosted_orchestrator, CHANGE_POLICY.high_risk.local_agent_host_topology, and CHANGE_POLICY.high_risk.expose_direct_mcp_document_body_write for boundaries.
 ```
 
 # SuperLeaf Agent Guide
@@ -119,6 +119,20 @@ surface plus a multi-Agent review/polishing/workflow layer.
   run on the user's machine so browser-local tools and local Agent installs are
   reachable. The all-in-one/backend images copy the host source for packaging;
   they do not start it as part of the server runtime.
+- **Backend-native SuperLeaf MCP**: `./start.sh mcp` enables backend `/mcp`
+  on the backend port. Protocol/session/SSE/status code lives in
+  `services/backend/app/mcp/`; tool execution lives in
+  `services/backend/app/agent_commands/`; compatibility wrappers live in
+  `services/backend/app/services/superleaf_mcp_*.py`; shared schemas and
+  tool metadata live in `services/shared/superleaf-tools.json`. This is the
+  token-direct Codex / IDE / CLI path and remains separate from Local Agent
+  Host's browser Bridge.
+- **Agent Command write posture**: SuperLeaf MCP write tools currently create
+  proposal/annotation DB records or new Project FS/DB files. They do not
+  directly mutate existing document body text. `propose_doc_edit` and
+  `create_suggestion` repair stale annotation anchors with `original_text`
+  through `agent_commands/anchors.py`; accepting body edits still belongs to
+  the frontend editor/Yjs path.
 - **External I/O decoding**: Agent and project integrations must tolerate
   non-UTF-8 bytes from external command output or remote catalog/API payloads.
   Prefer UTF-8 decoding with replacement (`errors="replace"`) at external I/O
@@ -157,6 +171,8 @@ surface plus a multi-Agent review/polishing/workflow layer.
 ├── supports/
 │   └── SuperLeaf.MCPs/                 (MCP catalog presets, golden tests, contributor docs)
 └── services/
+    ├── shared/
+    │   └── superleaf-tools.json             (shared SuperLeaf tool registry: schema + MCP annotations/_meta)
     ├── local-agent-host/                    (downloaded user-machine bridge for Codex/Claude/Nanobot + SuperLeaf MCP/browser tool bridge)
     ├── collab-server/                       (Node.js Yjs WebSocket server)
     │   ├── package.json                     (yjs, y-protocols, y-leveldb, ws)
@@ -178,19 +194,32 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │       │   ├── auth.py                  (register/login/logout/me/verify/collab-token)
     │       │   ├── providers.py
     │       │   ├── native_agents.py         (native Agent credentials/skills/agents/marketplace + Local Agent Host package/download metadata)
+    │       │   ├── mcp.py / mcp_rpc.py      (MCP token management, legacy REST compatibility, JSON-RPC compatibility)
     │       │   ├── github.py / archives.py  (GitHub account + project archive)
     │       │   ├── workflows.py             (cached + runs + definitions + execute)
     │       │   ├── filesystem.py            (project tree + upload + internal doc content)
     │       │   ├── conversations.py         (SSE chat messages)
     │       │   └── compile.py               (latexmk wrapper)
+    │       ├── mcp/
+    │       │   ├── router.py                (backend-native /mcp JSON-RPC, SSE, DELETE, status)
+    │       │   ├── sessions.py              (MCP session metadata, TTL, event replay state)
+    │       │   └── transport.py             (MCP response/event helpers)
+    │       ├── agent_commands/
+    │       │   ├── context.py / executor.py (AgentCommandContext + dispatcher)
+    │       │   ├── registry.py              (shared registry loader; preserves annotations/_meta)
+    │       │   ├── project.py / files.py    (project list/read/grep/outline + new text files)
+    │       │   ├── suggestions.py           (proposal/suggestion DB writes)
+    │       │   └── anchors.py               (original_text anchor repair for annotations/proposals)
     │       └── services/
     │           ├── dify_client.py           (Dify SSE)
     │           ├── nanobot_client.py        (OpenAI-style + multimodal)
     │           ├── provider_service.py
     │           ├── native_agent_service.py  (native Agent + Skill CRUD)
     │           ├── native_agent_runner.py   (provider-backed native Agent runtime)
+    │           ├── native_agent_tool_kernel.py (backend Native Agent local tool adapters; reuses Agent Command anchor logic)
     │           ├── mcp_tool_service.py      (on-demand stdio/remote MCP bridge)
     │           ├── mcp_catalog_service.py   (remote SuperLeaf.MCPs catalog loader + probe)
+    │           ├── superleaf_mcp_registry.py / superleaf_mcp_tools.py / superleaf_mcp_transport.py (compatibility wrappers around Agent Commands + MCP transport)
     │           ├── skill_marketplace_service.py / skill_content_crypto.py
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
     │           ├── project_archive_service.py / github_service.py (Git/archive subprocess output uses tolerant UTF-8 decoding)
@@ -249,6 +278,8 @@ Services are organized under `services/`:
 - `services/frontend/` - React 19 + Vite + TypeScript
 - `services/backend/` - FastAPI + SQLite
 - `services/collab-server/` - Node.js + Yjs WebSocket
+- `services/local-agent-host/` - user-machine browser Bridge for local Agents
+- `services/shared/` - shared runtime contracts such as `superleaf-tools.json`
 
 ## Capabilities
 

@@ -15,6 +15,7 @@ class ProjectOut(BaseModel):
     compiler: str
     project_type: str = "paper"
     is_skill_project: bool = False
+    tags: list[str] = Field(default_factory=list)
     project_skill_id: str = ""
     skill_cache_version: int = 0
     skill_cache_updated_at: datetime | None = None
@@ -29,6 +30,7 @@ class ProjectOut(BaseModel):
 class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     project_type: str = Field(default="paper", pattern="^(paper|skill|data)$")
+    tags: list[str] = Field(default_factory=list, max_length=12)
 
 
 class GitHubProjectImportIn(BaseModel):
@@ -43,6 +45,7 @@ class ProjectUpdateIn(BaseModel):
     compiler: str | None = None
     is_skill_project: bool | None = None
     project_type: str | None = Field(default=None, pattern="^(paper|skill|data)$")
+    tags: list[str] | None = Field(default=None, max_length=12)
 
 
 class ProjectMemberAddIn(BaseModel):

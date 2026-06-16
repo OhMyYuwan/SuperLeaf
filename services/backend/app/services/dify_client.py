@@ -20,8 +20,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
+from ..settings import settings
+from .safe_http import safe_async_client
 from .sse_decode import iter_sse_json_events
 
 CHAT_MODES = {"chat", "advanced-chat", "agent-chat"}
@@ -54,7 +54,10 @@ class DifyClient:
 
     async def probe(self) -> DifyAppInfo:
         """Verify the endpoint/key pair and return the app descriptor."""
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.get(f"{self.endpoint}/info", headers=self._headers)
             if resp.status_code != 200:
                 raise DifyError(resp.status_code, resp.text[:400])
@@ -86,7 +89,10 @@ class DifyClient:
             "file": (name, blob, mime),
         }
         data = {"user": user}
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.post(url, headers=self._headers, files=files, data=data)
             if resp.status_code != 201:
                 raise DifyError(resp.status_code, resp.text[:400])
@@ -136,7 +142,10 @@ class DifyClient:
         if files:
             body["files"] = files
 
-        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=None,
+        ) as client:
             async with client.stream(
                 "POST",
                 url,
@@ -177,7 +186,10 @@ class DifyClient:
             }
         if files:
             body["files"] = files
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.post(
                 url,
                 headers={**self._headers, "Content-Type": "application/json"},
@@ -188,7 +200,10 @@ class DifyClient:
             return resp.json()
 
     async def run_detail(self, run_id: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with safe_async_client(
+            allow_private=settings.provider_private_networks_enabled,
+            timeout=self.timeout,
+        ) as client:
             resp = await client.get(
                 f"{self.endpoint}/workflows/run/{run_id}",
                 headers=self._headers,

@@ -36,6 +36,16 @@ from .project_entry_name import ProjectEntryNameError, validate_project_entry_na
 
 # All known TeX Live / MacTeX binaries we'll try to detect.
 KNOWN_COMPILERS = ("latexmk", "pdflatex", "xelatex", "lualatex")
+COMPILER_CONTROL_FILENAMES = frozenset(
+    {
+        ".latexmkrc",
+        "latexmkrc",
+        ".texmf.cnf",
+        "texmf.cnf",
+    }
+)
+TEX_FILE_ACCESS_POLICY = "p"
+DIRECT_COMPILER_SECURITY_ARGS = ("-no-shell-escape",)
 GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
 INCLUDEGRAPHICS_RE = re.compile(
     r"(?P<command>\\includegraphics(?:\s*\[[^\]]*\])?\s*)\{(?P<target>[^{}]+)\}"
@@ -251,12 +261,12 @@ class LatexCompilerService:
             .all()
         )
         for folder in folders:
-            validate_project_entry_name(folder.name, field="folder name")
+            _validate_compile_entry_name(folder.name, field="folder name")
         for doc in docs:
-            validate_project_entry_name(doc.name, field="document name")
+            _validate_compile_entry_name(doc.name, field="document name")
         for file in file_metadata:
-            validate_project_entry_name(file.name, field="file name")
-        validate_project_entry_name(main_doc.name, field="document name")
+            _validate_compile_entry_name(file.name, field="file name")
+        _validate_compile_entry_name(main_doc.name, field="document name")
 
         folder_paths: dict[str, Path] = {}
 
@@ -469,6 +479,7 @@ class LatexCompilerService:
             runs = [
                 [
                     "latexmk",
+                    "-norc",
                     "-pdf",
                     "-synctex=1",
                     "-interaction=nonstopmode",
@@ -481,14 +492,7 @@ class LatexCompilerService:
             # Direct compilers do not invoke BibTeX themselves. We run one
             # LaTeX pass to create the .aux, optionally run BibTeX, then run
             # two more LaTeX passes to resolve citations and references.
-            base = [
-                compiler,
-                "-synctex=1",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                "-file-line-error",
-                str(main_rel_path.name),
-            ]
+            base = self._direct_compiler_command(compiler, main_rel_path.name)
             runs = [base]
 
         all_log: list[str] = []
@@ -558,14 +562,7 @@ class LatexCompilerService:
                         duration_ms=0,
                     )
 
-            base = [
-                compiler,
-                "-synctex=1",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                "-file-line-error",
-                str(main_rel_path.name),
-            ]
+            base = self._direct_compiler_command(compiler, main_rel_path.name)
             for _ in range(2):
                 proc_result = await self._run_command(base, cwd=working_dir, env=env)
                 if proc_result[0] in ("missing", "timeout"):
@@ -937,7 +934,21 @@ class LatexCompilerService:
         joined = os.pathsep.join(search_paths)
         for key in ("TEXINPUTS", "BIBINPUTS", "BSTINPUTS"):
             env[key] = joined
+        env["openin_any"] = TEX_FILE_ACCESS_POLICY
+        env["openout_any"] = TEX_FILE_ACCESS_POLICY
         return env
+
+    @staticmethod
+    def _direct_compiler_command(compiler: str, main_name: str) -> list[str]:
+        return [
+            compiler,
+            *DIRECT_COMPILER_SECURITY_ARGS,
+            "-synctex=1",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
+            main_name,
+        ]
 
 
 # Module-level singleton. API routes call `get_compiler_service()` to access it.
@@ -949,3 +960,10 @@ def get_compiler_service() -> LatexCompilerService:
     if _compiler_service is None:
         _compiler_service = LatexCompilerService()
     return _compiler_service
+
+
+def _validate_compile_entry_name(name: str, *, field: str) -> str:
+    cleaned = validate_project_entry_name(name, field=field)
+    if cleaned.casefold() in COMPILER_CONTROL_FILENAMES:
+        raise ProjectEntryNameError(f"{field} must not be a compiler control file")
+    return cleaned

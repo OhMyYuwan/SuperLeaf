@@ -93,7 +93,7 @@ export async function executeNanobotBrowserToolRequest(args: {
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
-      inputs: args.request.inputs,
+      inputs: bridgeInputsWithAgent(args.request),
       tool_call: toolCallFromBridgeRequest(args.request),
     }, { signal: args.signal }))
     args.markActivity()
@@ -123,7 +123,7 @@ export async function executeCodexBrowserToolRequest(args: {
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
-      inputs: args.request.inputs,
+      inputs: bridgeInputsWithAgent(args.request),
       tool_call: toolCallFromBridgeRequest(args.request),
     }, { signal: args.signal }))
     args.markActivity()
@@ -153,7 +153,7 @@ export async function executeClaudeBrowserToolRequest(args: {
       document_id: args.request.document_id,
       range_start: args.request.range_start,
       range_end: args.request.range_end,
-      inputs: args.request.inputs,
+      inputs: bridgeInputsWithAgent(args.request),
       tool_call: toolCallFromBridgeRequest(args.request),
     }, { signal: args.signal }))
     args.markActivity()
@@ -167,6 +167,11 @@ export async function executeClaudeBrowserToolRequest(args: {
     }
     throw err
   }
+}
+
+function bridgeInputsWithAgent(request: BrowserToolBridgeRequest): Record<string, unknown> {
+  if (!request.agent_name) return request.inputs
+  return { ...request.inputs, agent_name: request.agent_name }
 }
 
 export function claudeToolMode(prepared: { claude_settings?: { tool_mode?: unknown } }): 'mcp-first' | 'browser-preflight' | 'marker-only' {

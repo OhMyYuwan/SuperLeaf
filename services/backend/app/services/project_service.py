@@ -250,7 +250,14 @@ class ProjectService:
             return None
         return p
 
-    def create(self, *, user_id: str, name: str, project_type: str = "paper") -> Project:
+    def create(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        project_type: str = "paper",
+        tags: list[str] | None = None,
+    ) -> Project:
         normalized_type = project_type if project_type in {"paper", "skill", "data"} else "paper"
         is_skill = normalized_type == "skill"
         p = Project(
@@ -258,6 +265,7 @@ class ProjectService:
             user_id=user_id,
             project_type=normalized_type,
             is_skill_project=is_skill,
+            tags=_clean_project_tags(tags or []),
         )
         self.db.add(p)
         self.db.flush()
@@ -379,6 +387,7 @@ class ProjectService:
         compiler: str | None = None,
         is_skill_project: bool | None = None,
         project_type: str | None = None,
+        tags: list[str] | None = None,
     ) -> Project | None:
         p = self.db.get(Project, project_id)
         if p is None or p.user_id != user_id:
@@ -396,6 +405,8 @@ class ProjectService:
             normalized_type = project_type if project_type in {"paper", "skill", "data"} else p.project_type
             p.project_type = normalized_type
             p.is_skill_project = normalized_type == "skill"
+        if tags is not None:
+            p.tags = _clean_project_tags(tags)
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)
@@ -492,3 +503,21 @@ class ProjectService:
         self.db.delete(p)
         self.db.commit()
         return True
+
+
+def _clean_project_tags(tags: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in tags or []:
+        tag = str(raw).strip()
+        if not tag:
+            continue
+        tag = tag[:32]
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(tag)
+        if len(cleaned) >= 12:
+            break
+    return cleaned

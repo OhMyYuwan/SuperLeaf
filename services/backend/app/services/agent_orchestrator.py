@@ -21,7 +21,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from ..models import WorkflowDefinition, WorkflowRun
+from ..models import Doc, WorkflowDefinition, WorkflowRun
 from ..secrets_vault import decrypt
 from .agent_registry_service import AgentRegistryService
 from .agent_workspace_service import AgentWorkspaceService
@@ -94,8 +94,16 @@ class WorkflowOrchestrator:
         """Execute a workflow definition and stream events."""
         # Load workflow definition
         workflow_def = self.db.get(WorkflowDefinition, workflow_def_id)
-        if not workflow_def:
+        if (
+            not workflow_def
+            or workflow_def.project_id != project_id
+            or workflow_def.user_id != user_id
+        ):
             raise ValueError(f"Workflow definition {workflow_def_id} not found")
+        if document_id:
+            doc = self.db.get(Doc, document_id)
+            if doc is None or doc.project_id != project_id:
+                raise ValueError(f"Document {document_id} not found")
 
         # Create workflow run record
         workflow_run = WorkflowRun(
@@ -657,6 +665,7 @@ class WorkflowOrchestrator:
             async for event in nested_orchestrator.execute_workflow(
                 workflow_def_id=nested_workflow_id,
                 project_id=ctx.workflow_run.project_id,
+                user_id=ctx.workflow_run.user_id,
                 document_id=ctx.document_id,
                 target_text=ctx.target_text,
                 range_start=ctx.target_range["from"],
@@ -1120,11 +1129,12 @@ class WorkflowOrchestrator:
             user_id=ctx.workflow_def.user_id,
             runtime_config=native_agent.runtime_config or {},
         )
+        provider_endpoint = self.provider_service.ensure_backend_endpoint_allowed(provider)
         runner = NativeAgentRunner(
             NativeAgentRuntimeConfig(
                 agent_id=native_agent.id,
                 agent_name=native_agent.name,
-                provider_endpoint=provider.endpoint,
+                provider_endpoint=provider_endpoint,
                 api_key=decrypt(provider.api_key_enc),
                 model=native_agent.model,
                 instructions=native_agent.instructions,
@@ -1321,8 +1331,9 @@ class WorkflowOrchestrator:
         try:
             # Local import to keep orchestrator import-time cheap.
             from . import evaluation_service
+
             entries = evaluation_service.review_summary_for_doc(
-                ctx.db, ctx.document_id
+                ctx.db, ctx.document_id, user_id=ctx.workflow_run.user_id
             )
         except Exception:  # pragma: no cover — never break a workflow on this
             return ""

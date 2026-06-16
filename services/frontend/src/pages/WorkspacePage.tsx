@@ -22,7 +22,6 @@ import {
   type PanelSize,
 } from 'react-resizable-panels'
 import { Topbar } from '../features/topbar'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
 import { FileTree, OutlineList } from '../features/file-tree'
 import {
   EditorToolbar,
@@ -173,7 +172,6 @@ export function WorkspacePage() {
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [outlineCollapsed, setOutlineCollapsed] = useState(false)
-  const [personalPanelOpen, setPersonalPanelOpen] = useState(false)
   const leftOuterPanelRef = useRef<PanelImperativeHandle | null>(null)
   const rightOuterPanelRef = useRef<PanelImperativeHandle | null>(null)
   const leftExpandedSizeRef = useRef<number>(WORKSPACE_PANEL_SIZES.outer.left.defaultSize)
@@ -775,10 +773,7 @@ export function WorkspacePage() {
   return (
     <div className="app-shell">
       <ProjectEventBridge />
-      <Topbar
-        onOpenPersonalPanel={() => setPersonalPanelOpen(true)}
-      />
-      <SettingsDialog open={personalPanelOpen} onOpenChange={setPersonalPanelOpen} />
+      <Topbar />
 
       <main className="workspace" aria-busy={showProjectTransition}>
         <PanelGroup

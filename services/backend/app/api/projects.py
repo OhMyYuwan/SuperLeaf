@@ -81,7 +81,12 @@ def create_project(
     db: Session = Depends(get_session),
 ) -> ProjectOut:
     svc = ProjectService(db)
-    p = svc.create(user_id=user.id, name=body.name, project_type=body.project_type)
+    p = svc.create(
+        user_id=user.id,
+        name=body.name,
+        project_type=body.project_type,
+        tags=body.tags,
+    )
     return ProjectOut.model_validate(p)
 
 
@@ -156,6 +161,7 @@ def update_project(
         compiler=body.compiler,
         is_skill_project=body.is_skill_project,
         project_type=body.project_type,
+        tags=body.tags,
     )
     if p is None:
         raise HTTPException(404, "Project not found")

@@ -129,9 +129,23 @@ class Settings(BaseSettings):
     mcp_event_ttl_seconds: int = 3600
     mcp_event_max_per_stream: int = 200
 
-    # NPX skill install policy. Public deployments keep this disabled; local /
-    # trusted deployments can opt in to allow installing skills via npx recipes.
-    skill_npx_install_enabled: bool = False
+    # ── NPX Skill 安装策略 ──────────────────────────────────────────────
+    # 控制是否允许通过 npx 命令安装 Skill（即 "recipe" 类型的 Skill）。
+    #
+    # 安装流程：前端调用 POST /agents/{id}/skills/install-npx 或
+    #           POST /agents 时传入 skill_recipes 参数
+    # → 后端校验此开关 + 用户 is_admin 权限
+    # → 调用 NativeAgentService.install_agent_skill_recipe()
+    # → 执行 npx <package> 拉取 Skill 资产并写入数据库
+    #
+    # 安全考量：npx 会执行远程代码，公开部署建议保持 False，
+    #          仅在本地/可信环境中启用。
+    # 环境变量：YLW_SKILL_NPX_INSTALL_ENABLED=true 覆盖默认值。
+    # 相关端点：_ensure_npx_skill_install_allowed() — 权限守卫
+    #          POST /agents/{id}/skills/install-npx — 单个 Skill 安装
+    #          POST /agents (body.skill_recipes) — 批量安装
+    # ────────────────────────────────────────────────────────────────────
+    skill_npx_install_enabled: bool = True
 
     def resolved_database_url(self) -> str:
         if self.database_url:

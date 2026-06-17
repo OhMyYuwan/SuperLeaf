@@ -199,6 +199,23 @@ def _skill_export_folder_name(row: Skill) -> str:
 
 
 def _ensure_npx_skill_install_allowed(user: User) -> None:
+    """NPX Skill 安装权限守卫。
+
+    两道检查：
+    1. 服务端开关 — settings.skill_npx_install_enabled 必须为 True。
+       默认为 True（本地部署友好），公开部署应设为 False 并通过
+       环境变量 YLW_SKILL_NPX_INSTALL_ENABLED=true 显式开启。
+    2. 用户身份 — 当前用户必须具有 is_admin 权限。
+       因为 npx 会执行远程包代码，只有管理员才能触发。
+
+    调用方：
+      - POST /agents/{id}/skills/install-npx  — 单个 recipe Skill 安装
+      - POST /agents (body.skill_recipes 非空) — 创建 Agent 时批量安装
+
+    不检查此守卫的市场安装端点：
+      - POST /skill-marketplace/{id}/install — 走 SkillMarketplaceService，
+        不涉及 npx 执行，仅从 GitHub 拉取 SKILL.md 文件。
+    """
     if not getattr(settings, "skill_npx_install_enabled", True):
         raise HTTPException(403, "npx skill installation is disabled by server policy")
     if not getattr(user, "is_admin", False):
@@ -1116,6 +1133,14 @@ def install_marketplace_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> SkillMarketplaceInstallOut:
+    """从 Skill 市场安装一个 Skill。
+
+    与 npx recipe 安装不同，此端点不涉及 npx 代码执行。
+    它通过 SkillMarketplaceService.install() 从 GitHub marketplace.json
+    获取 Skill 元数据，再拉取 SKILL.md 文件写入数据库。
+
+    不受 skill_npx_install_enabled 开关限制，任何登录用户均可操作。
+    """
     svc = SkillMarketplaceService(db)
     try:
         row, entry = svc.install(skill_id, user_id=user.id)
@@ -1157,6 +1182,14 @@ def clone_marketplace_skill_to_local(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> SkillMarketplaceCloneOut:
+    """将市场 Skill 克隆为本地可编辑副本。
+
+    从 GitHub 拉取市场版 SKILL.md，在本地数据库创建一个
+    source='local' 的可编辑副本，并移除原有的市场安装记录。
+    用户可在本地副本上自由修改 Skill 内容。
+
+    不受 skill_npx_install_enabled 限制，不涉及 npx 执行。
+    """
     """Fetch marketplace SKILL.md, create an editable local copy, and remove the install."""
     try:
         row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
@@ -1192,6 +1225,8 @@ def create_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
+    # 创建 Agent 时可批量附带 npx recipe Skills。
+    # 同样需要 npx 开关 + admin 权限。
     if body.skill_recipes:
         _ensure_npx_skill_install_allowed(user)
     try:
@@ -1241,6 +1276,23 @@ def install_agent_skill_recipe(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentSkillInstallOut:
+    """通过 npx recipe 安装 Skill 到指定 Agent。
+
+    流程：
+      1. 校验 Agent 存在且属于当前项目
+      2. _ensure_npx_skill_install_allowed() — 检查服务端开关 + admin 权限
+      3. NativeAgentService.install_agent_skill_recipe() — 执行 npx 命令
+         拉取 Skill 资产（SKILL.md 等），写入 native_agent_skill_installs 表
+
+    前置条件：
+      - settings.skill_npx_install_enabled = True
+      - 当前用户 is_admin = True
+      - Agent 存在于当前项目中
+
+    与市场安装的区别：
+      - 此端点执行 npx 远程代码，需要 admin 权限
+      - POST /skill-marketplace/{id}/install 仅拉取文件，无需 admin
+    """
     svc = NativeAgentService(db)
     if svc.get_agent(agent_id, project_id=project.id, user_id=user.id) is None:
         raise HTTPException(404, "native agent not found")

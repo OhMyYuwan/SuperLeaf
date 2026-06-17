@@ -66,6 +66,7 @@ export class PdfJsWrapper {
 
     this.eventBus.on('pagesinit', () => {
       options.onPagesInit?.(this.viewer.pagesCount)
+      this.updateSoon()
     })
     this.eventBus.on('pagechanging', (event: { pageNumber: number }) => {
       options.onPageChanging?.(event.pageNumber)
@@ -81,6 +82,11 @@ export class PdfJsWrapper {
   }
 
   async load(url: string): Promise<void> {
+    if (this.activeUrl === url && this.viewer.pdfDocument) {
+      this.updateSoon()
+      return
+    }
+
     this.activeUrl = url
     this.loadingTask?.destroy()
 
@@ -116,6 +122,7 @@ export class PdfJsWrapper {
       }
       this.viewer.setDocument(pdf)
       this.linkService.setDocument(pdf, null)
+      this.updateSoon()
     } catch (err: unknown) {
       // Suppress transient errors during mode switches where the shared
       // PDF.js worker/transport is terminated mid-render.
@@ -214,6 +221,10 @@ export class PdfJsWrapper {
   }
 
   updateOnResize(): void {
+    this.updateSoon()
+  }
+
+  private updateSoon(): void {
     window.requestAnimationFrame(() => {
       this.viewer.update()
     })

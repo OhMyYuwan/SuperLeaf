@@ -61,6 +61,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onPageChanging,
     onPageRendered,
     onScaleChanging,
+    onLoadError,
   })
 
   callbacksRef.current = {
@@ -68,6 +69,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onPageChanging,
     onPageRendered,
     onScaleChanging,
+    onLoadError,
   }
 
   useImperativeHandle(ref, () => ({
@@ -100,9 +102,9 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
   useEffect(() => {
     if (!wrapperRef.current || !url) return
     wrapperRef.current.load(url).catch((error: unknown) => {
-      onLoadError(error instanceof Error ? error : new Error(String(error)))
+      callbacksRef.current.onLoadError(error instanceof Error ? error : new Error(String(error)))
     })
-  }, [url, buildId, onLoadError])
+  }, [url, buildId])
 
   // Sync zoom level.
   useEffect(() => {

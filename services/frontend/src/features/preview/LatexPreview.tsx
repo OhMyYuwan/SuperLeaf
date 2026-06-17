@@ -39,7 +39,8 @@ import {
 } from '../../services/previewSourceMap'
 import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
 import { pdfPointFromPageClientPosition } from './pdfCoordinate'
-import { PdfJsViewer } from './PdfJsViewer'
+import { PdfJsViewer, type PdfJsViewerHandle } from './PdfJsViewer'
+import type { PdfJsPagePoint } from './pdfJsWrapper'
 import './latex-preview.css'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -48,7 +49,6 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 const DEFAULT_PDF_PAGE_ASPECT_RATIO = 792 / 612
 const PDF_INTERSECTION_ROOT_MARGIN = '1200px 0px'
-const PDF_RANGE_CHUNK_SIZE = 128 * 1024
 const PDF_RENDER_RADIUS = 2
 const PDF_MAX_DEVICE_PIXEL_RATIO = 2
 const PDF_LOAD_OPTIONS = {
@@ -119,6 +119,7 @@ export function LatexPreview({
   const containerRef = useRef<HTMLDivElement>(null)
   const compileSettingsRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
+  const pdfJsViewerRef = useRef<PdfJsViewerHandle | null>(null)
   const lastAutoCompiledSavedAtRef = useRef(0)
   const lastPdfVersionRef = useRef(pdfVersion)
   const pdfScrollTopRef = useRef(0)
@@ -145,6 +146,8 @@ export function LatexPreview({
     zoom,
     setZoom,
   })
+
+  const activePdfViewer = pdfLoadError ? 'native' : latexPdfViewer
 
   const compileCurrentDocument = async () => {
     await saveBackendDoc(documentId)
@@ -251,6 +254,7 @@ export function LatexPreview({
   }
 
   const handlePdfDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (activePdfViewer === 'pdfjs-viewer') return
     const target = event.target
     if (!(target instanceof HTMLElement)) return
     void jumpFromPdfDoubleClick(target, event.clientX, event.clientY)
@@ -286,6 +290,27 @@ export function LatexPreview({
 
     const textElement = target.closest<HTMLElement>('.react-pdf__Page__textContent span')
     const jump = sourceJumpFromPreviewText(source, textElement?.textContent)
+    if (jump) {
+      onSourceJump?.(jump)
+    } else {
+      showPdfSyncMessage('未找到对应源码位置，请先确认已编译最新内容')
+    }
+  }
+
+  async function jumpFromPdfJsDoubleClick(point: PdfJsPagePoint, text?: string) {
+    try {
+      const location = await compileApi.syncFromPdf(point)
+      onSourceJump?.({
+        documentId: location.document_id,
+        pos: location.offset,
+      })
+      setPdfSyncMessage(null)
+      return
+    } catch {
+      // Fall back to text-layer matching when reverse SyncTeX is unavailable or stale.
+    }
+
+    const jump = sourceJumpFromPreviewText(source, text)
     if (jump) {
       onSourceJump?.(jump)
     } else {
@@ -373,6 +398,14 @@ export function LatexPreview({
   }
 
   function scrollToSynctexLocation(location: CompileSyncToPdfResult): boolean {
+    if (activePdfViewer === 'pdfjs-viewer') {
+      const target = pdfJsViewerRef.current?.scrollToPdfLocation(location)
+      if (!target) return false
+      showPdfSyncMarker(location.page, target.xRatio, target.yRatio)
+      setPdfSyncMessage(null)
+      return true
+    }
+
     const scroller = pdfScrollRef.current
     if (!scroller) return false
 
@@ -492,6 +525,7 @@ export function LatexPreview({
 
   useEffect(() => {
     if (!pdfSyncMarker) return
+    if (activePdfViewer !== 'react-pdf') return
     const scroller = pdfScrollRef.current
     if (!scroller) return
     const page = scroller.querySelector<HTMLElement>(
@@ -508,7 +542,7 @@ export function LatexPreview({
     if (targetTop < scroller.scrollTop || targetTop > scroller.scrollTop + scroller.clientHeight) {
       scroller.scrollTop = Math.max(0, Math.min(maxTop, targetTop - scroller.clientHeight * 0.32))
     }
-  }, [pageWidth, pdfSyncMarker, zoom])
+  }, [activePdfViewer, pageWidth, pdfSyncMarker, zoom])
 
   const pdfUrl = useMemo(() => {
     if (pdfVersion <= 0 || !currentProjectId) return ''
@@ -571,7 +605,6 @@ export function LatexPreview({
 
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
-  const activePdfViewer = pdfLoadError ? 'native' : latexPdfViewer
   const nativePdfUrl = useMemo(() => {
     if (!pdfUrl) return ''
     return `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`
@@ -629,6 +662,11 @@ export function LatexPreview({
   }
 
   const fitPdfToWidth = () => {
+    if (activePdfViewer === 'pdfjs-viewer') {
+      pdfJsViewerRef.current?.setScaleValue('page-width')
+      return
+    }
+
     const scroller = pdfScrollRef.current
     if (!scroller) {
       setZoom(1)
@@ -657,11 +695,10 @@ export function LatexPreview({
         <a
           className={`small-btn latex-preview-download${pdfUrl ? '' : ' is-disabled'}`}
           href={pdfUrl || undefined}
-          target={pdfUrl ? '_blank' : undefined}
-          rel={pdfUrl ? 'noopener noreferrer' : undefined}
+          download={pdfUrl ? downloadName : undefined}
           aria-disabled={!pdfUrl}
-          aria-label={pdfUrl ? `在新标签页打开 ${downloadName}` : '尚未编译'}
-          title={pdfUrl ? `在新标签页打开 ${downloadName}` : '尚未编译'}
+          aria-label={pdfUrl ? `下载 ${downloadName}` : '尚未编译'}
+          title={pdfUrl ? `下载 ${downloadName}` : '尚未编译'}
           onClick={(e) => {
             if (!pdfUrl) e.preventDefault()
           }}
@@ -874,6 +911,8 @@ export function LatexPreview({
               })
             }}
             onLoadError={(err) => {
+              const msg = String(err)
+              if (msg.includes('Worker was destroyed') || msg.includes('Transport destroyed')) return
               console.error('PDF load error', err)
               setPdfLoadError(err instanceof Error ? err : new Error(String(err)))
             }}
@@ -926,10 +965,12 @@ export function LatexPreview({
         )}
         {pdfUrl && activePdfViewer === 'pdfjs-viewer' && (
           <PdfJsViewer
+            ref={pdfJsViewerRef}
             key={activeBuildId || pdfUrl}
             url={pdfUrl}
             buildId={activeBuildId}
             zoom={zoom}
+            syncMarker={pdfSyncMarker}
             onPagesInit={(pagesCount) => {
               setPdfLoadError(null)
               setNumPages(pagesCount)
@@ -939,10 +980,15 @@ export function LatexPreview({
             }}
             onPageChanging={(pageNumber) => setCurrentPage(pageNumber)}
             onPageRendered={restorePdfScrollSoon}
+            onScaleChanging={(scale) => setZoom(clampPdfZoom(scale))}
+            onPdfDoubleClick={(point, text) => {
+              void jumpFromPdfJsDoubleClick(point, text)
+            }}
             onLoadError={(error) => {
-              // Suppress "Worker was destroyed" — expected during preview mode
-              // switches where the shared PDF.js worker is terminated.
-              if (String(error).includes('Worker was destroyed')) return
+              // Suppress transient errors during preview mode switches where
+              // the shared PDF.js worker/transport is terminated mid-render.
+              const msg = String(error)
+              if (msg.includes('Worker was destroyed') || msg.includes('Transport destroyed')) return
               console.error('PDF load error', error)
               setPdfLoadError(error)
             }}
@@ -955,7 +1001,7 @@ export function LatexPreview({
 
 function findPdfTextMatch(container: HTMLElement, candidates: string[]): HTMLElement | null {
   const spans = Array.from(
-    container.querySelectorAll<HTMLElement>('.react-pdf__Page__textContent span'),
+    container.querySelectorAll<HTMLElement>('.react-pdf__Page__textContent span, .textLayer span'),
   )
   const normalizedCandidates = candidates
     .map((candidate) => normalizePdfLookup(candidate))

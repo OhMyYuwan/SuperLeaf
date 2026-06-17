@@ -966,7 +966,6 @@ export function LatexPreview({
         {pdfUrl && activePdfViewer === 'pdfjs-viewer' && (
           <PdfJsViewer
             ref={pdfJsViewerRef}
-            key={activeBuildId || pdfUrl}
             url={pdfUrl}
             buildId={activeBuildId}
             zoom={zoom}

@@ -35,6 +35,12 @@ interface PdfJsPageSize {
   height: number
 }
 
+interface PdfJsViewportAnchor {
+  pageNumber: number
+  left: number
+  top: number
+}
+
 export interface PdfJsWrapperOptions {
   container: HTMLDivElement
   viewer: HTMLDivElement
@@ -51,6 +57,7 @@ export class PdfJsWrapper {
   private loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null
   private activeUrl = ''
   private syncMarkerElement: HTMLSpanElement | null = null
+  private pendingViewportRestore: PdfJsViewportAnchor | null = null
 
   constructor(options: PdfJsWrapperOptions) {
     this.linkService = new PDFLinkService({ eventBus: this.eventBus })
@@ -73,6 +80,7 @@ export class PdfJsWrapper {
     })
     this.eventBus.on('pagerendered', (event: { pageNumber: number }) => {
       options.onPageRendered?.(event.pageNumber)
+      this.restoreViewportAnchor()
     })
     this.eventBus.on('scalechanging', (event: { scale: number }) => {
       if (Number.isFinite(event.scale)) {
@@ -86,6 +94,8 @@ export class PdfJsWrapper {
       this.updateSoon()
       return
     }
+
+    this.pendingViewportRestore = this.captureViewportAnchor()
 
     this.activeUrl = url
     this.loadingTask?.destroy()
@@ -220,6 +230,50 @@ export class PdfJsWrapper {
     window.requestAnimationFrame(() => {
       this.viewer.update()
     })
+  }
+
+  private captureViewportAnchor(): PdfJsViewportAnchor | null {
+    if (!this.viewer.pdfDocument || this.viewer.pagesCount <= 0) return null
+
+    this.viewer.update()
+    const location = this.viewer._location
+    const pageNumber = Number(location?.pageNumber ?? this.viewer.currentPageNumber)
+    if (!Number.isFinite(pageNumber) || pageNumber < 1) return null
+
+    const left = Number(location?.left ?? 0)
+    const top = Number(location?.top ?? 0)
+    return {
+      pageNumber: Math.min(Math.max(1, Math.round(pageNumber)), this.viewer.pagesCount),
+      left: Number.isFinite(left) ? Math.max(0, left) : 0,
+      top: Number.isFinite(top) ? Math.max(0, top) : 0,
+    }
+  }
+
+  private restoreViewportAnchor(): void {
+    const anchor = this.pendingViewportRestore
+    if (!anchor) {
+      return
+    }
+    this.pendingViewportRestore = null
+
+    const pageNumber = Math.min(Math.max(1, anchor.pageNumber), this.viewer.pagesCount || 1)
+
+    let attempts = 0
+    const restore = () => {
+      if (this.activeUrl === '' || attempts >= 12) return
+      this.viewer.scrollPageIntoView({
+        pageNumber,
+        destArray: [null, { name: 'XYZ' }, anchor.left, anchor.top, null],
+        ignoreDestinationZoom: true,
+      })
+      this.viewer.currentPageNumber = pageNumber
+      this.updateSoon()
+      attempts += 1
+      if (attempts < 12) {
+        window.setTimeout(restore, 80)
+      }
+    }
+    restore()
   }
 
   destroy(): void {

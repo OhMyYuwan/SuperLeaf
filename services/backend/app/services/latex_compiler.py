@@ -1172,15 +1172,28 @@ class LatexCompilerService:
 
     @staticmethod
     def _line_column_from_offset(source: str, offset: int) -> tuple[int, int]:
+        """Convert a 0-based byte offset to 1-based line and column for synctex.
+
+        synctex view -i line:column:file expects 1-based values.
+        CodeMirror uses 0-based byte offsets where the cursor sits between
+        characters, so offset=0 is before the first character (line 1, col 1).
+        """
         safe_offset = max(0, min(offset, len(source)))
         prefix = source[:safe_offset]
         line = prefix.count("\n") + 1
         last_newline = prefix.rfind("\n")
-        column = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
+        # 0-based column from offset, then +1 for synctex's 1-based convention.
+        col_0 = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
+        column = col_0 + 1
         return line, column
 
     @staticmethod
     def _offset_from_line_column(source: str, line: int, column: int) -> int:
+        """Convert 1-based line/column (from synctex) to 0-based byte offset.
+
+        synctex edit output uses 1-based line and column numbers.
+        Returns a 0-based offset suitable for CodeMirror/editor positions.
+        """
         if line <= 1:
             line_start = 0
         else:
@@ -1200,7 +1213,8 @@ class LatexCompilerService:
         line_end = source.find("\n", line_start)
         if line_end < 0:
             line_end = len(source)
-        return max(0, min(line_start + column, line_end, len(source)))
+        # column from synctex is 1-based, so subtract 1 for 0-based offset.
+        return max(0, min(line_start + column - 1, line_end, len(source)))
 
     @staticmethod
     def _parse_synctex_view_output(output: str) -> dict[str, int | float | None] | None:

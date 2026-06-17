@@ -103,3 +103,4 @@ deploy/package-local.sh
 deploy/upload-release.sh
 deploy/update-server.sh
 services/backend/test/test_backend_mcp_rpc.py
+SECURITY.md

@@ -86,9 +86,6 @@ PRESERVED_GENERATED_PATTERNS = (
     "*.fdb_latexmk",
     "*.pygtex",
     "*.pygstyle",
-    "_minted*",
-    "cache",
-    "cache/*",
 )
 CONTENT_BEARING_GENERATED_SUFFIXES = frozenset(
     {
@@ -117,6 +114,19 @@ class CompileResult:
     source_paths: dict[str, str] = field(default_factory=dict)
     main_rel_path: str = ""
     started_at: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class ProjectTreeWriteResult:
+    main_rel_path: Path
+    warnings: list[str]
+    source_paths: dict[str, str]
+    workspace_manifest: set[str]
+
+    def __iter__(self):
+        yield self.main_rel_path
+        yield self.warnings
+        yield self.source_paths
 
 
 class LatexCompilerService:
@@ -270,10 +280,10 @@ class LatexCompilerService:
         self,
         workspace: Path,
         sync_state: str,
-        source_paths: dict[str, str],
+        workspace_manifest: set[str],
     ) -> None:
-        resource_list = sorted(source_paths.values())
-        payload = "\n".join([*resource_list, f"stateHash:{sync_state}", ""])
+        resource_list = sorted(workspace_manifest)
+        payload = "\n".join(["manifestVersion:2", *resource_list, f"stateHash:{sync_state}", ""])
         (workspace / SYNC_STATE_FILE).write_text(payload, encoding="utf-8")
 
     # ----------------------------------------------------------- workspace writers
@@ -284,15 +294,18 @@ class LatexCompilerService:
         project_id: str,
         workspace: Path,
         main_doc: Doc,
-    ) -> tuple[Path, list[str], dict[str, str]]:
+    ) -> ProjectTreeWriteResult:
         self._remove_stale_final_outputs(workspace)
-        main_rel_path, warnings, source_paths = self._write_project_tree(
+        tree = self._write_project_tree(
             db,
             project_id,
             workspace,
             main_doc,
         )
-        expected_sources = self._expected_workspace_source_files(workspace, source_paths)
+        expected_sources = self._expected_workspace_source_files(
+            workspace,
+            tree.workspace_manifest,
+        )
         for stale in sorted((path for path in workspace.rglob("*") if path.is_file())):
             if stale.name == SYNC_STATE_FILE:
                 continue
@@ -302,16 +315,16 @@ class LatexCompilerService:
                 continue
             stale.unlink(missing_ok=True)
         self._prune_empty_dirs(workspace)
-        return main_rel_path, warnings, source_paths
+        return tree
 
     def _expected_workspace_source_files(
         self,
         workspace: Path,
-        source_paths: dict[str, str],
+        workspace_manifest: set[str],
     ) -> set[Path]:
         resolved_workspace = workspace.resolve(strict=False)
         expected: set[Path] = set()
-        for rel_path in source_paths.values():
+        for rel_path in workspace_manifest:
             candidate = (workspace / rel_path).resolve(strict=False)
             if candidate != resolved_workspace and not str(candidate).startswith(
                 f"{resolved_workspace}{os.sep}"
@@ -348,15 +361,15 @@ class LatexCompilerService:
         project_id: str,
         workspace: Path,
         main_doc: Doc,
-    ) -> tuple[Path, list[str], dict[str, str]]:
-        main_rel_path, warnings, source_paths = self._write_project_tree(
+    ) -> ProjectTreeWriteResult:
+        tree = self._write_project_tree(
             db,
             project_id,
             workspace,
             main_doc,
         )
         self._remove_stale_final_outputs(workspace)
-        return main_rel_path, warnings, source_paths
+        return tree
 
     # ----------------------------------------------------------- compile guards
 
@@ -532,18 +545,21 @@ class LatexCompilerService:
                 workspace = self._incremental_project_dir(workspace_key)
                 previous_state = None if from_scratch else self._read_workspace_sync_state(workspace)
                 if previous_state == sync_state:
-                    main_rel_path, placeholder_warnings, source_paths = (
-                        self._write_incremental_compile_workspace(
-                            db, project_id, workspace, main_doc,
-                        )
+                    tree = self._write_incremental_compile_workspace(
+                        db, project_id, workspace, main_doc,
                     )
                 else:
-                    main_rel_path, placeholder_warnings, source_paths = (
-                        self._write_full_compile_workspace(
-                            db, project_id, workspace, main_doc,
-                        )
+                    tree = self._write_full_compile_workspace(
+                        db, project_id, workspace, main_doc,
                     )
-                    self._write_workspace_sync_state(workspace, sync_state, source_paths)
+                    self._write_workspace_sync_state(
+                        workspace,
+                        sync_state,
+                        tree.workspace_manifest,
+                    )
+                main_rel_path = tree.main_rel_path
+                placeholder_warnings = tree.warnings
+                source_paths = tree.source_paths
                 result = await self._run_compiler(
                     tmpdir=workspace,
                     main_rel_path=main_rel_path,
@@ -554,9 +570,10 @@ class LatexCompilerService:
             else:
                 with tempfile.TemporaryDirectory(prefix="ylw-tex-") as tmp:
                     tmpdir = Path(tmp)
-                    main_rel_path, placeholder_warnings, source_paths = self._write_project_tree(
-                        db, project_id, tmpdir, main_doc
-                    )
+                    tree = self._write_project_tree(db, project_id, tmpdir, main_doc)
+                    main_rel_path = tree.main_rel_path
+                    placeholder_warnings = tree.warnings
+                    source_paths = tree.source_paths
                     result = await self._run_compiler(
                         tmpdir=tmpdir,
                         main_rel_path=main_rel_path,
@@ -626,7 +643,7 @@ class LatexCompilerService:
 
     def _write_project_tree(
         self, db: Session, project_id: str, tmpdir: Path, main_doc: Doc
-    ) -> tuple[Path, list[str], dict[str, str]]:
+    ) -> ProjectTreeWriteResult:
         """Write all docs + files of the project into tmpdir, preserving folder
         structure. Returns the relative path of the main doc within tmpdir."""
 
@@ -684,6 +701,10 @@ class LatexCompilerService:
             add_existing((resolve_folder_path(f.folder_id) / f.name).relative_to(tmpdir))
 
         placeholder_warnings: list[str] = []
+        project_manifest: set[str] = set()
+
+        def add_manifest_path(path: Path) -> None:
+            project_manifest.add(self._workspace_manifest_path(path.relative_to(tmpdir)))
 
         # Write all docs (text).
         main_rel_path = Path(main_doc.name)
@@ -702,6 +723,7 @@ class LatexCompilerService:
                     warnings=placeholder_warnings,
                 )
             file_path.write_text(content, encoding="utf-8")
+            add_manifest_path(file_path)
             doc_rel_paths[d.id] = file_path.relative_to(tmpdir)
             if d.id == main_doc.id:
                 main_rel_path = file_path.relative_to(tmpdir)
@@ -725,6 +747,7 @@ class LatexCompilerService:
             file_path = folder_path / f.name
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(f.blob or b"")
+            add_manifest_path(file_path)
             db.expunge(f)
 
         main_parent = main_rel_path.parent
@@ -733,7 +756,12 @@ class LatexCompilerService:
             for doc_id, rel_path in doc_rel_paths.items()
         }
 
-        return main_rel_path, placeholder_warnings, source_paths
+        return ProjectTreeWriteResult(
+            main_rel_path=main_rel_path,
+            warnings=placeholder_warnings,
+            source_paths=source_paths,
+            workspace_manifest=project_manifest,
+        )
 
     @staticmethod
     def _relative_posix_path(path: Path, base: Path) -> str:
@@ -741,6 +769,10 @@ class LatexCompilerService:
         if base_posix in ("", "."):
             return posixpath.normpath(path.as_posix())
         return posixpath.normpath(posixpath.relpath(path.as_posix(), base_posix))
+
+    @staticmethod
+    def _workspace_manifest_path(path: Path) -> str:
+        return posixpath.normpath(path.as_posix().lstrip("/"))
 
     def _replace_missing_graphics(
         self,

@@ -11,8 +11,8 @@
  *   - Full-log toggle
  */
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import * as pdfjsLib from 'pdfjs-dist'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { Document, Page, pdfjs } from 'react-pdf'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
   Loader2,
@@ -30,6 +30,7 @@ import {
 import { useCompileStore } from '../../stores/compileStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { compileApi, type CompileSyncToPdfResult } from '../../services/backendApi'
 import {
   sourceJumpFromPreviewText,
@@ -40,14 +41,22 @@ import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWh
 import { pdfPointFromPageClientPosition } from './pdfCoordinate'
 import { PdfJsViewer } from './PdfJsViewer'
 import './latex-preview.css'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
 
-// Configure PDF.js worker for the wrapper.
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
+const DEFAULT_PDF_PAGE_ASPECT_RATIO = 792 / 612
 const PDF_INTERSECTION_ROOT_MARGIN = '1200px 0px'
+const PDF_RANGE_CHUNK_SIZE = 128 * 1024
 const PDF_RENDER_RADIUS = 2
-
-type PdfViewerPreference = 'auto' | 'pdfjs' | 'native'
+const PDF_MAX_DEVICE_PIXEL_RATIO = 2
+const PDF_LOAD_OPTIONS = {
+  disableAutoFetch: true,
+  disableStream: true,
+  isEvalSupported: false,
+  rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
+} as const
 
 interface PdfPageSize {
   width: number
@@ -90,6 +99,7 @@ export function LatexPreview({
   const saveBackendDoc = useDocumentStore((s) => s.saveBackendDoc)
   const saveStatus = useDocumentStore((s) => s.saveStatus[documentId] ?? 'idle')
   const lastSavedAt = useDocumentStore((s) => s.lastSavedAt[documentId] ?? 0)
+  const latexPdfViewer = useSettingsStore((s) => s.latexPdfViewer)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectName = useProjectStore((s) =>
     s.currentProjectId
@@ -101,10 +111,9 @@ export function LatexPreview({
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [showLog, setShowLog] = useState(false)
   const [showCompileSettings, setShowCompileSettings] = useState(false)
-  const [pdfViewerPreference, setPdfViewerPreference] = useState<PdfViewerPreference>('auto')
   const [pdfLoadError, setPdfLoadError] = useState<Error | null>(null)
-  const [, setVisiblePdfPages] = useState<Set<number>>(() => new Set([1]))
-  const [, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
+  const [visiblePdfPages, setVisiblePdfPages] = useState<Set<number>>(() => new Set([1]))
+  const [pdfPageSizes, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -314,6 +323,44 @@ export function LatexPreview({
     }, 1400)
   }
 
+  function recordPdfPageSize(
+    pageNumber: number,
+    page: { getViewport: (options: { scale: number }) => { width: number; height: number } },
+  ) {
+    const viewport = page.getViewport({ scale: 1 })
+    const nextSize = {
+      width: viewport.width,
+      height: viewport.height,
+    }
+    pdfPageSizesRef.current[pageNumber] = nextSize
+    setPdfPageSizes((sizes) => {
+      const existing = sizes[pageNumber]
+      if (existing?.width === nextSize.width && existing.height === nextSize.height) return sizes
+      return { ...sizes, [pageNumber]: nextSize }
+    })
+  }
+
+  function getPdfPageShellStyle(pageNumber: number): CSSProperties {
+    const width = pageWidth * clampPdfZoom(zoom)
+    const naturalSize = pdfPageSizes[pageNumber]
+    const aspectRatio = naturalSize
+      ? naturalSize.height / Math.max(1, naturalSize.width)
+      : DEFAULT_PDF_PAGE_ASPECT_RATIO
+
+    return {
+      width,
+      minHeight: width * aspectRatio,
+    }
+  }
+
+  function shouldKeepPdfPageRendered(pageNumber: number): boolean {
+    return (
+      visiblePdfPages.has(pageNumber) ||
+      Math.abs(pageNumber - currentPage) <= PDF_RENDER_RADIUS ||
+      pdfSyncMarker?.page === pageNumber
+    )
+  }
+
   function showPdfSyncMarker(page: number, xRatio: number, yRatio: number) {
     setPdfSyncMarker({ page, xRatio, yRatio })
     if (pdfSyncMarkerTimerRef.current != null) {
@@ -470,6 +517,13 @@ export function LatexPreview({
     return `${compileApi.pdfUrl(currentProjectId)}?build=${encodeURIComponent(cacheKey)}`
   }, [pdfVersion, activeBuildId, currentProjectId])
 
+  const pdfFile = useMemo(() => {
+    if (!pdfUrl) return null
+    // Keep this object stable across editor-state rerenders. react-pdf treats
+    // a new `file` object as a new document and resets scroll to page one.
+    return { url: pdfUrl, withCredentials: true } as const
+  }, [pdfUrl])
+
   useEffect(() => {
     // The PDF URL is the document identity here; reset viewer state together so
     // a previous load error or page count cannot leak into the next compile.
@@ -517,19 +571,14 @@ export function LatexPreview({
 
   const compilersAvailable = compilers?.available ?? []
   const currentCompiler = settings?.compiler || compilers?.default || ''
-  const activePdfViewer =
-    pdfViewerPreference === 'auto'
-      ? pdfLoadError
-        ? 'native'
-        : 'pdfjs'
-      : pdfViewerPreference
+  const activePdfViewer = pdfLoadError ? 'native' : latexPdfViewer
   const nativePdfUrl = useMemo(() => {
     if (!pdfUrl) return ''
     return `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`
   }, [pdfUrl])
 
   useEffect(() => {
-    if (activePdfViewer !== 'pdfjs' || numPages <= 0) return
+    if (activePdfViewer !== 'react-pdf' || numPages <= 0) return
     const scroller = pdfScrollRef.current
     if (!scroller || !('IntersectionObserver' in window)) {
       setVisiblePdfPages(new Set([1]))
@@ -695,19 +744,6 @@ export function LatexPreview({
                 从头编译
               </button>
 
-              <label className="latex-settings-field">
-                <span>预览器</span>
-                <select
-                  className="compiler-picker"
-                  value={pdfViewerPreference}
-                  onChange={(e) => setPdfViewerPreference(e.target.value as PdfViewerPreference)}
-                  title="PDF 预览器"
-                >
-                  <option value="auto">自动</option>
-                  <option value="native">浏览器</option>
-                  <option value="pdfjs">PDF.js</option>
-                </select>
-              </label>
             </div>
           )}
         </div>
@@ -806,7 +842,75 @@ export function LatexPreview({
             src={nativePdfUrl}
           />
         )}
-        {pdfUrl && activePdfViewer === 'pdfjs' && (
+        {pdfFile && activePdfViewer === 'react-pdf' && (
+          <Document
+            key={activeBuildId || pdfVersion}
+            file={pdfFile}
+            options={PDF_LOAD_OPTIONS}
+            onLoadSuccess={({ numPages }) => {
+              setPdfLoadError(null)
+              setNumPages(numPages)
+              setCurrentPage(numPages > 0 ? 1 : 0)
+              setVisiblePdfPages(new Set([1]))
+              restorePdfScrollSoon()
+              window.requestAnimationFrame(() => {
+                if (pdfScrollRef.current) {
+                  updateCurrentPdfPage(pdfScrollRef.current)
+                }
+              })
+            }}
+            onLoadError={(err) => {
+              console.error('PDF load error', err)
+              setPdfLoadError(err instanceof Error ? err : new Error(String(err)))
+            }}
+            loading={<div className="latex-preview-empty">加载 PDF…</div>}
+          >
+            {Array.from({ length: numPages }, (_, i) => {
+              const pageNumber = i + 1
+              const shouldRenderPage = shouldKeepPdfPageRendered(pageNumber)
+
+              return (
+                <div
+                  key={pageNumber}
+                  ref={(node) => {
+                    pdfPageShellRefs.current[pageNumber] = node
+                  }}
+                  className="latex-pdf-page-shell"
+                  data-page-number={pageNumber}
+                  style={getPdfPageShellStyle(pageNumber)}
+                >
+                  {shouldRenderPage ? (
+                    <Page
+                      pageNumber={pageNumber}
+                      width={pageWidth * clampPdfZoom(zoom)}
+                      renderTextLayer
+                      renderAnnotationLayer={false}
+                      canvasBackground="white"
+                      className="latex-pdf-page"
+                      devicePixelRatio={getPdfDevicePixelRatio()}
+                      loading={<div className="latex-pdf-page-placeholder" />}
+                      onLoadSuccess={(page) => recordPdfPageSize(pageNumber, page)}
+                      onRenderSuccess={restorePdfScrollSoon}
+                    />
+                  ) : (
+                    <div className="latex-pdf-page-placeholder" aria-hidden="true" />
+                  )}
+                  {pdfSyncMarker?.page === pageNumber && (
+                    <span
+                      className="pdf-source-sync-target"
+                      style={{
+                        left: `${pdfSyncMarker.xRatio * 100}%`,
+                        top: `${pdfSyncMarker.yRatio * 100}%`,
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </Document>
+        )}
+        {pdfUrl && activePdfViewer === 'pdfjs-viewer' && (
           <PdfJsViewer
             key={activeBuildId || pdfUrl}
             url={pdfUrl}
@@ -873,6 +977,12 @@ function normalizePdfLookup(value: string): string {
 function clampRatio(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
+}
+
+function getPdfDevicePixelRatio(): number {
+  if (typeof window === 'undefined') return 1
+  const ratio = window.devicePixelRatio || 1
+  return Math.max(1, Math.min(PDF_MAX_DEVICE_PIXEL_RATIO, ratio))
 }
 
 function setsAreEqual(a: Set<number>, b: Set<number>): boolean {

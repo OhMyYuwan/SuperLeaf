@@ -99,9 +99,17 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
   }, [])
 
   // Load a new PDF when url or buildId changes.
+  // Preserve current page across recompiles so the viewer doesn't jump to page 1.
   useEffect(() => {
     if (!wrapperRef.current || !url) return
-    wrapperRef.current.load(url).catch((error: unknown) => {
+    const wrapper = wrapperRef.current
+    const savedPage = wrapper.getCurrentPage()
+    wrapper.load(url).then(() => {
+      // Restore the page position after the new PDF is loaded.
+      if (savedPage > 1) {
+        wrapper.scrollToPage(savedPage)
+      }
+    }).catch((error: unknown) => {
       callbacksRef.current.onLoadError(error instanceof Error ? error : new Error(String(error)))
     })
   }, [url, buildId])

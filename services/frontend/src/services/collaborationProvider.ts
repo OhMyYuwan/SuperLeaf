@@ -12,6 +12,7 @@ export interface PeerInfo {
   colorLight: string
   projectId?: string
   docId?: string
+  cursorPos?: { anchor: number; head: number }
 }
 
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
@@ -125,12 +126,22 @@ export class CollaborationProvider {
 
   getPeers(): PeerInfo[] {
     const peersByUserId = new Map<string, PeerInfo>()
+    const ydoc = this.doc
     this.awareness.getStates().forEach((state, clientId) => {
       if (clientId === this.doc.clientID) return
       const user = state.user as PeerInfo | undefined
       if (user?.projectId !== this.projectId || user?.docId !== this.docId) return
       if (user?.id && !peersByUserId.has(user.id)) {
-        peersByUserId.set(user.id, user)
+        let cursorPos: { anchor: number; head: number } | undefined
+        const cursor = state.cursor as { anchor: unknown; head: unknown } | null | undefined
+        if (cursor?.anchor && cursor?.head) {
+          const absAnchor = Y.createAbsolutePositionFromRelativePosition(cursor.anchor as Y.RelativePosition, ydoc)
+          const absHead = Y.createAbsolutePositionFromRelativePosition(cursor.head as Y.RelativePosition, ydoc)
+          if (absAnchor && absHead) {
+            cursorPos = { anchor: absAnchor.index, head: absHead.index }
+          }
+        }
+        peersByUserId.set(user.id, { ...user, cursorPos })
       }
     })
     return Array.from(peersByUserId.values())

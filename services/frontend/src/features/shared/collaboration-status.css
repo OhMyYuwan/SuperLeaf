@@ -40,6 +40,21 @@
   font-weight: 600;
   color: var(--text-primary, #e0e0e0);
   background: var(--bg-secondary, #2a2a2a);
+  opacity: 0.6;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.collab-peer-chip.stale {
+  opacity: 0.3;
+}
+
+.collab-peer-chip.clickable {
+  cursor: pointer;
+}
+
+.collab-peer-chip.clickable:hover {
+  opacity: 1;
+  transform: scale(1.15);
 }
 
 .collab-label {

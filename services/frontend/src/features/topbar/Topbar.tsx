@@ -6,7 +6,6 @@ import { Link } from 'react-router-dom'
 import { ViewControl } from './ViewControl'
 import { UserMenu } from './UserMenu'
 import { NotificationBell } from './NotificationBell'
-import { PresenceIndicator } from './PresenceIndicator'
 import { useProjectStore } from '../../stores/projectStore'
 import './topbar.css'
 
@@ -35,7 +34,6 @@ export function Topbar() {
         </div>
       </div>
       <div className="topbar-actions">
-        <PresenceIndicator />
         {!isDataProject && <ViewControl />}
         <NotificationBell />
         <UserMenu />

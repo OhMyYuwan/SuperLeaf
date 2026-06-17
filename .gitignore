@@ -94,6 +94,7 @@ docs/superpowers/
 
 # test
 services/frontend/src/__tests__/
+services/backend/test/
 docs/analysis/
 deploy/package-local.sh
 .gitignore

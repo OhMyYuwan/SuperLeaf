@@ -96,6 +96,7 @@ def _ensure_bootstrap_project(conn) -> str:
             ("user_id", "''"),
             ("project_type", "'paper'"),
             ("is_skill_project", "0"),
+            ("tags", "'[]'"),
             ("project_skill_id", "''"),
             ("skill_cache_version", "0"),
         )

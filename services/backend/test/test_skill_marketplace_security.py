@@ -33,6 +33,44 @@ def test_skill_marketplace_rejects_absolute_loopback_entry_url(
     assert requested == []
 
 
+def test_skill_marketplace_rejects_private_catalog_url_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_catalog_url = "http://127.0.0.1:8765/marketplace.json"
+    requested: list[str] = []
+
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        requested.append(str(request.url))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
+
+    service = SkillMarketplaceService(Mock(), catalog_url=private_catalog_url)
+    with pytest.raises(SkillMarketplaceError, match="localhost|private|reserved"):
+        service.list_entries(user_id="user")
+
+    assert requested == []
+
+
+def test_skill_marketplace_install_rejects_private_catalog_url_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_catalog_url = "http://127.0.0.1:8765/marketplace.json"
+    requested: list[str] = []
+
+    def fake_handle_request(self, request: httpx.Request) -> httpx.Response:  # noqa: ANN001
+        requested.append(str(request.url))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle_request)
+
+    service = SkillMarketplaceService(Mock(), catalog_url=private_catalog_url)
+    with pytest.raises(SkillMarketplaceError, match="localhost|private|reserved"):
+        service.install("demo", user_id="user")
+
+    assert requested == []
+
+
 def test_skill_marketplace_rejects_absolute_private_readme_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

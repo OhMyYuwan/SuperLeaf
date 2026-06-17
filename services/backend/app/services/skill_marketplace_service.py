@@ -168,10 +168,10 @@ class SkillMarketplaceService:
         """
         from .native_agent_service import NativeAgentService
 
-        entry = self._find_entry(skill_id, user_id=user_id)
         installed = self._installed_by_catalog_id(user_id=user_id)
-        if entry.id not in installed:
-            raise SkillMarketplaceError("市场 Skill 尚未安装，请先安装后再复制到本地")
+        if skill_id not in installed:
+            raise SkillMarketplaceError("marketplace skill install not found")
+        entry = self._find_entry(skill_id, user_id=user_id)
 
         content = self._fetch_text(entry.entry_url)
         if not content.strip():

@@ -15,6 +15,8 @@ import { initPersistence, handleHttpRequest } from './persistence.js'
 import {
   COLLAB_MAX_PENDING_UPGRADES,
   createUpgradeAuthLimiter,
+  normalizeCollabWsPathPrefix,
+  resolveCollabWsUpgrade,
   verifyToken,
   type AuthUser,
   type VerifiedCollabSession,
@@ -23,9 +25,7 @@ import {
 const PORT = parseInt(process.env.COLLAB_PORT ?? '4444', 10)
 const HOST = process.env.COLLAB_HOST ?? '0.0.0.0'
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000'
-const WS_PATH_PREFIX = normalizePathPrefix(process.env.COLLAB_WS_PATH_PREFIX ?? '')
-const COLLAB_TOKEN_PROTOCOL_PREFIX = 'superleaf-collab-token.'
-const COLLAB_GENERATION_PROTOCOL_PREFIX = 'superleaf-collab-generation.'
+const WS_PATH_PREFIX = normalizeCollabWsPathPrefix(process.env.COLLAB_WS_PATH_PREFIX ?? '')
 const upgradeAuthLimiter = createUpgradeAuthLimiter()
 
 const server = http.createServer((req, res) => {
@@ -48,9 +48,15 @@ server.on('upgrade', async (req, socket, head) => {
   // Optional gateway format: /<COLLAB_WS_PATH_PREFIX>/<docId>
   // Auth token is supplied via WebSocket subprotocol, not a URL query string.
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
-  const docId = getDocIdFromPath(url.pathname)
-  const protocols = parseCollabProtocols(req.headers['sec-websocket-protocol'])
-  const { token, clientGeneration } = protocols
+  const {
+    docId,
+    token,
+    clientGeneration,
+  } = resolveCollabWsUpgrade(
+    url.pathname,
+    req.headers['sec-websocket-protocol'],
+    WS_PATH_PREFIX,
+  )
 
   if (!docId) {
     void recordCollabServerEvent('websocket_upgrade_rejected', {
@@ -165,28 +171,6 @@ wss.on(
   },
 )
 
-function parseCollabProtocols(raw: string | string[] | undefined): {
-  token: string | null
-  clientGeneration: number | null
-} {
-  const header = Array.isArray(raw) ? raw.join(',') : raw
-  let token: string | null = null
-  let clientGeneration: number | null = null
-  if (!header) return { token, clientGeneration }
-  for (const item of header.split(',')) {
-    const protocol = item.trim()
-    if (protocol.startsWith(COLLAB_TOKEN_PROTOCOL_PREFIX)) {
-      const parsedToken = protocol.slice(COLLAB_TOKEN_PROTOCOL_PREFIX.length).trim()
-      token = parsedToken || null
-    } else if (protocol.startsWith(COLLAB_GENERATION_PROTOCOL_PREFIX)) {
-      const rawGeneration = protocol.slice(COLLAB_GENERATION_PROTOCOL_PREFIX.length).trim()
-      const parsedGeneration = Number(rawGeneration)
-      clientGeneration = Number.isSafeInteger(parsedGeneration) ? parsedGeneration : null
-    }
-  }
-  return { token, clientGeneration }
-}
-
 initPersistence()
 
 server.listen(PORT, HOST, () => {
@@ -199,27 +183,3 @@ server.listen(PORT, HOST, () => {
     console.log(`[collab-server] websocket path prefix: ${WS_PATH_PREFIX}`)
   }
 })
-
-function normalizePathPrefix(raw: string): string {
-  const value = raw.trim()
-  if (!value || value === '/') return ''
-  return `/${value.replace(/^\/+/, '').replace(/\/+$/, '')}`
-}
-
-function getDocIdFromPath(pathname: string): string | null {
-  let docPath = pathname
-  if (WS_PATH_PREFIX) {
-    if (pathname === WS_PATH_PREFIX || !pathname.startsWith(`${WS_PATH_PREFIX}/`)) {
-      return null
-    }
-    docPath = pathname.slice(WS_PATH_PREFIX.length)
-  }
-
-  const encodedDocId = docPath.replace(/^\/+/, '')
-  if (!encodedDocId) return null
-  try {
-    return decodeURIComponent(encodedDocId)
-  } catch {
-    return null
-  }
-}

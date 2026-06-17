@@ -68,7 +68,7 @@ from ..services.skill_marketplace_service import (
     SkillMarketplaceService,
 )
 from ..settings import settings
-from .deps import get_current_project, get_current_user, require_write_access
+from .deps import get_current_project, get_current_user, require_admin, require_write_access
 
 router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
 
@@ -138,6 +138,15 @@ class LocalAgentHostPackageOut(BaseModel):
     windows: dict[str, str]
     codex_env: dict[str, str]
     claude_env: dict[str, str]
+
+
+def _native_agent_mutation_http_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    if detail == "provider not found":
+        return HTTPException(404, detail)
+    if detail.startswith("skill not available:"):
+        return HTTPException(404, "skill not found")
+    return HTTPException(400, detail)
 
 
 class LocalAgentHostUpdateOut(BaseModel):
@@ -546,7 +555,7 @@ def get_official_badge_ui(
 @router.patch("/ui/official-badge")
 def update_official_badge_ui(
     body: OfficialBadgeUiPatch,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     if not _official_badge_toggle_enabled():
         raise HTTPException(403, "Official badge style toggle is disabled by backend configuration")
@@ -718,7 +727,8 @@ def delete_mcp_server(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    McpConfigService(db).delete_server(server_id, user_id=user.id)
+    if not McpConfigService(db).delete_server(server_id, user_id=user.id):
+        raise HTTPException(404, "MCP server not found")
 
 
 @router.post("/mcp/servers/{server_id}/probe")
@@ -856,7 +866,8 @@ def delete_credential(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_credential(credential_id, user_id=user.id)
+    if not NativeAgentService(db).delete_credential(credential_id, user_id=user.id):
+        raise HTTPException(404, "credential not found")
 
 
 @router.post("/credentials/{credential_id}/probe", response_model=NativeAgentCredentialOut)
@@ -979,7 +990,8 @@ def delete_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+    if not NativeAgentService(db).delete_skill(skill_id, user_id=user.id):
+        raise HTTPException(404, "skill not found")
 
 
 @router.get("/local-agent-host/package", response_model=LocalAgentHostPackageOut)
@@ -1030,8 +1042,7 @@ def download_local_agent_host(
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     disposition = (
-        'attachment; filename="superleaf-local-agent-host.zip"; '
-        f"filename*=UTF-8''{quote(filename)}"
+        f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
     )
     sha256 = hashlib.sha256(payload).hexdigest()
     return Response(
@@ -1076,11 +1087,11 @@ def list_skill_usage(
     """List Agents that currently bind this skill — used by the frontend's
     delete-confirmation dialog so the user knows whose Agents will lose the
     skill before clicking through."""
-    agents = NativeAgentService(db).agents_using_skill(skill_id, user_id=user.id)
-    return [
-        SkillUsageOut(agent_id=a.id, agent_name=a.name, project_id=a.project_id)
-        for a in agents
-    ]
+    svc = NativeAgentService(db)
+    if svc.get_skill(skill_id, user_id=user.id) is None:
+        raise HTTPException(404, "skill not found")
+    agents = svc.agents_using_skill(skill_id, user_id=user.id)
+    return [SkillUsageOut(agent_id=a.id, agent_name=a.name, project_id=a.project_id) for a in agents]
 
 
 @router.get("/skill-marketplace", response_model=SkillMarketplaceOut)
@@ -1131,7 +1142,8 @@ def uninstall_marketplace_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
+    if not SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id):
+        raise HTTPException(404, "marketplace skill install not found")
 
 
 @router.post(
@@ -1149,6 +1161,8 @@ def clone_marketplace_skill_to_local(
     try:
         row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
     except SkillMarketplaceError as exc:
+        if str(exc) == "marketplace skill install not found":
+            raise HTTPException(404, str(exc)) from exc
         raise HTTPException(400, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -1197,7 +1211,7 @@ def create_agent(
             is_enabled=body.is_enabled,
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise _native_agent_mutation_http_error(exc) from exc
     return _agent_out(row)
 
 
@@ -1208,7 +1222,10 @@ def list_agent_skill_installs(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[NativeAgentSkillInstallOut]:
-    rows = NativeAgentService(db).list_agent_skill_installs(agent_id, project_id=project.id, user_id=user.id)
+    svc = NativeAgentService(db)
+    if svc.get_agent(agent_id, project_id=project.id, user_id=user.id) is None:
+        raise HTTPException(404, "native agent not found")
+    rows = svc.list_agent_skill_installs(agent_id, project_id=project.id, user_id=user.id)
     return [_install_out(row) for row in rows]
 
 
@@ -1224,9 +1241,12 @@ def install_agent_skill_recipe(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentSkillInstallOut:
+    svc = NativeAgentService(db)
+    if svc.get_agent(agent_id, project_id=project.id, user_id=user.id) is None:
+        raise HTTPException(404, "native agent not found")
     _ensure_npx_skill_install_allowed(user)
     try:
-        row = NativeAgentService(db).install_agent_skill_recipe(
+        row = svc.install_agent_skill_recipe(
             agent_id,
             project_id=project.id,
             user_id=user.id,
@@ -1275,7 +1295,7 @@ def update_agent(
             patch=patch,
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise _native_agent_mutation_http_error(exc) from exc
     if row is None:
         raise HTTPException(404, "native agent not found")
     return _agent_out(row)
@@ -1288,4 +1308,5 @@ def delete_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_agent(agent_id, project_id=project.id, user_id=user.id)
+    if not NativeAgentService(db).delete_agent(agent_id, project_id=project.id, user_id=user.id):
+        raise HTTPException(404, "native agent not found")

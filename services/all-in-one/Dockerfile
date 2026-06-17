@@ -64,7 +64,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g; s|http://deb.debian.org/debian|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && \
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g; s|http://deb.debian.org/debian|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && \
     apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
     apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
       bash \
@@ -74,24 +75,43 @@ RUN sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g; s|
       gosu \
       nginx-light && \
     if [ "${INSTALL_TEXLIVE}" = "true" ]; then \
+      dpkg-divert --add --rename --divert /usr/bin/fmtutil.real /usr/bin/fmtutil && \
+      printf '#!/bin/sh\nexit 0\n' > /usr/bin/fmtutil && \
+      chmod +x /usr/bin/fmtutil && \
       apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
         latexmk \
         biber \
+        fontconfig \
         ghostscript \
+        inkscape \
         python3-pygments \
+        qpdf \
         fonts-noto-cjk \
-        texlive-latex-base \
-        texlive-latex-recommended \
-        texlive-latex-extra \
-        texlive-plain-generic \
-        texlive-science \
-        texlive-publishers \
+        cm-super \
+        tex-gyre \
+        texlive-base \
         texlive-bibtex-extra \
-        texlive-fonts-recommended \
+        texlive-extra-utils \
+        texlive-font-utils \
         texlive-fonts-extra \
+        texlive-fonts-recommended \
         texlive-lang-chinese \
+        texlive-latex-base \
+        texlive-latex-extra \
+        texlive-latex-recommended \
         texlive-luatex \
-        texlive-xetex; \
+        texlive-pictures \
+        texlive-plain-generic \
+        texlive-pstricks \
+        texlive-publishers \
+        texlive-science \
+        texlive-xetex && \
+      rm -f /usr/bin/fmtutil && \
+      dpkg-divert --rename --remove /usr/bin/fmtutil && \
+      mktexlsr && \
+      (fmtutil-sys --byfmt=pdflatex || true) && \
+      (fmtutil-sys --byfmt=xelatex || true) && \
+      (fmtutil-sys --byfmt=lualatex || true); \
     fi && \
     rm -rf /var/lib/apt/lists/*
 

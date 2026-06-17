@@ -47,19 +47,28 @@ SYSTEM_SKILLS = [
     {
         "name": "annotation-review",
         "description": "读取传入的批注上下文，给出聚焦、可执行的修改建议。",
-        "content": "你是项目批注审阅助手。只能基于调用方传入的批注、引用片段和讨论内容工作，不直接读取或修改项目文件。输出应简洁、可执行，并明确指出需要用户确认的部分。",
+        "content": (
+            "你是项目批注审阅助手。只能基于调用方传入的批注、引用片段和讨论内容工作，"
+            "不直接读取或修改项目文件。输出应简洁、可执行，并明确指出需要用户确认的部分。"
+        ),
         "tags": ["annotation", "review"],
     },
     {
         "name": "plan-breakdown",
         "description": "把项目需求拆解为可执行计划、风险点和验收标准。",
-        "content": "你是项目计划助手。只能使用调用方传入的需求、项目元信息和显式上下文。输出计划时包含阶段、依赖、风险和验收标准，避免假设未传入的文件内容。",
+        "content": (
+            "你是项目计划助手。只能使用调用方传入的需求、项目元信息和显式上下文。"
+            "输出计划时包含阶段、依赖、风险和验收标准，避免假设未传入的文件内容。"
+        ),
         "tags": ["planning", "project"],
     },
     {
         "name": "workflow-draft",
         "description": "根据传入目标生成工作流草稿和节点说明。",
-        "content": "你是工作流草稿助手。根据调用方提供的目标、输入输出约束和可用节点，生成清晰的工作流草案。不得直接访问项目文件，必须要求调用方提供必要上下文。",
+        "content": (
+            "你是工作流草稿助手。根据调用方提供的目标、输入输出约束和可用节点，"
+            "生成清晰的工作流草案。不得直接访问项目文件，必须要求调用方提供必要上下文。"
+        ),
         "tags": ["workflow", "draft"],
     },
 ]
@@ -269,8 +278,12 @@ class NativeAgentService:
         cleaned_skill_name = (skill_name or parsed_skill).strip()
         if not is_direct_skill_source(source) and not cleaned_skill_name:
             raise ValueError("repo/package 安装需要填写 skill name；直接 GitHub Skill 文件夹 URL 可以留空")
-        public_name = _recipe_public_name(user_id=user_id, source=source, skill_name=cleaned_skill_name, name=name)
-        display_name = _clean_name(name or public_name or cleaned_skill_name or _skill_name_from_source(source))
+        public_name = _recipe_public_name(
+            user_id=user_id, source=source, skill_name=cleaned_skill_name, name=name
+        )
+        display_name = _clean_name(
+            name or public_name or cleaned_skill_name or _skill_name_from_source(source)
+        )
         command = build_npx_install_command(source, cleaned_skill_name)
         existing = (
             self.db.query(Skill)
@@ -306,7 +319,9 @@ class NativeAgentService:
         if not ProjectMemberService(self.db).can_write(project.id, user_id):
             raise ValueError("Project not found")
 
-        root_skill = self.db.query(Doc).filter_by(project_id=project.id, folder_id=None, name="SKILL.md").first()
+        root_skill = (
+            self.db.query(Doc).filter_by(project_id=project.id, folder_id=None, name="SKILL.md").first()
+        )
         if root_skill is None:
             raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
 
@@ -319,7 +334,9 @@ class NativeAgentService:
         cache_root.mkdir(parents=True, exist_ok=True)
 
         try:
-            doc_count, file_count, byte_count = ProjectFsService(self.db, project).materialize_to_directory(tmp)
+            doc_count, file_count, byte_count = ProjectFsService(self.db, project).materialize_to_directory(
+                tmp
+            )
             if not (tmp / "SKILL.md").is_file():
                 raise ValueError("项目根目录需要包含 SKILL.md 才能缓存为 Skill")
             if current.exists():
@@ -335,9 +352,13 @@ class NativeAgentService:
         skill.cache_path = str(current)
         skill.cache_version = previous_cache_version + 1
         skill.cache_updated_at = now
-        skill.version = int(skill.version or 1) + 1 if previous_cache_version else max(int(skill.version or 1), 1)
+        skill.version = (
+            int(skill.version or 1) + 1 if previous_cache_version else max(int(skill.version or 1), 1)
+        )
         skill.description = skill.description or f"Project-backed Skill cache for {project.name}"
-        skill.tags = _project_skill_tags(project, doc_count=doc_count, file_count=file_count, byte_count=byte_count)
+        skill.tags = _project_skill_tags(
+            project, doc_count=doc_count, file_count=file_count, byte_count=byte_count
+        )
         skill.updated_at = now
 
         project.is_skill_project = True
@@ -408,7 +429,7 @@ class NativeAgentService:
             )
             if exists is None:
                 return name, public_name
-        digest = hashlib.sha1(f"{user_id}:{base_name}".encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha1(f"{user_id}:{base_name}".encode()).hexdigest()[:8]
         name = f"{clean_base}-{digest}"
         return name, f"{author}@{name}"
 
@@ -445,11 +466,7 @@ class NativeAgentService:
         if row is None or not self.can_edit_skill(row, user_id=user_id):
             return None
         public_name = self._public_name(user_id=user_id, skill_name=row.name)
-        existing = (
-            self.db.query(Skill)
-            .filter(Skill.public_name == public_name, Skill.id != skill_id)
-            .first()
-        )
+        existing = self.db.query(Skill).filter(Skill.public_name == public_name, Skill.id != skill_id).first()
         if existing is not None:
             raise ValueError("public skill name already exists")
         row.visibility = "public"
@@ -472,7 +489,7 @@ class NativeAgentService:
         return row
 
     def delete_skill(self, skill_id: str, *, user_id: str) -> bool:
-        row = self.db.get(Skill, skill_id)
+        row = self.get_skill(skill_id, user_id=user_id)
         if row is None:
             return False
         if row.owner_user_id == user_id and row.source != "bundled":
@@ -508,11 +525,7 @@ class NativeAgentService:
         still references it. Hidden / public skills are scoped per user, so the
         cleanup is also scoped — we don't touch other users' agents.
         """
-        agents = (
-            self.db.query(NativeAgent)
-            .filter(NativeAgent.owner_user_id == user_id)
-            .all()
-        )
+        agents = self.db.query(NativeAgent).filter(NativeAgent.owner_user_id == user_id).all()
         for agent in agents:
             ids = list(agent.skill_ids or [])
             if skill_id not in ids:
@@ -525,11 +538,7 @@ class NativeAgentService:
         Used by the API to populate `used_by_agent_count` and to label the
         delete-confirmation dialog with the impacted Agents.
         """
-        agents = (
-            self.db.query(NativeAgent)
-            .filter(NativeAgent.owner_user_id == user_id)
-            .all()
-        )
+        agents = self.db.query(NativeAgent).filter(NativeAgent.owner_user_id == user_id).all()
         return [a for a in agents if skill_id in (a.skill_ids or [])]
 
     def can_edit_skill(self, row: Skill, *, user_id: str) -> bool:
@@ -544,9 +553,7 @@ class NativeAgentService:
     def _hidden_skill_keys(self, *, user_id: str) -> set[str]:
         return {
             key
-            for (key,) in self.db.query(SkillHidden.skill_key)
-            .filter(SkillHidden.user_id == user_id)
-            .all()
+            for (key,) in self.db.query(SkillHidden.skill_key).filter(SkillHidden.user_id == user_id).all()
         }
 
     def _hide_skill(self, row: Skill, *, user_id: str) -> None:
@@ -571,7 +578,9 @@ class NativeAgentService:
         self._sync_agent_skill_refs(rows, project_id=project_id, user_id=user_id)
         return rows
 
-    def list_agents_for_provider(self, *, project_id: str, user_id: str, provider_id: str) -> list[NativeAgent]:
+    def list_agents_for_provider(
+        self, *, project_id: str, user_id: str, provider_id: str
+    ) -> list[NativeAgent]:
         rows = (
             self.db.query(NativeAgent)
             .filter(
@@ -656,7 +665,18 @@ class NativeAgentService:
             existing_skill_ids=list(row.skill_ids or []),
         )
 
-        for key in ("name", "description", "provider_id", "model", "instructions", "agent_md", "skill_ids", "output_contract", "runtime_config", "is_enabled"):
+        for key in (
+            "name",
+            "description",
+            "provider_id",
+            "model",
+            "instructions",
+            "agent_md",
+            "skill_ids",
+            "output_contract",
+            "runtime_config",
+            "is_enabled",
+        ):
             if key in patch and patch[key] is not None:
                 setattr(row, key, patch[key])
         if "agent_md" in patch and patch["agent_md"] is not None:
@@ -664,9 +684,13 @@ class NativeAgentService:
         else:
             AgentWorkspaceService(self.db).ensure_workspace(row)
         if "skill_ids" in patch and patch["skill_ids"] is not None:
-            self._install_selected_skills(row, user_id=user_id, project_id=project_id, skill_ids=row.skill_ids or [])
+            self._install_selected_skills(
+                row, user_id=user_id, project_id=project_id, skill_ids=row.skill_ids or []
+            )
         if patch.get("skill_recipes"):
-            self._install_skill_recipes(row, user_id=user_id, project_id=project_id, recipes=patch["skill_recipes"])
+            self._install_skill_recipes(
+                row, user_id=user_id, project_id=project_id, recipes=patch["skill_recipes"]
+            )
         row.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(row)
@@ -713,7 +737,9 @@ class NativeAgentService:
             self._delete_agent_row(agent)
         return len(agents)
 
-    def list_agent_skill_installs(self, agent_id: str, *, project_id: str, user_id: str) -> list[NativeAgentSkillInstall]:
+    def list_agent_skill_installs(
+        self, agent_id: str, *, project_id: str, user_id: str
+    ) -> list[NativeAgentSkillInstall]:
         agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
         if agent is None:
             return []
@@ -739,7 +765,9 @@ class NativeAgentService:
         agent = self.get_agent(agent_id, project_id=project_id, user_id=user_id)
         if agent is None:
             return None
-        installs = self._install_skill_recipes(agent, user_id=user_id, project_id=project_id, recipes=[recipe])
+        installs = self._install_skill_recipes(
+            agent, user_id=user_id, project_id=project_id, recipes=[recipe]
+        )
         self.db.commit()
         return installs[0] if installs else None
 
@@ -789,7 +817,9 @@ class NativeAgentService:
         source_url = _source_from_install(install)
         if not source_url:
             return None
-        skill_name = str(install.skill_name or install.folder_name or _skill_name_from_source(source_url)).strip()
+        skill_name = str(
+            install.skill_name or install.folder_name or _skill_name_from_source(source_url)
+        ).strip()
         public_name = (
             str(install.marketplace_id or "").strip()
             if source == "marketplace" and str(install.marketplace_id or "").strip()
@@ -1049,7 +1079,9 @@ class NativeAgentService:
                 self.db.flush()
                 if cache_path is None or not cache_path.exists() or not (cache_path / "SKILL.md").is_file():
                     row.status = "failed"
-                    row.install_log = "Project Skill cache is missing; update Skill cache from the project first"
+                    row.install_log = (
+                        "Project Skill cache is missing; update Skill cache from the project first"
+                    )
                     logs.append(f"{skill.public_name or skill.name}: {row.install_log}")
                     installed_rows.append(row)
                     continue
@@ -1230,11 +1262,7 @@ class NativeAgentService:
         return login
 
     def _github_login_optional(self, *, user_id: str) -> str:
-        account = (
-            self.db.query(GitHubAccount)
-            .filter(GitHubAccount.user_id == user_id)
-            .first()
-        )
+        account = self.db.query(GitHubAccount).filter(GitHubAccount.user_id == user_id).first()
         login = str(getattr(account, "login", "") if account is not None else "").strip()
         if not login or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", login):
             return ""
@@ -1329,7 +1357,7 @@ def _skill_name_from_source(source: str) -> str:
 
 
 def _custom_public_name(*, user_id: str, name: str, source: str) -> str:
-    digest = hashlib.sha1(f"{user_id}:{source}".encode("utf-8")).hexdigest()[:10]
+    digest = hashlib.sha1(f"{user_id}:{source}".encode()).hexdigest()[:10]
     return f"custom@{_slug(name)}-{digest}"
 
 
@@ -1397,14 +1425,17 @@ def _recipe_from_skill(row: Skill) -> SkillInstallRecipe | None:
     if not source_url:
         return None
     skill_name = (meta.get("skill_name") or row.name or "").strip()
-    install_command = (meta.get("install_command") or build_npx_install_command(source_url, skill_name)).strip()
+    install_command = (
+        meta.get("install_command") or build_npx_install_command(source_url, skill_name)
+    ).strip()
     return SkillInstallRecipe(
         repo_url=(meta.get("repo_url") or source_url).strip(),
         source_url=source_url,
         source_ref=meta.get("source_ref", "").strip(),
         skill_name=skill_name,
         install_command=install_command,
-        marketplace_id=meta.get("marketplace_id", "").strip() or (row.public_name if row.source == "marketplace" else ""),
+        marketplace_id=meta.get("marketplace_id", "").strip()
+        or (row.public_name if row.source == "marketplace" else ""),
         source=meta.get("source", "").strip() or row.source or "custom",
     )
 

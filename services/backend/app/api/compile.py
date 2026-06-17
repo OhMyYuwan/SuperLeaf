@@ -105,6 +105,7 @@ def sync_to_pdf(
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
 ) -> CompileSyncToPdfOut:
+    _ensure_project_doc(db, project, body.document_id)
     svc = get_compiler_service()
     result = svc.sync_to_pdf(
         db,
@@ -267,7 +268,14 @@ def _validate_main_doc_id(db: Session, project: Project, main_doc_id: str | None
         return None
     doc = db.get(Doc, main_doc_id)
     if doc is None or doc.project_id != project.id:
-        raise HTTPException(400, "main_doc_id must belong to the current project")
+        raise HTTPException(404, "Document not found")
     if doc.format != "tex":
         raise HTTPException(400, "main_doc_id must reference a tex document")
     return doc.id
+
+
+def _ensure_project_doc(db: Session, project: Project, document_id: str) -> Doc:
+    doc = db.get(Doc, document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "Document not found")
+    return doc

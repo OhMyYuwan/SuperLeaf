@@ -128,7 +128,7 @@ def delete_run(
 ) -> None:
     run = db.get(WorkflowRun, run_id)
     if run is None or run.project_id != project.id or run.user_id != user.id:
-        return None
+        raise HTTPException(404, "Run not found")
     db.delete(run)
     db.commit()
 
@@ -202,9 +202,24 @@ class ContextFileRef(BaseModel):
     the agent prompt rather than passing a path, because most agents have no
     file-read tool. Truncation happens at prompt-build time if needed.
     """
+
     name: str = ""
     document_id: str = ""
     content: str = ""
+
+
+def _ensure_context_files_in_project(
+    db: Session,
+    project: Project,
+    context_files: list[ContextFileRef],
+) -> None:
+    for ref in context_files:
+        document_id = str(ref.document_id or "").strip()
+        if not document_id:
+            continue
+        doc = db.get(Doc, document_id)
+        if doc is None or doc.project_id != project.id:
+            raise HTTPException(404, "Context file not found")
 
 
 class RunBody(BaseModel):
@@ -238,6 +253,7 @@ async def run_workflow(
     `outputs.text` for the existing annotation parser.
     """
     _ensure_run_document(db, project, body.document_id)
+    _ensure_context_files_in_project(db, project, body.context_files)
 
     if workflow_id.startswith(NATIVE_WORKFLOW_PREFIX):
         resolved = AgentRegistryService(db).resolve(
@@ -319,6 +335,7 @@ async def run_workflow(
 
             if provider.kind == "nanobot":
                 from ..services.nanobot_client import NanobotClient
+
                 if not isinstance(client, NanobotClient):
                     raise TypeError(f"Expected NanobotClient for nanobot provider, got {type(client)}")
                 if not conversation_id:
@@ -329,9 +346,7 @@ async def run_workflow(
                         {"type": "text", "text": prompt},
                     ]
                     for img in image_attachments:
-                        user_content.append(
-                            {"type": "image_url", "image_url": {"url": img["url"]}}
-                        )
+                        user_content.append({"type": "image_url", "image_url": {"url": img["url"]}})
                 else:
                     user_content = prompt
                 async for evt in client.run_streaming(
@@ -348,6 +363,7 @@ async def run_workflow(
                     yield {"event": "nanobot", "data": json.dumps(evt)}
             else:
                 from ..services.dify_client import DifyClient
+
                 if not isinstance(client, DifyClient):
                     raise TypeError(f"Expected DifyClient for dify provider, got {type(client)}")
                 mode = (provider.meta or {}).get("mode") or cw.kind or "workflow"
@@ -695,11 +711,11 @@ def _native_request_trace(
         "parent_run_id": body.parent_run_id,
         "inputs": dict(inputs if inputs is not None else body.inputs or {}),
         "context_files": list(
-            context_files
-            if context_files is not None
-            else [ref.model_dump() for ref in body.context_files]
+            context_files if context_files is not None else [ref.model_dump() for ref in body.context_files]
         ),
     }
+
+
 # ---------------------------------------------------------------------------
 # Workflow Definition Management
 # ---------------------------------------------------------------------------
@@ -798,7 +814,7 @@ def delete_workflow_definition(
     """Delete (deactivate) a workflow definition."""
     wf = db.get(WorkflowDefinition, definition_id)
     if wf is None or wf.project_id != project.id or wf.user_id != user.id:
-        return None
+        raise HTTPException(404, "Workflow definition not found")
     wf.is_active = False
     db.commit()
 
@@ -843,6 +859,7 @@ async def execute_workflow_definition(
     target_text = _source_text_from_run_body(body)
     context_files = [cf.model_dump() for cf in body.context_files]
     _ensure_run_document(db, project, body.document_id)
+    _ensure_context_files_in_project(db, project, body.context_files)
 
     orchestrator = WorkflowOrchestrator(db)
 
@@ -910,11 +927,13 @@ def _collect_unhealthy_agents(
         cfg = n.get("config") or {}
         agent_id = str(cfg.get("agent_id") or cfg.get("agentId") or "").strip()
         if not agent_id:
-            issues.append({
-                "node_id": n.get("id"),
-                "agent_id": "",
-                "reason": "unconfigured",
-            })
+            issues.append(
+                {
+                    "node_id": n.get("id"),
+                    "agent_id": "",
+                    "reason": "unconfigured",
+                }
+            )
             continue
         resolved = registry.resolve(
             agent_id,
@@ -923,20 +942,24 @@ def _collect_unhealthy_agents(
             require_enabled=False,
         )
         if resolved is None:
-            issues.append({
-                "node_id": n.get("id"),
-                "agent_id": agent_id,
-                "reason": "missing",
-            })
+            issues.append(
+                {
+                    "node_id": n.get("id"),
+                    "agent_id": agent_id,
+                    "reason": "missing",
+                }
+            )
             continue
         if resolved.source == "external":
             disabled = bool(resolved.cached_workflow and resolved.cached_workflow.is_disabled)
         else:
             disabled = bool(resolved.native_agent and not resolved.native_agent.is_enabled)
         if disabled:
-            issues.append({
-                "node_id": n.get("id"),
-                "agent_id": agent_id,
-                "reason": "disabled",
-            })
+            issues.append(
+                {
+                    "node_id": n.get("id"),
+                    "agent_id": agent_id,
+                    "reason": "disabled",
+                }
+            )
     return issues

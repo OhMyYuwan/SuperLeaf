@@ -15,6 +15,7 @@ from hashlib import sha256
 from typing import Any
 
 from ..database import SessionLocal
+from ..models import Doc
 from . import operation_service
 from .attached_files import render_attached_files_block
 from .mcp_tool_service import McpToolRef, call_mcp_tool, discover_mcp_tools
@@ -794,6 +795,8 @@ def _audit_native_agent_tool_call(
 ) -> None:
     if payload is None or not payload.document_id:
         return
+    if not config.project_id:
+        return
     fn = call.get("function") if isinstance(call.get("function"), dict) else {}
     tool_name = str(fn.get("name") or "")
     audit_payload = {
@@ -810,6 +813,9 @@ def _audit_native_agent_tool_call(
     }
     try:
         with SessionLocal() as db:
+            doc = db.get(Doc, payload.document_id)
+            if doc is None or doc.project_id != config.project_id:
+                return
             operation_service.record(
                 db,
                 payload.document_id,

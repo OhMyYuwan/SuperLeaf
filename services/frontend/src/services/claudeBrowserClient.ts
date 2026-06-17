@@ -1,5 +1,5 @@
 import type { BrowserClaudePrepare, ProviderModel } from './backendApi'
-import { normalizeLocalAgentHostEndpoint } from './browserToolBridge'
+import { localAgentHostAuthHeaders, normalizeLocalAgentHostEndpoint } from './browserToolBridge'
 
 export interface BrowserClaudeHealth {
   status: string
@@ -42,8 +42,10 @@ export interface BrowserClaudeSessionList {
 }
 
 export async function probeBrowserClaude(endpoint: string): Promise<BrowserClaudeHealth> {
-  const resp = await fetch(`${normalizeClaudeEndpoint(endpoint)}/claude/health`, {
+  const normalizedEndpoint = normalizeClaudeEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/claude/health`, {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
   })
   const payload = await readJson(resp)
   if (!resp.ok) {
@@ -75,9 +77,13 @@ export async function createBrowserClaudeSession(args: {
   if (!workspacePath) {
     throw new Error('Claude Local 缺少 workspace path，请编辑 Provider 设置代码项目路径')
   }
-  const resp = await fetch(`${normalizeClaudeEndpoint(args.endpoint)}/claude/sessions`, {
+  const normalizedEndpoint = normalizeClaudeEndpoint(args.endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/claude/sessions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
+    },
     body: JSON.stringify({
       superleaf_origin: args.superleafOrigin ?? window.location.origin,
       superleaf_project_id: String(args.prepared.superleaf_context.project_id ?? ''),
@@ -121,8 +127,10 @@ export async function listBrowserClaudeSessions(
     params.set('limit', String(query.limit))
   }
   const suffix = params.toString() ? `?${params.toString()}` : ''
-  const resp = await fetch(`${normalizeClaudeEndpoint(endpoint)}/claude/sessions${suffix}`, {
+  const normalizedEndpoint = normalizeClaudeEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/claude/sessions${suffix}`, {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
   })
   const payload = await readJson(resp)
   if (!resp.ok) {
@@ -139,9 +147,13 @@ export async function runBrowserClaudeTurn(args: {
   onActivity?: () => void
   onDelta?: (delta: string) => void
 }): Promise<BrowserClaudeTurnResult> {
-  const resp = await fetch(`${normalizeClaudeEndpoint(args.endpoint)}/claude/sessions/${encodeURIComponent(args.sessionId)}/turns`, {
+  const normalizedEndpoint = normalizeClaudeEndpoint(args.endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/claude/sessions/${encodeURIComponent(args.sessionId)}/turns`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
+    },
     body: JSON.stringify({
       stream: true,
       prompt: buildClaudePrompt(args.prepared),

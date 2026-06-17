@@ -13,7 +13,10 @@ import {
 } from '../../../services/nanobotBrowserClient'
 import { listBrowserCodexSessions } from '../../../services/codexBrowserClient'
 import { listBrowserClaudeSessions } from '../../../services/claudeBrowserClient'
-import { normalizeLocalAgentHostEndpoint } from '../../../services/browserToolBridge'
+import {
+  localAgentHostAuthHeaders,
+  normalizeLocalAgentHostEndpoint,
+} from '../../../services/browserToolBridge'
 import {
   arrayLength,
   numberRecordValue,
@@ -438,7 +441,11 @@ async function probeLocalHostEndpoint(group: LocalHostEndpointGroup): Promise<Lo
 }
 
 async function fetchLocalHostJson(endpoint: string, path: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(endpoint)}${path}`, { method: 'GET' })
+  const normalizedEndpoint = normalizeLocalAgentHostEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}${path}`, {
+    method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
+  })
   const text = await resp.text()
   let payload: Record<string, unknown> = {}
   if (text.trim()) {

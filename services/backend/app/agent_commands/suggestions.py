@@ -55,6 +55,7 @@ def propose_doc_edit(db: Session, ctx: AgentCommandContext, args: dict[str, Any]
         "annotation.created",
         {"annotation": annotation_service.to_dict(annotation)},
         origin_client_id="",
+        visible_to_user_ids=[ctx.user_id] if ctx.user_id else None,
     )
     payload = {
         "status": "proposed",
@@ -100,6 +101,7 @@ def create_suggestion(db: Session, ctx: AgentCommandContext, args: dict[str, Any
         "annotation.created",
         {"annotation": annotation_service.to_dict(annotation)},
         origin_client_id="",
+        visible_to_user_ids=[ctx.user_id] if ctx.user_id else None,
     )
     payload = {
         "status": "created",

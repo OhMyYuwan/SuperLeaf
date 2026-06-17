@@ -1,9 +1,8 @@
 /**
  * LatexPreview — shows the compiled PDF for the current LaTeX project.
  *
- * Uses react-pdf (PDF.js) to render pages. Each successful compile bumps
- * `pdfVersion` in the compile store; we key the Document on it so the PDF
- * reloads automatically.
+ * Uses PDF.js PDFViewer (via PdfJsWrapper) to render pages with lazy loading.
+ * Each successful compile bumps `pdfVersion` in the compile store.
  *
  * Controls:
  *   - 编译 button (manual trigger)
@@ -12,8 +11,9 @@
  *   - Full-log toggle
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Document, Page, pdfjs } from 'react-pdf'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import * as pdfjsLib from 'pdfjs-dist'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
   Loader2,
   Play,
@@ -27,11 +27,6 @@ import {
   StretchHorizontal,
   Settings,
 } from 'lucide-react'
-import 'react-pdf/dist/Page/AnnotationLayer.css'
-import 'react-pdf/dist/Page/TextLayer.css'
-// Vite's `?url` import returns a hashed URL Vite serves from its dev server.
-// This is the correct way to point pdfjs at its worker in a bundled app.
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useCompileStore } from '../../stores/compileStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
@@ -43,21 +38,14 @@ import {
 } from '../../services/previewSourceMap'
 import { calculateFitWidthZoom, clampPdfZoom, usePdfWheelZoom } from './usePdfWheelZoom'
 import { pdfPointFromPageClientPosition } from './pdfCoordinate'
+import { PdfJsViewer } from './PdfJsViewer'
 import './latex-preview.css'
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+// Configure PDF.js worker for the wrapper.
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
-const DEFAULT_PDF_PAGE_ASPECT_RATIO = 792 / 612
 const PDF_INTERSECTION_ROOT_MARGIN = '1200px 0px'
-const PDF_RANGE_CHUNK_SIZE = 128 * 1024
 const PDF_RENDER_RADIUS = 2
-const PDF_MAX_DEVICE_PIXEL_RATIO = 2
-const PDF_LOAD_OPTIONS = {
-  disableAutoFetch: true,
-  disableStream: true,
-  isEvalSupported: false,
-  rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
-} as const
 
 type PdfViewerPreference = 'auto' | 'pdfjs' | 'native'
 
@@ -90,6 +78,7 @@ export function LatexPreview({
   const lastResult = useCompileStore((s) => s.lastResult)
   const compiling = useCompileStore((s) => s.compiling)
   const pdfVersion = useCompileStore((s) => s.pdfVersion)
+  const activeBuildId = useCompileStore((s) => s.activeBuildId)
   const autoCompile = useCompileStore((s) => s.autoCompile)
   const fullLog = useCompileStore((s) => s.fullLog)
   const loadCompilers = useCompileStore((s) => s.loadCompilers)
@@ -114,8 +103,8 @@ export function LatexPreview({
   const [showCompileSettings, setShowCompileSettings] = useState(false)
   const [pdfViewerPreference, setPdfViewerPreference] = useState<PdfViewerPreference>('auto')
   const [pdfLoadError, setPdfLoadError] = useState<Error | null>(null)
-  const [visiblePdfPages, setVisiblePdfPages] = useState<Set<number>>(() => new Set([1]))
-  const [pdfPageSizes, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
+  const [, setVisiblePdfPages] = useState<Set<number>>(() => new Set([1]))
+  const [, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -130,6 +119,11 @@ export function LatexPreview({
   const pdfSyncMarkerTimerRef = useRef<number | null>(null)
   const pdfPageSizesRef = useRef<Record<number, PdfPageSize>>({})
   const pdfPageShellRefs = useRef<Record<number, HTMLDivElement | null>>({})
+  // Auto-compile debounce timers (Overleaf-style: debounce + max-wait).
+  const autoCompileTimerRef = useRef<number | null>(null)
+  const autoCompileMaxWaitTimerRef = useRef<number | null>(null)
+  const AUTO_COMPILE_DEBOUNCE_MS = 2500
+  const AUTO_COMPILE_MAX_WAIT_MS = 5000
   const [pdfSyncMessage, setPdfSyncMessage] = useState<string | null>(null)
   const [pdfSyncMarker, setPdfSyncMarker] = useState<{
     page: number
@@ -183,17 +177,54 @@ export function LatexPreview({
     }
   }, [showCompileSettings])
 
-  // Auto-compile only after the open document has been saved. This prevents
-  // compile errors from creating retry loops and keeps latexmk off dirty text.
+  // Auto-compile with debounce + max-wait (Overleaf pattern).
+  // Resets the debounce timer on each save; fires at most after MAX_WAIT.
+  const clearAutoCompileTimers = () => {
+    if (autoCompileTimerRef.current != null) {
+      window.clearTimeout(autoCompileTimerRef.current)
+      autoCompileTimerRef.current = null
+    }
+    if (autoCompileMaxWaitTimerRef.current != null) {
+      window.clearTimeout(autoCompileMaxWaitTimerRef.current)
+      autoCompileMaxWaitTimerRef.current = null
+    }
+  }
+
   useEffect(() => {
-    if (!autoCompile) return
+    if (!autoCompile) {
+      clearAutoCompileTimers()
+      return
+    }
     if (compiling) return
     if (saveStatus !== 'saved') return
     if (!lastSavedAt || lastSavedAt === lastAutoCompiledSavedAtRef.current) return
 
-    lastAutoCompiledSavedAtRef.current = lastSavedAt
-    void compile(documentId)
+    // Clear previous debounce timer but keep max-wait running.
+    if (autoCompileTimerRef.current != null) {
+      window.clearTimeout(autoCompileTimerRef.current)
+    }
+
+    const run = () => {
+      clearAutoCompileTimers()
+      lastAutoCompiledSavedAtRef.current = lastSavedAt
+      void compile(documentId, { isAutoCompile: true })
+    }
+
+    autoCompileTimerRef.current = window.setTimeout(run, AUTO_COMPILE_DEBOUNCE_MS)
+    // Max-wait: fire even if user keeps typing.
+    if (autoCompileMaxWaitTimerRef.current == null) {
+      autoCompileMaxWaitTimerRef.current = window.setTimeout(run, AUTO_COMPILE_MAX_WAIT_MS)
+    }
+
+    return clearAutoCompileTimers
   }, [autoCompile, compiling, saveStatus, lastSavedAt, documentId, compile])
+
+  // Disable auto-compile on backoff to prevent retry loops.
+  useEffect(() => {
+    if (lastResult?.status === 'autocompile-backoff') {
+      setAutoCompile(false)
+    }
+  }, [lastResult?.status, setAutoCompile])
 
   // Track container width for responsive PDF pages.
   useEffect(() => {
@@ -281,44 +312,6 @@ export function LatexPreview({
       }
       pdfSyncTimerRef.current = null
     }, 1400)
-  }
-
-  function recordPdfPageSize(
-    pageNumber: number,
-    page: { getViewport: (options: { scale: number }) => { width: number; height: number } },
-  ) {
-    const viewport = page.getViewport({ scale: 1 })
-    const nextSize = {
-      width: viewport.width,
-      height: viewport.height,
-    }
-    pdfPageSizesRef.current[pageNumber] = nextSize
-    setPdfPageSizes((sizes) => {
-      const existing = sizes[pageNumber]
-      if (existing?.width === nextSize.width && existing.height === nextSize.height) return sizes
-      return { ...sizes, [pageNumber]: nextSize }
-    })
-  }
-
-  function getPdfPageShellStyle(pageNumber: number): CSSProperties {
-    const width = pageWidth * clampPdfZoom(zoom)
-    const naturalSize = pdfPageSizes[pageNumber]
-    const aspectRatio = naturalSize
-      ? naturalSize.height / Math.max(1, naturalSize.width)
-      : DEFAULT_PDF_PAGE_ASPECT_RATIO
-
-    return {
-      width,
-      minHeight: width * aspectRatio,
-    }
-  }
-
-  function shouldKeepPdfPageRendered(pageNumber: number): boolean {
-    return (
-      visiblePdfPages.has(pageNumber) ||
-      Math.abs(pageNumber - currentPage) <= PDF_RENDER_RADIUS ||
-      pdfSyncMarker?.page === pageNumber
-    )
   }
 
   function showPdfSyncMarker(page: number, xRatio: number, yRatio: number) {
@@ -472,16 +465,10 @@ export function LatexPreview({
 
   const pdfUrl = useMemo(() => {
     if (pdfVersion <= 0 || !currentProjectId) return ''
-    // Append pdfVersion as cache-buster so fresh compiles are not served stale.
-    return `${compileApi.pdfUrl(currentProjectId)}?v=${pdfVersion}`
-  }, [pdfVersion, currentProjectId])
-
-  const pdfFile = useMemo(() => {
-    if (!pdfUrl) return null
-    // Keep this object stable across editor-state rerenders. react-pdf treats
-    // a new `file` object as a new document and resets scroll to page one.
-    return { url: pdfUrl, withCredentials: true } as const
-  }, [pdfUrl])
+    // Use activeBuildId as primary identity; fall back to pdfVersion.
+    const cacheKey = activeBuildId || `v${pdfVersion}`
+    return `${compileApi.pdfUrl(currentProjectId)}?build=${encodeURIComponent(cacheKey)}`
+  }, [pdfVersion, activeBuildId, currentProjectId])
 
   useEffect(() => {
     // The PDF URL is the document identity here; reset viewer state together so
@@ -683,6 +670,31 @@ export function LatexPreview({
                 />
               </label>
 
+              <label className="latex-settings-toggle" title="复用 LaTeX 辅助文件缓存">
+                <span>增量编译</span>
+                <input
+                  type="checkbox"
+                  checked={settings?.incremental_compile ?? false}
+                  onChange={(e) => updateSettings({ incremental_compile: e.target.checked })}
+                  disabled={compiling}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="ghost-btn small"
+                disabled={compiling}
+                onClick={() => {
+                  void (async () => {
+                    await useCompileStore.getState().clearCache()
+                    await compile(documentId, { fromScratch: true })
+                  })()
+                }}
+              >
+                <RefreshCw size={12} />
+                从头编译
+              </button>
+
               <label className="latex-settings-field">
                 <span>预览器</span>
                 <select
@@ -794,73 +806,26 @@ export function LatexPreview({
             src={nativePdfUrl}
           />
         )}
-        {pdfFile && activePdfViewer === 'pdfjs' && (
-          <Document
-            key={pdfVersion}
-            file={pdfFile}
-            options={PDF_LOAD_OPTIONS}
-            onLoadSuccess={({ numPages }) => {
+        {pdfUrl && activePdfViewer === 'pdfjs' && (
+          <PdfJsViewer
+            key={activeBuildId || pdfUrl}
+            url={pdfUrl}
+            buildId={activeBuildId}
+            zoom={zoom}
+            onPagesInit={(pagesCount) => {
               setPdfLoadError(null)
-              setNumPages(numPages)
-              setCurrentPage(numPages > 0 ? 1 : 0)
+              setNumPages(pagesCount)
+              setCurrentPage(pagesCount > 0 ? 1 : 0)
               setVisiblePdfPages(new Set([1]))
               restorePdfScrollSoon()
-              window.requestAnimationFrame(() => {
-                if (pdfScrollRef.current) {
-                  updateCurrentPdfPage(pdfScrollRef.current)
-                }
-              })
             }}
-            onLoadError={(err) => {
-              console.error('PDF load error', err)
-              setPdfLoadError(err instanceof Error ? err : new Error(String(err)))
+            onPageChanging={(pageNumber) => setCurrentPage(pageNumber)}
+            onPageRendered={restorePdfScrollSoon}
+            onLoadError={(error) => {
+              console.error('PDF load error', error)
+              setPdfLoadError(error)
             }}
-            loading={<div className="latex-preview-empty">加载 PDF…</div>}
-          >
-            {Array.from({ length: numPages }, (_, i) => {
-              const pageNumber = i + 1
-              const shouldRenderPage = shouldKeepPdfPageRendered(pageNumber)
-
-              return (
-                <div
-                  key={pageNumber}
-                  ref={(node) => {
-                    pdfPageShellRefs.current[pageNumber] = node
-                  }}
-                  className="latex-pdf-page-shell"
-                  data-page-number={pageNumber}
-                  style={getPdfPageShellStyle(pageNumber)}
-                >
-                  {shouldRenderPage ? (
-                    <Page
-                      pageNumber={pageNumber}
-                      width={pageWidth * clampPdfZoom(zoom)}
-                      renderTextLayer
-                      renderAnnotationLayer={false}
-                      canvasBackground="white"
-                      className="latex-pdf-page"
-                      devicePixelRatio={getPdfDevicePixelRatio()}
-                      loading={<div className="latex-pdf-page-placeholder" />}
-                      onLoadSuccess={(page) => recordPdfPageSize(pageNumber, page)}
-                      onRenderSuccess={restorePdfScrollSoon}
-                    />
-                  ) : (
-                    <div className="latex-pdf-page-placeholder" aria-hidden="true" />
-                  )}
-                  {pdfSyncMarker?.page === pageNumber && (
-                    <span
-                      className="pdf-source-sync-target"
-                      style={{
-                        left: `${pdfSyncMarker.xRatio * 100}%`,
-                        top: `${pdfSyncMarker.yRatio * 100}%`,
-                      }}
-                      aria-hidden="true"
-                    />
-                  )}
-                </div>
-              )
-            })}
-          </Document>
+          />
         )}
       </div>
     </div>
@@ -908,12 +873,6 @@ function normalizePdfLookup(value: string): string {
 function clampRatio(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
-}
-
-function getPdfDevicePixelRatio(): number {
-  if (typeof window === 'undefined') return 1
-  const ratio = window.devicePixelRatio || 1
-  return Math.max(1, Math.min(PDF_MAX_DEVICE_PIXEL_RATIO, ratio))
 }
 
 function setsAreEqual(a: Set<number>, b: Set<number>): boolean {

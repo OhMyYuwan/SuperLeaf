@@ -1184,6 +1184,14 @@ API_POLICIES: tuple[ApiPolicy, ...] = (
         "require_write_access + _validate_main_doc_id main_doc_id project scope",
     ),
     ApiPolicy(
+        "DELETE",
+        "/api/compile/cache",
+        "project",
+        "compile",
+        "session",
+        "require_write_access + compiler clear project cache",
+    ),
+    ApiPolicy(
         "POST",
         "/api/compile/sync-to-pdf",
         "project",
@@ -1221,7 +1229,7 @@ API_POLICIES: tuple[ApiPolicy, ...] = (
         "project",
         "compile",
         "session",
-        "require_write_access + _validate_main_doc_id main_doc_id project scope",
+        "require_write_access + _validate_main_doc_id main_doc_id project scope + incremental_compile project setting",
     ),
     ApiPolicy(
         "GET",

@@ -270,7 +270,7 @@ test('root manifest can read backend sparse resource and API policy summary', ()
   assert.deepEqual(summary.counts, {
     actionPolicies: 75,
     agentCommandPolicies: 10,
-    apiPolicies: 217,
+    apiPolicies: 218,
     crossUserTestPolicies: 222,
     mcpTransportPolicies: 4,
     resourcePolicies: 47,
@@ -363,7 +363,7 @@ test('root manifest exposes permission matrix closure blockers', () => {
   assert.deepEqual(status.policyRows, {
     backendActions: 75,
     backendAgentCommandPolicies: 10,
-    backendApiPolicies: 217,
+    backendApiPolicies: 218,
     backendCrossUserTestPolicies: 222,
     backendMcpTransportPolicies: 4,
     backendResources: 47,
@@ -516,7 +516,7 @@ test('root manifest exposes objective-level permission matrix completion audit',
   assert.equal(items.get('resource-ownership-matrix')?.status, 'verified')
   assert.equal(items.get('resource-ownership-matrix')?.evidence.backendResources, 47)
   assert.equal(items.get('api-permission-matrix')?.status, 'verified')
-  assert.equal(items.get('api-permission-matrix')?.evidence.backendApiPolicies, 217)
+  assert.equal(items.get('api-permission-matrix')?.evidence.backendApiPolicies, 218)
   assert.equal(items.get('api-permission-matrix')?.evidence.localAgentHostHttpPolicies, 27)
   assert.equal(items.get('cross-user-test-suite')?.status, 'verified')
   assert.equal(items.get('cross-user-test-suite')?.evidence.backendApiEvidenceRows, 222)

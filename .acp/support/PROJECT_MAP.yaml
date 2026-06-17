@@ -169,7 +169,7 @@ modules:
   - id: backend-api
     path: services/backend/app/api
     kind: api-routes
-    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, backend MCP token/admin compatibility routes, workflows, Data Project datasets, conversations, archive/major versions, document versions, compile, notifications, annotations, and spelling.
+    description: HTTP route modules for auth, projects, files, providers, native Agents/Skills/MCPs, backend MCP token/admin compatibility routes, workflows, Data Project datasets, conversations, archive/major versions, document versions, compile (with cache reset and incremental settings), notifications, annotations, and spelling.
     entry_files:
       - services/backend/app/api/__init__.py
       - services/backend/app/api/health.py
@@ -512,9 +512,11 @@ modules:
   - id: frontend-feature-preview
     path: services/frontend/src/features/preview
     kind: feature-module
-    description: LaTeX PDF preview, Markdown preview, markdown asset rewriting, and preview styling.
+    description: LaTeX PDF preview (PDF.js PDFViewer wrapper), Markdown preview, markdown asset rewriting, and preview styling.
     entry_files:
       - services/frontend/src/features/preview/LatexPreview.tsx
+      - services/frontend/src/features/preview/PdfJsViewer.tsx
+      - services/frontend/src/features/preview/pdfJsWrapper.ts
       - services/frontend/src/features/preview/MarkdownPreview.tsx
       - services/frontend/src/features/preview/markdownAssets.ts
       - services/frontend/src/features/preview/latex-preview.css

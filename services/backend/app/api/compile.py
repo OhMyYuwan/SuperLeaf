@@ -69,6 +69,15 @@ def rescan_compilers(_admin: User = Depends(require_admin)) -> CompilerInfoOut:
     return _compiler_info()
 
 
+@router.delete("/cache", status_code=204)
+def clear_compile_cache(
+    project: Project = Depends(require_write_access),
+) -> Response:
+    svc = get_compiler_service()
+    svc.clear_cache(project.id)
+    return Response(status_code=204)
+
+
 @router.post("", response_model=CompileOut)
 async def compile_project(
     body: CompileIn,
@@ -79,6 +88,11 @@ async def compile_project(
     compiler = body.compiler or project.compiler or None
     requested_main_doc_id = body.main_doc_id if body.main_doc_id is not None else project.main_doc_id
     main_doc_id = _validate_main_doc_id(db, project, requested_main_doc_id)
+    incremental = (
+        body.incremental_compile
+        if body.incremental_compile is not None
+        else bool(project.incremental_compile)
+    )
     await flush_project_collab_or_503(project)
     db.expire_all()
 
@@ -88,9 +102,14 @@ async def compile_project(
         project.id,
         main_doc_id=main_doc_id,
         compiler=compiler,
+        incremental=incremental,
+        from_scratch=body.from_scratch,
+        is_auto_compile=body.is_auto_compile,
     )
     return CompileOut(
         ok=result.ok,
+        status=result.status,
+        build_id=result.build_id,
         compiler=result.compiler,
         duration_ms=result.duration_ms,
         error=result.error,
@@ -242,6 +261,7 @@ def get_settings(
     return ProjectCompileSettingsOut(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
+        incremental_compile=bool(project.incremental_compile),
     )
 
 
@@ -255,11 +275,14 @@ def update_settings(
         project.main_doc_id = _validate_main_doc_id(db, project, body.main_doc_id) or ""
     if body.compiler is not None:
         project.compiler = body.compiler
+    if body.incremental_compile is not None:
+        project.incremental_compile = body.incremental_compile
     db.commit()
     db.refresh(project)
     return ProjectCompileSettingsOut(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
+        incremental_compile=bool(project.incremental_compile),
     )
 
 

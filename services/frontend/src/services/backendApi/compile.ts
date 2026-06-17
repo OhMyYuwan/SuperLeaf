@@ -12,10 +12,24 @@ export interface CompilerInfo {
 export interface CompileRequest {
   compiler?: string
   main_doc_id?: string
+  incremental_compile?: boolean
+  from_scratch?: boolean
+  is_auto_compile?: boolean
 }
+
+export type CompileStatus =
+  | 'success'
+  | 'failure'
+  | 'compile-in-progress'
+  | 'too-recently-compiled'
+  | 'autocompile-backoff'
+  | 'unavailable'
+  | 'timedout'
 
 export interface CompileResult {
   ok: boolean
+  status: CompileStatus
+  build_id: string
   compiler: string
   duration_ms: number
   error: string
@@ -55,6 +69,7 @@ export interface CompileSyncFromPdfResult {
 export interface CompileSettings {
   main_doc_id: string
   compiler: string
+  incremental_compile: boolean
 }
 
 export const compileApi = {
@@ -90,6 +105,10 @@ export const compileApi = {
     http<CompileSettings>('/api/compile/settings', {
       method: 'PUT',
       body: JSON.stringify(body),
+    }),
+  clearCache: () =>
+    http<void>('/api/compile/cache', {
+      method: 'DELETE',
     }),
 }
 

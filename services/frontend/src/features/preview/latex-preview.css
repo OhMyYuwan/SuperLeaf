@@ -406,3 +406,21 @@
     transform: translate(-50%, -50%) scale(1);
   }
 }
+
+/* PDF.js viewer container (direct PDFViewer mode) */
+.latex-pdfjs-container {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+  overflow: auto;
+}
+
+.latex-pdfjs-container .pdfViewer .page {
+  margin: 0 auto 16px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+  background: white;
+}
+
+.latex-pdfjs-container .pdfViewer .page .loadingIcon {
+  display: none;
+}

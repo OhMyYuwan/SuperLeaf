@@ -78,8 +78,10 @@ class RecentCollaboratorOut(BaseModel):
 class ProjectCompileSettingsIn(BaseModel):
     main_doc_id: str | None = None
     compiler: str | None = None
+    incremental_compile: bool | None = None
 
 
 class ProjectCompileSettingsOut(BaseModel):
     main_doc_id: str
     compiler: str
+    incremental_compile: bool

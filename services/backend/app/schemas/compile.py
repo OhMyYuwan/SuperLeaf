@@ -13,10 +13,15 @@ class CompilerInfoOut(BaseModel):
 class CompileIn(BaseModel):
     compiler: str | None = None
     main_doc_id: str | None = None
+    incremental_compile: bool | None = None
+    from_scratch: bool = False
+    is_auto_compile: bool = False
 
 
 class CompileOut(BaseModel):
     ok: bool
+    status: str
+    build_id: str
     compiler: str
     duration_ms: int
     error: str

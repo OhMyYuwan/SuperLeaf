@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     # Collaboration server (Node.js y-websocket)
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30
-    collab_token_lifetime_seconds: int = 30
+    collab_token_lifetime_seconds: int = 300
     collab_internal_token: str = ""
 
     # Static Skill marketplace catalog. The default reads the official GitHub

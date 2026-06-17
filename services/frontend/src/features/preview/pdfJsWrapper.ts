@@ -57,25 +57,46 @@ export class PdfJsWrapper {
     this.activeUrl = url
     this.loadingTask?.destroy()
 
+    // Fetch the entire PDF as ArrayBuffer first.
+    // JPEG2000 images require all data to be available for decoding;
+    // PDF.js's partial loading (disableAutoFetch) may only fetch partial
+    // JPX data, causing "OpenJPEG failed to initialize" errors.
+    let data: ArrayBuffer
+    try {
+      const res = await fetch(url, { credentials: 'include' })
+      if (!res.ok) throw new Error(`PDF fetch failed: ${res.status}`)
+      data = await res.arrayBuffer()
+    } catch {
+      // Fetch was cancelled or network error — safe to ignore.
+      return
+    }
+
+    // Guard: if a newer load was requested while we fetched, discard this one.
+    if (this.activeUrl !== url) return
+
     const loadingTask = pdfjsLib.getDocument({
-      url,
-      withCredentials: true,
-      disableAutoFetch: true,
-      disableStream: true,
+      data,
       isEvalSupported: false,
       enableXfa: false,
-      rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
     })
     this.loadingTask = loadingTask
 
-    const pdf = await loadingTask.promise
-    // Guard: if a newer load was requested while we awaited, discard this one.
-    if (this.activeUrl !== url) {
-      await pdf.destroy()
-      return
+    try {
+      const pdf = await loadingTask.promise
+      if (this.activeUrl !== url) {
+        await pdf.destroy()
+        return
+      }
+      this.viewer.setDocument(pdf)
+      this.linkService.setDocument(pdf, null)
+    } catch (err: any) {
+      // Suppress "Worker was destroyed" — expected during mode switches
+      // or component unmounts where the shared PDF.js worker is terminated.
+      if (err?.name === 'AbortError' || String(err).includes('Worker was destroyed')) {
+        return
+      }
+      throw err
     }
-    this.viewer.setDocument(pdf)
-    this.linkService.setDocument(pdf, null)
   }
 
   setScale(scale: number | 'page-width' | 'auto'): void {

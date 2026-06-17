@@ -52,10 +52,9 @@ const PDF_RANGE_CHUNK_SIZE = 128 * 1024
 const PDF_RENDER_RADIUS = 2
 const PDF_MAX_DEVICE_PIXEL_RATIO = 2
 const PDF_LOAD_OPTIONS = {
-  disableAutoFetch: true,
+  disableAutoFetch: false,
   disableStream: true,
   isEvalSupported: false,
-  rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
 } as const
 
 interface PdfPageSize {
@@ -941,6 +940,9 @@ export function LatexPreview({
             onPageChanging={(pageNumber) => setCurrentPage(pageNumber)}
             onPageRendered={restorePdfScrollSoon}
             onLoadError={(error) => {
+              // Suppress "Worker was destroyed" — expected during preview mode
+              // switches where the shared PDF.js worker is terminated.
+              if (String(error).includes('Worker was destroyed')) return
               console.error('PDF load error', error)
               setPdfLoadError(error)
             }}

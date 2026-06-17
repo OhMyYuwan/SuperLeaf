@@ -22,6 +22,12 @@ describe('PDF preview chrome contract', () => {
     expect(css).toMatch(
       /\.latex-pdf-page\s+canvas\s*\{[^}]*border:\s*0;[^}]*outline:\s*0;[^}]*box-shadow:\s*none;[^}]*background:\s*#ffffff;/s,
     )
+    expect(css).toMatch(
+      /\.latex-preview-pdf\s*\{[^}]*--latex-pdf-edge-crop:\s*max\(3px,\s*0\.22%\);/s,
+    )
+    expect(css).toMatch(
+      /\.latex-pdf-page\s+canvas,\s*\.latex-pdfjs-container\s+\.pdfViewer\s+\.page\s+canvas\s*\{[^}]*clip-path:\s*inset\(var\(--latex-pdf-edge-crop\)\);/s,
+    )
   })
 
   it('keeps PDF.js inside an app-owned outer shell and scroll container', async () => {

@@ -283,6 +283,8 @@
 }
 
 .latex-preview-pdf {
+  --latex-pdf-edge-crop: max(3px, 0.22%);
+
   position: relative;
   flex: 1;
   min-height: 0;
@@ -333,7 +335,7 @@
 }
 
 .latex-pdf-page {
-  overflow: visible;
+  overflow: hidden;
   border: 0;
   outline: 0;
   box-shadow: none;
@@ -348,6 +350,11 @@
   outline: 0;
   box-shadow: none;
   background: #ffffff;
+}
+
+.latex-pdf-page canvas,
+.latex-pdfjs-container .pdfViewer .page canvas {
+  clip-path: inset(var(--latex-pdf-edge-crop));
 }
 
 .latex-pdf-page-placeholder {

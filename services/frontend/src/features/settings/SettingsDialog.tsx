@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CheckCircle2, CircleAlert, FileText, GitBranch, KeyRound, Layers3, Loader2, Palette, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import { CheckCircle2, CircleAlert, GitBranch, KeyRound, Layers3, Loader2, Palette, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import type { GitHubAccountStatus, GitHubDeviceStart, Provider, ProviderDraft, ProviderModel } from '../../services/backendApi'
 import {
   BACKEND_BASE,
@@ -23,7 +23,7 @@ import {
 } from '../../services/nanobotBrowserClient'
 import { listBrowserCodexModels, probeBrowserCodex } from '../../services/codexBrowserClient'
 import { probeBrowserClaude } from '../../services/claudeBrowserClient'
-import { useSettingsStore, type LatexPdfViewerPreference } from '../../stores/settingsStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import {
   LATEX_EDITOR_THEME_PRESETS,
   type LatexEditorThemeId,
@@ -136,7 +136,6 @@ export function PersonalSettingsContent({ activeTab }: { activeTab: PersonalSett
         <>
           <EditorAppearanceSettings />
           <MathPreviewSettings />
-          <PdfPreviewSettings />
         </>
       )}
 
@@ -235,41 +234,6 @@ function MathPreviewSettings() {
         >
           关闭
         </button>
-      </div>
-    </section>
-  )
-}
-
-function PdfPreviewSettings() {
-  const latexPdfViewer = useSettingsStore((s) => s.latexPdfViewer)
-  const setLatexPdfViewer = useSettingsStore((s) => s.setLatexPdfViewer)
-
-  const choices: Array<{ value: LatexPdfViewerPreference; label: string }> = [
-    { value: 'react-pdf', label: 'react-pdf' },
-    { value: 'pdfjs-viewer', label: 'PDF.js Viewer' },
-  ]
-
-  return (
-    <section className="settings-section">
-      <div className="settings-section-head">
-        <div>
-          <h3><FileText size={14} /> PDF 预览器</h3>
-          <p>react-pdf 是稳定模式；PDF.js Viewer 保留为大文档实验模式。</p>
-        </div>
-      </div>
-      <div className="settings-segmented" role="radiogroup" aria-label="PDF 预览器">
-        {choices.map((choice) => (
-          <button
-            key={choice.value}
-            type="button"
-            role="radio"
-            aria-checked={latexPdfViewer === choice.value}
-            className={latexPdfViewer === choice.value ? 'active' : ''}
-            onClick={() => setLatexPdfViewer(choice.value)}
-          >
-            {choice.label}
-          </button>
-        ))}
       </div>
     </section>
   )

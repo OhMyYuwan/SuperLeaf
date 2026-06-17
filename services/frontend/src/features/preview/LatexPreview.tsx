@@ -1,7 +1,7 @@
 /**
  * LatexPreview — shows the compiled PDF for the current LaTeX project.
  *
- * Uses PDF.js PDFViewer (via PdfJsWrapper) to render pages with lazy loading.
+ * Uses the configured PDF previewer to render successful LaTeX compiles.
  * Each successful compile bumps `pdfVersion` in the compile store.
  *
  * Controls:
@@ -30,7 +30,7 @@ import {
 import { useCompileStore } from '../../stores/compileStore'
 import { useDocumentStore } from '../../stores/documentStore'
 import { useProjectStore } from '../../stores/projectStore'
-import { useSettingsStore } from '../../stores/settingsStore'
+import { useSettingsStore, type LatexPdfViewerPreference } from '../../stores/settingsStore'
 import { compileApi, type CompileSyncToPdfResult } from '../../services/backendApi'
 import {
   sourceJumpFromPreviewText,
@@ -100,6 +100,7 @@ export function LatexPreview({
   const saveStatus = useDocumentStore((s) => s.saveStatus[documentId] ?? 'idle')
   const lastSavedAt = useDocumentStore((s) => s.lastSavedAt[documentId] ?? 0)
   const latexPdfViewer = useSettingsStore((s) => s.latexPdfViewer)
+  const setLatexPdfViewer = useSettingsStore((s) => s.setLatexPdfViewer)
   const currentProjectId = useProjectStore((s) => s.currentProjectId)
   const projectName = useProjectStore((s) =>
     s.currentProjectId
@@ -744,6 +745,20 @@ export function LatexPreview({
                 从头编译
               </button>
 
+              <label className="latex-settings-field">
+                <span>预览器</span>
+                <select
+                  className="compiler-picker"
+                  value={latexPdfViewer}
+                  onChange={(e) =>
+                    setLatexPdfViewer(e.target.value as LatexPdfViewerPreference)
+                  }
+                  title="PDF 预览器"
+                >
+                  <option value="react-pdf">react-pdf</option>
+                  <option value="pdfjs-viewer">PDF.js Viewer</option>
+                </select>
+              </label>
             </div>
           )}
         </div>

@@ -64,7 +64,7 @@ export function PdfJsViewer({
 
   return (
     <div className="latex-pdfjs-container" ref={containerRef}>
-      <div className="pdfViewer" ref={viewerRef} />
+      <div className="pdfViewer removePageBorders" ref={viewerRef} />
     </div>
   )
 }

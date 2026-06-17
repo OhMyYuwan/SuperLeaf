@@ -13,10 +13,31 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _resolve_env_file() -> str:
+    """Find .env file with fallback chain.
+
+    Priority:
+      1. .env in current working directory (Docker / deployment)
+      2. .env in monorepo root (local dev: services/backend/ → ../../.env)
+    """
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.is_file():
+        return str(cwd_env)
+    # settings.py is at <root>/services/backend/app/settings.py
+    root_env = Path(__file__).resolve().parents[3] / ".env"
+    if root_env.is_file():
+        return str(root_env)
+    return str(cwd_env)  # default; pydantic will ignore if missing
+
+
 class Settings(BaseSettings):
     # The legacy YLW_ prefix and ~/.yuwanlab data dir are intentionally kept so
     # existing local deployments survive the SuperLeaf rename without migration.
-    model_config = SettingsConfigDict(env_prefix="YLW_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="YLW_",
+        env_file=_resolve_env_file(),
+        extra="ignore",
+    )
 
     database_url: str = Field(default="")
     data_dir: Path = Field(default=Path.home() / ".yuwanlab")

@@ -956,8 +956,8 @@ class LatexCompilerService:
             aux_path = actual_output_dir / f"{jobname}.aux"
             if self._aux_needs_bibtex(aux_path):
                 bib_result = await self._run_command(
-                    ["bibtex", f"-output-directory={actual_output_dir.as_posix()}", jobname],
-                    cwd=working_dir, env=env,
+                    ["bibtex", jobname],
+                    cwd=actual_output_dir, env=env,
                 )
                 if bib_result[0] == "missing":
                     return CompileResult(

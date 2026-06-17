@@ -274,6 +274,7 @@
 }
 
 .latex-preview-pdf {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -409,9 +410,8 @@
 
 /* PDF.js viewer container (direct PDFViewer mode) */
 .latex-pdfjs-container {
-  position: relative;
-  width: 100%;
-  min-height: 100%;
+  position: absolute;
+  inset: 0;
   overflow: auto;
 }
 

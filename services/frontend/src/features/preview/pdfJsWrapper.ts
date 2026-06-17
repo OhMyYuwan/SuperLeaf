@@ -90,27 +90,19 @@ export class PdfJsWrapper {
     this.activeUrl = url
     this.loadingTask?.destroy()
 
-    // Fetch the entire PDF as ArrayBuffer first.
-    // JPEG2000 images require all data to be available for decoding;
-    // PDF.js's partial loading (disableAutoFetch) may only fetch partial
-    // JPX data, causing "OpenJPEG failed to initialize" errors.
-    let data: ArrayBuffer
-    try {
-      const res = await fetch(url, { credentials: 'include' })
-      if (!res.ok) throw new Error(`PDF fetch failed: ${res.status}`)
-      data = await res.arrayBuffer()
-    } catch {
-      // Fetch was cancelled or network error — safe to ignore.
-      return
-    }
-
-    // Guard: if a newer load was requested while we fetched, discard this one.
-    if (this.activeUrl !== url) return
-
+    // Priority page loading: PDF.js fetches only the data needed for the
+    // current viewport, then progressively loads other pages on scroll.
+    // This is the key advantage over react-pdf (which loads everything upfront).
+    // Trade-off: JPEG2000 images may fail to decode (known PDF.js limitation),
+    // but large PDFs load much faster for the common case.
     const loadingTask = pdfjsLib.getDocument({
-      data,
+      url,
+      withCredentials: true,
+      disableAutoFetch: true,
+      disableStream: true,
       isEvalSupported: false,
       enableXfa: false,
+      rangeChunkSize: 128 * 1024,
     })
     this.loadingTask = loadingTask
 

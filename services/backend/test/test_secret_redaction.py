@@ -39,6 +39,16 @@ def test_provider_errors_store_and_render_redacted_detail() -> None:
     assert "[redacted]" in str(nanobot)
 
 
+def test_workflow_sse_failures_emit_redacted_run_error() -> None:
+    source = (ROOT / "app/api/workflows.py").read_text(encoding="utf-8")
+
+    assert 'run.error = redact_secrets(f"{e.status}: {e.detail}")[:512]' in source
+    assert "run.error = safe_error_text(e)" in source
+    assert 'yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}' in source
+    assert 'json.dumps({"run_id": run.id, "error": str(e)' not in source
+    assert 'json.dumps({"error": str(e)})' not in source
+
+
 def test_conversation_routes_do_not_emit_multimodal_debug_logs() -> None:
     source = (ROOT / "app/api/conversations.py").read_text(encoding="utf-8")
 

@@ -2,7 +2,9 @@ import { BACKEND_BASE, type BrowserNanobotToolResult, type NanobotToolCall } fro
 
 const DEFAULT_LOCAL_AGENT_HOST_ENDPOINT = 'http://127.0.0.1:8787'
 const LOCAL_AGENT_HOST_AUTH_HEADER = 'X-SuperLeaf-Local-Token'
+const LOCAL_AGENT_HOST_CONTEXT_HEADER = 'X-SuperLeaf-Context-Token'
 const LOCAL_AGENT_HOST_AUTH_STORAGE_PREFIX = 'superleaf.localAgentHost.authToken.'
+const localAgentHostAuthTokens = new Map<string, string>()
 
 export interface BrowserToolBridgeContextInput {
   contextId?: string
@@ -281,11 +283,13 @@ export async function pollBrowserToolBridgeRequests(args: {
   const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
   const url = new URL(`${endpoint}/superleaf/mcp/tool-requests`)
   url.searchParams.set('context_id', args.contextId)
-  url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
-    headers: localAgentHostAuthHeaders(endpoint),
+    headers: {
+      ...localAgentHostAuthHeaders(endpoint),
+      ...localAgentHostContextHeaders(args.contextSecret),
+    },
     signal: args.signal,
   })
   const payload = await readJson(resp)
@@ -350,11 +354,13 @@ export async function pollBrowserToolBridgeApprovalRequests(args: {
   const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
   const url = new URL(`${endpoint}/superleaf/mcp/approval-requests`)
   url.searchParams.set('context_id', args.contextId)
-  url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
-    headers: localAgentHostAuthHeaders(endpoint),
+    headers: {
+      ...localAgentHostAuthHeaders(endpoint),
+      ...localAgentHostContextHeaders(args.contextSecret),
+    },
     signal: args.signal,
   })
   const payload = await readJson(resp)
@@ -423,16 +429,25 @@ export function storeLocalAgentHostAuthToken(endpoint: string, token: string): v
   if (!isLocalAgentHostAuthTokenValue(cleaned)) {
     throw new Error('Local Agent Host token has an invalid format.')
   }
+  const key = localAgentHostAuthStorageKey(endpoint)
+  localAgentHostAuthTokens.set(key, cleaned)
   try {
-    localStorage.setItem(localAgentHostAuthStorageKey(endpoint), cleaned)
+    localStorage.removeItem(key)
   } catch {
-    // Browser storage can be disabled; callers should surface connection errors.
+    // Browser storage can be disabled; the in-memory token is already set.
   }
 }
 
 export function clearLocalAgentHostAuthToken(endpoint: string): void {
+  let key = ''
   try {
-    localStorage.removeItem(localAgentHostAuthStorageKey(endpoint))
+    key = localAgentHostAuthStorageKey(endpoint)
+    localAgentHostAuthTokens.delete(key)
+  } catch {
+    return
+  }
+  try {
+    localStorage.removeItem(key)
   } catch {
     // Browser storage can be disabled.
   }
@@ -445,17 +460,18 @@ export function readLocalAgentHostAuthToken(endpoint: string): string {
   } catch {
     return ''
   }
-  try {
-    const token = localStorage.getItem(key)?.trim() ?? ''
-    return isLocalAgentHostAuthTokenValue(token) ? token : ''
-  } catch {
-    return ''
-  }
+  const token = localAgentHostAuthTokens.get(key)?.trim() ?? ''
+  return isLocalAgentHostAuthTokenValue(token) ? token : ''
 }
 
 export function localAgentHostAuthHeaders(endpoint: string): Record<string, string> {
   const token = readLocalAgentHostAuthToken(endpoint)
   return token ? { [LOCAL_AGENT_HOST_AUTH_HEADER]: token } : {}
+}
+
+function localAgentHostContextHeaders(contextSecret: string): Record<string, string> {
+  const token = contextSecret.trim()
+  return token ? { [LOCAL_AGENT_HOST_CONTEXT_HEADER]: token } : {}
 }
 
 export function validateBrowserToolBridgeRequestBinding(

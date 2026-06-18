@@ -62,6 +62,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onPageRendered,
     onScaleChanging,
     onLoadError,
+    zoom,
   })
 
   callbacksRef.current = {
@@ -70,6 +71,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onPageRendered,
     onScaleChanging,
     onLoadError,
+    zoom,
   }
 
   useImperativeHandle(ref, () => ({
@@ -86,7 +88,12 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     const wrapper = new PdfJsWrapper({
       container: containerRef.current,
       viewer: viewerRef.current,
-      onPagesInit: (pagesCount) => callbacksRef.current.onPagesInit(pagesCount),
+      onPagesInit: (pagesCount) => {
+        callbacksRef.current.onPagesInit(pagesCount)
+        if (callbacksRef.current.zoom === 1) {
+          wrapperRef.current?.setScaleValue('page-width')
+        }
+      },
       onPageChanging: (pageNumber) => callbacksRef.current.onPageChanging(pageNumber),
       onPageRendered: (pageNumber) => callbacksRef.current.onPageRendered(pageNumber),
       onScaleChanging: (scale) => callbacksRef.current.onScaleChanging(scale),

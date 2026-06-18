@@ -25,6 +25,8 @@ describe('PDF.js SuperLeaf integration contract', () => {
     expect(viewerSource).toContain('callbacksRef.current.onLoadError')
     expect(viewerSource).toContain('}, [url, buildId])')
     expect(viewerSource).toContain('syncMarker')
+    expect(viewerSource).toContain('zoom')
+    expect(viewerSource).toContain("setScaleValue('page-width')")
 
     expect(wrapperSource).toContain('scrollToPdfLocation')
     expect(wrapperSource).toContain('pdfPointFromClientPosition')

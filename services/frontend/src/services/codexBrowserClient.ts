@@ -6,6 +6,7 @@ import type {
   ProviderModel,
 } from './backendApi'
 import {
+  localAgentHostAuthHeaders,
   normalizeLocalAgentHostEndpoint,
   pollBrowserToolBridgeRequests,
   registerBrowserToolBridgeContext,
@@ -71,8 +72,10 @@ const SUPERLEAF_TOOL_MARKER = '<superleaf_tool_call'
 export { codexToolMode } from './agentPromptPolicy'
 
 export async function probeBrowserCodex(endpoint: string): Promise<BrowserCodexHealth> {
-  const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/health`, {
+  const normalizedEndpoint = normalizeCodexEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/codex/health`, {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
   })
   const payload = await readJson(resp)
   if (!resp.ok) {
@@ -85,8 +88,10 @@ export async function probeBrowserCodex(endpoint: string): Promise<BrowserCodexH
 }
 
 export async function listBrowserCodexModels(endpoint: string): Promise<ProviderModel[]> {
-  const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/models?limit=100`, {
+  const normalizedEndpoint = normalizeCodexEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/codex/models?limit=100`, {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
   })
   const payload = await readJson(resp)
   if (!resp.ok) {
@@ -106,9 +111,13 @@ export async function createBrowserCodexSession(args: {
   if (!workspacePath) {
     throw new Error('Codex Agent 缺少 workspace path，请编辑 Provider 设置代码项目路径')
   }
-  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/codex/sessions`, {
+  const normalizedEndpoint = normalizeCodexEndpoint(args.endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/codex/sessions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
+    },
     body: JSON.stringify({
       superleaf_origin: args.superleafOrigin ?? window.location.origin,
       superleaf_project_id: String(args.prepared.superleaf_context.project_id ?? ''),
@@ -158,8 +167,10 @@ export async function listBrowserCodexSessions(
     params.set('limit', String(query.limit))
   }
   const suffix = params.toString() ? `?${params.toString()}` : ''
-  const resp = await fetch(`${normalizeCodexEndpoint(endpoint)}/codex/sessions${suffix}`, {
+  const normalizedEndpoint = normalizeCodexEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/codex/sessions${suffix}`, {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(normalizedEndpoint),
   })
   const payload = await readJson(resp)
   if (!resp.ok) {
@@ -240,9 +251,13 @@ export async function runBrowserCodexTurn(args: {
 }): Promise<BrowserCodexTurnResult> {
   const includeSessionBoot = args.includeSessionBoot ??
     shouldIncludeCodexSessionBoot(args.prepared, args.session)
-  const resp = await fetch(`${normalizeCodexEndpoint(args.endpoint)}/codex/sessions/${encodeURIComponent(args.sessionId)}/turns`, {
+  const normalizedEndpoint = normalizeCodexEndpoint(args.endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/codex/sessions/${encodeURIComponent(args.sessionId)}/turns`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
+    },
     body: JSON.stringify({
       stream: true,
       prompt: buildCodexPromptWithPolicy({

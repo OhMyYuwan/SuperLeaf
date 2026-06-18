@@ -76,6 +76,7 @@ def run_migrations(engine: Engine) -> None:
         _create_annotation_agent_suggestion_table(conn)
         _create_registration_invite_table(conn)
         _create_mcp_tokens_table(conn)
+        _add_project_incremental_compile_column(conn)
 
 
 def _ensure_bootstrap_project(conn) -> str:
@@ -94,8 +95,10 @@ def _ensure_bootstrap_project(conn) -> str:
         values = [":id", ":name", "''", "''", ":now", ":now"]
         optional_defaults = (
             ("user_id", "''"),
+            ("incremental_compile", "0"),
             ("project_type", "'paper'"),
             ("is_skill_project", "0"),
+            ("tags", "'[]'"),
             ("project_skill_id", "''"),
             ("skill_cache_version", "0"),
         )
@@ -994,3 +997,18 @@ def _create_annotation_agent_suggestion_table(conn) -> None:
     )
     for stmt in indexes:
         conn.execute(text(stmt))
+
+
+def _add_project_incremental_compile_column(conn) -> None:
+    if not _table_exists(conn, "projects"):
+        return
+    if not _column_exists(conn, "projects", "incremental_compile"):
+        conn.execute(
+            text("ALTER TABLE projects ADD COLUMN incremental_compile BOOLEAN DEFAULT 0")
+        )
+    conn.execute(
+        text(
+            "UPDATE projects SET incremental_compile = 0 "
+            "WHERE incremental_compile IS NULL"
+        )
+    )

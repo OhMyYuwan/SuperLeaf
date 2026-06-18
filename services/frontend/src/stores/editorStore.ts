@@ -18,8 +18,16 @@ import { extractSelection } from '../services/selectionContext'
 import { useDocumentStore } from './documentStore'
 import { createUserScopedStorage } from './_userScopedStorage'
 
+export interface EditorScrollTarget {
+  documentId: string
+  pos: number
+  to?: number
+  seq: number
+}
+
 interface EditorStoreState {
   states: Record<string, EditorState>
+  scrollTo: EditorScrollTarget | null
 
   updateSelection: (
     documentId: string,
@@ -35,12 +43,15 @@ interface EditorStoreState {
   ) => void
   clearSelection: (documentId: string) => void
   getSelection: (documentId: string) => Selection | null
+  setScrollTo: (target: EditorScrollTarget) => void
+  clearScrollTo: () => void
 }
 
 export const useEditorStore = create<EditorStoreState>()(
   persist(
     (set, get) => ({
       states: {},
+      scrollTo: null,
 
       updateSelection: (documentId, range) => {
         const doc = useDocumentStore.getState().documents[documentId]
@@ -114,6 +125,14 @@ export const useEditorStore = create<EditorStoreState>()(
 
       getSelection: (documentId) => {
         return get().states[documentId]?.selection ?? null
+      },
+
+      setScrollTo: (target) => {
+        set({ scrollTo: target })
+      },
+
+      clearScrollTo: () => {
+        set({ scrollTo: null })
       },
     }),
     {

@@ -245,7 +245,7 @@ def provider_stats(
     provider = ProviderService(db).get(provider_id, user_id=user.id)
     if provider is None:
         raise HTTPException(404, "Provider not found")
-    rows = stats_service.stats_for_provider(db, provider_id)
+    rows = stats_service.stats_for_provider(db, provider_id, user_id=provider.user_id)
     return ProviderStatsOut(
         provider_id=provider_id,
         agents=[

@@ -23,9 +23,7 @@ router = APIRouter(
 )
 
 
-def _require_definition(
-    db: Session, project: Project, definition_id: str, user: User
-) -> WorkflowDefinition:
+def _require_definition(db: Session, project: Project, definition_id: str, user: User) -> WorkflowDefinition:
     defn = db.get(WorkflowDefinition, definition_id)
     if defn is None or defn.project_id != project.id or defn.user_id != user.id:
         raise HTTPException(404, "Workflow definition not found")
@@ -102,6 +100,6 @@ def delete_case(
     _require_definition(db, project, definition_id, user)
     case = db.get(WorkflowTestCase, case_id)
     if case is None or case.definition_id != definition_id:
-        return None
+        raise HTTPException(404, "Test case not found")
     db.delete(case)
     db.commit()

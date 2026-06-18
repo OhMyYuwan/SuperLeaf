@@ -46,7 +46,8 @@ def _env_float(name: str, default: float) -> float:
 # tool surfaces as a tool-side timeout instead of an httpx.ReadTimeout that the
 # UI renders as a generic "network error".
 MCP_TIMEOUT_SECONDS = _env_float("YLW_MCP_TIMEOUT_SECONDS", 150.0)
-ALLOWED_COMMANDS = {"uv", "uvx", "npx", "python", "python3"}
+ALLOWED_COMMANDS = {"uv", "uvx", "npx"}
+BLOCKED_INTERPRETER_COMMANDS = {"python", "python3", "python.exe", "python3.exe"}
 
 
 class McpToolError(RuntimeError):
@@ -216,6 +217,10 @@ async def _with_mcp_session(server: McpServerConfig, fn):
             await session.close()
 
     command_name = os.path.basename(server.command)
+    if command_name in BLOCKED_INTERPRETER_COMMANDS:
+        raise McpToolError(
+            f"Command `{server.command}` is an interpreter and is not allowed for stdio MCP servers"
+        )
     if command_name not in ALLOWED_COMMANDS:
         raise McpToolError(f"Command `{server.command}` is not allowed for MCP servers")
 
@@ -239,7 +244,7 @@ async def _with_mcp_session(server: McpServerConfig, fn):
             proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
         stderr_task.cancel()

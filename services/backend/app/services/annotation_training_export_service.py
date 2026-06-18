@@ -95,6 +95,16 @@ def build_annotation_training_export_zip(
             "only_training_candidates": only_training_candidates,
             "context_mode": "current_line_only",
         },
+        "formats": {
+            "superleaf": [
+                "records.jsonl",
+                "documents.json",
+            ],
+            "phoenix": [
+                "phoenix_dataset.json",
+                "phoenix_dataset.jsonl",
+            ],
+        },
         "counts": {
             "records": len(records),
             "documents": len(documents),
@@ -103,12 +113,21 @@ def build_annotation_training_export_zip(
             "skipped_missing_doc": skipped_missing_doc,
         },
     }
+    phoenix_payload = _phoenix_dataset_payload(
+        project,
+        records,
+        only_training_candidates=only_training_candidates,
+        exported_at=exported_at,
+    )
+    phoenix_jsonl = "\n".join(_json_line(row) for row in _phoenix_jsonl_rows(phoenix_payload))
 
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", _json(manifest))
         zf.writestr("documents.json", _json(documents))
         zf.writestr("records.jsonl", "\n".join(_json_line(record) for record in records) + ("\n" if records else ""))
+        zf.writestr("phoenix_dataset.json", _json(phoenix_payload))
+        zf.writestr("phoenix_dataset.jsonl", phoenix_jsonl + ("\n" if phoenix_jsonl else ""))
         zf.writestr("agent_prompt.md", _agent_prompt(project.name))
         zf.writestr("README.md", _export_readme())
     return out.getvalue()
@@ -170,6 +189,7 @@ def _record_for(
             "tags": evaluation.tags or [],
             "adoption": evaluation.adoption,
             "training_candidate": bool(evaluation.training_candidate),
+            "context": evaluation.context or {},
             "created_at": evaluation.created_at.isoformat() if evaluation.created_at else None,
             "updated_at": evaluation.updated_at.isoformat() if evaluation.updated_at else None,
         },
@@ -207,6 +227,207 @@ def _document_payload(doc: Doc) -> dict[str, Any]:
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
     }
+
+
+def _phoenix_dataset_payload(
+    project: Project,
+    records: list[dict[str, Any]],
+    *,
+    only_training_candidates: bool,
+    exported_at: str,
+) -> dict[str, Any]:
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    metadata: list[dict[str, Any]] = []
+    splits: list[list[str] | None] = []
+    example_ids: list[str] = []
+
+    for record in records:
+        inputs.append(_phoenix_input(record))
+        outputs.append(_phoenix_output(record))
+        metadata.append(_phoenix_metadata(record))
+        row_splits = _phoenix_splits(record)
+        splits.append(row_splits or None)
+        example_ids.append(str(record["record_id"]))
+
+    return {
+        "action": "create",
+        "name": f"{project.name or 'Project'} Annotation Training",
+        "description": (
+            "SuperLeaf annotation training export for Phoenix datasets. "
+            f"project_id={project.id}; only_training_candidates={only_training_candidates}; "
+            f"exported_at={exported_at}"
+        ),
+        "inputs": inputs,
+        "outputs": outputs,
+        "metadata": metadata,
+        "splits": splits,
+        "example_ids": example_ids,
+    }
+
+
+def _phoenix_jsonl_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    inputs = payload.get("inputs") if isinstance(payload.get("inputs"), list) else []
+    outputs = payload.get("outputs") if isinstance(payload.get("outputs"), list) else []
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), list) else []
+    splits = payload.get("splits") if isinstance(payload.get("splits"), list) else []
+    example_ids = payload.get("example_ids") if isinstance(payload.get("example_ids"), list) else []
+    rows: list[dict[str, Any]] = []
+    for idx, input_payload in enumerate(inputs):
+        split_value = splits[idx] if idx < len(splits) else None
+        rows.append(
+            {
+                "id": example_ids[idx] if idx < len(example_ids) else str(idx),
+                "input": input_payload,
+                "output": outputs[idx] if idx < len(outputs) else {},
+                "metadata": metadata[idx] if idx < len(metadata) else {},
+                "splits": split_value if isinstance(split_value, list) else [],
+            }
+        )
+    return rows
+
+
+def _phoenix_input(record: dict[str, Any]) -> dict[str, Any]:
+    annotation = record.get("annotation") if isinstance(record.get("annotation"), dict) else {}
+    context = record.get("context") if isinstance(record.get("context"), dict) else {}
+    thread = annotation.get("thread") if isinstance(annotation.get("thread"), list) else []
+    messages = _thread_messages(thread)
+    source_text = annotation.get("target_text") or context.get("target_text") or ""
+    prompt_messages = messages or ([{"role": "user", "content": _textify(source_text)}] if source_text else [])
+    out: dict[str, Any] = {
+        "messages": prompt_messages,
+        "source_text": source_text,
+        "current_line_content": context.get("current_line_content") or "",
+        "section": context.get("section"),
+        "annotation": {
+            "kind": annotation.get("kind") or "",
+            "severity": annotation.get("severity") or "",
+            "status": annotation.get("status") or "",
+            "target_text": source_text,
+        },
+    }
+    return out
+
+
+def _phoenix_output(record: dict[str, Any]) -> dict[str, Any]:
+    output_text = _annotation_output(record)
+    if not output_text:
+        return {}
+    return {
+        "messages": [{"role": "assistant", "content": output_text}],
+        "agent_output": output_text,
+    }
+
+
+def _phoenix_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    annotation = record.get("annotation") if isinstance(record.get("annotation"), dict) else {}
+    evaluation = record.get("evaluation") if isinstance(record.get("evaluation"), dict) else {}
+    context = record.get("context") if isinstance(record.get("context"), dict) else {}
+    label = {
+        "source_kind": "annotation_evaluation",
+        "source_id": evaluation.get("id") or "",
+        "name": "human_verdict",
+        "label": evaluation.get("verdict"),
+        "score": _verdict_score(evaluation.get("verdict")),
+        "explanation": evaluation.get("reason") or "",
+        "tags": evaluation.get("tags") or [],
+        "adoption": evaluation.get("adoption") or "",
+        "training_candidate": bool(evaluation.get("training_candidate")),
+        "context": evaluation.get("context") or {},
+        "created_at": evaluation.get("created_at"),
+        "updated_at": evaluation.get("updated_at"),
+    }
+    return {
+        "record_id": record.get("record_id") or "",
+        "source_type": "annotation_evaluation",
+        "source_id": evaluation.get("id") or "",
+        "project_id": record.get("project_id") or "",
+        "doc_id": record.get("doc_id") or "",
+        "annotation_id": annotation.get("id") or record.get("annotation_id") or "",
+        "evaluation_id": evaluation.get("id") or record.get("evaluation_id") or "",
+        "reference_kind": _reference_kind(record),
+        "review_status": record.get("review_status") or "open",
+        "annotation": {
+            "kind": annotation.get("kind") or "",
+            "status": annotation.get("status") or "",
+            "severity": annotation.get("severity") or "",
+            "workflow_id": annotation.get("workflow_id") or "",
+            "agent_name": annotation.get("agent_name") or "",
+            "conversation_id": annotation.get("conversation_id") or "",
+            "suggestion": annotation.get("suggestion") or {},
+            "risk": annotation.get("risk") or {},
+            "attached_files": annotation.get("attached_files") or [],
+        },
+        "labels": [label],
+        "context": {
+            **context,
+            "content_omitted": True,
+        },
+        "wiki_hints": record.get("wiki_hints") or {},
+    }
+
+
+def _thread_messages(thread: list[Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for item in thread:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not content:
+            continue
+        role = str(item.get("role") or "user").strip().lower()
+        if role in {"agent", "ai"}:
+            role = "assistant"
+        elif role not in {"system", "developer", "user", "assistant"}:
+            role = "user"
+        out.append({"role": role, "content": _textify(content)})
+    return out
+
+
+def _annotation_output(record: dict[str, Any]) -> str:
+    annotation = record.get("annotation") if isinstance(record.get("annotation"), dict) else {}
+    suggestion = annotation.get("suggestion") if isinstance(annotation.get("suggestion"), dict) else {}
+    risk = annotation.get("risk") if isinstance(annotation.get("risk"), dict) else {}
+    for value in (
+        suggestion.get("proposed"),
+        risk.get("mitigation"),
+        annotation.get("content"),
+    ):
+        if value:
+            return _textify(value)
+    return ""
+
+
+def _phoenix_splits(record: dict[str, Any]) -> list[str]:
+    return ["train"] if record.get("is_training_candidate") else []
+
+
+def _reference_kind(record: dict[str, Any]) -> str:
+    evaluation = record.get("evaluation") if isinstance(record.get("evaluation"), dict) else {}
+    verdict = str(evaluation.get("verdict") or "").lower()
+    adoption = str(evaluation.get("adoption") or "").lower()
+    if verdict == "positive" and (
+        record.get("is_training_candidate") or adoption in {"accepted", "adopted"}
+    ):
+        return "human_approved"
+    if verdict:
+        return "human_labeled"
+    return "baseline"
+
+
+def _verdict_score(value: Any) -> float | None:
+    verdict = str(value or "").strip().lower()
+    if verdict == "positive":
+        return 1.0
+    if verdict == "negative":
+        return 0.0
+    return None
+
+
+def _textify(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _line_context_for_range(content: str, range_from: int, range_to: int) -> dict[str, Any]:
@@ -305,6 +526,8 @@ Files:
 - `manifest.json`: export metadata and counts.
 - `records.jsonl`: one evaluation sample per line.
 - `documents.json`: metadata and hashes for documents referenced by records.
+- `phoenix_dataset.json`: Phoenix `/v1/datasets/upload` compatible dataset payload.
+- `phoenix_dataset.jsonl`: one Phoenix-style dataset example per line.
 - `agent_prompt.md`: suggested prompt for an Agent/wiki builder.
 
 Privacy note: this export intentionally omits full document content. Each

@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -83,6 +84,7 @@ class ProjectEventBus:
         payload: dict[str, Any],
         *,
         origin_client_id: str = "",
+        visible_to_user_ids: Iterable[str] | None = None,
     ) -> None:
         """Fan-out an event. Call this AFTER `db.commit()` — never inside a
         transaction, so subscribers don't observe rows that may roll back.
@@ -104,7 +106,10 @@ class ProjectEventBus:
             "origin_client_id": origin_client_id,
             "payload": payload,
         }
+        visible_to = set(visible_to_user_ids) if visible_to_user_ids is not None else None
         for sub in list(bucket):
+            if visible_to is not None and sub.user_id not in visible_to:
+                continue
             try:
                 sub.queue.put_nowait(event)
             except asyncio.QueueFull:

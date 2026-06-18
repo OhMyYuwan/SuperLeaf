@@ -514,6 +514,7 @@ class Project(Base):
     # LaTeX compile settings
     main_doc_id: Mapped[str] = mapped_column(String(32), default="")
     compiler: Mapped[str] = mapped_column(String(32), default="")
+    incremental_compile: Mapped[bool] = mapped_column(Boolean, default=False)
     project_type: Mapped[str] = mapped_column(String(16), default="paper", index=True)
     is_skill_project: Mapped[bool] = mapped_column(Boolean, default=False)
     tags: Mapped[list] = mapped_column(JSON, default=list)

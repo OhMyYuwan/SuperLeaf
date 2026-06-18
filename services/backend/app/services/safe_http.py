@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -98,6 +99,57 @@ def _resolve_and_pick(host: str, *, allow_private: bool) -> tuple[str, int]:
 def _ip_literal_host(addr: str, family: int) -> str:
     """Format an address for use as a URL host: bare for IPv4, bracketed for IPv6."""
     return f"[{addr}]" if family == socket.AF_INET6 else addr
+
+
+class PinnedTransport(httpx.HTTPTransport):
+    """Synchronous companion to :class:`PinnedAsyncTransport`.
+
+    The synchronous catalog and marketplace loaders used to validate URLs with
+    the SSRF policy and then let ``urllib`` perform a fresh hostname lookup for
+    the real request. This transport gives sync callers the same single-lookup
+    pinning guarantee as async provider clients.
+    """
+
+    def __init__(self, *, allow_private: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._allow_private = allow_private
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        url = request.url
+        host = url.host
+        if not host:
+            return super().handle_request(request)
+
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            ip = None
+        if ip is not None:
+            validate_resolved_ip(ip, allow_private=self._allow_private)
+            return super().handle_request(request)
+
+        pinned_addr, family = _resolve_and_pick(
+            host, allow_private=self._allow_private
+        )
+        pinned_host = _ip_literal_host(pinned_addr, family)
+
+        port = url.port
+        default_port = 443 if url.scheme == "https" else 80
+        host_header = host if port in (None, default_port) else f"{host}:{port}"
+
+        new_headers = httpx.Headers(request.headers)
+        new_headers["Host"] = host_header
+        new_extensions = dict(request.extensions or {})
+        new_extensions["sni_hostname"] = host
+
+        new_request = httpx.Request(
+            method=request.method,
+            url=url.copy_with(host=pinned_host),
+            headers=new_headers,
+            stream=request.stream,
+            extensions=new_extensions,
+        )
+        return super().handle_request(new_request)
 
 
 class PinnedAsyncTransport(httpx.AsyncHTTPTransport):
@@ -189,3 +241,40 @@ def safe_async_client(
     return httpx.AsyncClient(
         transport=transport, timeout=timeout, trust_env=trust_env, **kwargs
     )
+
+
+def safe_client(
+    *,
+    allow_private: bool = False,
+    timeout: Any = None,
+    trust_env: bool = False,
+    **kwargs: Any,
+) -> httpx.Client:
+    """Construct a synchronous ``httpx.Client`` with pinned-IP egress."""
+    transport = PinnedTransport(allow_private=allow_private)
+    return httpx.Client(
+        transport=transport, timeout=timeout, trust_env=trust_env, **kwargs
+    )
+
+
+def safe_fetch_text(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    timeout: Any = 20,
+    allow_private: bool = False,
+    max_bytes: int = 1_048_576,
+) -> str:
+    """Fetch a small text resource via the synchronous pinned transport."""
+    with safe_client(allow_private=allow_private, timeout=timeout) as client:
+        with client.stream("GET", url, headers=headers) as response:
+            response.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise SsrfPolicyError("Outbound response exceeds the configured size limit")
+                chunks.append(chunk)
+    raw = b"".join(chunks)
+    return raw.decode("utf-8", errors="replace")

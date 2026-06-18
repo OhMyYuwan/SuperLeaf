@@ -47,7 +47,7 @@ export function ProjectEventBridge() {
     resetProjectEventSeq()
     projectEventStream.start(currentProjectId, (evt: ProjectEvent) => {
       try {
-        dispatch(evt, currentUserId)
+        dispatchProjectEvent(evt, currentUserId)
       } catch (err) {
         console.warn('[event-bridge] failed to apply event', evt.type, err)
       }
@@ -62,7 +62,7 @@ export function ProjectEventBridge() {
   return null
 }
 
-function dispatch(evt: ProjectEvent, currentUserId: string): void {
+export function dispatchProjectEvent(evt: ProjectEvent, currentUserId: string): void {
   const p = evt.payload as Record<string, unknown>
   if (hasProjectEventSeqGap(evt)) {
     scheduleTreeReload()

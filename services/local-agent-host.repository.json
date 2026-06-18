@@ -1,0 +1,13 @@
+{
+  "path": "services/local-agent-host",
+  "selectedWorkflow": "explicit-submodule-or-independent-repo",
+  "sensitivity": "external-sensitive",
+  "parentTracking": "ignored",
+  "permissionMatrixValidation": "validate-local-checkout",
+  "userDecisionRecorded": true,
+  "decisionDate": "2026-06-17",
+  "reason": "User selected an explicit submodule/independent-repository workflow because the Local Agent Host checkout may contain sensitive content.",
+  "requiredParentIgnores": [
+    "services/local-agent-host/"
+  ]
+}

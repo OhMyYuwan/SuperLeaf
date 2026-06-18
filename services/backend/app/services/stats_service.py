@@ -36,7 +36,12 @@ class AgentStat:
     avg_latency_ms: float | None
 
 
-def _aggregate_runs(db: Session, provider_id: str) -> dict[str, tuple[int, float | None]]:
+def _aggregate_runs(
+    db: Session,
+    provider_id: str,
+    *,
+    user_id: str,
+) -> dict[str, tuple[int, float | None]]:
     """Return {workflow_id: (completed_run_count, avg_latency_ms_or_None)}."""
     rows = (
         db.query(
@@ -50,6 +55,7 @@ def _aggregate_runs(db: Session, provider_id: str) -> dict[str, tuple[int, float
             ),
         )
         .filter(WorkflowRun.provider_id == provider_id)
+        .filter(WorkflowRun.user_id == user_id)
         .filter(WorkflowRun.status == "completed")
         .filter(WorkflowRun.finished_at.is_not(None))
         .group_by(WorkflowRun.workflow_id)
@@ -61,7 +67,12 @@ def _aggregate_runs(db: Session, provider_id: str) -> dict[str, tuple[int, float
     return out
 
 
-def _aggregate_decisions(db: Session, workflow_ids: list[str]) -> dict[str, tuple[int, int]]:
+def _aggregate_decisions(
+    db: Session,
+    workflow_ids: list[str],
+    *,
+    user_id: str,
+) -> dict[str, tuple[int, int]]:
     """Return {workflow_id: (accepts, rejects)} extracted from operation log."""
     if not workflow_ids:
         return {}
@@ -70,6 +81,7 @@ def _aggregate_decisions(db: Session, workflow_ids: list[str]) -> dict[str, tupl
         db.query(workflow_id_expr, Operation.type, func.count(Operation.id))
         .filter(workflow_id_expr.in_(workflow_ids))
         .filter(Operation.type.in_(("accept_suggestion", "reject_suggestion")))
+        .filter(Operation.actor == user_id)
         .group_by(workflow_id_expr, Operation.type)
         .all()
     )
@@ -85,17 +97,17 @@ def _aggregate_decisions(db: Session, workflow_ids: list[str]) -> dict[str, tupl
     return out
 
 
-def stats_for_provider(db: Session, provider_id: str) -> list[AgentStat]:
+def stats_for_provider(db: Session, provider_id: str, *, user_id: str) -> list[AgentStat]:
     workflows = (
         db.query(CachedWorkflow)
-        .filter(CachedWorkflow.provider_id == provider_id)
+        .filter(CachedWorkflow.provider_id == provider_id, CachedWorkflow.user_id == user_id)
         .all()
     )
     if not workflows:
         return []
 
-    runs_by_wf = _aggregate_runs(db, provider_id)
-    decisions = _aggregate_decisions(db, [w.id for w in workflows])
+    runs_by_wf = _aggregate_runs(db, provider_id, user_id=user_id)
+    decisions = _aggregate_decisions(db, [w.id for w in workflows], user_id=user_id)
 
     stats: list[AgentStat] = []
     for wf in workflows:

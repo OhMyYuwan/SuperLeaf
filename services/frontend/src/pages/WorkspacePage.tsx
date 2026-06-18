@@ -95,6 +95,9 @@ export function WorkspacePage() {
 
   const updateSelection = useEditorStore((s) => s.updateSelection)
   const updateEditorViewState = useEditorStore((s) => s.updateViewState)
+  const setScrollTo = useEditorStore((s) => s.setScrollTo)
+  const clearScrollTo = useEditorStore((s) => s.clearScrollTo)
+  const editorScrollTo = useEditorStore((s) => s.scrollTo)
   const activeSelection = useEditorStore((s) =>
     activeDocumentId ? s.states[activeDocumentId]?.selection ?? null : null,
   )
@@ -157,12 +160,6 @@ export function WorkspacePage() {
   // UI-only state -----------------------------------------------------------
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null)
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null)
-  const [editorScrollTo, setEditorScrollTo] = useState<{
-    documentId: string
-    pos: number
-    to?: number
-    seq: number
-  } | null>(null)
   const [pdfSyncRequest, setPdfSyncRequest] = useState<PdfSourceSyncRequest | null>(null)
   const [rightTab, setRightTab] = useState<string>('discussion')
   const [pendingComment, setPendingComment] = useState<{
@@ -702,13 +699,13 @@ export function WorkspacePage() {
   const handleEditorViewStateChange = (documentId: string, state: EditorRestoreState) => {
     updateEditorViewState(documentId, state)
     clearActiveAnnotationIfSelectionLeft(documentId, state.selectionRange)
-    setEditorScrollTo((prev) => {
-      if (!prev || prev.documentId !== documentId) return prev
+    const prev = useEditorStore.getState().scrollTo
+    if (prev && prev.documentId === documentId) {
       const expectedTo = prev.to ?? prev.pos
-      return state.selectionRange.from === prev.pos && state.selectionRange.to === expectedTo
-        ? null
-        : prev
-    })
+      if (state.selectionRange.from === prev.pos && state.selectionRange.to === expectedTo) {
+        clearScrollTo()
+      }
+    }
   }
 
   const handleDecorationClick = (id: string) => {
@@ -720,7 +717,7 @@ export function WorkspacePage() {
     if (!id) return
     const item = annotationItemsById[id]
     if (!item || item.documentId !== activeDocumentId) return
-    setEditorScrollTo({
+    setScrollTo({
       documentId: item.documentId,
       pos: item.range.from,
       to: item.range.to,
@@ -735,7 +732,7 @@ export function WorkspacePage() {
     if (!targetDocumentId) return
     const applyJump = () => {
       useDocumentStore.getState().setActive(targetDocumentId)
-      setEditorScrollTo({ documentId: targetDocumentId, pos: jump.pos, to, seq: Date.now() })
+      setScrollTo({ documentId: targetDocumentId, pos: jump.pos, to, seq: Date.now() })
     }
 
     if (documents[targetDocumentId]) {
@@ -747,7 +744,7 @@ export function WorkspacePage() {
       .then(applyJump)
       .catch(() => {
         if (!fallbackDocumentId || fallbackDocumentId !== targetDocumentId) return
-        setEditorScrollTo({ documentId: fallbackDocumentId, pos: jump.pos, to, seq: Date.now() })
+        setScrollTo({ documentId: fallbackDocumentId, pos: jump.pos, to, seq: Date.now() })
       })
   }
 
@@ -845,7 +842,7 @@ export function WorkspacePage() {
                           onToggleCollapsed={() => setOutlineCollapsed((v) => !v)}
                           onSectionClick={(sec) => {
                             if (!activeDocumentId) return
-                            setEditorScrollTo({
+                            setScrollTo({
                               documentId: activeDocumentId,
                               pos: sec.range.from,
                               seq: Date.now(),
@@ -1038,7 +1035,7 @@ export function WorkspacePage() {
                       onReloadWorkflows={loadWorkflows}
                       onJumpToRange={(range) => {
                         if (!activeDocumentId) return
-                        setEditorScrollTo({
+                        setScrollTo({
                           documentId: activeDocumentId,
                           pos: range.from,
                           seq: Date.now(),

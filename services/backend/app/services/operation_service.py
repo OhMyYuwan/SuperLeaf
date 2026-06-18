@@ -19,13 +19,13 @@ from sqlalchemy.orm import Session
 
 from ..models import Operation
 
-
 ALLOWED_TYPES = {
     "accept_suggestion",
     "reject_suggestion",
     "restore",
     "label_add",
     "label_remove",
+    "native_agent_tool_call",
 }
 
 MAX_LIMIT = 200

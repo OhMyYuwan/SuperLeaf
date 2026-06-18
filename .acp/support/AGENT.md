@@ -9,7 +9,7 @@ profiles:
   capability: enabled
   support: enabled
 active_request_id: null
-last_completed_request_id: REQ-0038
+last_completed_request_id: REQ-0690
 entry_order:
   - .acp/support/AGENT.md
   - .acp/support/PROJECT_MAP.yaml
@@ -100,8 +100,11 @@ surface plus a multi-Agent review/polishing/workflow layer.
   (OpenAI Chat Completions-style with session_id + multimodal content blocks).
 - **Self-hosted orchestrator**: agent + loop nodes, arbitrary nesting,
   per-node test inspection, loop entry/exit handles, per-round feedback.
-- **Compile**: latexmk wrapper in `latex_compiler.py` + `/api/compile` +
-  `LatexPreview.tsx` (pdfjs-dist) + `compileStore`.
+- **Compile**: latexmk wrapper in `latex_compiler.py` with state-guarded
+  incremental workspace, compile lock/cooldown, and build-id output.
+  `/api/compile` + `DELETE /api/compile/cache` + `/api/compile/settings`.
+  Frontend: `LatexPreview.tsx` (PDF.js PDFViewer via `PdfJsWrapper`) +
+  `compileStore` with stale-response guard and auto-compile debounce.
 - **V3 roadmap** (REQ-0025 / docs/v3_executive_plan.md): 4 phases over
   6–8 weeks — editing ergonomics (position migration, bidirectional jump,
   attached chips, error handling), workflow deepening (@workflow in
@@ -224,7 +227,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
     │           ├── agent_orchestrator.py    (V2.2 canonical baseline)
     │           ├── project_archive_service.py / github_service.py (Git/archive subprocess output uses tolerant UTF-8 decoding)
     │           ├── project_fs_service.py    (SQLite file tree)
-    │           ├── latex_compiler.py        (latexmk + SyncTeX subprocesses; external output uses tolerant UTF-8 decoding)
+    │           ├── latex_compiler.py        (latexmk + SyncTeX subprocesses; incremental workspace with sync-state hash, compile lock/cooldown, build-id output; external output uses tolerant UTF-8 decoding)
     │           ├── attached_files.py        (@ file normalization)
     │           └── collab_snapshot_service.py (periodic Yjs → DB snapshots)
     └── frontend/
@@ -262,7 +265,7 @@ surface plus a multi-Agent review/polishing/workflow layer.
                 ├── settings/                (SettingsDialog)
                 ├── topbar/                  (Topbar + ViewControl + notifications + presence)
                 ├── file-tree/               (FileTree + OutlineList)
-                ├── preview/                 (LatexPreview + MarkdownPreview)
+                ├── preview/                 (LatexPreview + PdfJsViewer + PdfJsWrapper + MarkdownPreview)
                 ├── workspace-center/        (EditorColumn + Toolbar + AnnotationColumn + PreviewColumn)
                 ├── annotation-panel/        (AnnotationPanel + CommentComposer)
                 ├── right-panel/             (Discussion/Team Agent-Skill-Workflow/Automation/RunHistory/Versions)
@@ -288,7 +291,8 @@ Services are organized under `services/`:
 - **frontend-topbar** — top bar + view controls + notifications + presence.
 - **frontend-workspace-center** — editor + toolbar + annotation column + preview column.
 - **frontend-file-tree** — left-column project tree + outline.
-- **frontend-preview** — LaTeX / Markdown preview renderers.
+- **frontend-preview** — LaTeX preview (PDF.js PDFViewer wrapper with lazy
+  rendering) / Markdown preview renderers.
 - **frontend-settings** — Provider registry dialog.
 - **frontend-stores** — Zustand stores for documents, workflows, native Agents,
   automation, collaboration, history, project/user state, and UI view state.
@@ -299,7 +303,8 @@ Services are organized under `services/`:
 - **frontend-conversations** — doc-scoped chat (UI + store + backend).
 - **frontend-mention-system** — @-mention infrastructure (parser + input component + backend contract). Shared by annotations + discussion.
 - **latex-editor** — self-contained editor module. Includes cursor-triggered MathJax v3 formula preview (math-preview slice; toggle in Settings).
-- **latex-compile** — latexmk → PDF pipeline (backend + frontend).
+- **latex-compile** — latexmk → PDF pipeline with incremental workspace,
+  compile lock/cooldown, build-id output, and PDF.js viewer wrapper.
 - **domain-model** — TypeScript contracts across 8 layers.
 - **backend-service** — FastAPI + SQLite core.
 - **native-agent-skills** — native Agent credentials, Agent CRUD/runtime,
@@ -340,6 +345,7 @@ Use them to pick the smallest sufficient authority boundary.
 - **REQ-0025 (closed)**: V3 executive plan — finishing posture, 4 phases over 6-8 weeks, snapshot history with 20-cap + 10-min cooldown, debate/consensus as templates.
 - **REQ-0026 (closed)**: V2.2 governance refresh — this document plus PROJECT_MAP, capabilities, LOAD_RULES, CHANGE_POLICY.
 - **REQ-0027..0038 (closed)**: Collaboration/auth hardening, panel ergonomics, Agent Markdown rendering, LaTeX compile reliability (current file selection, missing-graphic placeholders, relative paths, BibTeX), file-tree root moves, stale project-context request fixes, and this Chinese README / project-map refresh.
+- **REQ-0690 (closed)**: LaTeX preview optimization — state-guarded incremental compile workspace (sync-state hash, manifest-based lifecycle), non-waiting compile lock with per-project cooldown and global concurrency cap, PDF.js PDFViewer wrapper replacing react-pdf, frontend auto-compile debounce with max-wait, incremental toggle UI, cache reset button, and build-id based PDF identity.
 - **REQ-0305..0309 (local)**: Data Project labeling surface, source-rule settings, workflow/native-agent `source_text` snapshot capture, record load/export repair, metadata cleanup, and ACP Data Project routing refresh.
 
 Track full lineage in `.acp/kernel/changes/`. Every CHG-NNNN names its commit SHA (or `local-only` for kernel-only / docs-only Changes).

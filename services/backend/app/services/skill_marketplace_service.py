@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 import shlex
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.error import HTTPError
+
+import httpx
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from ..settings import settings
 from .mcp_policy import validate_remote_endpoint
 from .project_fs_service import ProjectFsService
 from .project_service import ProjectService
+from .safe_http import SsrfPolicyError, safe_fetch_text
 from .skill_recipe_metadata import (
     build_npx_install_command,
     build_recipe_tags,
@@ -167,10 +168,10 @@ class SkillMarketplaceService:
         """
         from .native_agent_service import NativeAgentService
 
-        entry = self._find_entry(skill_id, user_id=user_id)
         installed = self._installed_by_catalog_id(user_id=user_id)
-        if entry.id not in installed:
-            raise SkillMarketplaceError("市场 Skill 尚未安装，请先安装后再复制到本地")
+        if skill_id not in installed:
+            raise SkillMarketplaceError("marketplace skill install not found")
+        entry = self._find_entry(skill_id, user_id=user_id)
 
         content = self._fetch_text(entry.entry_url)
         if not content.strip():
@@ -236,18 +237,21 @@ class SkillMarketplaceService:
             validate_remote_endpoint(url)
         except ValueError as exc:
             raise SkillMarketplaceError(f"Blocked Skill marketplace URL {url}: {exc}") from exc
-        req = urllib.request.Request(
-            url,
-            headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},
-        )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read()
-        except HTTPError as exc:
-            raise SkillMarketplaceError(f"Skill marketplace request failed: HTTP {exc.code}") from exc
+            return safe_fetch_text(
+                url,
+                headers={"Accept": "application/json,text/plain,*/*", "User-Agent": "SuperLeaf"},
+                timeout=20,
+                allow_private=settings.mcp_remote_private_networks_enabled,
+            )
+        except SsrfPolicyError as exc:
+            raise SkillMarketplaceError(f"Blocked Skill marketplace URL {url}: {exc}") from exc
+        except httpx.HTTPStatusError as exc:
+            raise SkillMarketplaceError(
+                f"Skill marketplace request failed: HTTP {exc.response.status_code}"
+            ) from exc
         except Exception as exc:  # pragma: no cover - runtime/network path
             raise SkillMarketplaceError(f"Skill marketplace request failed: {exc}") from exc
-        return raw.decode("utf-8", errors="replace")
 
     def _entry_from_raw(self, raw: dict) -> MarketplaceEntry:
         path = str(raw.get("path") or "").strip()

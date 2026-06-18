@@ -41,6 +41,7 @@ from ..services.native_agent_runner import (
     NativeRunPayload,
 )
 from ..services.provider_service import ProviderService
+from ..services.secret_redaction import redact_secrets, safe_error_text
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -382,14 +383,14 @@ async def run_workflow(
                     yield {"event": "dify", "data": json.dumps(evt)}
         except (DifyError, NanobotError) as e:
             run.status = "failed"
-            run.error = f"{e.status}: {e.detail}"
+            run.error = redact_secrets(f"{e.status}: {e.detail}")[:512]
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
             return
         except Exception as e:  # noqa: BLE001
             run.status = "failed"
-            run.error = f"{type(e).__name__}: {e}"[:512]
+            run.error = safe_error_text(e)
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
@@ -655,7 +656,7 @@ def _run_native_agent(
                 yield {"event": str(evt.get("event")), "data": json.dumps(data)}
         except Exception as exc:  # noqa: BLE001
             run.status = "failed"
-            run.error = f"{type(exc).__name__}: {exc}"[:512]
+            run.error = safe_error_text(exc)
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
@@ -878,7 +879,7 @@ async def execute_workflow_definition(
             ):
                 yield {"event": event.get("event", "message"), "data": json.dumps(event.get("data", {}))}
         except (DifyError, NanobotError) as e:
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield {"event": "error", "data": json.dumps({"error": redact_secrets(str(e))})}
 
     return EventSourceResponse(event_generator())
 

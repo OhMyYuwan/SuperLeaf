@@ -12,6 +12,7 @@ export interface PeerInfo {
   colorLight: string
   projectId?: string
   docId?: string
+  cursorPos?: { anchor: number; head: number }
 }
 
 const COLLAB_PORT = import.meta.env.VITE_COLLAB_PORT ?? '4444'
@@ -48,6 +49,8 @@ export class CollaborationProvider {
   private _status: ConnectionStatus = 'disconnected'
   private _listeners = new Set<(status: ConnectionStatus) => void>()
   private _resetListeners = new Set<() => void>()
+  private _cachedToken: string
+  private _refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
     projectId: string,
@@ -59,6 +62,7 @@ export class CollaborationProvider {
     this.projectId = projectId
     this.docId = docId
     this.docGeneration = docGeneration
+    this._cachedToken = token
     this.doc = new Y.Doc()
     this.yText = this.doc.getText('content')
     this.provider = new WebsocketProvider(
@@ -95,6 +99,11 @@ export class CollaborationProvider {
       if (synced) this._setStatus('synced')
     })
 
+    // Fires on ALL WebSocket closes: both previously-connected drops AND
+    // initial connection failures (HTTP 401 at upgrade stage).
+    // y-websocket schedules reconnect AFTER emitting this event, and reads
+    // provider.protocols when the timer fires (not when scheduled).
+    // So updating protocols here ensures the next reconnect uses a fresh token.
     this.provider.on('connection-close', (event: CloseEvent | null) => {
       if (
         event?.code === DOC_REPLACED_CLOSE_CODE
@@ -102,6 +111,7 @@ export class CollaborationProvider {
       ) {
         this._emitResetRequired()
       }
+      this.provider.protocols = this._protocolsForToken(this._cachedToken)
     })
   }
 
@@ -125,25 +135,63 @@ export class CollaborationProvider {
 
   getPeers(): PeerInfo[] {
     const peersByUserId = new Map<string, PeerInfo>()
+    const ydoc = this.doc
     this.awareness.getStates().forEach((state, clientId) => {
       if (clientId === this.doc.clientID) return
       const user = state.user as PeerInfo | undefined
       if (user?.projectId !== this.projectId || user?.docId !== this.docId) return
       if (user?.id && !peersByUserId.has(user.id)) {
-        peersByUserId.set(user.id, user)
+        let cursorPos: { anchor: number; head: number } | undefined
+        const cursor = state.cursor as { anchor: unknown; head: unknown } | null | undefined
+        if (cursor?.anchor && cursor?.head) {
+          const absAnchor = Y.createAbsolutePositionFromRelativePosition(cursor.anchor as Y.RelativePosition, ydoc)
+          const absHead = Y.createAbsolutePositionFromRelativePosition(cursor.head as Y.RelativePosition, ydoc)
+          if (absAnchor && absHead) {
+            cursorPos = { anchor: absAnchor.index, head: absHead.index }
+          }
+        }
+        peersByUserId.set(user.id, { ...user, cursorPos })
       }
     })
     return Array.from(peersByUserId.values())
   }
 
   refreshToken(token: string): void {
+    this._cachedToken = token
     this.provider.protocols = this._protocolsForToken(token)
     this.provider.disconnect()
     this.provider.connect()
     this._setStatus('connecting')
   }
 
+  /**
+   * Register an async token refresher with periodic refresh.
+   * The refresher is called:
+   *   1. Immediately (to seed the cache)
+   *   2. Every intervalMs (default: 60s) to keep the cached token fresh
+   *
+   * On connection-close, the cached token is applied SYNCHRONOUSLY to
+   * provider.protocols, so y-websocket's auto-reconnect uses it.
+   */
+  setTokenRefresher(refresher: () => Promise<string>, intervalMs = 60_000): void {
+    if (this._refreshTimer) clearInterval(this._refreshTimer)
+    // Seed the cache immediately
+    void refresher().then((token) => {
+      this._cachedToken = token
+    }).catch(() => {})
+    // Keep the cache fresh
+    this._refreshTimer = setInterval(() => {
+      void refresher().then((token) => {
+        this._cachedToken = token
+      }).catch(() => {})
+    }, intervalMs)
+  }
+
   destroy(): void {
+    if (this._refreshTimer) {
+      clearInterval(this._refreshTimer)
+      this._refreshTimer = null
+    }
     this.provider.disconnect()
     this.provider.destroy()
     this.doc.destroy()

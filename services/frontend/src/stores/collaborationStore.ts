@@ -32,8 +32,6 @@ interface CollaborationState {
   getCurrentText: (docId: string) => string | null
 }
 
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-
 interface CollabTokenResponse {
   token: string
   expires_in: number
@@ -54,10 +52,6 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   currentDocId: null,
 
   connect: async (projectId, docId, user) => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
     const prev = get().provider
     if (prev) {
       prev.destroy()
@@ -83,10 +77,6 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
     })
 
     const reconnectFresh = () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
-      }
       const state = get()
       if (state.provider !== provider || state.currentProjectId !== projectId || state.currentDocId !== docId) {
         return
@@ -96,32 +86,29 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
 
     provider.onResetRequired(reconnectFresh)
 
+    // Proactive token refresh: fetches token periodically and caches it.
+    // On connection-close, the cached token is applied SYNCHRONOUSLY to
+    // provider.protocols, so y-websocket's auto-reconnect (which reads
+    // protocols at execution time, not scheduling time) uses a fresh token.
+    const refreshIntervalMs = Math.max(5_000, (token.expires_in * 1000) * 0.8)
+    provider.setTokenRefresher(async () => {
+      const t = await issueCollabToken(docId)
+      if (get().provider !== provider || get().currentDocId !== docId) {
+        throw new Error('stale provider')
+      }
+      if (t.collab_generation !== provider.docGeneration) {
+        reconnectFresh()
+        throw new Error('generation mismatch')
+      }
+      return t.token
+    }, refreshIntervalMs)
+
     provider.onStatusChange((status) => {
       if (get().provider !== provider) return
       set({ status })
-      if (status === 'disconnected') {
-        if (reconnectTimer) clearTimeout(reconnectTimer)
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null
-          const state = get()
-          if (state.provider !== provider || state.currentProjectId !== projectId || state.currentDocId !== docId) {
-            return
-          }
-          void (async () => {
-            try {
-              const token = await issueCollabToken(docId)
-              if (get().provider !== provider || get().currentDocId !== docId) return
-              if (token.collab_generation !== provider.docGeneration) {
-                reconnectFresh()
-                return
-              }
-              provider.refreshToken(token.token)
-            } catch {
-              console.warn('[collaborationStore] failed to refresh collab token')
-            }
-          })()
-        }, 1000)
-      }
+      // Token refresh is handled by connection-close callback (setTokenRefresher).
+      // If auto-reconnect succeeds, status goes to 'connected'/'synced'.
+      // If it keeps failing, the user sees 'disconnected' and can manually retry.
     })
 
     provider.awareness.on('change', () => {
@@ -139,10 +126,6 @@ export const useCollaborationStore = create<CollaborationState>()((set, get) => 
   },
 
   disconnect: () => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
     const { provider } = get()
     if (provider) {
       provider.destroy()

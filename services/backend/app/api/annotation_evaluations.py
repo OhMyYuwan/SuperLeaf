@@ -16,7 +16,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Annotation, Doc, Project, User, WorkflowDefinition
+from ..models import (
+    Annotation,
+    AnnotationAgentSuggestion,
+    Conversation,
+    Doc,
+    Project,
+    User,
+    WorkflowDefinition,
+)
 from ..schemas import (
     AnnotationAgentSuggestionOut,
     AnnotationAgentSuggestionPatchIn,
@@ -48,6 +56,25 @@ def _ensure_doc(db: Session, project: Project, doc_id: str) -> Doc:
     if doc is None or doc.project_id != project.id:
         raise HTTPException(404, "doc not found")
     return doc
+
+
+def _ensure_visible_annotation(
+    db: Session,
+    project: Project,
+    annotation_id: str,
+    user: User,
+    *,
+    doc_id: str | None = None,
+) -> Annotation:
+    row = annotation_service.get(db, annotation_id)
+    if row is None or row.project_id != project.id:
+        raise HTTPException(404, "annotation not found")
+    if doc_id is not None and row.doc_id != doc_id:
+        raise HTTPException(404, "annotation not found")
+    _ensure_doc(db, project, row.doc_id)
+    if row.is_global or row.user_id == user.id:
+        return row
+    raise HTTPException(404, "annotation not found")
 
 
 def _to_out(row) -> EvaluationOut:
@@ -98,8 +125,11 @@ def create_evaluation(
     user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> EvaluationOut:
-    _ensure_doc(db, project, body.doc_id)
-    if evaluation_service.get_evaluation(db, body.id) is not None:
+    _ensure_visible_annotation(db, project, annotation_id, user, doc_id=body.doc_id)
+    existing = evaluation_service.get_evaluation(db, body.id)
+    if existing is not None and existing.user_id and existing.user_id != user.id:
+        raise HTTPException(404, "evaluation not found")
+    if existing is not None:
         raise HTTPException(409, "evaluation id already exists")
     row = evaluation_service.create_evaluation(
         db,
@@ -123,6 +153,7 @@ def create_evaluation(
         "annotation.evaluation.created",
         {"annotation_id": annotation_id, "doc_id": body.doc_id, "evaluation": out.model_dump(mode="json")},
         origin_client_id=x_client_id,
+        visible_to_user_ids=[user.id],
     )
     return out
 
@@ -146,6 +177,7 @@ def patch_evaluation(
     if row.user_id and row.user_id != user.id:
         raise HTTPException(404, "evaluation not found")
     _ensure_doc(db, project, row.doc_id)
+    _ensure_visible_annotation(db, project, annotation_id, user, doc_id=row.doc_id)
     row = evaluation_service.update_evaluation(
         db,
         row,
@@ -163,6 +195,7 @@ def patch_evaluation(
         "annotation.evaluation.updated",
         {"annotation_id": annotation_id, "doc_id": row.doc_id, "evaluation": out.model_dump(mode="json")},
         origin_client_id=x_client_id,
+        visible_to_user_ids=[user.id],
     )
     return out
 
@@ -185,6 +218,7 @@ def delete_evaluation(
     if row.user_id and row.user_id != user.id:
         raise HTTPException(404, "evaluation not found")
     _ensure_doc(db, project, row.doc_id)
+    _ensure_visible_annotation(db, project, annotation_id, user, doc_id=row.doc_id)
     doc_id = row.doc_id
     evaluation_service.delete_evaluation(db, row)
     db.commit()
@@ -193,6 +227,7 @@ def delete_evaluation(
         "annotation.evaluation.deleted",
         {"annotation_id": annotation_id, "doc_id": doc_id, "evaluation_id": evaluation_id},
         origin_client_id=x_client_id,
+        visible_to_user_ids=[user.id],
     )
 
 
@@ -210,7 +245,7 @@ def patch_review_status(
     user: User = Depends(get_current_user),
     x_client_id: str = Header(default="", alias="X-Client-Id"),
 ) -> ReviewStateOut:
-    _ensure_doc(db, project, body.doc_id)
+    _ensure_visible_annotation(db, project, annotation_id, user, doc_id=body.doc_id)
     try:
         row = evaluation_service.set_review_status(
             db,
@@ -233,6 +268,7 @@ def patch_review_status(
         "annotation.review_status.changed",
         out.model_dump(mode="json"),
         origin_client_id=x_client_id,
+        visible_to_user_ids=[user.id],
     )
     return out
 
@@ -292,6 +328,12 @@ def _ann_to_out(row: Annotation) -> AnnotationOut:
     return AnnotationOut.model_validate(row, from_attributes=True)
 
 
+def _annotation_event_audience(row: Annotation) -> list[str] | None:
+    if row.is_global:
+        return None
+    return [row.user_id] if row.user_id else []
+
+
 def _suggestion_to_out(row) -> AnnotationAgentSuggestionOut:
     return AnnotationAgentSuggestionOut.model_validate(row, from_attributes=True)
 
@@ -324,6 +366,10 @@ def _is_range_only_patch(body: AnnotationPatchIn) -> bool:
     return bool(touched) and touched <= _RANGE_PATCH_FIELDS
 
 
+def _annotation_patch_requires_project_write(row: Annotation, body: AnnotationPatchIn) -> bool:
+    return row.is_global or body.publish is not None
+
+
 def _ensure_annotation_patch_allowed(
     db: Session,
     project: Project,
@@ -332,6 +378,10 @@ def _ensure_annotation_patch_allowed(
     body: AnnotationPatchIn,
 ) -> None:
     if row.user_id == user.id:
+        if _annotation_patch_requires_project_write(row, body) and not ProjectMemberService(db).can_write(
+            project.id, user.id
+        ):
+            raise HTTPException(403, "Read-only access")
         return
     if row.is_global and _is_range_only_patch(body):
         if ProjectMemberService(db).can_write(project.id, user.id):
@@ -355,6 +405,52 @@ def _ensure_annotation_upsert_allowed(
     if row.is_global and ProjectMemberService(db).can_write(project.id, user.id):
         return
     raise HTTPException(404, "annotation not found")
+
+
+def _ensure_annotation_workflow_ref_allowed(
+    db: Session,
+    project: Project,
+    user: User,
+    workflow_id: str,
+) -> str:
+    workflow_id = str(workflow_id or "").strip()
+    if not workflow_id:
+        return ""
+    if AgentRegistryService(db).resolve(
+        workflow_id,
+        project_id=project.id,
+        user_id=user.id,
+        require_enabled=False,
+    ):
+        return workflow_id
+    workflow_def = db.get(WorkflowDefinition, workflow_id)
+    if (
+        workflow_def is not None
+        and workflow_def.project_id == project.id
+        and workflow_def.user_id == user.id
+        and workflow_def.is_active
+    ):
+        return workflow_id
+    raise HTTPException(404, "workflow not found")
+
+
+def _ensure_annotation_conversation_ref_allowed(
+    db: Session,
+    project: Project,
+    user: User,
+    conversation_id: str,
+) -> str:
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        return ""
+    conversation = db.get(Conversation, conversation_id)
+    if (
+        conversation is not None
+        and conversation.project_id == project.id
+        and conversation.user_id == user.id
+    ):
+        return conversation_id
+    raise HTTPException(404, "conversation not found")
 
 
 @router.get("/by-doc/{doc_id}/items", response_model=list[AnnotationOut])
@@ -381,6 +477,18 @@ def create_annotation(
     existing = annotation_service.get(db, body.id)
     if existing is not None:
         _ensure_annotation_upsert_allowed(db, project, existing, user, body)
+    workflow_id = _ensure_annotation_workflow_ref_allowed(
+        db,
+        project,
+        user,
+        body.workflow_id,
+    )
+    conversation_id = _ensure_annotation_conversation_ref_allowed(
+        db,
+        project,
+        user,
+        body.conversation_id,
+    )
     old_source_hash = (
         annotation_agent_suggestion_service.compute_annotation_source_hash(existing)
         if existing is not None
@@ -388,7 +496,7 @@ def create_annotation(
     )
     # No agent involved → global annotation (visible to all collaborators).
     # Has workflow_id or agent_name → private to the requesting user.
-    is_global = not body.workflow_id and not body.agent_name
+    is_global = not workflow_id and not body.agent_name
     row, created = annotation_service.upsert(
         db,
         annotation_id=body.id,
@@ -403,9 +511,9 @@ def create_annotation(
         target_text=body.target_text,
         content=body.content,
         severity=body.severity,
-        workflow_id=body.workflow_id,
+        workflow_id=workflow_id,
         agent_name=body.agent_name,
-        conversation_id=body.conversation_id,
+        conversation_id=conversation_id,
         original=body.original,
         proposed=body.proposed,
         reason=body.reason,
@@ -425,6 +533,7 @@ def create_annotation(
         "annotation.created" if created else "annotation.updated",
         {"annotation": annotation_service.to_dict(row)},
         origin_client_id=x_client_id,
+        visible_to_user_ids=_annotation_event_audience(row),
     )
     return _ann_to_out(row)
 
@@ -465,6 +574,7 @@ def patch_annotation(
         "annotation.updated",
         {"annotation": annotation_service.to_dict(row)},
         origin_client_id=x_client_id,
+        visible_to_user_ids=_annotation_event_audience(row),
     )
     return _ann_to_out(row)
 
@@ -480,10 +590,15 @@ def delete_annotation(
     row = annotation_service.get(db, annotation_id)
     if row is None:
         return  # idempotent delete
+    if row.project_id != project.id:
+        raise HTTPException(404, "annotation not found")
     if row.user_id and row.user_id != user.id:
-        return  # not yours
+        raise HTTPException(404, "annotation not found")
     _ensure_doc(db, project, row.doc_id)
+    if row.is_global and not ProjectMemberService(db).can_write(project.id, user.id):
+        raise HTTPException(403, "Read-only access")
     doc_id = row.doc_id
+    visible_to_user_ids = _annotation_event_audience(row)
     annotation_service.delete(db, row)
     db.commit()
     bus.publish(
@@ -491,6 +606,7 @@ def delete_annotation(
         "annotation.deleted",
         {"annotation_id": annotation_id, "doc_id": doc_id},
         origin_client_id=x_client_id,
+        visible_to_user_ids=visible_to_user_ids,
     )
 
 
@@ -676,9 +792,11 @@ def delete_agent_suggestion(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    row = annotation_agent_suggestion_service.get_for_user(db, suggestion_id, user_id=user.id)
-    if row is None or row.project_id != project.id:
+    row = db.get(AnnotationAgentSuggestion, suggestion_id)
+    if row is None:
         return
+    if row.user_id != user.id or row.project_id != project.id:
+        raise HTTPException(404, "agent suggestion not found")
     annotation_agent_suggestion_service.delete(db, row)
     db.commit()
 
@@ -740,13 +858,15 @@ async def _generate_annotation_auto_reply_workflow(
     doc: Doc,
     annotation: Annotation,
 ) -> tuple[list[str], dict]:
-    prompt = "\n\n".join([
-        _annotation_auto_reply_system_prompt(
-            agent_name=workflow_def.name,
-            agent_instructions=workflow_def.description or "",
-        ),
-        _annotation_auto_reply_user_prompt(doc, annotation),
-    ])
+    prompt = "\n\n".join(
+        [
+            _annotation_auto_reply_system_prompt(
+                agent_name=workflow_def.name,
+                agent_instructions=workflow_def.description or "",
+            ),
+            _annotation_auto_reply_user_prompt(doc, annotation),
+        ]
+    )
     final_outputs: Any = None
     async for event in WorkflowOrchestrator(db).execute_workflow(
         workflow_def_id=workflow_def.id,
@@ -842,9 +962,9 @@ def _annotation_surrounding_context(doc_content: str, annotation: Annotation) ->
     total = len(doc_content)
     start = max(0, min(int(annotation.range_from or 0), total))
     end = max(start, min(int(annotation.range_to or 0), total))
-    before = doc_content[max(0, start - 800):start].strip()
+    before = doc_content[max(0, start - 800) : start].strip()
     target = doc_content[start:end].strip()
-    after = doc_content[end:min(total, end + 800)].strip()
+    after = doc_content[end : min(total, end + 800)].strip()
     return before, target, after
 
 

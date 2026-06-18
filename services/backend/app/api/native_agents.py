@@ -6,13 +6,13 @@ left for a follow-up request.
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import os
-from pathlib import Path
 import re
 import zipfile
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -46,15 +46,15 @@ from ..schemas import (
     NativeMcpServerOut,
     NativeMcpServerPatch,
     SkillIn,
-    SkillMarketplaceEntryOut,
     SkillMarketplaceCloneIn,
     SkillMarketplaceCloneOut,
+    SkillMarketplaceEntryOut,
     SkillMarketplaceInstallOut,
     SkillMarketplaceOut,
     SkillOut,
-    SkillUsageOut,
     SkillPatch,
     SkillRecipeIn,
+    SkillUsageOut,
 )
 from ..services.agent_workspace_service import AgentWorkspaceError, AgentWorkspaceService
 from ..services.mcp_catalog_service import McpCatalogError, McpCatalogService
@@ -68,7 +68,7 @@ from ..services.skill_marketplace_service import (
     SkillMarketplaceService,
 )
 from ..settings import settings
-from .deps import get_current_project, get_current_user, require_write_access
+from .deps import get_current_project, get_current_user, require_admin, require_write_access
 
 router = APIRouter(prefix="/api/native-agent", tags=["native-agent"])
 
@@ -140,6 +140,15 @@ class LocalAgentHostPackageOut(BaseModel):
     claude_env: dict[str, str]
 
 
+def _native_agent_mutation_http_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    if detail == "provider not found":
+        return HTTPException(404, detail)
+    if detail.startswith("skill not available:"):
+        return HTTPException(404, "skill not found")
+    return HTTPException(400, detail)
+
+
 class LocalAgentHostUpdateOut(BaseModel):
     status: str
     channel: str
@@ -187,6 +196,30 @@ def _skill_export_folder_name(row: Skill) -> str:
     raw_name = (row.name or "skill").strip()
     safe_name = re.sub(r"[\x00-\x1f/\\:]+", "-", raw_name).strip(" .")
     return safe_name[:100] or "skill"
+
+
+def _ensure_npx_skill_install_allowed(user: User) -> None:
+    """NPX Skill 安装权限守卫。
+
+    两道检查：
+    1. 服务端开关 — settings.skill_npx_install_enabled 必须为 True。
+       默认为 True（本地部署友好），公开部署应设为 False 并通过
+       环境变量 YLW_SKILL_NPX_INSTALL_ENABLED=true 显式开启。
+    2. 用户身份 — 当前用户必须具有 is_admin 权限。
+       因为 npx 会执行远程包代码，只有管理员才能触发。
+
+    调用方：
+      - POST /agents/{id}/skills/install-npx  — 单个 recipe Skill 安装
+      - POST /agents (body.skill_recipes 非空) — 创建 Agent 时批量安装
+
+    不检查此守卫的市场安装端点：
+      - POST /skill-marketplace/{id}/install — 走 SkillMarketplaceService，
+        不涉及 npx 执行，仅从 GitHub 拉取 SKILL.md 文件。
+    """
+    if not getattr(settings, "skill_npx_install_enabled", True):
+        raise HTTPException(403, "npx skill installation is disabled by server policy")
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(403, "admin privileges are required for npx skill installation")
 
 
 def _skill_export_archive(row: Skill) -> tuple[str, bytes]:
@@ -539,7 +572,7 @@ def get_official_badge_ui(
 @router.patch("/ui/official-badge")
 def update_official_badge_ui(
     body: OfficialBadgeUiPatch,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     if not _official_badge_toggle_enabled():
         raise HTTPException(403, "Official badge style toggle is disabled by backend configuration")
@@ -711,7 +744,8 @@ def delete_mcp_server(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    McpConfigService(db).delete_server(server_id, user_id=user.id)
+    if not McpConfigService(db).delete_server(server_id, user_id=user.id):
+        raise HTTPException(404, "MCP server not found")
 
 
 @router.post("/mcp/servers/{server_id}/probe")
@@ -849,7 +883,8 @@ def delete_credential(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_credential(credential_id, user_id=user.id)
+    if not NativeAgentService(db).delete_credential(credential_id, user_id=user.id):
+        raise HTTPException(404, "credential not found")
 
 
 @router.post("/credentials/{credential_id}/probe", response_model=NativeAgentCredentialOut)
@@ -972,7 +1007,8 @@ def delete_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_skill(skill_id, user_id=user.id)
+    if not NativeAgentService(db).delete_skill(skill_id, user_id=user.id):
+        raise HTTPException(404, "skill not found")
 
 
 @router.get("/local-agent-host/package", response_model=LocalAgentHostPackageOut)
@@ -1022,7 +1058,9 @@ def download_local_agent_host(
         filename, payload = _local_agent_host_package()
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
-    disposition = f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
+    disposition = (
+        f"attachment; filename=\"superleaf-local-agent-host.zip\"; filename*=UTF-8''{quote(filename)}"
+    )
     sha256 = hashlib.sha256(payload).hexdigest()
     return Response(
         content=payload,
@@ -1066,11 +1104,11 @@ def list_skill_usage(
     """List Agents that currently bind this skill — used by the frontend's
     delete-confirmation dialog so the user knows whose Agents will lose the
     skill before clicking through."""
-    agents = NativeAgentService(db).agents_using_skill(skill_id, user_id=user.id)
-    return [
-        SkillUsageOut(agent_id=a.id, agent_name=a.name, project_id=a.project_id)
-        for a in agents
-    ]
+    svc = NativeAgentService(db)
+    if svc.get_skill(skill_id, user_id=user.id) is None:
+        raise HTTPException(404, "skill not found")
+    agents = svc.agents_using_skill(skill_id, user_id=user.id)
+    return [SkillUsageOut(agent_id=a.id, agent_name=a.name, project_id=a.project_id) for a in agents]
 
 
 @router.get("/skill-marketplace", response_model=SkillMarketplaceOut)
@@ -1095,6 +1133,14 @@ def install_marketplace_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> SkillMarketplaceInstallOut:
+    """从 Skill 市场安装一个 Skill。
+
+    与 npx recipe 安装不同，此端点不涉及 npx 代码执行。
+    它通过 SkillMarketplaceService.install() 从 GitHub marketplace.json
+    获取 Skill 元数据，再拉取 SKILL.md 文件写入数据库。
+
+    不受 skill_npx_install_enabled 开关限制，任何登录用户均可操作。
+    """
     svc = SkillMarketplaceService(db)
     try:
         row, entry = svc.install(skill_id, user_id=user.id)
@@ -1121,20 +1167,35 @@ def uninstall_marketplace_skill(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id)
+    if not SkillMarketplaceService(db).uninstall(skill_id, user_id=user.id):
+        raise HTTPException(404, "marketplace skill install not found")
 
 
-@router.post("/skill-marketplace/{skill_id}/clone-to-local", response_model=SkillMarketplaceCloneOut, status_code=201)
+@router.post(
+    "/skill-marketplace/{skill_id}/clone-to-local",
+    response_model=SkillMarketplaceCloneOut,
+    status_code=201,
+)
 def clone_marketplace_skill_to_local(
     skill_id: str,
     body: SkillMarketplaceCloneIn = SkillMarketplaceCloneIn(),
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> SkillMarketplaceCloneOut:
-    """Fetch the marketplace SKILL.md, create an editable local copy, and remove the marketplace installation."""
+    """将市场 Skill 克隆为本地可编辑副本。
+
+    从 GitHub 拉取市场版 SKILL.md，在本地数据库创建一个
+    source='local' 的可编辑副本，并移除原有的市场安装记录。
+    用户可在本地副本上自由修改 Skill 内容。
+
+    不受 skill_npx_install_enabled 限制，不涉及 npx 执行。
+    """
+    """Fetch marketplace SKILL.md, create an editable local copy, and remove the install."""
     try:
         row = SkillMarketplaceService(db).clone_to_local(skill_id, user_id=user.id, name=body.name)
     except SkillMarketplaceError as exc:
+        if str(exc) == "marketplace skill install not found":
+            raise HTTPException(404, str(exc)) from exc
         raise HTTPException(400, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -1164,8 +1225,10 @@ def create_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
-    if body.skill_recipes and not getattr(settings, "skill_npx_install_enabled", True):
-        raise HTTPException(403, "npx skill installation is disabled by server policy")
+    # 创建 Agent 时可批量附带 npx recipe Skills。
+    # 同样需要 npx 开关 + admin 权限。
+    if body.skill_recipes:
+        _ensure_npx_skill_install_allowed(user)
     try:
         row = NativeAgentService(db).create_agent(
             project_id=project.id,
@@ -1183,7 +1246,7 @@ def create_agent(
             is_enabled=body.is_enabled,
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise _native_agent_mutation_http_error(exc) from exc
     return _agent_out(row)
 
 
@@ -1194,7 +1257,10 @@ def list_agent_skill_installs(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[NativeAgentSkillInstallOut]:
-    rows = NativeAgentService(db).list_agent_skill_installs(agent_id, project_id=project.id, user_id=user.id)
+    svc = NativeAgentService(db)
+    if svc.get_agent(agent_id, project_id=project.id, user_id=user.id) is None:
+        raise HTTPException(404, "native agent not found")
+    rows = svc.list_agent_skill_installs(agent_id, project_id=project.id, user_id=user.id)
     return [_install_out(row) for row in rows]
 
 
@@ -1210,10 +1276,29 @@ def install_agent_skill_recipe(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentSkillInstallOut:
-    if not getattr(settings, "skill_npx_install_enabled", True):
-        raise HTTPException(403, "NPX skill installation is disabled by backend configuration")
+    """通过 npx recipe 安装 Skill 到指定 Agent。
+
+    流程：
+      1. 校验 Agent 存在且属于当前项目
+      2. _ensure_npx_skill_install_allowed() — 检查服务端开关 + admin 权限
+      3. NativeAgentService.install_agent_skill_recipe() — 执行 npx 命令
+         拉取 Skill 资产（SKILL.md 等），写入 native_agent_skill_installs 表
+
+    前置条件：
+      - settings.skill_npx_install_enabled = True
+      - 当前用户 is_admin = True
+      - Agent 存在于当前项目中
+
+    与市场安装的区别：
+      - 此端点执行 npx 远程代码，需要 admin 权限
+      - POST /skill-marketplace/{id}/install 仅拉取文件，无需 admin
+    """
+    svc = NativeAgentService(db)
+    if svc.get_agent(agent_id, project_id=project.id, user_id=user.id) is None:
+        raise HTTPException(404, "native agent not found")
+    _ensure_npx_skill_install_allowed(user)
     try:
-        row = NativeAgentService(db).install_agent_skill_recipe(
+        row = svc.install_agent_skill_recipe(
             agent_id,
             project_id=project.id,
             user_id=user.id,
@@ -1251,15 +1336,18 @@ def update_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> NativeAgentOut:
+    patch = body.model_dump(exclude_unset=True)
+    if patch.get("skill_recipes"):
+        _ensure_npx_skill_install_allowed(user)
     try:
         row = NativeAgentService(db).update_agent(
             agent_id,
             project_id=project.id,
             user_id=user.id,
-            patch=body.model_dump(exclude_unset=True),
+            patch=patch,
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise _native_agent_mutation_http_error(exc) from exc
     if row is None:
         raise HTTPException(404, "native agent not found")
     return _agent_out(row)
@@ -1272,4 +1360,5 @@ def delete_agent(
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> None:
-    NativeAgentService(db).delete_agent(agent_id, project_id=project.id, user_id=user.id)
+    if not NativeAgentService(db).delete_agent(agent_id, project_id=project.id, user_id=user.id):
+        raise HTTPException(404, "native agent not found")

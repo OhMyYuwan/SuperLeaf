@@ -105,7 +105,10 @@ def _panel_reply_contract(
             "[REPLY FORMAT]",
             "- 主要回答直接用 Markdown。",
             "- 不要输出 JSON，也不要把内容拆成 annotations/suggestions/risks 或多张批注。",
-            f"- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持{label}源格式，围栏语言建议：{fence}.",
+            (
+                f"- 如果给出可替换文本，只放在一个 fenced code block 中；代码块内容保持{label}"
+                f"源格式，围栏语言建议：{fence}."
+            ),
             "[END REPLY FORMAT]",
         ]
     )
@@ -174,6 +177,22 @@ def _provider_transport(provider: Any) -> str:
     return str((provider.meta or {}).get("transport") or "backend").strip() or "backend"
 
 
+def _browser_tool_active_document_id(
+    db: Session,
+    conv: Conversation,
+    project: Project,
+    requested_document_id: str,
+) -> str:
+    conversation_document_id = str(conv.document_id or "").strip()
+    requested = str(requested_document_id or "").strip()
+    if requested and requested != conversation_document_id:
+        raise HTTPException(404, "Document not found")
+    doc = db.get(Doc, conversation_document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "Document not found")
+    return conversation_document_id
+
+
 def _browser_nanobot_bridge_endpoint(provider: Any) -> str:
     meta = provider.meta or {}
     for key in ("local_agent_host_endpoint", "nanobot_adapter_endpoint"):
@@ -202,11 +221,7 @@ def _build_agent_query(
     body: MessageSendIn,
     current_message_id: str | None = None,
 ) -> dict[str, Any]:
-    history_rows = [
-        row
-        for row in _conversation_message_rows(db, conv.id)
-        if row.id != current_message_id
-    ]
+    history_rows = [row for row in _conversation_message_rows(db, conv.id) if row.id != current_message_id]
     session_context = render_session_messages_for_prompt(
         conversation_session_messages_from_rows(history_rows)
     )
@@ -219,9 +234,7 @@ def _build_agent_query(
     doc_format = str(body.inputs.get("doc_format") or getattr(document, "format", "") or "").strip()
     attached_files = normalize_attached_files(body.inputs.get("attached_files"))
     image_attachments = collect_image_attachments(attached_files)
-    has_selection = bool(target_text) and (
-        body.range_start is not None and body.range_end is not None
-    )
+    has_selection = bool(target_text) and (body.range_start is not None and body.range_end is not None)
 
     prompt_parts: list[str] = []
     if session_context:
@@ -242,8 +255,10 @@ def _build_agent_query(
             f"format: {document.format}",
             (
                 "This is the document currently bound to the SuperLeaf editor conversation. "
-                "When the user says current document, active document, this file, or the text in the editor, "
-                f"use doc_id {document.id}. Do not assume the current document is main.tex unless this name says so."
+                "When the user says current document, active document, this file, "
+                "or the text in the editor, "
+                f"use doc_id {document.id}. Do not assume the current document is main.tex "
+                "unless this name says so."
             ),
             "[END CURRENT SUPERLEAF DOCUMENT]",
         ]
@@ -253,9 +268,7 @@ def _build_agent_query(
         context_parts: list[str] = ["[DISCUSSION CONTEXT]"]
         if section_title:
             context_parts.append(f"章节：{section_title}")
-        context_parts.append(
-            f"选区位置：文档偏移 {body.range_start}–{body.range_end}"
-        )
+        context_parts.append(f"选区位置：文档偏移 {body.range_start}–{body.range_end}")
         if before:
             context_parts.append(f"上文：\n{before}")
         context_parts.append(f"选中文本：\n{target_text}")
@@ -399,12 +412,32 @@ def _codex_settings_from_provider(provider: Any) -> dict[str, str]:
     return {
         "model": str(meta.get("codex_model") or "").strip(),
         "effort": _codex_effort_choice(meta.get("codex_effort")),
-        "summary": _settings_choice(meta.get("codex_summary"), {"none", "auto", "concise", "detailed"}, "none"),
+        "summary": _settings_choice(
+            meta.get("codex_summary"),
+            {"none", "auto", "concise", "detailed"},
+            "none",
+        ),
         "service_tier": str(meta.get("codex_service_tier") or "").strip(),
-        "sandbox": _settings_choice(meta.get("codex_sandbox"), {"read-only", "workspace-write", "danger-full-access"}, "danger-full-access"),
-        "approval_policy": _settings_choice(meta.get("codex_approval_policy"), {"never", "untrusted", "on-request", "on-failure"}, "on-request"),
-        "prompt_mode": _settings_choice(meta.get("codex_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
-        "tool_mode": _settings_choice(meta.get("codex_tool_mode"), {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first"),
+        "sandbox": _settings_choice(
+            meta.get("codex_sandbox"),
+            {"read-only", "workspace-write", "danger-full-access"},
+            "danger-full-access",
+        ),
+        "approval_policy": _settings_choice(
+            meta.get("codex_approval_policy"),
+            {"never", "untrusted", "on-request", "on-failure"},
+            "on-request",
+        ),
+        "prompt_mode": _settings_choice(
+            meta.get("codex_prompt_mode"),
+            {"fast-edit", "full-agent"},
+            "fast-edit",
+        ),
+        "tool_mode": _settings_choice(
+            meta.get("codex_tool_mode"),
+            {"mcp-first", "browser-preflight", "marker-only"},
+            "mcp-first",
+        ),
         "context_mode": context_mode,
         "codex_context_mode": context_mode,
     }
@@ -414,8 +447,16 @@ def _claude_settings_from_provider(provider: Any) -> dict[str, str]:
     meta = provider.meta or {}
     return {
         "model": str(meta.get("claude_model") or "").strip(),
-        "prompt_mode": _settings_choice(meta.get("claude_prompt_mode"), {"fast-edit", "full-agent"}, "fast-edit"),
-        "tool_mode": _settings_choice(meta.get("claude_tool_mode"), {"mcp-first", "browser-preflight", "marker-only"}, "mcp-first"),
+        "prompt_mode": _settings_choice(
+            meta.get("claude_prompt_mode"),
+            {"fast-edit", "full-agent"},
+            "fast-edit",
+        ),
+        "tool_mode": _settings_choice(
+            meta.get("claude_tool_mode"),
+            {"mcp-first", "browser-preflight", "marker-only"},
+            "mcp-first",
+        ),
     }
 
 
@@ -654,6 +695,13 @@ def _browser_tool_model_content(result: Any, model_visible: dict[str, Any]) -> s
     return json.dumps(model_visible, ensure_ascii=False)
 
 
+def _ensure_conversation_document(db: Session, project: Project, document_id: str) -> Doc:
+    doc = db.get(Doc, document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "doc not found")
+    return doc
+
+
 @router.get("", response_model=list[ConversationOut])
 def list_conversations(
     document_id: str | None = None,
@@ -700,10 +748,7 @@ def list_conversations(
         if msg:
             last_msgs[r.id] = (msg.content or "")[:80]
 
-    return [
-        _to_out(r, message_count=counts.get(r.id, 0), last_preview=last_msgs.get(r.id, ""))
-        for r in rows
-    ]
+    return [_to_out(r, message_count=counts.get(r.id, 0), last_preview=last_msgs.get(r.id, "")) for r in rows]
 
 
 @router.post("", response_model=ConversationOut, status_code=201)
@@ -716,6 +761,7 @@ def create_conversation(
     resolved = _resolve_agent(db, body.workflow_id, project=project, user=user)
     if resolved is None:
         raise HTTPException(404, "Agent (workflow) not found")
+    _ensure_conversation_document(db, project, body.document_id)
     conv = Conversation(
         project_id=project.id,
         user_id=user.id,
@@ -777,7 +823,7 @@ def delete_conversation(
 ) -> None:
     c = db.get(Conversation, conversation_id)
     if c is None or c.project_id != project.id or c.user_id != user.id:
-        return None
+        raise HTTPException(404, "Conversation not found")
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(c)
     db.commit()
@@ -854,7 +900,6 @@ async def send_message(
     _sync_conversation_session(db, conv)
     prompt_payload = _build_agent_query(db, conv, body, current_message_id=user_msg.id)
     agent_query = str(prompt_payload["agent_query"])
-    image_attachments = prompt_payload["image_attachments"]
 
     async def event_gen():
         yield {"event": "ylw.msg.user", "data": json.dumps(user_msg_payload)}
@@ -896,14 +941,15 @@ async def send_message(
 
                 # === 诊断日志开始 ===
                 from ..services.multimodal_attachments import to_openai_chat_content_parts
-                print(f"\n{'='*60}")
+
+                print(f"\n{'=' * 60}")
                 print(f"[MULTIMODAL DEBUG] Provider: native (agent_id={agent.id})")
                 print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
                 print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
                 for att in multimodal_attachments:
                     print(f"  - name={att.name}")
                     print(f"    kind={att.kind}")
-                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024 * 1024):.2f} MB)")
                     print(f"    mime={att.mime}")
                 multimodal_parts_debug = to_openai_chat_content_parts(multimodal_attachments)
                 print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts_debug)} content parts")
@@ -918,7 +964,7 @@ async def send_message(
                         print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
                     else:
                         print(f"  part[{i}] type={ptype}")
-                print(f"{'='*60}\n")
+                print(f"{'=' * 60}\n")
                 # === 诊断日志结束 ===
 
                 runner = NativeAgentRunner(
@@ -990,14 +1036,14 @@ async def send_message(
                 )
 
                 # === 诊断日志开始 ===
-                print(f"\n{'='*60}")
+                print(f"\n{'=' * 60}")
                 print(f"[MULTIMODAL DEBUG] Provider: {provider.kind}")
                 print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
                 print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
                 for att in multimodal_attachments:
                     print(f"  - name={att.name}")
                     print(f"    kind={att.kind}")
-                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024*1024):.2f} MB)")
+                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024 * 1024):.2f} MB)")
                     print(f"    mime={att.mime}")
 
                 multimodal_parts = to_openai_chat_content_parts(multimodal_attachments)
@@ -1013,7 +1059,7 @@ async def send_message(
                         print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
                     else:
                         print(f"  part[{i}] type={ptype}")
-                print(f"{'='*60}\n")
+                print(f"{'=' * 60}\n")
                 # === 诊断日志结束 ===
 
                 if multimodal_parts:
@@ -1241,8 +1287,9 @@ async def execute_browser_codex_tool(
     if provider.kind != "codex-local":
         raise HTTPException(400, "Conversation is not configured for browser Codex transport")
 
+    document_id = _browser_tool_active_document_id(db, conv, project, body.document_id)
     payload = NativeRunPayload(
-        document_id=body.document_id or conv.document_id,
+        document_id=document_id,
         range_start=body.range_start,
         range_end=body.range_end,
         inputs=dict(body.inputs or {}),
@@ -1359,7 +1406,10 @@ def prepare_browser_claude_message(
         provider_id=provider.id,
         endpoint=provider.endpoint,
         model=claude_settings["model"] or resolved.cached_workflow.external_id or "claude",
-        system_prompt="You are Claude Code running locally for SuperLeaf. Use SuperLeaf MCP tools when project context, document reads, search, or suggestions are needed.",
+        system_prompt=(
+            "You are Claude Code running locally for SuperLeaf. Use SuperLeaf MCP tools "
+            "when project context, document reads, search, or suggestions are needed."
+        ),
         prompt=str(prompt_payload["agent_query"]),
         tools=browser_nanobot_tools(),
         user_message=MessageOut.model_validate(user_msg),
@@ -1392,8 +1442,9 @@ async def execute_browser_claude_tool(
     if provider.kind != "claude-local":
         raise HTTPException(400, "Conversation is not configured for browser Claude transport")
 
+    document_id = _browser_tool_active_document_id(db, conv, project, body.document_id)
     payload = NativeRunPayload(
-        document_id=body.document_id or conv.document_id,
+        document_id=document_id,
         range_start=body.range_start,
         range_end=body.range_end,
         inputs=dict(body.inputs or {}),
@@ -1525,8 +1576,9 @@ async def execute_browser_nanobot_tool(
     if provider.kind != "nanobot" or _provider_transport(provider) != "browser":
         raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
 
+    document_id = _browser_tool_active_document_id(db, conv, project, body.document_id)
     payload = NativeRunPayload(
-        document_id=body.document_id or conv.document_id,
+        document_id=document_id,
         range_start=body.range_start,
         range_end=body.range_end,
         inputs=dict(body.inputs or {}),
@@ -1568,7 +1620,11 @@ def finish_browser_nanobot_message(
     if conv is None or conv.project_id != project.id or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
     resolved = _resolve_agent(db, conv.workflow_id, project=project, user=user)
-    if resolved is None or resolved.provider.kind != "nanobot" or _provider_transport(resolved.provider) != "browser":
+    if (
+        resolved is None
+        or resolved.provider.kind != "nanobot"
+        or _provider_transport(resolved.provider) != "browser"
+    ):
         raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
 
     content = body.content.strip()

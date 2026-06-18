@@ -493,6 +493,17 @@ class DatasetService:
         records = self._export_records(dataset, user_id=user.id, status=status)
         responses = self.responses_for_records(records, user_id=user.id)
         exported_at = datetime.utcnow().isoformat()
+        phoenix_payload = _phoenix_dataset_payload(
+            dataset,
+            records,
+            responses,
+            status=status,
+            exported_at=exported_at,
+        )
+        phoenix_jsonl = "\n".join(
+            json.dumps(row, ensure_ascii=False, default=str)
+            for row in _phoenix_jsonl_rows(phoenix_payload)
+        )
         manifest = {
             "dataset_project_id": dataset.id,
             "project_id": dataset.project_id,
@@ -500,6 +511,17 @@ class DatasetService:
             "status_filter": status,
             "record_count": len(records),
             "schema": dataset.label_schema,
+            "formats": {
+                "superleaf": [
+                    "records.jsonl",
+                    "responses.jsonl",
+                    "labeled_samples.jsonl",
+                ],
+                "phoenix": [
+                    "phoenix_dataset.json",
+                    "phoenix_dataset.jsonl",
+                ],
+            },
             "exported_at": exported_at,
         }
         records_jsonl = "\n".join(
@@ -527,6 +549,10 @@ class DatasetService:
             "records.jsonl": records_jsonl + ("\n" if records_jsonl else ""),
             "responses.jsonl": responses_jsonl + ("\n" if responses_jsonl else ""),
             "labeled_samples.jsonl": labeled_samples_jsonl + ("\n" if labeled_samples_jsonl else ""),
+            "phoenix_dataset.json": (
+                json.dumps(phoenix_payload, ensure_ascii=False, indent=2, default=str) + "\n"
+            ),
+            "phoenix_dataset.jsonl": phoenix_jsonl + ("\n" if phoenix_jsonl else ""),
         }
         return files, manifest
 
@@ -576,8 +602,16 @@ class DatasetService:
         out: list[dict[str, Any]] = []
         for row in rows:
             evaluations = self._annotation_evaluations(row, user_id=user.id)
-            skill_ids = self._skill_ids_from_workflow_id(row.workflow_id)
-            agent_ids = self._agent_ids_from_workflow_id(row.workflow_id)
+            skill_ids = self._skill_ids_from_workflow_id(
+                row.workflow_id,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
+            agent_ids = self._agent_ids_from_workflow_id(
+                row.workflow_id,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
             if not self._matches_filters(
                 filters,
                 source_status=row.status,
@@ -634,8 +668,16 @@ class DatasetService:
         )
         out: list[dict[str, Any]] = []
         for row in rows:
-            skill_ids = self._skill_ids_from_workflow_id(row.workflow_id)
-            agent_ids = self._agent_ids_from_workflow_id(row.workflow_id)
+            skill_ids = self._skill_ids_from_workflow_id(
+                row.workflow_id,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
+            agent_ids = self._agent_ids_from_workflow_id(
+                row.workflow_id,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
             if not self._matches_filters(
                 filters,
                 workflow_id=row.workflow_id,
@@ -697,10 +739,30 @@ class DatasetService:
         )
         out: list[dict[str, Any]] = []
         for row in rows:
-            skill_ids = self._skill_ids_from_trace(row.trace)
-            skill_ids.update(self._skill_ids_from_workflow_id(row.workflow_id))
-            agent_ids = self._agent_ids_from_trace(row.trace)
-            agent_ids.update(self._agent_ids_from_workflow_id(row.workflow_id))
+            skill_ids = self._skill_ids_from_trace(
+                row.trace,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
+            skill_ids.update(
+                self._skill_ids_from_workflow_id(
+                    row.workflow_id,
+                    project_id=rule.source_project_id,
+                    user_id=user.id,
+                )
+            )
+            agent_ids = self._agent_ids_from_trace(
+                row.trace,
+                project_id=rule.source_project_id,
+                user_id=user.id,
+            )
+            agent_ids.update(
+                self._agent_ids_from_workflow_id(
+                    row.workflow_id,
+                    project_id=rule.source_project_id,
+                    user_id=user.id,
+                )
+            )
             if not self._matches_filters(
                 filters,
                 source_status=row.status,
@@ -769,7 +831,7 @@ class DatasetService:
         expected_agent = str(filters.get("agent_id") or "").strip()
         if expected_agent:
             ids = set(agent_ids or [])
-            if expected_agent not in ids and workflow_id not in {expected_agent, f"native:{expected_agent}"}:
+            if expected_agent not in ids:
                 return False
         expected_skill = str(filters.get("skill_id") or "").strip()
         if expected_skill and expected_skill not in set(skill_ids or []):
@@ -800,32 +862,82 @@ class DatasetService:
         if not ProjectMemberService(self.db).has_access(project_id, user_id):
             raise ValueError("Source project not found")
 
-    def _agent_ids_from_workflow_id(self, workflow_id: str) -> list[str]:
+    def _agent_ids_from_workflow_id(
+        self,
+        workflow_id: str,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> list[str]:
+        workflow_id = str(workflow_id or "").strip()
+        if not workflow_id:
+            return []
         if workflow_id.startswith("native:"):
-            return [workflow_id.split(":", 1)[1]]
-        return [workflow_id] if workflow_id else []
+            agent_id = workflow_id.split(":", 1)[1]
+            agent = self._scoped_native_agent(agent_id, project_id=project_id, user_id=user_id)
+            return [agent.id] if agent is not None else []
+        cached = self.db.get(CachedWorkflow, workflow_id)
+        if cached is None or cached.user_id != user_id:
+            return []
+        return [workflow_id]
 
-    def _skill_ids_from_workflow_id(self, workflow_id: str) -> list[str]:
+    def _skill_ids_from_workflow_id(
+        self,
+        workflow_id: str,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> list[str]:
+        workflow_id = str(workflow_id or "").strip()
         if not workflow_id.startswith("native:"):
             return []
         agent_id = workflow_id.split(":", 1)[1]
-        agent = self.db.get(NativeAgent, agent_id)
+        agent = self._scoped_native_agent(agent_id, project_id=project_id, user_id=user_id)
         if agent is None:
             return []
-        return [str(item) for item in (agent.skill_ids or []) if item]
+        return sorted(self._scoped_skill_ids(agent.skill_ids or [], user_id=user_id))
 
-    def _agent_ids_from_trace(self, trace: list | None) -> set[str]:
+    def _scoped_native_agent(
+        self,
+        agent_id: str,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> NativeAgent | None:
+        agent = self.db.get(NativeAgent, agent_id)
+        if agent is None or agent.project_id != project_id or agent.owner_user_id != user_id:
+            return None
+        return agent
+
+    def _agent_ids_from_trace(
+        self,
+        trace: list | None,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> set[str]:
         ids: set[str] = set()
         for node in trace or []:
             if not isinstance(node, dict):
                 continue
             for key in ("agentId", "agent_id", "agent"):
                 value = str(node.get(key) or "").strip()
-                if value:
-                    ids.add(value)
+                scoped = self._scoped_agent_id_from_trace_ref(
+                    value,
+                    project_id=project_id,
+                    user_id=user_id,
+                )
+                if scoped:
+                    ids.add(scoped)
         return ids
 
-    def _skill_ids_from_trace(self, trace: list | None) -> set[str]:
+    def _skill_ids_from_trace(
+        self,
+        trace: list | None,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> set[str]:
         ids: set[str] = set()
         for node in trace or []:
             if not isinstance(node, dict):
@@ -833,15 +945,65 @@ class DatasetService:
             for key in ("skill_ids", "skillIds", "skills"):
                 raw = node.get(key)
                 if isinstance(raw, list):
-                    ids.update(str(item) for item in raw if item)
+                    ids.update(self._scoped_skill_ids(raw, user_id=user_id))
                 elif isinstance(raw, str) and raw:
-                    ids.add(raw)
+                    ids.update(self._scoped_skill_ids([raw], user_id=user_id))
             agent_id = str(node.get("agentId") or node.get("agent_id") or "").strip()
             if agent_id:
-                agent = self.db.get(NativeAgent, agent_id)
+                agent = self._native_agent_from_trace_ref(
+                    agent_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                )
                 if agent is not None:
-                    ids.update(str(item) for item in (agent.skill_ids or []) if item)
+                    ids.update(self._scoped_skill_ids(agent.skill_ids or [], user_id=user_id))
         return ids
+
+    def _scoped_agent_id_from_trace_ref(
+        self,
+        agent_ref: str,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> str:
+        native_agent = self._native_agent_from_trace_ref(
+            agent_ref,
+            project_id=project_id,
+            user_id=user_id,
+        )
+        if native_agent is not None:
+            return native_agent.id
+        ref = str(agent_ref or "").strip()
+        if not ref or ref.startswith("native:"):
+            return ""
+        cached = self.db.get(CachedWorkflow, ref)
+        if cached is None or cached.user_id != user_id:
+            return ""
+        return cached.id
+
+    def _native_agent_from_trace_ref(
+        self,
+        agent_ref: str,
+        *,
+        project_id: str,
+        user_id: str,
+    ) -> NativeAgent | None:
+        ref = str(agent_ref or "").strip()
+        if not ref:
+            return None
+        agent_id = ref.split(":", 1)[1] if ref.startswith("native:") else ref
+        return self._scoped_native_agent(agent_id, project_id=project_id, user_id=user_id)
+
+    def _scoped_skill_ids(self, skill_ids: list | set | tuple, *, user_id: str) -> set[str]:
+        svc = NativeAgentService(self.db)
+        out: set[str] = set()
+        for item in skill_ids:
+            skill_id = str(item or "").strip()
+            if not skill_id:
+                continue
+            if svc.get_skill(skill_id, user_id=user_id) is not None:
+                out.add(skill_id)
+        return out
 
 
 def _candidate(
@@ -1022,6 +1184,266 @@ def _response_payload(row: DatasetResponse) -> dict:
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
+
+
+def _phoenix_dataset_payload(
+    dataset: DatasetProject,
+    records: list[DatasetRecord],
+    responses: dict[str, DatasetResponse],
+    *,
+    status: str,
+    exported_at: str,
+) -> dict[str, Any]:
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    metadata: list[dict[str, Any]] = []
+    splits: list[list[str] | None] = []
+    example_ids: list[str] = []
+
+    for row in records:
+        response = responses.get(row.id)
+        labels = _phoenix_labels(row, response)
+        input_payload = _phoenix_input(row)
+        output_payload = _phoenix_output(row)
+        metadata_payload = _phoenix_metadata(row, response, labels)
+
+        inputs.append(input_payload)
+        outputs.append(output_payload)
+        metadata.append(metadata_payload)
+        row_splits = _phoenix_splits(row)
+        splits.append(row_splits or None)
+        example_ids.append(_phoenix_example_id(row))
+
+    return {
+        "action": "create",
+        "name": dataset.name or f"Data Project {dataset.id}",
+        "description": (
+            "SuperLeaf Data Project export for Phoenix datasets. "
+            f"dataset_project_id={dataset.id}; status_filter={status}; exported_at={exported_at}"
+        ),
+        "inputs": inputs,
+        "outputs": outputs,
+        "metadata": metadata,
+        "splits": splits,
+        "example_ids": example_ids,
+    }
+
+
+def _phoenix_jsonl_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    inputs = payload.get("inputs") if isinstance(payload.get("inputs"), list) else []
+    outputs = payload.get("outputs") if isinstance(payload.get("outputs"), list) else []
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), list) else []
+    splits = payload.get("splits") if isinstance(payload.get("splits"), list) else []
+    example_ids = payload.get("example_ids") if isinstance(payload.get("example_ids"), list) else []
+    for idx, input_payload in enumerate(inputs):
+        split_value = splits[idx] if idx < len(splits) else None
+        rows.append(
+            {
+                "id": example_ids[idx] if idx < len(example_ids) else str(idx),
+                "input": input_payload,
+                "output": outputs[idx] if idx < len(outputs) else {},
+                "metadata": metadata[idx] if idx < len(metadata) else {},
+                "splits": split_value if isinstance(split_value, list) else [],
+            }
+        )
+    return rows
+
+
+def _phoenix_input(row: DatasetRecord) -> dict[str, Any]:
+    fields = row.fields or {}
+    chat = _normalize_chat_messages(fields.get("chat"))
+    source_text = fields.get("source_text")
+    trace = fields.get("trace")
+    out: dict[str, Any] = {
+        "messages": _phoenix_prompt_messages(chat, source_text),
+    }
+    if source_text not in (None, ""):
+        out["source_text"] = source_text
+    if chat:
+        out["chat"] = chat
+    if trace not in (None, ""):
+        out["trace"] = _jsonable(trace)
+    extra = {
+        key: _jsonable(value)
+        for key, value in fields.items()
+        if key not in {"chat", "source_text", "agent_output", "trace"}
+    }
+    if extra:
+        out["extra_fields"] = extra
+    return out
+
+
+def _phoenix_output(row: DatasetRecord) -> dict[str, Any]:
+    fields = row.fields or {}
+    agent_output = fields.get("agent_output")
+    if agent_output in (None, ""):
+        return {}
+    return {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": _textify(agent_output),
+            }
+        ],
+        "agent_output": _jsonable(agent_output),
+    }
+
+
+def _phoenix_metadata(
+    row: DatasetRecord,
+    response: DatasetResponse | None,
+    labels: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "record_id": row.id,
+        "source_type": row.source_type,
+        "source_id": row.source_id,
+        "source_created_at": row.source_created_at.isoformat() if row.source_created_at else None,
+        "fingerprint": row.fingerprint,
+        "status": row.status,
+        "split": row.split,
+        "reference_kind": _phoenix_reference_kind(response, labels),
+        "record_metadata": _jsonable(row.record_metadata or {}),
+        "provenance": _jsonable(row.provenance or {}),
+        "labels": labels,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+def _phoenix_labels(
+    row: DatasetRecord,
+    response: DatasetResponse | None,
+) -> list[dict[str, Any]]:
+    labels: list[dict[str, Any]] = []
+    metadata = row.record_metadata or {}
+    evaluations = metadata.get("evaluations")
+    if isinstance(evaluations, list):
+        for evaluation in evaluations:
+            if not isinstance(evaluation, dict):
+                continue
+            labels.append(
+                {
+                    "source_kind": "annotation_evaluation",
+                    "source_id": str(evaluation.get("id") or ""),
+                    "name": "human_verdict",
+                    "label": evaluation.get("verdict"),
+                    "score": _phoenix_verdict_score(evaluation.get("verdict")),
+                    "explanation": evaluation.get("reason"),
+                    "tags": _jsonable(evaluation.get("tags") or []),
+                    "adoption": evaluation.get("adoption"),
+                    "training_candidate": bool(evaluation.get("training_candidate")),
+                    "context": _jsonable(evaluation.get("context") or {}),
+                    "created_at": evaluation.get("created_at"),
+                }
+            )
+    if response is not None:
+        labels.append(
+            {
+                "source_kind": "dataset_response",
+                "source_id": response.id,
+                "name": "dataset_response",
+                "label": response.status,
+                "status": response.status,
+                "values": _jsonable(response.values or {}),
+                "lead_time_ms": response.lead_time_ms,
+                "created_at": response.created_at.isoformat(),
+                "updated_at": response.updated_at.isoformat(),
+            }
+        )
+    return labels
+
+
+def _phoenix_prompt_messages(
+    chat: list[dict[str, str]],
+    source_text: Any,
+) -> list[dict[str, str]]:
+    messages = [
+        {"role": row["role"], "content": row["content"]}
+        for row in chat
+        if row.get("role") in {"system", "developer", "user"}
+    ]
+    if messages:
+        return messages
+    if source_text not in (None, ""):
+        return [{"role": "user", "content": _textify(source_text)}]
+    return []
+
+
+def _normalize_chat_messages(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if content in (None, ""):
+            continue
+        role = str(item.get("role") or "user").strip().lower()
+        if role in {"agent", "ai", "assistant_message"}:
+            role = "assistant"
+        elif role not in {"system", "developer", "user", "assistant", "tool"}:
+            role = "user"
+        out.append({"role": role, "content": _textify(content)})
+    return out
+
+
+def _phoenix_splits(row: DatasetRecord) -> list[str]:
+    split = str(row.split or "").strip()
+    if not split or split == "unassigned":
+        return []
+    return [split]
+
+
+def _phoenix_example_id(row: DatasetRecord) -> str:
+    source_type = str(row.source_type or "").strip()
+    source_id = str(row.source_id or "").strip()
+    if source_type and source_id:
+        return f"{source_type}:{source_id}"
+    return f"record:{row.id}"
+
+
+def _phoenix_reference_kind(
+    response: DatasetResponse | None,
+    labels: list[dict[str, Any]],
+) -> str:
+    if response is not None and response.status == "submitted":
+        values = response.values or {}
+        if _truthy_training_candidate(values.get("training_candidate")):
+            return "human_approved"
+        if str(values.get("task_success") or "").lower() == "success":
+            return "human_approved"
+        return "human_labeled"
+    for label in labels:
+        if (
+            label.get("source_kind") == "annotation_evaluation"
+            and label.get("label") == "positive"
+            and (
+                label.get("training_candidate") is True
+                or str(label.get("adoption") or "").lower() in {"accepted", "adopted"}
+            )
+        ):
+            return "human_approved"
+    if labels:
+        return "human_labeled"
+    return "baseline"
+
+
+def _truthy_training_candidate(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"yes", "true", "1", "candidate"}
+
+
+def _phoenix_verdict_score(value: Any) -> float | None:
+    verdict = str(value or "").strip().lower()
+    if verdict == "positive":
+        return 1.0
+    if verdict == "negative":
+        return 0.0
+    return None
 
 
 def _jsonable(value: Any) -> Any:

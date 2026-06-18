@@ -16,8 +16,10 @@ import {
 const PROJECT_LIST_GROUPING_KEY = 'yuwanlab.projectListGrouping'
 const LATEX_EDITOR_THEME_KEY = 'yuwanlab.latexEditorTheme'
 const MATH_PREVIEW_KEY = 'yuwanlab.mathPreview'
+const LATEX_PDF_VIEWER_KEY = 'yuwanlab.latexPdfViewer'
 
 export type ProjectListGrouping = 'grouped' | 'mixed'
+export type LatexPdfViewerPreference = 'react-pdf' | 'pdfjs-viewer'
 
 function readInitialProjectListGrouping(): ProjectListGrouping {
   if (typeof window === 'undefined') return 'grouped'
@@ -35,11 +37,19 @@ function readInitialMathPreview(): boolean {
   return window.localStorage.getItem(MATH_PREVIEW_KEY) === 'true'
 }
 
+function readInitialLatexPdfViewer(): LatexPdfViewerPreference {
+  if (typeof window === 'undefined') return 'react-pdf'
+  return window.localStorage.getItem(LATEX_PDF_VIEWER_KEY) === 'pdfjs-viewer'
+    ? 'pdfjs-viewer'
+    : 'react-pdf'
+}
+
 interface SettingsState {
   providers: Provider[]
   projectListGrouping: ProjectListGrouping
   latexEditorTheme: LatexEditorThemeId
   mathPreview: boolean
+  latexPdfViewer: LatexPdfViewerPreference
   loading: boolean
   loaded: boolean
   error: string | null
@@ -55,6 +65,7 @@ interface SettingsState {
   setProjectListGrouping: (grouping: ProjectListGrouping) => void
   setLatexEditorTheme: (theme: LatexEditorThemeId) => void
   setMathPreview: (enabled: boolean) => void
+  setLatexPdfViewer: (viewer: LatexPdfViewerPreference) => void
   reset: () => void
 }
 
@@ -63,6 +74,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   projectListGrouping: readInitialProjectListGrouping(),
   latexEditorTheme: readInitialLatexEditorTheme(),
   mathPreview: readInitialMathPreview(),
+  latexPdfViewer: readInitialLatexPdfViewer(),
   loading: false,
   loaded: false,
   error: null,
@@ -158,6 +170,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       window.localStorage.setItem(MATH_PREVIEW_KEY, enabled ? 'true' : 'false')
     }
     set({ mathPreview: enabled })
+  },
+
+  setLatexPdfViewer: (viewer) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LATEX_PDF_VIEWER_KEY, viewer)
+    }
+    set({ latexPdfViewer: viewer })
   },
 
   reset: () => set({ providers: [], loaded: false, error: null }),

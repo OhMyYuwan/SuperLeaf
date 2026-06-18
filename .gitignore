@@ -88,14 +88,19 @@ memory/
 
 
 
+# Local Agent Host is an external-sensitive checkout. The parent repository
+# records only the sibling workflow declaration, not the host source itself.
 services/local-agent-host/
+!services/local-agent-host.repository.json
 docs/superpowers/
 
 
 # test
 services/frontend/src/__tests__/
+services/backend/test/
 docs/analysis/
 deploy/package-local.sh
-.gitignore
 deploy/upload-release.sh
 deploy/update-server.sh
+services/backend/test/test_backend_mcp_rpc.py
+SECURITY.md

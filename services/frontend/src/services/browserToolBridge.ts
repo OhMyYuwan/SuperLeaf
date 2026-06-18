@@ -1,6 +1,8 @@
 import { BACKEND_BASE, type BrowserNanobotToolResult, type NanobotToolCall } from './backendApi'
 
 const DEFAULT_LOCAL_AGENT_HOST_ENDPOINT = 'http://127.0.0.1:8787'
+const LOCAL_AGENT_HOST_AUTH_HEADER = 'X-SuperLeaf-Local-Token'
+const LOCAL_AGENT_HOST_AUTH_STORAGE_PREFIX = 'superleaf.localAgentHost.authToken.'
 
 export interface BrowserToolBridgeContextInput {
   contextId?: string
@@ -123,6 +125,19 @@ export interface StartBrowserToolBridgeArgs {
   onApprovalPollError?: (err: unknown) => void
 }
 
+export interface BrowserToolBridgeRequestBinding {
+  contextId?: string
+  projectId?: string
+  conversationId?: string
+  documentId?: string
+}
+
+export interface BrowserToolBridgeRequestBindingResult {
+  ok: boolean
+  message: string
+  mismatches: string[]
+}
+
 export async function startBrowserToolBridge(
   args: StartBrowserToolBridgeArgs,
 ): Promise<BrowserToolBridgeHandle> {
@@ -215,9 +230,13 @@ export async function registerBrowserToolBridgeContext(args: {
   context: BrowserToolBridgeContextInput
   signal?: AbortSignal
 }): Promise<BrowserToolBridgeContext> {
-  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/context`, {
+  const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
+  const resp = await fetch(`${endpoint}/superleaf/mcp/context`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(endpoint),
+    },
     body: JSON.stringify({
       context_id: args.context.contextId ?? '',
       context_secret: args.context.contextSecret ?? '',
@@ -259,12 +278,14 @@ export async function pollBrowserToolBridgeRequests(args: {
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserToolBridgeRequest[]> {
-  const url = new URL(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/tool-requests`)
+  const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
+  const url = new URL(`${endpoint}/superleaf/mcp/tool-requests`)
   url.searchParams.set('context_id', args.contextId)
   url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(endpoint),
     signal: args.signal,
   })
   const payload = await readJson(resp)
@@ -291,9 +312,13 @@ export async function submitBrowserToolBridgeResult(args: {
   audit?: Record<string, unknown>
   signal?: AbortSignal
 }): Promise<void> {
-  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/tool-results`, {
+  const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
+  const resp = await fetch(`${endpoint}/superleaf/mcp/tool-results`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(endpoint),
+    },
     body: JSON.stringify({
       request_id: args.requestId,
       context_secret: args.contextSecret,
@@ -322,12 +347,14 @@ export async function pollBrowserToolBridgeApprovalRequests(args: {
   signal?: AbortSignal
   waitMs?: number
 }): Promise<BrowserToolBridgeApprovalRequest[]> {
-  const url = new URL(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/approval-requests`)
+  const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
+  const url = new URL(`${endpoint}/superleaf/mcp/approval-requests`)
   url.searchParams.set('context_id', args.contextId)
   url.searchParams.set('context_secret', args.contextSecret)
   url.searchParams.set('wait_ms', String(args.waitMs ?? 25000))
   const resp = await fetch(url.toString(), {
     method: 'GET',
+    headers: localAgentHostAuthHeaders(endpoint),
     signal: args.signal,
   })
   const payload = await readJson(resp)
@@ -347,9 +374,13 @@ export async function submitBrowserToolBridgeApprovalResult(args: {
   decision: 'accept' | 'reject'
   signal?: AbortSignal
 }): Promise<void> {
-  const resp = await fetch(`${normalizeLocalAgentHostEndpoint(args.endpoint)}/superleaf/mcp/approval-results`, {
+  const endpoint = normalizeLocalAgentHostEndpoint(args.endpoint)
+  const resp = await fetch(`${endpoint}/superleaf/mcp/approval-results`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...localAgentHostAuthHeaders(endpoint),
+    },
     body: JSON.stringify({
       request_id: args.requestId,
       context_secret: args.contextSecret,
@@ -383,9 +414,109 @@ export function normalizeLocalAgentHostEndpoint(endpoint: string): string {
   return url.toString().replace(/\/+$/u, '')
 }
 
+export function localAgentHostAuthStorageKey(endpoint: string): string {
+  return `${LOCAL_AGENT_HOST_AUTH_STORAGE_PREFIX}${normalizeLocalAgentHostEndpoint(endpoint)}`
+}
+
+export function storeLocalAgentHostAuthToken(endpoint: string, token: string): void {
+  const cleaned = token.trim()
+  if (!isLocalAgentHostAuthTokenValue(cleaned)) {
+    throw new Error('Local Agent Host token has an invalid format.')
+  }
+  try {
+    localStorage.setItem(localAgentHostAuthStorageKey(endpoint), cleaned)
+  } catch {
+    // Browser storage can be disabled; callers should surface connection errors.
+  }
+}
+
+export function clearLocalAgentHostAuthToken(endpoint: string): void {
+  try {
+    localStorage.removeItem(localAgentHostAuthStorageKey(endpoint))
+  } catch {
+    // Browser storage can be disabled.
+  }
+}
+
+export function readLocalAgentHostAuthToken(endpoint: string): string {
+  let key = ''
+  try {
+    key = localAgentHostAuthStorageKey(endpoint)
+  } catch {
+    return ''
+  }
+  try {
+    const token = localStorage.getItem(key)?.trim() ?? ''
+    return isLocalAgentHostAuthTokenValue(token) ? token : ''
+  } catch {
+    return ''
+  }
+}
+
+export function localAgentHostAuthHeaders(endpoint: string): Record<string, string> {
+  const token = readLocalAgentHostAuthToken(endpoint)
+  return token ? { [LOCAL_AGENT_HOST_AUTH_HEADER]: token } : {}
+}
+
+export function validateBrowserToolBridgeRequestBinding(
+  request: BrowserToolBridgeRequest,
+  binding: BrowserToolBridgeRequestBinding,
+): BrowserToolBridgeRequestBindingResult {
+  return validateBridgeResourceBinding({
+    context_id: request.context_id,
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    document_id: request.document_id,
+  }, binding, 'Browser bridge tool request')
+}
+
+export function validateBrowserToolBridgeApprovalRequestBinding(
+  request: BrowserToolBridgeApprovalRequest,
+  binding: BrowserToolBridgeRequestBinding,
+): BrowserToolBridgeRequestBindingResult {
+  return validateBridgeResourceBinding({
+    context_id: request.context_id,
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    document_id: request.document_id,
+  }, binding, 'Browser bridge approval request')
+}
+
+function validateBridgeResourceBinding(
+  request: {
+    context_id: string
+    project_id: string
+    conversation_id: string
+    document_id: string
+  },
+  binding: BrowserToolBridgeRequestBinding,
+  label: string,
+): BrowserToolBridgeRequestBindingResult {
+  const checks: Array<[string, string, string]> = [
+    ['context_id', request.context_id, binding.contextId ?? ''],
+    ['project_id', request.project_id, binding.projectId ?? ''],
+    ['conversation_id', request.conversation_id, binding.conversationId ?? ''],
+    ['document_id', request.document_id, binding.documentId ?? ''],
+  ]
+  const mismatches = checks
+    .filter(([, actual, expected]) => Boolean(stringValue(expected)) && stringValue(actual) !== stringValue(expected))
+    .map(([field]) => field)
+  return {
+    ok: mismatches.length === 0,
+    message: mismatches.length
+      ? `${label} does not match active SuperLeaf context: ${mismatches.join(', ')}`
+      : '',
+    mismatches,
+  }
+}
+
 function isLoopbackLocalAgentHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, '')
   return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1'
+}
+
+function isLocalAgentHostAuthTokenValue(value: string): boolean {
+  return /^[A-Za-z0-9._~:+/=-]{16,512}$/u.test(value)
 }
 
 export function bridgeRequestFromToolCall(
@@ -473,7 +604,7 @@ async function runBrowserToolBridgeLoop(
 
     for (const request of requests) {
       if (args.signal.aborted) break
-      await executeAndSubmitBridgeRequest(args, request)
+      await executeAndSubmitBridgeRequest({ ...args, contextId, contextSecret }, request)
     }
   }
   wake.dispose()
@@ -525,6 +656,27 @@ async function runBrowserApprovalBridgeLoop(
     if (requests.length > 0) args.onActivity?.()
     for (const request of requests) {
       if (args.signal.aborted) break
+      const binding = validateBrowserToolBridgeApprovalRequestBinding(request, {
+        contextId,
+        projectId: args.context.projectId,
+        conversationId: args.context.conversationId,
+        documentId: args.context.documentId,
+      })
+      if (!binding.ok) {
+        const err = new Error(binding.message)
+        args.onApprovalPollError?.(err)
+        await submitBrowserToolBridgeApprovalResult({
+          endpoint: args.endpoint,
+          requestId: request.id,
+          contextSecret,
+          approvalSecret: request.approval_secret,
+          decision: 'reject',
+          signal: args.signal,
+        }).catch((submitErr) => {
+          if (!args.signal.aborted) args.onApprovalPollError?.(submitErr)
+        })
+        continue
+      }
       args.onApprovalRequest?.({
         ...request,
         context_secret: contextSecret,
@@ -536,7 +688,7 @@ async function runBrowserApprovalBridgeLoop(
 }
 
 async function executeAndSubmitBridgeRequest(
-  args: StartBrowserToolBridgeArgs & { contextSecret: string; signal: AbortSignal },
+  args: StartBrowserToolBridgeArgs & { contextId: string; contextSecret: string; signal: AbortSignal },
   request: BrowserToolBridgeRequest,
 ): Promise<void> {
   const requestTimeoutMs = Math.max(1000, args.requestTimeoutMs ?? 105000)
@@ -550,6 +702,13 @@ async function executeAndSubmitBridgeRequest(
     requestCtl.abort(new DOMException(`SuperLeaf MCP browser tool ${request.name} timed out after ${requestTimeoutMs}ms`, 'TimeoutError'))
   }, requestTimeoutMs)
   try {
+    const binding = validateBrowserToolBridgeRequestBinding(request, {
+      contextId: args.contextId,
+      projectId: args.context.projectId,
+      conversationId: args.context.conversationId,
+      documentId: args.context.documentId,
+    })
+    if (!binding.ok) throw new Error(binding.message)
     const result = await args.executeRequest(request, requestCtl.signal)
     const toolKind = 'tool_kind' in result ? result.tool_kind : result.toolKind
     args.onActivity?.()

@@ -71,7 +71,7 @@ def create_evaluation(
     context: dict,
     user_id: str = "",
 ) -> AnnotationEvaluation:
-    enriched_context = enrich_context(db, annotation_id, context)
+    enriched_context = enrich_context(db, annotation_id, context, doc_id=doc_id, user_id=user_id)
     row = AnnotationEvaluation(
         id=eid,
         annotation_id=annotation_id,
@@ -113,7 +113,13 @@ def update_evaluation(
     if training_candidate is not None:
         evaluation.training_candidate = training_candidate
     if context is not None:
-        evaluation.context = enrich_context(db, evaluation.annotation_id, context)
+        evaluation.context = enrich_context(
+            db,
+            evaluation.annotation_id,
+            context,
+            doc_id=evaluation.doc_id,
+            user_id=evaluation.user_id,
+        )
     evaluation.updated_at = datetime.utcnow()
     db.flush()
     return evaluation
@@ -192,7 +198,14 @@ def aggregate_tags_for_doc(
     return [t for t, _ in counts.most_common(limit)]
 
 
-def enrich_context(db: Session, annotation_id: str, context: dict) -> dict:
+def enrich_context(
+    db: Session,
+    annotation_id: str,
+    context: dict,
+    *,
+    doc_id: str = "",
+    user_id: str = "",
+) -> dict:
     """Copy workflow_id / workflow_run_id from the most recent Operation
     matching this annotation_id into the evaluation context, unless the
     frontend already filled them in.
@@ -207,15 +220,19 @@ def enrich_context(db: Session, annotation_id: str, context: dict) -> dict:
     if not needs_workflow and not needs_run:
         return out
 
-    op = (
+    op_query = (
         db.query(Operation)
         .filter(
             Operation.type.in_(("accept_suggestion", "reject_suggestion")),
             func.json_extract(Operation.payload, "$.annotation_id") == annotation_id,
         )
         .order_by(desc(Operation.created_at))
-        .first()
     )
+    if doc_id:
+        op_query = op_query.filter(Operation.doc_id == doc_id)
+    if user_id:
+        op_query = op_query.filter(Operation.actor == user_id)
+    op = op_query.first()
     if op is None:
         return out
     payload = op.payload or {}

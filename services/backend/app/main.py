@@ -22,12 +22,16 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     init_db()
+    docs_enabled = settings.api_docs_enabled
 
     app = FastAPI(
         title="SuperLeaf Backend",
         description="FastAPI proxy to Dify + local document/annotation/history persistence.",
         version="0.0.1",
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     app.add_middleware(

@@ -128,6 +128,15 @@
   cursor: pointer;
 }
 
+.latex-compile-settings-popover .ghost-btn.small {
+  color: #0f172a;
+}
+
+.latex-compile-settings-popover .ghost-btn.small svg {
+  color: #0f172a;
+  stroke: #0f172a;
+}
+
 .latex-preview-zoom {
   display: inline-flex;
   align-items: center;
@@ -274,6 +283,9 @@
 }
 
 .latex-preview-pdf {
+  --latex-pdf-edge-crop: max(3px, 0.22%);
+
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -323,24 +335,35 @@
 }
 
 .latex-pdf-page {
-  overflow: visible;
-  outline: 1px solid rgba(148, 163, 184, 0.22);
-  box-shadow: 0 1px 3px rgba(148, 163, 184, 0.18);
-  background: white;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: #ffffff;
 }
 
 .latex-pdf-page canvas {
   display: block;
   max-width: none;
   max-height: none;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: #ffffff;
+}
+
+.latex-pdf-page canvas,
+.latex-pdfjs-container .pdfViewer .page canvas {
+  clip-path: inset(var(--latex-pdf-edge-crop));
 }
 
 .latex-pdf-page-placeholder {
   width: 100%;
   min-height: inherit;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.72);
-  outline: 1px solid rgba(148, 163, 184, 0.16);
+  background: #ffffff;
+  border: 0;
+  outline: 0;
   box-shadow: none;
 }
 
@@ -405,4 +428,68 @@
     opacity: 0.85;
     transform: translate(-50%, -50%) scale(1);
   }
+}
+
+/* PDF.js viewer container (direct PDFViewer mode) */
+.latex-pdfjs-outer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+  color-scheme: light;
+  isolation: isolate;
+}
+
+.latex-pdfjs-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: transparent;
+  color-scheme: light;
+  -webkit-font-smoothing: initial;
+  -moz-osx-font-smoothing: initial;
+}
+
+.latex-pdfjs-container .pdfViewer {
+  --page-border: none;
+  --page-margin: 0 auto 16px;
+  --page-bg-color: #ffffff;
+  --pdfViewer-padding-bottom: 0;
+  min-height: 100%;
+  padding-bottom: 0;
+  background: transparent;
+  color-scheme: light;
+}
+
+.latex-pdfjs-container .pdfViewer .page {
+  margin: 0 auto 16px;
+  overflow: hidden;
+  border: 0 !important;
+  outline: 0 !important;
+  background-color: #ffffff !important;
+  background-clip: border-box;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.latex-pdfjs-container .pdfViewer .canvasWrapper,
+.latex-pdfjs-container .pdfViewer .page canvas {
+  background: #ffffff;
+}
+
+.latex-pdfjs-container .pdfViewer .page,
+.latex-pdfjs-container .pdfViewer .canvasWrapper,
+.latex-pdfjs-container .pdfViewer .page canvas {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.latex-pdfjs-container .pdfViewer .textLayer,
+.latex-pdfjs-container .pdfViewer .annotationLayer {
+  background: transparent;
+}
+
+.latex-pdfjs-container .pdfViewer .page .loadingIcon {
+  display: none;
 }

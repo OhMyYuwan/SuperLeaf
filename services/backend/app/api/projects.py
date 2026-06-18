@@ -35,8 +35,8 @@ from ..services.github_service import GitHubError, GitHubService, parse_repo_url
 from ..services.native_agent_service import NativeAgentService
 from ..services.project_member_service import ProjectMemberService
 from ..services.project_service import LastProjectError, ProjectService
-from ..services.skill_data_handoff_service import SkillDataHandoffService
 from ..services.skill_content_crypto import decrypt_skill_content
+from ..services.skill_data_handoff_service import SkillDataHandoffService
 from .deps import get_current_user, get_project_from_path
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -153,16 +153,19 @@ def update_project(
     db: Session = Depends(get_session),
 ) -> ProjectOut:
     svc = ProjectService(db)
-    p = svc.update(
-        project_id,
-        user_id=user.id,
-        name=body.name,
-        main_doc_id=body.main_doc_id,
-        compiler=body.compiler,
-        is_skill_project=body.is_skill_project,
-        project_type=body.project_type,
-        tags=body.tags,
-    )
+    try:
+        p = svc.update(
+            project_id,
+            user_id=user.id,
+            name=body.name,
+            main_doc_id=body.main_doc_id,
+            compiler=body.compiler,
+            is_skill_project=body.is_skill_project,
+            project_type=body.project_type,
+            tags=body.tags,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if p is None:
         raise HTTPException(404, "Project not found")
     return ProjectOut.model_validate(p)
@@ -175,8 +178,13 @@ def update_project_skill_cache(
     db: Session = Depends(get_session),
 ) -> ProjectSkillCacheOut:
     project = db.get(Project, project_id)
-    if project is None or not ProjectMemberService(db).has_access(project.id, user.id):
+    if project is None:
         raise HTTPException(404, "Project not found")
+    role = ProjectMemberService(db).get_role(project.id, user.id)
+    if role is None:
+        raise HTTPException(404, "Project not found")
+    if role not in ("owner", "editor"):
+        raise HTTPException(403, "Read-only access")
     try:
         skill = NativeAgentService(db).update_project_skill_cache(project, user_id=user.id)
     except ValueError as exc:
@@ -296,11 +304,12 @@ def export_annotation_training_data(
 @router.get("/{project_id}/members", response_model=list[ProjectMemberOut])
 def list_project_members(
     project: Project = Depends(get_project_from_path),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_session),
 ) -> list[ProjectMemberOut]:
     """List all members of a project."""
     svc = ProjectMemberService(db)
-    members = svc.list_members(project.id)
+    members = svc.list_members(project.id, include_inactive=project.user_id == user.id)
     return [
         ProjectMemberOut(
             id=member.id,
@@ -324,24 +333,28 @@ def add_project_member(
     db: Session = Depends(get_session),
 ) -> ProjectMemberOut:
     """Add a member to a project. Only the project owner can add members."""
-    # Check if user is the project owner
+    member_svc = ProjectMemberService(db)
+    role = member_svc.get_role(project_id, user.id)
+    if role is None:
+        raise HTTPException(404, "Project not found")
+    if role != "owner":
+        raise HTTPException(403, "Only the project owner can add members")
     project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, "Project not found")
-    if project.user_id != user.id:
-        raise HTTPException(403, "Only the project owner can add members")
 
-    svc = ProjectMemberService(db)
-    member = svc.add_member(project_id, body.email, body.role, user.id)
+    member = member_svc.add_member(project_id, body.email, body.role, user.id)
     if member is None:
         raise HTTPException(404, f"User with email {body.email} not found")
 
     # Create notification for the invited user
+    role_label = "编辑" if body.role == "editor" else "查看"
+    inviter_name = user.display_name or user.email
     notification = Notification(
         user_id=member.user_id,
         kind="project_invite",
         title=f"你已被邀请加入项目「{project.name}」",
-        body=f"{user.display_name or user.email} 邀请你以{('编辑' if body.role == 'editor' else '查看')}权限加入项目。",
+        body=f"{inviter_name} 邀请你以{role_label}权限加入项目。",
         target_id=project_id,
         target_type="project",
     )
@@ -370,15 +383,14 @@ def remove_project_member(
     db: Session = Depends(get_session),
 ) -> None:
     """Remove a member from a project. Only the project owner can remove members."""
-    # Check if user is the project owner
-    project = db.get(Project, project_id)
-    if project is None:
+    member_svc = ProjectMemberService(db)
+    role = member_svc.get_role(project_id, user.id)
+    if role is None:
         raise HTTPException(404, "Project not found")
-    if project.user_id != user.id:
+    if role != "owner":
         raise HTTPException(403, "Only the project owner can remove members")
 
-    svc = ProjectMemberService(db)
-    ok = svc.remove_member(project_id, user_id)
+    ok = member_svc.remove_member(project_id, user_id)
     if not ok:
         raise HTTPException(404, "Member not found")
 
@@ -389,6 +401,7 @@ def get_online_users_endpoint(
 ) -> list[dict]:
     """Return list of users currently connected to this project's SSE stream."""
     from ..services.event_bus import get_online_users
+
     return get_online_users(project.id)
 
 
@@ -424,7 +437,7 @@ async def project_events(
             while True:
                 try:
                     evt = await asyncio.wait_for(sub.queue.get(), timeout=25.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield {"event": "ylw.heartbeat", "data": "{}"}
                     continue
                 yield {

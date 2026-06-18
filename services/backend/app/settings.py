@@ -13,10 +13,31 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _resolve_env_file() -> str:
+    """Find .env file with fallback chain.
+
+    Priority:
+      1. .env in current working directory (Docker / deployment)
+      2. .env in monorepo root (local dev: services/backend/ → ../../.env)
+    """
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.is_file():
+        return str(cwd_env)
+    # settings.py is at <root>/services/backend/app/settings.py
+    root_env = Path(__file__).resolve().parents[3] / ".env"
+    if root_env.is_file():
+        return str(root_env)
+    return str(cwd_env)  # default; pydantic will ignore if missing
+
+
 class Settings(BaseSettings):
     # The legacy YLW_ prefix and ~/.yuwanlab data dir are intentionally kept so
     # existing local deployments survive the SuperLeaf rename without migration.
-    model_config = SettingsConfigDict(env_prefix="YLW_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="YLW_",
+        env_file=_resolve_env_file(),
+        extra="ignore",
+    )
 
     database_url: str = Field(default="")
     data_dir: Path = Field(default=Path.home() / ".yuwanlab")
@@ -68,10 +89,14 @@ class Settings(BaseSettings):
     # - false: allow local HTTP-only development
     cookie_secure: str = "auto"
 
+    # Public deployments keep interactive API docs and raw OpenAPI closed by
+    # default. Trusted local deployments can opt in with YLW_API_DOCS_ENABLED=true.
+    api_docs_enabled: bool = False
+
     # Collaboration server (Node.js y-websocket)
     collab_server_url: str = "http://localhost:4444"
     collab_snapshot_interval_s: int = 30
-    collab_token_lifetime_seconds: int = 30
+    collab_token_lifetime_seconds: int = 300
     collab_internal_token: str = ""
 
     # Static Skill marketplace catalog. The default reads the official GitHub
@@ -104,9 +129,23 @@ class Settings(BaseSettings):
     mcp_event_ttl_seconds: int = 3600
     mcp_event_max_per_stream: int = 200
 
-    # NPX skill install policy. Public deployments keep this disabled; local /
-    # trusted deployments can opt in to allow installing skills via npx recipes.
-    skill_npx_install_enabled: bool = False
+    # ── NPX Skill 安装策略 ──────────────────────────────────────────────
+    # 控制是否允许通过 npx 命令安装 Skill（即 "recipe" 类型的 Skill）。
+    #
+    # 安装流程：前端调用 POST /agents/{id}/skills/install-npx 或
+    #           POST /agents 时传入 skill_recipes 参数
+    # → 后端校验此开关 + 用户 is_admin 权限
+    # → 调用 NativeAgentService.install_agent_skill_recipe()
+    # → 执行 npx <package> 拉取 Skill 资产并写入数据库
+    #
+    # 安全考量：npx 会执行远程代码，公开部署建议保持 False，
+    #          仅在本地/可信环境中启用。
+    # 环境变量：YLW_SKILL_NPX_INSTALL_ENABLED=true 覆盖默认值。
+    # 相关端点：_ensure_npx_skill_install_allowed() — 权限守卫
+    #          POST /agents/{id}/skills/install-npx — 单个 Skill 安装
+    #          POST /agents (body.skill_recipes) — 批量安装
+    # ────────────────────────────────────────────────────────────────────
+    skill_npx_install_enabled: bool = True
 
     def resolved_database_url(self) -> str:
         if self.database_url:

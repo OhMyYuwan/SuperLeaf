@@ -19,7 +19,6 @@ from ..services.auth_service import AuthService
 from ..services.mcp_token_service import McpTokenService
 from ..services.project_member_service import ProjectMemberService
 
-
 SESSION_COOKIE_NAME = "ylw_session"
 
 
@@ -97,7 +96,10 @@ def require_write_access(
     if project is None:
         raise HTTPException(404, "Project not found")
     member_svc = ProjectMemberService(db)
-    if not member_svc.can_write(x_project_id, user.id):
+    role = member_svc.get_role(x_project_id, user.id)
+    if role is None:
+        raise HTTPException(404, "Project not found")
+    if role not in ("owner", "editor"):
         raise HTTPException(403, "Read-only access")
     return project
 

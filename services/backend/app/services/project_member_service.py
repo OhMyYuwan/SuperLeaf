@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from ..models import Project, ProjectMember, RecentCollaborator, User
 
+_ACCEPTED_MEMBER_STATUS = "accepted"
+
 
 class ProjectMemberService:
     def __init__(self, db: Session) -> None:
@@ -35,15 +37,19 @@ class ProjectMemberService:
             )
         )
         if existing:
+            existing.role = role
+            existing.status = _ACCEPTED_MEMBER_STATUS
+            existing.invited_by = invited_by_id
             self.record_project_collaboration(project_id)
             self.db.commit()
+            self.db.refresh(existing)
             return existing
 
         member = ProjectMember(
             project_id=project_id,
             user_id=user.id,
             role=role,
-            status="accepted",
+            status=_ACCEPTED_MEMBER_STATUS,
             invited_by=invited_by_id,
         )
         self.db.add(member)
@@ -81,7 +87,10 @@ class ProjectMemberService:
             ).all()
         }
         member_project_ids = self.db.scalars(
-            select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+            select(ProjectMember.project_id).where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == _ACCEPTED_MEMBER_STATUS,
+            )
         ).all()
         project_ids.update(member_project_ids)
         for project_id in project_ids:
@@ -116,7 +125,10 @@ class ProjectMemberService:
             self.db.scalars(
                 select(User)
                 .join(ProjectMember, ProjectMember.user_id == User.id)
-                .where(ProjectMember.project_id == project_id)
+                .where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.status == _ACCEPTED_MEMBER_STATUS,
+                )
             )
             .all()
         )
@@ -149,14 +161,25 @@ class ProjectMemberService:
         row.collaborator_display_name = display_name
         row.last_collaborated_at = now
 
-    def list_members(self, project_id: str) -> list[tuple[ProjectMember, User]]:
-        """List all members of a project with their user info."""
+    def list_members(
+        self,
+        project_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> list[tuple[ProjectMember, User]]:
+        """List project members with user info.
+
+        Non-owner callers should receive only the accepted roster. Pending or
+        declined invitation rows are owner-managed metadata.
+        """
         stmt = (
             select(ProjectMember, User)
             .join(User, ProjectMember.user_id == User.id)
             .where(ProjectMember.project_id == project_id)
             .order_by(ProjectMember.created_at)
         )
+        if not include_inactive:
+            stmt = stmt.where(ProjectMember.status == _ACCEPTED_MEMBER_STATUS)
         return list(self.db.execute(stmt).all())
 
     def remove_member(self, project_id: str, user_id: str) -> bool:
@@ -179,6 +202,7 @@ class ProjectMemberService:
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
                 ProjectMember.user_id == user_id,
+                ProjectMember.status == _ACCEPTED_MEMBER_STATUS,
             )
         )
         return member is not None
@@ -211,6 +235,7 @@ class ProjectMemberService:
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
                 ProjectMember.user_id == user_id,
+                ProjectMember.status == _ACCEPTED_MEMBER_STATUS,
             )
         )
         if member:
@@ -227,7 +252,10 @@ class ProjectMemberService:
         stmt = (
             select(Project, ProjectMember)
             .join(ProjectMember, Project.id == ProjectMember.project_id)
-            .where(ProjectMember.user_id == user_id)
+            .where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == _ACCEPTED_MEMBER_STATUS,
+            )
             .order_by(Project.updated_at.desc())
         )
         return list(self.db.execute(stmt).all())

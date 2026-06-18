@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_session
-from ..models import Doc, Project
+from ..models import Doc, Project, User
 from ..schemas import (
     CompileIn,
     CompileOut,
@@ -31,7 +31,13 @@ from ..schemas import (
 )
 from ..services.latex_compiler import get_compiler_service
 from .collab_consistency import flush_project_collab_or_503
-from .deps import get_current_project, get_project_from_path, require_write_access
+from .deps import (
+    get_current_project,
+    get_current_user,
+    get_project_from_path,
+    require_admin,
+    require_write_access,
+)
 
 router = APIRouter(prefix="/api/compile", tags=["compile"])
 
@@ -41,7 +47,11 @@ projects_router = APIRouter(prefix="/api/projects", tags=["compile"])
 
 
 @router.get("/compilers", response_model=CompilerInfoOut)
-def list_compilers() -> CompilerInfoOut:
+def list_compilers(_user: User = Depends(get_current_user)) -> CompilerInfoOut:
+    return _compiler_info()
+
+
+def _compiler_info() -> CompilerInfoOut:
     svc = get_compiler_service()
     available = svc.available_compilers
     default = ""
@@ -53,10 +63,19 @@ def list_compilers() -> CompilerInfoOut:
 
 
 @router.post("/rescan", response_model=CompilerInfoOut)
-def rescan_compilers() -> CompilerInfoOut:
+def rescan_compilers(_admin: User = Depends(require_admin)) -> CompilerInfoOut:
     svc = get_compiler_service()
     svc.rescan_compilers()
-    return list_compilers()
+    return _compiler_info()
+
+
+@router.delete("/cache", status_code=204)
+def clear_compile_cache(
+    project: Project = Depends(require_write_access),
+) -> Response:
+    svc = get_compiler_service()
+    svc.clear_cache(project.id)
+    return Response(status_code=204)
 
 
 @router.post("", response_model=CompileOut)
@@ -69,6 +88,11 @@ async def compile_project(
     compiler = body.compiler or project.compiler or None
     requested_main_doc_id = body.main_doc_id if body.main_doc_id is not None else project.main_doc_id
     main_doc_id = _validate_main_doc_id(db, project, requested_main_doc_id)
+    incremental = (
+        body.incremental_compile
+        if body.incremental_compile is not None
+        else bool(project.incremental_compile)
+    )
     await flush_project_collab_or_503(project)
     db.expire_all()
 
@@ -78,9 +102,14 @@ async def compile_project(
         project.id,
         main_doc_id=main_doc_id,
         compiler=compiler,
+        incremental=incremental,
+        from_scratch=body.from_scratch,
+        is_auto_compile=body.is_auto_compile,
     )
     return CompileOut(
         ok=result.ok,
+        status=result.status,
+        build_id=result.build_id,
         compiler=result.compiler,
         duration_ms=result.duration_ms,
         error=result.error,
@@ -95,6 +124,7 @@ def sync_to_pdf(
     db: Session = Depends(get_session),
     project: Project = Depends(get_current_project),
 ) -> CompileSyncToPdfOut:
+    _ensure_project_doc(db, project, body.document_id)
     svc = get_compiler_service()
     result = svc.sync_to_pdf(
         db,
@@ -231,6 +261,7 @@ def get_settings(
     return ProjectCompileSettingsOut(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
+        incremental_compile=bool(project.incremental_compile),
     )
 
 
@@ -244,11 +275,14 @@ def update_settings(
         project.main_doc_id = _validate_main_doc_id(db, project, body.main_doc_id) or ""
     if body.compiler is not None:
         project.compiler = body.compiler
+    if body.incremental_compile is not None:
+        project.incremental_compile = body.incremental_compile
     db.commit()
     db.refresh(project)
     return ProjectCompileSettingsOut(
         main_doc_id=project.main_doc_id,
         compiler=project.compiler,
+        incremental_compile=bool(project.incremental_compile),
     )
 
 
@@ -257,7 +291,14 @@ def _validate_main_doc_id(db: Session, project: Project, main_doc_id: str | None
         return None
     doc = db.get(Doc, main_doc_id)
     if doc is None or doc.project_id != project.id:
-        raise HTTPException(400, "main_doc_id must belong to the current project")
+        raise HTTPException(404, "Document not found")
     if doc.format != "tex":
         raise HTTPException(400, "main_doc_id must reference a tex document")
     return doc.id
+
+
+def _ensure_project_doc(db: Session, project: Project, document_id: str) -> Doc:
+    doc = db.get(Doc, document_id)
+    if doc is None or doc.project_id != project.id:
+        raise HTTPException(404, "Document not found")
+    return doc

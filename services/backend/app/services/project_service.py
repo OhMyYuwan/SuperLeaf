@@ -395,7 +395,7 @@ class ProjectService:
         if name is not None:
             p.name = name
         if main_doc_id is not None:
-            p.main_doc_id = main_doc_id
+            p.main_doc_id = self._scoped_main_doc_id(p.id, main_doc_id)
         if compiler is not None:
             p.compiler = compiler
         if is_skill_project is not None:
@@ -411,6 +411,14 @@ class ProjectService:
         self.db.commit()
         self.db.refresh(p)
         return p
+
+    def _scoped_main_doc_id(self, project_id: str, main_doc_id: str) -> str:
+        if not main_doc_id:
+            return ""
+        doc = self.db.get(Doc, main_doc_id)
+        if doc is None or doc.project_id != project_id:
+            raise ValueError("main_doc_id must belong to the current project")
+        return doc.id
 
     def delete(self, project_id: str, *, user_id: str) -> bool:
         """Cascade-delete a project and all its scoped rows.

@@ -9,6 +9,7 @@ import {
   shouldIncludeSuperleafToolGuide,
   type SuperLeafToolGuideMode,
 } from './agentToolGuidePolicy'
+import { localAgentHostAuthHeaders } from './browserToolBridge'
 
 const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
 const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
@@ -66,9 +67,13 @@ export function readBrowserNanobotApiKey(providerId: string): string {
 }
 
 export async function probeBrowserNanobot(endpoint: string, apiKey = 'dummy'): Promise<unknown> {
-  const resp = await fetch(`${normalizeNanobotEndpoint(endpoint)}/health`, {
+  const normalizedEndpoint = normalizeNanobotEndpoint(endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/health`, {
     method: 'GET',
-    headers: authHeaders(apiKey),
+    headers: {
+      ...authHeaders(apiKey),
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
+    },
   })
   if (!resp.ok && resp.status !== 404 && resp.status !== 405) {
     throw new Error(`Nanobot health ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`)
@@ -161,10 +166,12 @@ export async function streamBrowserNanobotTurn(args: BrowserNanobotTurnArgs): Pr
     body.tool_choice = 'auto'
   }
 
-  const resp = await fetch(`${normalizeNanobotEndpoint(args.endpoint)}/v1/chat/completions`, {
+  const normalizedEndpoint = normalizeNanobotEndpoint(args.endpoint)
+  const resp = await fetch(`${normalizedEndpoint}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       ...authHeaders(args.apiKey || 'dummy'),
+      ...localAgentHostAuthHeaders(normalizedEndpoint),
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
     },
@@ -311,7 +318,10 @@ async function probeBrowserNanobotToolsAtEndpoint(
   const normalized = normalizeNanobotEndpoint(endpoint)
   const resp = await fetch(`${normalized}/nanobot/tools`, {
     method: 'GET',
-    headers: authHeaders(apiKey),
+    headers: {
+      ...authHeaders(apiKey),
+      ...localAgentHostAuthHeaders(normalized),
+    },
   })
   if (resp.status === 404 || resp.status === 405) return null
   if (!resp.ok) {

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import {
@@ -10,6 +13,7 @@ import {
   findUncoveredCollabHttpRouteTestPolicies,
   handleHttpRequest,
   matchCollabHttpRoutePolicy,
+  resolveCollabInternalToken,
   validateCollabHttpPermissionRegistry,
   type CollabHttpRoutePolicy,
   type CollabHttpRouteTestPolicy,
@@ -21,6 +25,20 @@ import {
 import {
   buildCollabServerPermissionEvidenceMatrix,
 } from './permission-policy.js'
+
+test('collab internal token can be loaded from a private token file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-collab-token-'))
+  const tokenFile = path.join(dir, 'collab.token')
+  fs.writeFileSync(tokenFile, 'file-secret-token\n', { mode: 0o600 })
+
+  assert.equal(
+    resolveCollabInternalToken({
+      COLLAB_INTERNAL_TOKEN: '',
+      COLLAB_INTERNAL_TOKEN_FILE: tokenFile,
+    }),
+    'file-secret-token',
+  )
+})
 
 class MockResponse {
   statusCode: number | null = null

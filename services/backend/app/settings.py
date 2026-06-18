@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     collab_snapshot_interval_s: int = 30
     collab_token_lifetime_seconds: int = 300
     collab_internal_token: str = ""
+    collab_internal_token_file: str = ""
 
     # Static Skill marketplace catalog. The default reads the official GitHub
     # repository main branch directly; GitHub Pages is optional for browsing.
@@ -163,6 +164,18 @@ class Settings(BaseSettings):
     def resolved_secrets_key_path(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir / self.secrets_key_file
+
+    def resolved_collab_internal_token(self) -> str:
+        token = self.collab_internal_token.strip()
+        if token:
+            return token
+        token_file = self.collab_internal_token_file.strip()
+        if not token_file:
+            return ""
+        try:
+            return Path(token_file).expanduser().read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
 
 
 settings = Settings()

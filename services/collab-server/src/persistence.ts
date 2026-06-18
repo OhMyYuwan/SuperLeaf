@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { timingSafeEqual } from 'node:crypto'
@@ -11,11 +11,30 @@ const DATA_DIR = process.env.COLLAB_DATA_DIR ?? path.join(os.homedir(), '.yuwanl
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000'
 const HISTORICAL_DEFAULT_INTERNAL_TOKEN = 'superleaf-local-collab-internal-token'
 const RAW_INTERNAL_TOKEN = process.env.COLLAB_INTERNAL_TOKEN?.trim() ?? ''
-const INTERNAL_TOKEN = RAW_INTERNAL_TOKEN === HISTORICAL_DEFAULT_INTERNAL_TOKEN ? '' : RAW_INTERNAL_TOKEN
+const INTERNAL_TOKEN = resolveCollabInternalToken()
 const INTERNAL_TOKEN_HEADER = 'x-superleaf-internal-token'
 
 if (RAW_INTERNAL_TOKEN === HISTORICAL_DEFAULT_INTERNAL_TOKEN) {
   console.warn('[collab-server] refusing historical default COLLAB_INTERNAL_TOKEN; document text HTTP API is disabled')
+}
+
+export function resolveCollabInternalToken(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.COLLAB_INTERNAL_TOKEN?.trim() ?? ''
+  if (raw) {
+    return raw === HISTORICAL_DEFAULT_INTERNAL_TOKEN ? '' : raw
+  }
+  const tokenFile = (env.COLLAB_INTERNAL_TOKEN_FILE || env.YLW_COLLAB_INTERNAL_TOKEN_FILE || '').trim()
+  if (!tokenFile) return ''
+  try {
+    const token = readFileSync(tokenFile, 'utf-8').trim()
+    return token === HISTORICAL_DEFAULT_INTERNAL_TOKEN ? '' : token
+  } catch {
+    return ''
+  }
+}
+
+export function hasCollabInternalTokenConfigured(): boolean {
+  return Boolean(INTERNAL_TOKEN)
 }
 
 let persistence: LeveldbPersistence

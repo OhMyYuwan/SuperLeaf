@@ -356,6 +356,8 @@ export interface LocalAgentHostPackageInfo {
   windows: Record<string, string>
   codex_env: Record<string, string>
   claude_env: Record<string, string>
+  local_auth_token?: string
+  local_auth_token_source?: string
 }
 
 export interface LocalAgentHostUpdateInfo {

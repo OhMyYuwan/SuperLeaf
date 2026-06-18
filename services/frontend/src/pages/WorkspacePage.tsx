@@ -37,6 +37,7 @@ import { useDocumentStore } from '../stores/documentStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useWorkflowStore } from '../stores/workflowStore'
+import { bootstrapLocalAgentHostAuth } from '../services/localAgentHostAutoAuth'
 import { useCollaborationStore } from '../stores/collaborationStore'
 import { useAnnotationStore } from '../stores/annotationStore'
 import { useAnnotationAgentSuggestionStore } from '../stores/annotationAgentSuggestionStore'
@@ -526,6 +527,7 @@ export function WorkspacePage() {
     }
     loadTree()
     loadProviders()
+    void bootstrapLocalAgentHostAuth()
     loadWorkflows()
     loadDefinitions()
   }, [projectId, loadTree, loadProviders, loadWorkflows, loadDefinitions])

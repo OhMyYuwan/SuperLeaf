@@ -16,6 +16,7 @@ import {
 } from '../../../services/nanobotBrowserClient'
 import { listBrowserCodexModels, probeBrowserCodex } from '../../../services/codexBrowserClient'
 import { probeBrowserClaude } from '../../../services/claudeBrowserClient'
+import { bootstrapLocalAgentHostAuth } from '../../../services/localAgentHostAutoAuth'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import { localAgentName } from './agent-presentation'
 import {
@@ -57,7 +58,8 @@ export function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCr
     let cancelled = false
     const timer = window.setTimeout(() => {
       setCodexModelsLoading(true)
-      listBrowserCodexModels(endpoint)
+      bootstrapLocalAgentHostAuth()
+        .then(() => listBrowserCodexModels(endpoint))
         .then((models) => {
           if (cancelled) return
           setCodexModels(models)
@@ -117,6 +119,9 @@ export function ProviderForm({ onClose, onCreated }: { onClose: () => void; onCr
     let codexHealth: Record<string, unknown> | null = null
     let claudeHealth: Record<string, unknown> | null = null
     let codexModelsForSync = codexModels
+    if (LOCAL_AGENT_PROVIDER_KINDS.has(filledDraft.kind)) {
+      await bootstrapLocalAgentHostAuth()
+    }
     if (filledDraft.kind === 'nanobot' && filledDraft.transport === 'browser') {
       try {
         browserAgents = await discoverBrowserNanobotAgents(filledDraft.endpoint, filledDraft.api_key)

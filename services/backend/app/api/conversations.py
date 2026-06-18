@@ -71,6 +71,7 @@ from ..services.secret_redaction import redact_secrets, safe_error_text
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+DEFAULT_LOCAL_AGENT_HOST_ENDPOINT = "http://127.0.0.1:8787"
 
 
 def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") -> ConversationOut:
@@ -200,7 +201,7 @@ def _browser_nanobot_bridge_endpoint(provider: Any) -> str:
         value = str(meta.get(key) or "").strip()
         if value:
             return value
-    return provider.endpoint
+    return DEFAULT_LOCAL_AGENT_HOST_ENDPOINT
 
 
 def _conversation_message_rows(db: Session, conversation_id: str) -> list[Message]:

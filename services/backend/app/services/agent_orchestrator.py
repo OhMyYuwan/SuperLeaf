@@ -986,6 +986,30 @@ class WorkflowOrchestrator:
         try:
             # Get agent configuration
             agent_id = node.config.get("agentId") or node.config.get("agent_id")
+
+            # Check for inline agent (workflow-specific, not a global NativeAgent)
+            is_inline = node.config.get("inline_agent", False)
+
+            if is_inline:
+                # Inline agent: build config directly from node config
+                prompt = self._build_agent_prompt(ctx, node)
+                output = await self._execute_inline_agent_node(ctx, node, prompt)
+                node.outputs = output
+                node.status = "completed"
+                node.finished_at = datetime.utcnow()
+                ctx.workflow_run.trace.append({
+                    "node_id": node_id,
+                    "agent_id": f"inline:{node_id}",
+                    "agent_source": "inline",
+                    "started_at": node.started_at.isoformat(),
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "completed",
+                    "input": node.inputs,
+                    "output": output,
+                })
+                self.db.commit()
+                return output
+
             if not agent_id:
                 raise ValueError(f"Node {node_id} missing agentId")
 
@@ -1205,6 +1229,162 @@ class WorkflowOrchestrator:
             "request": request_audit,
             "prompt_audit": prompt_audit,
         }
+
+    async def _execute_inline_agent_node(
+        self,
+        ctx: OrchestrationContext,
+        node: NodeContext,
+        prompt: str,
+    ) -> dict:
+        """Execute an inline agent node (workflow-specific, not a global NativeAgent).
+
+        Inline agents have their config directly in the node:
+        - skill_names: list of Skill names to load from .agents/skills/
+        - instructions: agent instructions
+        - provider_ref: "workflow_default" to use workflow-level provider config
+        """
+        node_config = node.config
+        skill_names = node_config.get("skill_names", [])
+        instructions = node_config.get("instructions", "")
+        provider_ref = node_config.get("provider_ref", "workflow_default")
+
+        # Get provider from workflow-level config
+        wf_config = ctx.workflow_def.config or {}
+        provider_config = wf_config.get("provider", {})
+
+        if not provider_config:
+            raise ValueError(
+                f"Inline agent node '{node.id}' requires a workflow-level provider. "
+                f"Configure it in Workflow Settings."
+            )
+
+        provider_id = provider_config.get("provider_id", "")
+        if not provider_id:
+            raise ValueError(
+                f"Inline agent node '{node.id}': no provider_id in workflow config. "
+                f"Select a Provider in Workflow Settings."
+            )
+
+        # Resolve provider
+        from ..models import Provider
+        provider = self.db.query(Provider).filter(Provider.id == provider_id).first()
+        if not provider:
+            raise ValueError(f"Provider {provider_id} not found")
+
+        provider_endpoint = self.provider_service.ensure_backend_endpoint_allowed(provider)
+
+        # Load skills by name from the project's .agents/skills/
+        skills = self._load_skills_by_names(ctx.workflow_def.project_id, skill_names)
+
+        # Get workspace root (create if needed)
+        from ..models import NativeAgent
+        # For inline agents, use a virtual workspace based on the project
+        workspace_root = AgentWorkspaceService(self.db).ensure_project_workspace(
+            project_id=ctx.workflow_def.project_id,
+            user_id=ctx.workflow_def.user_id,
+        )
+
+        # Build runtime config
+        runtime_config = {
+            "temperature": float(provider_config.get("temperature", 0.7)),
+            "max_tokens": int(provider_config.get("max_tokens", 4096)),
+        }
+
+        model = provider_config.get("model", "") or provider.default_model or ""
+
+        runner = NativeAgentRunner(
+            NativeAgentRuntimeConfig(
+                agent_id=f"inline:{node.id}",
+                agent_name=node.label or node.id,
+                provider_endpoint=provider_endpoint,
+                api_key=decrypt(provider.api_key_enc),
+                model=model,
+                instructions=instructions,
+                skills=skills,
+                workspace_root=str(workspace_root),
+                project_id=ctx.workflow_def.project_id,
+                user_id=ctx.workflow_def.user_id,
+                temperature=float(runtime_config.get("temperature", 0.7)),
+                max_tokens=int(runtime_config.get("max_tokens", 4096)),
+                runtime_config=runtime_config,
+            )
+        )
+
+        accumulated_text: list[str] = []
+        activated_skills: list[dict] = []
+        prior_messages = node.inputs.get("prior_messages")
+        if not isinstance(prior_messages, list):
+            prior_messages = _chat_log_to_messages(ctx.chat_log)
+        allow_project_context = _node_allows_project_context(node)
+
+        payload = NativeRunPayload(
+            document_id=ctx.document_id,
+            range_start=ctx.target_range.get("from", 0),
+            range_end=ctx.target_range.get("to", 0),
+            inputs={
+                "target_text": ctx.target_text,
+                "instruction": prompt,
+                "allow_project_context": allow_project_context,
+            },
+            query=prompt,
+            conversation_id="",
+            context_files=list(ctx.context_files or []),
+            prior_messages=prior_messages,
+            allow_project_context=allow_project_context,
+        )
+
+        request_audit = {
+            "document_id": payload.document_id,
+            "query": payload.query,
+            "inputs": dict(payload.inputs or {}),
+            "allow_project_context": allow_project_context,
+            "inline_agent": True,
+            "skill_names": skill_names,
+        }
+        prompt_audit = runner.prompt_audit_payload(payload)
+
+        async for evt in runner.stream(payload):
+            data = evt.get("data") or {}
+            if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    accumulated_text.append(delta)
+            elif evt.get("event") == "native.agent.skill.activated" and isinstance(data, dict):
+                activated_skills.append(data)
+
+        text = _strip_thinking("".join(accumulated_text)).strip()
+        _append_agent_turn(
+            ctx,
+            node,
+            agent_id=f"inline:{node.id}",
+            agent_name=node.label or node.id,
+            text=text,
+        )
+        return {
+            "text": text,
+            "agent_id": f"inline:{node.id}",
+            "agent_source": "inline",
+            "model": model,
+            "activated_skills": activated_skills,
+            "request": request_audit,
+            "prompt_audit": prompt_audit,
+        }
+
+    def _load_skills_by_names(self, project_id: str, skill_names: list[str]) -> list:
+        """Load skill blocks by name from the project's .agents/skills/ directory."""
+        if not skill_names:
+            return []
+
+        from ..models import NativeAgent
+        from .agent_registry_service import AgentRegistryService
+
+        # Scan the project's .agents/skills/ directory
+        registry = AgentRegistryService(self.db)
+        all_blocks = registry.skill_blocks_for_project(project_id)
+
+        # Filter by requested names
+        requested = set(skill_names)
+        return [b for b in all_blocks if b.name in requested]
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:
         """Build prompt for agent with context from previous outputs.

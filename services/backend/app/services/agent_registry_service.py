@@ -53,6 +53,45 @@ class AgentRegistryService:
             )
         return self._resolve_external(agent_id, user_id=user_id, require_enabled=require_enabled)
 
+    def skill_blocks_for_project(self, project_id: str) -> list[NativeSkillBlock]:
+        """Scan the project's inline agent workspace for available Skills.
+
+        Used by inline agent nodes in workflows.
+        """
+        from .agent_workspace_service import AgentWorkspaceService
+
+        svc = AgentWorkspaceService(self.db)
+        root = svc.root_for(user_id="", project_id=project_id, agent_id="inline")
+        skills_dir = root / ".agents" / "skills"
+        if not skills_dir.is_dir():
+            return []
+
+        out: list[NativeSkillBlock] = []
+        seen: set[str] = set()
+        for item in sorted(skills_dir.iterdir()):
+            if _is_macos_metadata_file(item):
+                continue
+            if item.is_dir() and (item / "SKILL.md").is_file():
+                folder_name = item.name
+                if folder_name in seen:
+                    continue
+                seen.add(folder_name)
+                meta = _read_skill_meta(item)
+                out.append(
+                    NativeSkillBlock(
+                        id=folder_name,
+                        name=meta.get("name") or folder_name,
+                        version=meta.get("version", 1),
+                        source="workspace",
+                        content="",
+                        aliases=[folder_name],
+                        description=meta.get("description", ""),
+                        tags=meta.get("tags", []),
+                        folder_path=f"skills/{folder_name}",
+                    )
+                )
+        return out
+
     def skill_blocks_for_native_agent(self, agent: NativeAgent, *, user_id: str) -> list[NativeSkillBlock]:
         """Scan the Agent's .agents/skills/ folder on disk for available Skills."""
         workspace = Path(agent.workspace_path) if agent.workspace_path else None

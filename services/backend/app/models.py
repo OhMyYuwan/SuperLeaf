@@ -1112,3 +1112,97 @@ class Notification(Base):
     target_type: Mapped[str] = mapped_column(String(32), default="")
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Skill Optimization (data-driven Skill generation pipeline)
+# ---------------------------------------------------------------------------
+
+
+class OptimizationRun(Base):
+    """One Skill optimization run spanning Data Project and Skill Project.
+
+    Lifecycle: collecting → diagnosing → generating → evaluating → reviewing
+               → published / discarded
+    """
+
+    __tablename__ = "skill_optimization_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    data_project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), index=True
+    )
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id"), index=True)
+    skill_project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    status: Mapped[str] = mapped_column(
+        String(24), default="collecting", index=True
+    )
+    signal_sources: Mapped[dict] = mapped_column(JSON, default=dict)
+    signal_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    diagnosis: Mapped[dict] = mapped_column(JSON, default=dict)
+    generated_artifacts: Mapped[list] = mapped_column(JSON, default=list)
+    eval_results: Mapped[dict] = mapped_column(JSON, default=dict)
+    diff_from_previous: Mapped[str] = mapped_column(Text, default="")
+    review_status: Mapped[str] = mapped_column(String(24), default="pending")
+    review_notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class SkillSedimentation(Base):
+    """Reusable procedure extracted from a conversation (hermes-style).
+
+    Created on user trigger.  After review, status moves to ``merged`` (into a
+    Skill) or ``discarded``.
+    """
+
+    __tablename__ = "skill_sedimentations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, default="")
+    source_conversation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source_project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), index=True, default=""
+    )
+    skill_id: Mapped[str | None] = mapped_column(
+        ForeignKey("skills.id"), index=True, nullable=True
+    )
+    procedure_summary: Mapped[str] = mapped_column(Text, default="")
+    raw_context: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(
+        String(24), default="candidate", index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(16), default="agent")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workflow Templates
+# ---------------------------------------------------------------------------
+
+
+class WorkflowTemplate(Base):
+    """Pre-defined workflow graph with inline agent configs and skill definitions.
+
+    Instantiated into a WorkflowDefinition + Skill files in the target project.
+    """
+
+    __tablename__ = "workflow_templates"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    graph_template: Mapped[dict] = mapped_column(JSON, default=dict)
+    required_skills: Mapped[list] = mapped_column(JSON, default=list)
+    category: Mapped[str] = mapped_column(String(32), default="optimization", index=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

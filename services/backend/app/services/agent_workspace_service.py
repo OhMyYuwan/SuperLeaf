@@ -62,6 +62,21 @@ class AgentWorkspaceService:
     def root_for(self, *, user_id: str, project_id: str, agent_id: str) -> Path:
         return settings.data_dir / "native" / _safe_segment(user_id) / _safe_segment(project_id) / _safe_segment(agent_id)
 
+    def ensure_project_workspace(self, *, project_id: str, user_id: str) -> Path:
+        """Create a workspace for inline agents (no NativeAgent required).
+
+        Used by workflow inline agent nodes that don't have a global NativeAgent.
+        """
+        root = self.root_for(user_id=user_id, project_id=project_id, agent_id="inline")
+        agents_dir = root / ".agents"
+        skills_dir = agents_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        _chmod_private(root)
+        agent_file = agents_dir / "AGENT.md"
+        if not agent_file.exists():
+            agent_file.write_text("# Inline Agent\n\nWorkflow-specific agent workspace.\n", encoding="utf-8")
+        return root
+
     def ensure_workspace(self, agent: NativeAgent, *, agent_md: str | None = None) -> Path:
         root = self.root_for(user_id=agent.owner_user_id, project_id=agent.project_id, agent_id=agent.id)
         agents_dir = root / ".agents"

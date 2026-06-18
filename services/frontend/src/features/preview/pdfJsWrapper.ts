@@ -37,8 +37,8 @@ interface PdfJsPageSize {
 
 interface PdfJsViewportAnchor {
   pageNumber: number
-  left: number
-  top: number
+  xRatio: number
+  yRatio: number
 }
 
 export interface PdfJsWrapperOptions {
@@ -236,16 +236,20 @@ export class PdfJsWrapper {
     if (!this.viewer.pdfDocument || this.viewer.pagesCount <= 0) return null
 
     this.viewer.update()
-    const location = this.viewer._location
-    const pageNumber = Number(location?.pageNumber ?? this.viewer.currentPageNumber)
+    const containerRect = this.viewer.container.getBoundingClientRect()
+    if (containerRect.width <= 0 || containerRect.height <= 0) return null
+
+    const centerX = containerRect.left + containerRect.width / 2
+    const centerY = containerRect.top + containerRect.height / 2
+    const page = this.getPageElementAtViewportPoint(centerX, centerY)
+    const pageNumber = Number(page?.dataset.pageNumber ?? this.viewer.currentPageNumber)
     if (!Number.isFinite(pageNumber) || pageNumber < 1) return null
 
-    const left = Number(location?.left ?? 0)
-    const top = Number(location?.top ?? 0)
+    const pageRect = page?.getBoundingClientRect()
     return {
       pageNumber: Math.min(Math.max(1, Math.round(pageNumber)), this.viewer.pagesCount),
-      left: Number.isFinite(left) ? Math.max(0, left) : 0,
-      top: Number.isFinite(top) ? Math.max(0, top) : 0,
+      xRatio: pageRect && pageRect.width > 0 ? clampRatio((centerX - pageRect.left) / pageRect.width) : 0,
+      yRatio: pageRect && pageRect.height > 0 ? clampRatio((centerY - pageRect.top) / pageRect.height) : 0,
     }
   }
 
@@ -261,10 +265,19 @@ export class PdfJsWrapper {
     let attempts = 0
     const restore = () => {
       if (this.activeUrl === '' || attempts >= 12) return
-      this.viewer.scrollPageIntoView({
-        pageNumber,
-        destArray: [null, { name: 'XYZ' }, anchor.left, anchor.top, null],
-        ignoreDestinationZoom: true,
+      const page = this.getPageElement(pageNumber)
+      if (!page) return
+      const maxLeft = Math.max(0, this.viewer.container.scrollWidth - this.viewer.container.clientWidth)
+      const maxTop = Math.max(0, this.viewer.container.scrollHeight - this.viewer.container.clientHeight)
+      this.viewer.container.scrollTo({
+        left: Math.max(
+          0,
+          Math.min(maxLeft, page.offsetLeft + anchor.xRatio * page.offsetWidth - this.viewer.container.clientWidth / 2),
+        ),
+        top: Math.max(
+          0,
+          Math.min(maxTop, page.offsetTop + anchor.yRatio * page.offsetHeight - this.viewer.container.clientHeight / 2),
+        ),
       })
       this.viewer.currentPageNumber = pageNumber
       this.updateSoon()
@@ -290,6 +303,36 @@ export class PdfJsWrapper {
       pageView?.div ??
       this.viewer.container.querySelector<HTMLElement>(`.page[data-page-number="${pageNumber}"]`)
     )
+  }
+
+  private getPageElementAtViewportPoint(clientX: number, clientY: number): HTMLElement | null {
+    const pages = Array.from(this.viewer.container.querySelectorAll<HTMLElement>('.page'))
+    let closestPage: HTMLElement | null = null
+    let closestDistance = Number.POSITIVE_INFINITY
+
+    for (const page of pages) {
+      const rect = page.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) continue
+
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        return page
+      }
+
+      const clampedX = Math.min(Math.max(clientX, rect.left), rect.right)
+      const clampedY = Math.min(Math.max(clientY, rect.top), rect.bottom)
+      const distance = (clientX - clampedX) ** 2 + (clientY - clampedY) ** 2
+      if (distance < closestDistance) {
+        closestDistance = distance
+        closestPage = page
+      }
+    }
+
+    return closestPage
   }
 
   private getPageSize(pageNumber: number): PdfJsPageSize | null {

@@ -72,7 +72,8 @@ export function CollaborationStatus() {
 
   const handleClick = useCallback((peerId: string) => {
     const cached = cacheRef.current.get(peerId)
-    if (!cached?.peer.cursorPos) return
+    const cursorPos = cached?.peer.cursorPos
+    if (!cursorPos) return
 
     const peer = cached.peer
     const editorStore = useEditorStore.getState()
@@ -83,7 +84,7 @@ export function CollaborationStatus() {
       setTimeout(() => {
         editorStore.setScrollTo({
           documentId: peer.docId!,
-          pos: peer.cursorPos!.head,
+          pos: cursorPos.head,
           seq: Date.now(),
         })
       }, 300)
@@ -92,7 +93,7 @@ export function CollaborationStatus() {
       if (!docId) return
       editorStore.setScrollTo({
         documentId: docId,
-        pos: peer.cursorPos.head,
+        pos: cursorPos.head,
         seq: Date.now(),
       })
     }

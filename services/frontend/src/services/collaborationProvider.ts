@@ -50,7 +50,6 @@ export class CollaborationProvider {
   private _listeners = new Set<(status: ConnectionStatus) => void>()
   private _resetListeners = new Set<() => void>()
   private _cachedToken: string
-  private _tokenRefresher: (() => Promise<string>) | null = null
   private _refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
@@ -175,7 +174,6 @@ export class CollaborationProvider {
    * provider.protocols, so y-websocket's auto-reconnect uses it.
    */
   setTokenRefresher(refresher: () => Promise<string>, intervalMs = 60_000): void {
-    this._tokenRefresher = refresher
     if (this._refreshTimer) clearInterval(this._refreshTimer)
     // Seed the cache immediately
     void refresher().then((token) => {

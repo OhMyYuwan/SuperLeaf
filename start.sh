@@ -846,16 +846,20 @@ Env:
   YLW_COLLAB_PORT=4444     Collab-server port
   YLW_COLLAB_HOST=127.0.0.1
                            Collab-server bind address for local dev
+  YLW_COLLAB_INTERNAL_TOKEN_FILE=
+                           Preferred collab internal token file; generated per run when empty
   YLW_COLLAB_INTERNAL_TOKEN=
-                           Optional collab internal token; generated per run when empty
+                           Compatibility-only plaintext token input; prefer TOKEN_FILE
   SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
                            Local Agent Host bind address
   SL_LOCAL_AGENT_HOST_PORT=8787
                            Local Agent Host port
   SL_LOCAL_AGENT_HOST_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
                            Local Agent Host CORS allow-list
+  SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE=
+                           Preferred local control token file; generated in data dir when empty
   SL_LOCAL_AGENT_HOST_AUTH_TOKEN=
-                           Optional local control token; generated in data dir when empty
+                           Compatibility-only plaintext token input; prefer AUTH_TOKEN_FILE
   SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
                            Local Nanobot base URL proxied by Local Agent Host
   SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=1

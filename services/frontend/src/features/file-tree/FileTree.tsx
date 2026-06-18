@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ChevronDown,
   ChevronRight,
@@ -16,6 +17,7 @@ import {
   Download,
   FileCode,
   FileType,
+  MoreHorizontal,
 } from 'lucide-react'
 import { filesystemApi, type ProjectTree, type TreeFolder, type TreeDoc, type TreeFile } from '../../services/filesystemApi'
 import { useProjectStore } from '../../stores/projectStore'
@@ -46,6 +48,12 @@ function getFileIcon(name: string, format?: string) {
   }
 }
 
+/** Returns true for .docx / .pptx files (case-insensitive). */
+function isMarkdownExtractableFile(file: TreeFile): boolean {
+  const ext = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '')
+  return ext === '.docx' || ext === '.pptx'
+}
+
 interface FileTreeProps {
   tree: ProjectTree | null
   activeDocId: string | null
@@ -74,6 +82,7 @@ interface FileTreeProps {
   onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
   onUploadProjectZip: (file: File) => Promise<void>
   onRenameProject: (name: string) => Promise<void>
+  onExtractMarkdown?: (fileId: string) => Promise<void>
 }
 
 export function FileTree({
@@ -95,6 +104,7 @@ export function FileTree({
   onUploadFolder,
   onUploadProjectZip,
   onRenameProject,
+  onExtractMarkdown,
 }: FileTreeProps) {
   const handleCreateRootFolder = async () => {
     const name = prompt('新建文件夹名称')?.trim()
@@ -201,6 +211,7 @@ export function FileTree({
             onMoveEntity={onMoveEntity}
             onUploadFile={onUploadFile}
             onUploadFolder={onUploadFolder}
+            onExtractMarkdown={onExtractMarkdown}
           />
         )}
       </div>
@@ -234,6 +245,7 @@ interface FolderNodeProps {
   ) => Promise<void>
   onUploadFile: (file: File, folderId?: string | null) => Promise<void>
   onUploadFolder: (files: FileList, parentFolderId?: string | null) => Promise<void>
+  onExtractMarkdown?: (fileId: string) => Promise<void>
 }
 
 function FolderNode({
@@ -253,6 +265,7 @@ function FolderNode({
   onMoveEntity,
   onUploadFile,
   onUploadFolder,
+  onExtractMarkdown,
 }: FolderNodeProps) {
   const expanded = depth === 0 ? true : !!expandedFolderIds[folder.id]
   const leftPad = depth === 0 ? 0 : 10 + (depth - 1) * 14
@@ -260,6 +273,7 @@ function FolderNode({
   const folderId = isRoot ? null : folder.id
 
   const [dragOver, setDragOver] = useState(false)
+  const [extractingFileId, setExtractingFileId] = useState<string | null>(null)
   const [localDragPayloadKind, setLocalDragPayloadKind] = useState<LocalDragPayloadKind>(null)
   const expandTimerRef = useRef<number | null>(null)
 
@@ -378,49 +392,42 @@ function FolderNode({
     if (id) onOpenDoc(id)
   }
 
-  const handleRenameFolder = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleRenameFolder = () => {
     const name = prompt('重命名文件夹', folder.name)?.trim()
     if (!name || name === folder.name) return
     onRenameEntity('folder', folder.id, name)
   }
 
-  const handleDeleteFolder = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleDeleteFolder = () => {
     if (!confirm(`确定删除文件夹「${folder.name}」？\n将同时删除所有子文件夹和文档。`)) return
     onDeleteEntity('folder', folder.id)
   }
 
-  const handleUpload = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleUpload = () => {
     triggerUpload((file) => {
       if (!confirmReplaceExisting(folder, file.name)) return
       onUploadFile(file, folderId)
     })
   }
 
-  const handleUploadFolder = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleUploadFolder = () => {
     if (!confirmFolderUploadReplace()) return
     triggerUploadFolder((files) => onUploadFolder(files, folderId))
   }
 
-  const handleRenameDoc = (e: React.MouseEvent, doc: TreeDoc) => {
-    e.stopPropagation()
+  const handleRenameDoc = (doc: TreeDoc) => {
     const name = prompt('重命名文档', doc.name)?.trim()
     if (!name || name === doc.name) return
     if (!confirmReplaceExisting(folder, name, doc.id)) return
     onRenameEntity('doc', doc.id, name)
   }
 
-  const handleDeleteDoc = (e: React.MouseEvent, doc: TreeDoc) => {
-    e.stopPropagation()
+  const handleDeleteDoc = (doc: TreeDoc) => {
     if (!confirm(`确定删除文档「${doc.name}」？`)) return
     onDeleteEntity('doc', doc.id)
   }
 
-  const handleDownloadDoc = async (e: React.MouseEvent, doc: TreeDoc) => {
-    e.stopPropagation()
+  const handleDownloadDoc = async (doc: TreeDoc) => {
     try {
       const backendDoc = await filesystemApi.getDoc(doc.id)
       const blob = new Blob([backendDoc.content ?? ''], {
@@ -433,27 +440,34 @@ function FolderNode({
     }
   }
 
-  const handleRenameFile = (e: React.MouseEvent, file: TreeFile) => {
-    e.stopPropagation()
+  const handleRenameFile = (file: TreeFile) => {
     const name = prompt('重命名文件', file.name)?.trim()
     if (!name || name === file.name) return
     if (!confirmReplaceExisting(folder, name, file.id)) return
     onRenameEntity('file', file.id, name)
   }
 
-  const handleDeleteFile = (e: React.MouseEvent, file: TreeFile) => {
-    e.stopPropagation()
+  const handleDeleteFile = (file: TreeFile) => {
     if (!confirm(`确定删除文件「${file.name}」？`)) return
     onDeleteEntity('file', file.id)
   }
 
-  const handleDownloadFile = (e: React.MouseEvent, file: TreeFile) => {
-    e.stopPropagation()
+  const handleDownloadFile = (file: TreeFile) => {
     const a = document.createElement('a')
     a.href = filesystemApi.fileUrl(file.id)
     a.download = file.name
     a.rel = 'noopener'
     a.click()
+  }
+
+  const handleExtractMarkdown = async (file: TreeFile) => {
+    if (!onExtractMarkdown || extractingFileId === file.id) return
+    setExtractingFileId(file.id)
+    try {
+      await onExtractMarkdown(file.id)
+    } finally {
+      setExtractingFileId(null)
+    }
   }
 
   const children = (
@@ -477,6 +491,7 @@ function FolderNode({
           onMoveEntity={onMoveEntity}
           onUploadFile={onUploadFile}
           onUploadFolder={onUploadFolder}
+          onExtractMarkdown={onExtractMarkdown}
         />
       ))}
 
@@ -494,27 +509,49 @@ function FolderNode({
           >
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{doc.name}</span>
-            <span className="tree-actions inline">
-              <button
-                className="tree-action-btn"
-                title="下载"
-                onClick={(e) => void handleDownloadDoc(e, doc)}
-              >
-                <Download size={11} />
-              </button>
-              <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameDoc(e, doc)}>
-                <Pencil size={11} />
-              </button>
-              <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteDoc(e, doc)}>
-                <Trash2 size={11} />
-              </button>
-            </span>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  className="tree-action-btn tree-row-more-btn"
+                  title="更多操作"
+                  aria-label={`${doc.name} 的更多操作`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreHorizontal size={13} />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="tree-action-menu" align="end" sideOffset={4}>
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item"
+                    onSelect={() => void handleDownloadDoc(doc)}
+                  >
+                    <Download size={14} /> 下载
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item"
+                    onSelect={() => handleRenameDoc(doc)}
+                  >
+                    <Pencil size={14} /> 重命名
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="tree-action-menu-sep" />
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item danger"
+                    onSelect={() => handleDeleteDoc(doc)}
+                  >
+                    <Trash2 size={14} /> 删除
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
         )
       })}
 
       {folder.files.map((file) => {
         const { icon: Icon, color } = getFileIcon(file.name)
+        const canExtract = isMarkdownExtractableFile(file)
         return (
           <div
             key={file.id}
@@ -527,17 +564,51 @@ function FolderNode({
           >
             <Icon size={14} style={{ color }} />
             <span className="tree-node-name">{file.name}</span>
-            <span className="tree-actions inline">
-              <button className="tree-action-btn" title="下载" onClick={(e) => handleDownloadFile(e, file)}>
-                <Download size={11} />
-              </button>
-              <button className="tree-action-btn" title="重命名" onClick={(e) => handleRenameFile(e, file)}>
-                <Pencil size={11} />
-              </button>
-              <button className="tree-action-btn" title="删除" onClick={(e) => handleDeleteFile(e, file)}>
-                <Trash2 size={11} />
-              </button>
-            </span>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  className="tree-action-btn tree-row-more-btn"
+                  title="更多操作"
+                  aria-label={`${file.name} 的更多操作`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreHorizontal size={13} />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="tree-action-menu" align="end" sideOffset={4}>
+                  {canExtract && (
+                    <DropdownMenu.Item
+                      className="tree-action-menu-item"
+                      disabled={extractingFileId === file.id}
+                      onSelect={() => void handleExtractMarkdown(file)}
+                    >
+                      <FileText size={14} /> 提取为 Markdown
+                    </DropdownMenu.Item>
+                  )}
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item"
+                    onSelect={() => handleDownloadFile(file)}
+                  >
+                    <Download size={14} /> 下载
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item"
+                    onSelect={() => handleRenameFile(file)}
+                  >
+                    <Pencil size={14} /> 重命名
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="tree-action-menu-sep" />
+                  <DropdownMenu.Item
+                    className="tree-action-menu-item danger"
+                    onSelect={() => handleDeleteFile(file)}
+                  >
+                    <Trash2 size={14} /> 删除
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
         )
       })}
@@ -580,26 +651,42 @@ function FolderNode({
         </button>
         {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
         <span className="tree-node-name">{folder.name}</span>
-        <span className="tree-actions inline">
-          <button className="tree-action-btn" title="上传文件" onClick={handleUpload}>
-            <Upload size={11} />
-          </button>
-          <button className="tree-action-btn" title="上传文件夹" onClick={handleUploadFolder}>
-            <FolderUp size={11} />
-          </button>
-          <button className="tree-action-btn" title="新建子文件夹" onClick={handleCreateSubFolder}>
-            <FolderPlus size={12} />
-          </button>
-          <button className="tree-action-btn" title="新建文档" onClick={handleCreateDoc}>
-            <Plus size={12} />
-          </button>
-          <button className="tree-action-btn" title="重命名" onClick={handleRenameFolder}>
-            <Pencil size={11} />
-          </button>
-          <button className="tree-action-btn" title="删除" onClick={handleDeleteFolder}>
-            <Trash2 size={11} />
-          </button>
-        </span>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className="tree-action-btn tree-row-more-btn"
+              title="更多操作"
+              aria-label={`${folder.name} 的更多操作`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MoreHorizontal size={13} />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content className="tree-action-menu" align="end" sideOffset={4}>
+              <DropdownMenu.Item className="tree-action-menu-item" onSelect={handleUpload}>
+                <Upload size={14} /> 上传文件
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="tree-action-menu-item" onSelect={handleUploadFolder}>
+                <FolderUp size={14} /> 上传文件夹
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="tree-action-menu-item" onSelect={handleCreateSubFolder}>
+                <FolderPlus size={14} /> 新建子文件夹
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="tree-action-menu-item" onSelect={handleCreateDoc}>
+                <Plus size={14} /> 新建文档
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="tree-action-menu-sep" />
+              <DropdownMenu.Item className="tree-action-menu-item" onSelect={handleRenameFolder}>
+                <Pencil size={14} /> 重命名
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="tree-action-menu-item danger" onSelect={handleDeleteFolder}>
+                <Trash2 size={14} /> 删除
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
 
       {expanded && children}

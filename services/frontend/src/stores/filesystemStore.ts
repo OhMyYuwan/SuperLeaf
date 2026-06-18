@@ -81,6 +81,7 @@ interface FilesystemState {
 
   setPreviewFile: (file: TreeFile | null) => void
   convertFileToDoc: (fileId: string) => Promise<string>
+  extractFileToMarkdown: (fileId: string) => Promise<string>
 }
 
 export const useFilesystemStore = create<FilesystemState>((set, get) => ({
@@ -388,6 +389,12 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
 
   convertFileToDoc: async (fileId) => {
     const doc = await filesystemApi.convertFileToDoc(fileId)
+    await get().loadTree()
+    return doc.id
+  },
+
+  extractFileToMarkdown: async (fileId) => {
+    const doc = await filesystemApi.extractMarkdown(fileId)
     await get().loadTree()
     return doc.id
   },

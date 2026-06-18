@@ -28,6 +28,7 @@ from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.collab_audit_log import record_collab_event
 from ..services.event_bus import bus
+from ..services.markitdown_service import MarkItDownService
 from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
 from ..services.project_fs_service import (
     DocVersionConflictError,
@@ -640,6 +641,65 @@ def convert_file_to_doc(
         folder_id=doc.folder_id,
         name=doc.name,
         format=doc.format,
+        doc=_tree_doc_payload(doc),
+    )
+    return DocOut.model_validate(doc)
+
+
+@router.post("/api/files/{file_id}/extract-markdown", response_model=DocOut, status_code=201)
+def extract_file_markdown(
+    file_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
+) -> DocOut:
+    """Extract a DOCX/PPTX FileBlob into a sibling Markdown Doc.
+
+    The original FileBlob is preserved.  The new Doc is created in the same
+    folder with a non-conflicting ``.md`` name.
+    """
+    f = db.get(FileBlob, file_id)
+    if f is None or f.project_id != project.id:
+        raise HTTPException(404, "file not found")
+
+    md_svc = MarkItDownService()
+    if not md_svc.is_supported(f.name):
+        raise HTTPException(
+            400,
+            f"Unsupported format: {f.name}. Only .docx and .pptx can be extracted.",
+        )
+
+    try:
+        result = md_svc.extract_file_blob(f.blob or b"", f.name, f.mime_type)
+    except Exception as exc:
+        raise HTTPException(500, f"Extraction failed: {exc}") from exc
+
+    svc = ProjectFsService(db, project)
+    try:
+        safe_name = svc.extracted_markdown_name_for(f.folder_id, f.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        doc = svc.create_doc(
+            folder_id=f.folder_id,
+            name=safe_name,
+            format="md",
+            content=result.markdown,
+        )
+    except ProjectEntryNameError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    _publish_tree_changed(
+        project,
+        "file.extracted_to_markdown",
+        origin_client_id=x_client_id,
+        file_id=file_id,
+        doc_id=doc.id,
+        folder_id=doc.folder_id,
+        name=doc.name,
+        format=doc.format,
+        source_name=f.name,
         doc=_tree_doc_payload(doc),
     )
     return DocOut.model_validate(doc)

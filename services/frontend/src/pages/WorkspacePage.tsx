@@ -125,6 +125,7 @@ export function WorkspacePage() {
   const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
   const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
   const convertFileToDoc = useFilesystemStore((s) => s.convertFileToDoc)
+  const extractFileToMarkdown = useFilesystemStore((s) => s.extractFileToMarkdown)
 
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
@@ -591,6 +592,11 @@ export function WorkspacePage() {
     if (!previewColumn) setVisibility({ previewColumn: true })
   }
 
+  const handleExtractMarkdown = async (fileId: string) => {
+    const docId = await extractFileToMarkdown(fileId)
+    await handleOpenDoc(docId)
+  }
+
   const handleRunWorkflow = (workflowId: string, instruction: string) => {
     if (!activeDocumentId) {
       alert('请先选择一个文件')
@@ -827,6 +833,7 @@ export function WorkspacePage() {
                           onUploadFolder={uploadFolder}
                           onUploadProjectZip={uploadProjectZip}
                           onRenameProject={renameProject}
+                          onExtractMarkdown={handleExtractMarkdown}
                         />
                       </Panel>
                       {!outlineCollapsed && (

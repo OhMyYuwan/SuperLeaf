@@ -948,7 +948,11 @@ export const useAnnotationStore = create<AnnotationState>()(
     try {
       ;[evaluations, reviewStates, annotations] = await Promise.all([
         annotationEvaluationApi.listByDoc(docId),
-        annotationEvaluationApi.listReviewStatesByDoc(docId),
+        annotationEvaluationApi.listReviewStatesByDoc(docId).catch((err) => {
+          // 404 is expected when no review states exist — not an error.
+          if (err instanceof BackendError && err.status === 404) return [] as ReviewStateOut[]
+          throw err
+        }),
         annotationEvaluationApi.listAnnotationsByDoc(docId),
       ])
     } catch (err) {

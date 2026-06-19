@@ -1154,6 +1154,14 @@ API_POLICIES: tuple[ApiPolicy, ...] = (
         "require_write_access",
     ),
     ApiPolicy(
+        "POST",
+        "/api/files/{file_id}/extract-markdown",
+        "file_blob",
+        "write_content",
+        "session",
+        "require_write_access + MarkItDownService whitelist .docx/.pptx",
+    ),
+    ApiPolicy(
         "GET",
         "/api/auth/collab-token",
         "doc",

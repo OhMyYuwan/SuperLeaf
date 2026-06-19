@@ -30,14 +30,17 @@ from .mcp_config_service import McpConfigService
 from .nanobot_client import NanobotClient
 from .native_agent_runner import NativeAgentRunner, NativeAgentRuntimeConfig, NativeRunPayload
 from .provider_service import ProviderService
+from .skill_release_cache_service import SkillReleaseCacheError, SkillReleaseCacheService
 
 
 @dataclass
 class NodeContext:
     """Execution context for a single node."""
+
     node_id: str
     node_type: str
     config: dict
+    label: str = ""
     inputs: dict = field(default_factory=dict)
     outputs: dict = field(default_factory=dict)
     status: str = "pending"  # pending | running | completed | failed
@@ -49,6 +52,7 @@ class NodeContext:
 @dataclass
 class OrchestrationContext:
     """Global context for workflow execution."""
+
     workflow_def: WorkflowDefinition
     workflow_run: WorkflowRun
     document_id: str
@@ -94,11 +98,7 @@ class WorkflowOrchestrator:
         """Execute a workflow definition and stream events."""
         # Load workflow definition
         workflow_def = self.db.get(WorkflowDefinition, workflow_def_id)
-        if (
-            not workflow_def
-            or workflow_def.project_id != project_id
-            or workflow_def.user_id != user_id
-        ):
+        if not workflow_def or workflow_def.project_id != project_id or workflow_def.user_id != user_id:
             raise ValueError(f"Workflow definition {workflow_def_id} not found")
         if document_id:
             doc = self.db.get(Doc, document_id)
@@ -141,6 +141,7 @@ class WorkflowOrchestrator:
                 node_id=node["id"],
                 node_type=node["type"],
                 config=node.get("config", {}),
+                label=node.get("label", ""),
             )
 
         # Execute based on mode
@@ -171,8 +172,7 @@ class WorkflowOrchestrator:
             # all_outputs list so existing parallel/pipeline/roundtable
             # workflows keep working.
             output_nodes = [
-                nc for nc in ctx.nodes.values()
-                if nc.node_type == "output" and nc.status == "completed"
+                nc for nc in ctx.nodes.values() if nc.node_type == "output" and nc.status == "completed"
             ]
             if output_nodes:
                 if len(output_nodes) == 1:
@@ -207,10 +207,11 @@ class WorkflowOrchestrator:
         yield {"event": "workflow.started", "data": {"mode": "parallel"}}
         _seed_chat_from_request(ctx)
 
-        # Find all agent nodes
+        # Find all agent nodes (including inline-agent nodes)
         agent_nodes = [
-            node for node in ctx.workflow_def.graph.get("nodes", [])
-            if node["type"] == "agent"
+            node
+            for node in ctx.workflow_def.graph.get("nodes", [])
+            if node["type"] in ("agent", "inline-agent")
         ]
 
         if not agent_nodes:
@@ -220,6 +221,9 @@ class WorkflowOrchestrator:
         tasks = []
         for node in agent_nodes:
             ctx.nodes[node["id"]].inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
+            # For inline-agent nodes, set inline_agent=True before execution
+            if node["type"] == "inline-agent":
+                ctx.nodes[node["id"]].config["inline_agent"] = True
             task = self._execute_agent_node(ctx, node["id"])
             tasks.append(task)
 
@@ -229,24 +233,24 @@ class WorkflowOrchestrator:
         # Collect outputs
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                    yield {
-                        "event": "node.failed",
-                        "data": {
-                            "node_id": agent_nodes[i]["id"],
-                            "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
-                            "error": str(result),
-                        },
-                    }
+                yield {
+                    "event": "node.failed",
+                    "data": {
+                        "node_id": agent_nodes[i]["id"],
+                        "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
+                        "error": str(result),
+                    },
+                }
             else:
                 ctx.all_outputs.append(result)
                 yield {
                     "event": "node.completed",
-                        "data": {
-                            "node_id": agent_nodes[i]["id"],
-                            "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
-                            "output": result,
-                        },
-                    }
+                    "data": {
+                        "node_id": agent_nodes[i]["id"],
+                        "input": ctx.nodes[agent_nodes[i]["id"]].inputs,
+                        "output": result,
+                    },
+                }
 
         # Merge results
         merged = self._merge_outputs(ctx.all_outputs, strategy="concat")
@@ -269,11 +273,15 @@ class WorkflowOrchestrator:
         for node_id in execution_order:
             node = ctx.nodes[node_id]
 
-            if node.node_type == "agent":
+            if node.node_type in ("agent", "inline-agent"):
                 # Pass previous output as context
                 if previous_output:
                     node.inputs["previous_output"] = previous_output
                 node.inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
+
+                # For inline-agent nodes, set inline_agent=True before execution
+                if node.node_type == "inline-agent":
+                    node.config["inline_agent"] = True
 
                 output = await self._execute_agent_node(ctx, node_id)
                 previous_output = output
@@ -293,9 +301,11 @@ class WorkflowOrchestrator:
         yield {"event": "workflow.started", "data": {"mode": "roundtable"}}
         _seed_chat_from_request(ctx)
 
+        # Find all agent nodes (including inline-agent nodes)
         agent_nodes = [
-            node for node in ctx.workflow_def.graph.get("nodes", [])
-            if node["type"] == "agent"
+            node
+            for node in ctx.workflow_def.graph.get("nodes", [])
+            if node["type"] in ("agent", "inline-agent")
         ]
 
         if len(agent_nodes) < 2:
@@ -322,6 +332,10 @@ class WorkflowOrchestrator:
                 ctx.nodes[node["id"]].inputs["previous_outputs"] = ctx.all_outputs
                 ctx.nodes[node["id"]].inputs["current_round"] = round_num
                 ctx.nodes[node["id"]].inputs["prior_messages"] = _chat_log_to_messages(ctx.chat_log)
+
+                # For inline-agent nodes, set inline_agent=True before execution
+                if node["type"] == "inline-agent":
+                    ctx.nodes[node["id"]].config["inline_agent"] = True
 
                 output = await self._execute_agent_node(ctx, node["id"])
                 round_outputs.append(output)
@@ -361,10 +375,7 @@ class WorkflowOrchestrator:
         # _execute_loop_node instead.
         loop_ids = {n["id"] for n in nodes if n.get("type") == "loop"}
         child_ids = {n["id"] for n in nodes if _parent_id(n) in loop_ids}
-        top_nodes = [
-            n for n in nodes
-            if n.get("type") != "loop" and n["id"] not in child_ids
-        ]
+        top_nodes = [n for n in nodes if n.get("type") != "loop" and n["id"] not in child_ids]
         top_node_ids = {n["id"] for n in top_nodes}
         # Also expose loop containers themselves as top-level nodes so they can
         # participate in the outer topology.
@@ -373,10 +384,7 @@ class WorkflowOrchestrator:
                 top_nodes.append(ln)
                 top_node_ids.add(ln["id"])
 
-        top_edges = [
-            e for e in edges
-            if _edge_source(e) in top_node_ids and _edge_target(e) in top_node_ids
-        ]
+        top_edges = [e for e in edges if _edge_source(e) in top_node_ids and _edge_target(e) in top_node_ids]
 
         # Build dependency graph
         dependencies = {node["id"]: [] for node in top_nodes}
@@ -435,8 +443,7 @@ class WorkflowOrchestrator:
             # Wait for at least one task to complete
             if pending_tasks:
                 done, pending = await asyncio.wait(
-                    pending_tasks.values(),
-                    return_when=asyncio.FIRST_COMPLETED
+                    pending_tasks.values(), return_when=asyncio.FIRST_COMPLETED
                 )
 
                 # Process completed tasks
@@ -519,6 +526,10 @@ class WorkflowOrchestrator:
         node = ctx.nodes[node_id]
 
         if node.node_type == "agent":
+            return await self._execute_agent_node(ctx, node_id)
+        elif node.node_type == "inline-agent":
+            # Inline agent nodes are treated as agent nodes with inline_agent=True
+            node.config["inline_agent"] = True
             return await self._execute_agent_node(ctx, node_id)
         elif node.node_type == "workflow":
             return await self._execute_workflow_node(ctx, node_id)
@@ -693,15 +704,17 @@ class WorkflowOrchestrator:
             node.finished_at = datetime.utcnow()
 
             # Add to trace
-            ctx.workflow_run.trace.append({
-                "node_id": node_id,
-                "node_type": "workflow",
-                "nested_workflow_id": nested_workflow_id,
-                "started_at": node.started_at.isoformat(),
-                "finished_at": node.finished_at.isoformat(),
-                "status": "completed",
-                "output": output,
-            })
+            ctx.workflow_run.trace.append(
+                {
+                    "node_id": node_id,
+                    "node_type": "workflow",
+                    "nested_workflow_id": nested_workflow_id,
+                    "started_at": node.started_at.isoformat(),
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "completed",
+                    "output": output,
+                }
+            )
             self.db.commit()
 
             return output
@@ -711,14 +724,16 @@ class WorkflowOrchestrator:
             node.error = str(e)
             node.finished_at = datetime.utcnow()
 
-            ctx.workflow_run.trace.append({
-                "node_id": node_id,
-                "node_type": "workflow",
-                "started_at": node.started_at.isoformat() if node.started_at else None,
-                "finished_at": node.finished_at.isoformat(),
-                "status": "failed",
-                "error": str(e),
-            })
+            ctx.workflow_run.trace.append(
+                {
+                    "node_id": node_id,
+                    "node_type": "workflow",
+                    "started_at": node.started_at.isoformat() if node.started_at else None,
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
             self.db.commit()
             raise
 
@@ -829,8 +844,7 @@ class WorkflowOrchestrator:
         child_ids = {n["id"] for n in child_nodes}
         # Edges fully contained inside this loop's child set.
         child_edges = [
-            e for e in graph_edges
-            if _edge_source(e) in child_ids and _edge_target(e) in child_ids
+            e for e in graph_edges if _edge_source(e) in child_ids and _edge_target(e) in child_ids
         ]
         entry_child_ids = _loop_entry_child_ids(graph_edges, node_id, child_ids)
         exit_child_ids = _loop_exit_child_ids(graph_edges, node_id, child_ids)
@@ -847,11 +861,7 @@ class WorkflowOrchestrator:
                 if next_round_feedback is not None
                 else dict(node.inputs.get("dependency_outputs") or {})
             )
-            initial_inputs = {
-                child_id: loop_inputs
-                for child_id in entry_child_ids
-                if loop_inputs
-            }
+            initial_inputs = {child_id: loop_inputs for child_id in entry_child_ids if loop_inputs}
             outputs_this_round, traces_this_round = await self._execute_subgraph_once(
                 ctx,
                 child_nodes,
@@ -947,9 +957,7 @@ class WorkflowOrchestrator:
             ready = []
 
             if pending:
-                done, _ = await asyncio.wait(
-                    pending.values(), return_when=asyncio.FIRST_COMPLETED
-                )
+                done, _ = await asyncio.wait(pending.values(), return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     done_id = next((k for k, v in pending.items() if v == task), None)
                     if not done_id:
@@ -986,6 +994,32 @@ class WorkflowOrchestrator:
         try:
             # Get agent configuration
             agent_id = node.config.get("agentId") or node.config.get("agent_id")
+
+            # Check for inline agent (workflow-specific, not a global NativeAgent)
+            is_inline = _is_inline_agent_config(node.config)
+
+            if is_inline:
+                # Inline agent: build config directly from node config
+                prompt = self._build_agent_prompt(ctx, node)
+                output = await self._execute_inline_agent_node(ctx, node, prompt)
+                node.outputs = output
+                node.status = "completed"
+                node.finished_at = datetime.utcnow()
+                ctx.workflow_run.trace.append(
+                    {
+                        "node_id": node_id,
+                        "agent_id": f"inline:{node_id}",
+                        "agent_source": "inline",
+                        "started_at": node.started_at.isoformat(),
+                        "finished_at": node.finished_at.isoformat(),
+                        "status": "completed",
+                        "input": node.inputs,
+                        "output": output,
+                    }
+                )
+                self.db.commit()
+                return output
+
             if not agent_id:
                 raise ValueError(f"Node {node_id} missing agentId")
 
@@ -1006,16 +1040,18 @@ class WorkflowOrchestrator:
                 node.outputs = output
                 node.status = "completed"
                 node.finished_at = datetime.utcnow()
-                ctx.workflow_run.trace.append({
-                    "node_id": node_id,
-                    "agent_id": agent_id,
-                    "agent_source": "native",
-                    "started_at": node.started_at.isoformat(),
-                    "finished_at": node.finished_at.isoformat(),
-                    "status": "completed",
-                    "input": node.inputs,
-                    "output": output,
-                })
+                ctx.workflow_run.trace.append(
+                    {
+                        "node_id": node_id,
+                        "agent_id": agent_id,
+                        "agent_source": "native",
+                        "started_at": node.started_at.isoformat(),
+                        "finished_at": node.finished_at.isoformat(),
+                        "status": "completed",
+                        "input": node.inputs,
+                        "output": output,
+                    }
+                )
                 self.db.commit()
                 return output
 
@@ -1080,15 +1116,17 @@ class WorkflowOrchestrator:
             node.finished_at = datetime.utcnow()
 
             # Add to trace
-            ctx.workflow_run.trace.append({
-                "node_id": node_id,
-                "agent_id": agent_id,
-                "started_at": node.started_at.isoformat(),
-                "finished_at": node.finished_at.isoformat(),
-                "status": "completed",
-                "input": node.inputs,
-                "output": output,
-            })
+            ctx.workflow_run.trace.append(
+                {
+                    "node_id": node_id,
+                    "agent_id": agent_id,
+                    "started_at": node.started_at.isoformat(),
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "completed",
+                    "input": node.inputs,
+                    "output": output,
+                }
+            )
             self.db.commit()
 
             return output
@@ -1098,13 +1136,15 @@ class WorkflowOrchestrator:
             node.error = str(e)
             node.finished_at = datetime.utcnow()
 
-            ctx.workflow_run.trace.append({
-                "node_id": node_id,
-                "started_at": node.started_at.isoformat() if node.started_at else None,
-                "finished_at": node.finished_at.isoformat(),
-                "status": "failed",
-                "error": str(e),
-            })
+            ctx.workflow_run.trace.append(
+                {
+                    "node_id": node_id,
+                    "started_at": node.started_at.isoformat() if node.started_at else None,
+                    "finished_at": node.finished_at.isoformat(),
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
             self.db.commit()
             raise
 
@@ -1205,6 +1245,242 @@ class WorkflowOrchestrator:
             "request": request_audit,
             "prompt_audit": prompt_audit,
         }
+
+    async def _execute_inline_agent_node(
+        self,
+        ctx: OrchestrationContext,
+        node: NodeContext,
+        prompt: str,
+    ) -> dict:
+        """Execute an inline agent node (workflow-specific, not a global NativeAgent).
+
+        Inline agents have their config directly in the node:
+        - skill_names: list of Skill names to load from .agents/skills/
+        - instructions: agent instructions
+        - provider: node-local Native Provider config for this temporary Agent
+        """
+        node_config = node.config
+        skill_names = _string_list(node_config.get("skill_names"))
+        instructions = node_config.get("instructions", "")
+        wf_config = ctx.workflow_def.config or {}
+        provider_config = _inline_agent_provider_config(node_config, wf_config)
+
+        if not isinstance(provider_config, dict) or not provider_config:
+            raise ValueError(
+                f"Inline agent node '{node.node_id}' requires a node-level provider. "
+                f"Configure it in the node settings."
+            )
+
+        provider_id = provider_config.get("provider_id", "")
+        if not provider_id:
+            raise ValueError(
+                f"Inline agent node '{node.node_id}': no provider_id in node provider config. "
+                f"Select a Provider in the node settings."
+            )
+
+        provider = self.provider_service.get(
+            str(provider_id),
+            user_id=ctx.workflow_def.user_id,
+        )
+        if not provider:
+            raise ValueError(f"Provider {provider_id} not found")
+        if provider.kind != "native":
+            raise ValueError(f"Inline agent node '{node.node_id}' requires a native Provider")
+
+        provider_endpoint = self.provider_service.ensure_backend_endpoint_allowed(provider)
+
+        workspace_root, skills = self._prepare_inline_agent_workspace_and_skills(
+            ctx=ctx,
+            node=node,
+            skill_names=skill_names,
+            instructions=str(instructions or ""),
+        )
+
+        # Build runtime config. Inline agents store MCP/tool choices in the
+        # same shape as NativeAgent.runtime_config; provider selection and model
+        # overrides live on the node for migrated workflows.
+        runtime_config_input = {}
+        if isinstance(node_config.get("runtime_config"), dict):
+            runtime_config_input.update(node_config["runtime_config"])
+        for key in ("mcp_server_ids", "mcp_preset_ids", "mcp_servers"):
+            if key in node_config and key not in runtime_config_input:
+                runtime_config_input[key] = node_config[key]
+        runtime_config_input.setdefault("temperature", provider_config.get("temperature", 0.7))
+        runtime_config_input.setdefault("max_tokens", provider_config.get("max_tokens", 4096))
+        runtime_config = McpConfigService(self.db).resolve_runtime_config(
+            user_id=ctx.workflow_def.user_id,
+            runtime_config=runtime_config_input,
+        )
+
+        provider_meta = provider.meta or {}
+        model = (
+            str(provider_config.get("model") or "").strip()
+            or str(provider_meta.get("codex_model") or "").strip()
+            or str(provider_meta.get("default_model") or "").strip()
+            or str(provider_meta.get("model") or "").strip()
+            or str(getattr(provider, "default_model", "") or "").strip()
+        )
+        agent_name = node.label or str(node_config.get("name") or node_config.get("label") or node.node_id)
+
+        runner = NativeAgentRunner(
+            NativeAgentRuntimeConfig(
+                agent_id=f"inline:{node.node_id}",
+                agent_name=agent_name,
+                provider_endpoint=provider_endpoint,
+                api_key=decrypt(provider.api_key_enc),
+                model=model,
+                instructions=instructions,
+                skills=skills,
+                workspace_root=str(workspace_root),
+                project_id=ctx.workflow_def.project_id,
+                user_id=ctx.workflow_def.user_id,
+                temperature=float(runtime_config.get("temperature", 0.7)),
+                max_tokens=int(runtime_config.get("max_tokens", 4096)),
+                runtime_config=runtime_config,
+            )
+        )
+
+        accumulated_text: list[str] = []
+        activated_skills: list[dict] = []
+        prior_messages = node.inputs.get("prior_messages")
+        if not isinstance(prior_messages, list):
+            prior_messages = _chat_log_to_messages(ctx.chat_log)
+        allow_project_context = _node_allows_project_context(node)
+
+        payload = NativeRunPayload(
+            document_id=ctx.document_id,
+            range_start=ctx.target_range.get("from", 0),
+            range_end=ctx.target_range.get("to", 0),
+            inputs={
+                "target_text": ctx.target_text,
+                "instruction": prompt,
+                "allow_project_context": allow_project_context,
+            },
+            query=prompt,
+            conversation_id="",
+            context_files=list(ctx.context_files or []),
+            prior_messages=prior_messages,
+            allow_project_context=allow_project_context,
+        )
+
+        request_audit = {
+            "document_id": payload.document_id,
+            "query": payload.query,
+            "inputs": dict(payload.inputs or {}),
+            "allow_project_context": allow_project_context,
+            "inline_agent": True,
+            "skill_names": skill_names,
+            "provider_id": str(provider_id),
+        }
+        prompt_audit = runner.prompt_audit_payload(payload)
+
+        async for evt in runner.stream(payload):
+            data = evt.get("data") or {}
+            if evt.get("event") == "native.agent.output.delta" and isinstance(data, dict):
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    accumulated_text.append(delta)
+            elif evt.get("event") == "native.agent.skill.activated" and isinstance(data, dict):
+                activated_skills.append(data)
+
+        text = _strip_thinking("".join(accumulated_text)).strip()
+        _append_agent_turn(
+            ctx,
+            node,
+            agent_id=f"inline:{node.node_id}",
+            agent_name=agent_name,
+            text=text,
+        )
+        return {
+            "text": text,
+            "agent_id": f"inline:{node.node_id}",
+            "agent_source": "inline",
+            "model": model,
+            "activated_skills": activated_skills,
+            "request": request_audit,
+            "prompt_audit": prompt_audit,
+        }
+
+    def _prepare_inline_agent_workspace_and_skills(
+        self,
+        *,
+        ctx: OrchestrationContext,
+        node: NodeContext,
+        skill_names: list[str],
+        instructions: str,
+    ) -> tuple[object, list]:
+        skill_refs = node.config.get("skills")
+        if isinstance(skill_refs, list) and skill_refs:
+            workspace = AgentWorkspaceService(self.db)
+            root = workspace.ensure_inline_workflow_node_workspace(
+                project_id=ctx.workflow_def.project_id,
+                user_id=ctx.workflow_def.user_id,
+                workflow_id=ctx.workflow_def.id,
+                node_id=node.node_id,
+                agent_md=instructions,
+            )
+            cache = SkillReleaseCacheService(self.db)
+            seen_aliases: set[str] = set()
+            for raw_ref in skill_refs:
+                if not isinstance(raw_ref, dict):
+                    raise ValueError(f"Inline agent node '{node.node_id}' has an invalid Skill ref")
+                try:
+                    resolved = cache.resolve_skill_ref(user_id=ctx.workflow_def.user_id, ref=raw_ref)
+                except SkillReleaseCacheError as exc:
+                    raise ValueError(f"Inline agent node '{node.node_id}': {exc}") from exc
+                if resolved.alias in seen_aliases:
+                    raise ValueError(
+                        f"Inline agent node '{node.node_id}' has duplicate Skill alias '{resolved.alias}'"
+                    )
+                seen_aliases.add(resolved.alias)
+                workspace.install_skill_reference_at_root(
+                    root,
+                    folder_name=resolved.alias,
+                    target_path=resolved.target_path,
+                    manifest=resolved.manifest,
+                    metadata={
+                        "alias": resolved.alias,
+                        "release_id": resolved.release_id,
+                        "skill_id": resolved.skill_id,
+                        "storage_scope": resolved.storage_scope,
+                        "source": resolved.source,
+                        "checksum": resolved.checksum,
+                        "display_name": resolved.name,
+                        "description": resolved.description,
+                        "version": resolved.version,
+                    },
+                )
+            skills = AgentRegistryService(self.db).skill_blocks_for_inline_workflow_node(
+                user_id=ctx.workflow_def.user_id,
+                project_id=ctx.workflow_def.project_id,
+                workflow_id=ctx.workflow_def.id,
+                node_id=node.node_id,
+            )
+            return root, skills
+
+        skills = self._load_skills_by_names(
+            user_id=ctx.workflow_def.user_id,
+            project_id=ctx.workflow_def.project_id,
+            skill_names=skill_names,
+        )
+        root = AgentWorkspaceService(self.db).ensure_project_workspace(
+            project_id=ctx.workflow_def.project_id,
+            user_id=ctx.workflow_def.user_id,
+        )
+        return root, skills
+
+    def _load_skills_by_names(self, *, user_id: str, project_id: str, skill_names: list[str]) -> list:
+        """Load skill blocks by name from the project's .agents/skills/ directory."""
+        if not skill_names:
+            return []
+
+        # Scan the project's .agents/skills/ directory
+        registry = AgentRegistryService(self.db)
+        all_blocks = registry.skill_blocks_for_project(project_id, user_id=user_id)
+
+        # Filter by requested names
+        requested = set(skill_names)
+        return [b for b in all_blocks if b.name in requested]
 
     def _build_agent_prompt(self, ctx: OrchestrationContext, node: NodeContext) -> str:
         """Build prompt for agent with context from previous outputs.
@@ -1309,7 +1585,7 @@ class WorkflowOrchestrator:
         if "previous_outputs" in node.inputs:
             parts.append("\nPrevious discussion:")
             for i, output in enumerate(node.inputs["previous_outputs"][-3:]):  # Last 3
-                parts.append(f"\nAgent {i+1}: {output.get('text', '')[:200]}...")
+                parts.append(f"\nAgent {i + 1}: {output.get('text', '')[:200]}...")
 
         # Round info (for roundtable)
         if "current_round" in node.inputs:
@@ -1358,19 +1634,14 @@ class WorkflowOrchestrator:
             status = entry["review_status"]
             evals = entry.get("evaluations", [])
             if evals:
-                verdict_glyphs = "".join(
-                    "✅" if e["verdict"] == "positive" else "❎" for e in evals
-                )
+                verdict_glyphs = "".join("✅" if e["verdict"] == "positive" else "❎" for e in evals)
                 # Top-N tags across these evaluations
                 tag_counts: dict[str, int] = {}
                 for e in evals:
                     for tag in e.get("tags") or []:
                         tag_counts[tag] = tag_counts.get(tag, 0) + 1
                 top_tags = ", ".join(
-                    f"#{t}"
-                    for t, _ in sorted(
-                        tag_counts.items(), key=lambda kv: -kv[1]
-                    )[:3]
+                    f"#{t}" for t, _ in sorted(tag_counts.items(), key=lambda kv: -kv[1])[:3]
                 )
                 tail = f" — {verdict_glyphs}"
                 if top_tags:
@@ -1385,8 +1656,7 @@ class WorkflowOrchestrator:
         """Merge multiple agent outputs based on strategy."""
         if strategy == "concat":
             merged_text = "\n\n---\n\n".join(
-                f"Agent {i+1}:\n{out.get('text', '')}"
-                for i, out in enumerate(outputs)
+                f"Agent {i + 1}:\n{out.get('text', '')}" for i, out in enumerate(outputs)
             )
             return {"text": merged_text, "strategy": "concat", "count": len(outputs)}
 
@@ -1394,7 +1664,9 @@ class WorkflowOrchestrator:
         return {"text": "", "strategy": strategy, "count": len(outputs)}
 
     def _collect_reference_files(
-        self, ctx: OrchestrationContext, node: NodeContext,
+        self,
+        ctx: OrchestrationContext,
+        node: NodeContext,
     ) -> list[dict]:
         """Return files that should reach this agent as [REFERENCE FILES].
 
@@ -1475,13 +1747,22 @@ def _snapshot_inputs(inputs: dict) -> dict:
     aliases = out.get("dependency_output_aliases")
     if isinstance(aliases, dict):
         out["dependency_output_aliases"] = {
-            key: list(value) if isinstance(value, list) else value
-            for key, value in aliases.items()
+            key: list(value) if isinstance(value, list) else value for key, value in aliases.items()
         }
     pm = out.get("prior_messages")
     if isinstance(pm, list):
         out["prior_messages"] = [dict(m) if isinstance(m, dict) else m for m in pm]
     return out
+
+
+def _is_inline_agent_config(config: dict) -> bool:
+    return bool(config.get("inline_agent")) or str(config.get("agent_source") or "").strip() == "inline"
+
+
+def _string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _dependency_outputs_for_node(
@@ -1550,6 +1831,27 @@ def _producer_outputs(outputs_by_id: dict[str, dict], node_ids: list[str]) -> di
         else:
             outputs[node_id] = node_output
     return outputs
+
+
+def _inline_agent_provider_config(
+    node_config: dict,
+    workflow_config: dict,
+) -> dict:
+    """Return provider config for an inline Agent node.
+
+    New inline Agent nodes own their Provider under config.provider. Legacy
+    imported workflows may still carry provider_ref=workflow_default; only
+    those continue reading the workflow-level provider block.
+    """
+    node_provider = node_config.get("provider")
+    if isinstance(node_provider, dict):
+        return node_provider
+
+    provider_ref = str(node_config.get("provider_ref") or "").strip()
+    if provider_ref == "workflow_default":
+        workflow_provider = workflow_config.get("provider") if isinstance(workflow_config, dict) else {}
+        return workflow_provider if isinstance(workflow_provider, dict) else {}
+    return {}
 
 
 def _node_allows_project_context(node: NodeContext) -> bool:
@@ -1882,12 +2184,14 @@ def _aggregate_as_annotation_schema(dep_outputs: dict[str, dict]) -> dict:
         if not isinstance(out, dict):
             raw = str(out).strip()
             if raw:
-                annotations.append({
-                    "content": raw,
-                    "type": "comment",
-                    "severity": "medium",
-                    "tags": [nid],
-                })
+                annotations.append(
+                    {
+                        "content": raw,
+                        "type": "comment",
+                        "severity": "medium",
+                        "tags": [nid],
+                    }
+                )
             continue
 
         payload = out.get("outputs") if isinstance(out.get("outputs"), dict) else out
@@ -1908,12 +2212,14 @@ def _aggregate_as_annotation_schema(dep_outputs: dict[str, dict]) -> dict:
 
         # 3) generic fallback comment
         if raw_text:
-            annotations.append({
-                "content": raw_text,
-                "type": "comment",
-                "severity": "medium",
-                "tags": [nid],
-            })
+            annotations.append(
+                {
+                    "content": raw_text,
+                    "type": "comment",
+                    "severity": "medium",
+                    "tags": [nid],
+                }
+            )
 
     return {
         "annotations": annotations,

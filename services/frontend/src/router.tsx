@@ -17,6 +17,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProjectListPage } from './pages/ProjectListPage'
 import { ProjectRoutePage } from './pages/ProjectRoutePage'
+import SkillOptimizationPage from './pages/SkillOptimizationPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { AdminPage } from './pages/AdminPage'
@@ -58,6 +59,14 @@ export function AppRouter() {
         element={
           <ProtectedRoute>
             <ProjectRoutePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/optimize"
+        element={
+          <ProtectedRoute>
+            <SkillOptimizationPage />
           </ProtectedRoute>
         }
       />

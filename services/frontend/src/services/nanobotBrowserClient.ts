@@ -14,6 +14,7 @@ import { localAgentHostAuthHeaders } from './browserToolBridge'
 const BROWSER_NANOBOT_KEY_PREFIX = 'superleaf.nanobotBrowser.apiKey.'
 const DEFAULT_NANOBOT_AGENT_ID = 'nanobot-agent'
 export const DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT = 'http://127.0.0.1:8787'
+const browserNanobotApiKeys = new Map<string, string>()
 
 export interface BrowserNanobotTurnResult {
   content: string
@@ -57,13 +58,28 @@ export interface BrowserNanobotToolDiagnostics {
 }
 
 export function storeBrowserNanobotApiKey(providerId: string, apiKey: string): void {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(`${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`, apiKey)
+  const key = `${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`
+  const cleaned = apiKey.trim()
+  if (cleaned && cleaned !== 'dummy') browserNanobotApiKeys.set(providerId, cleaned)
+  else browserNanobotApiKeys.delete(providerId)
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // Browser storage can be disabled; the in-memory key state is already set.
+  }
 }
 
 export function readBrowserNanobotApiKey(providerId: string): string {
-  if (typeof localStorage === 'undefined') return 'dummy'
-  return localStorage.getItem(`${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`) || 'dummy'
+  return browserNanobotApiKeys.get(providerId) || 'dummy'
+}
+
+export function clearBrowserNanobotApiKey(providerId: string): void {
+  browserNanobotApiKeys.delete(providerId)
+  try {
+    localStorage.removeItem(`${BROWSER_NANOBOT_KEY_PREFIX}${providerId}`)
+  } catch {
+    // Browser storage can be disabled.
+  }
 }
 
 export async function probeBrowserNanobot(endpoint: string, apiKey = 'dummy'): Promise<unknown> {

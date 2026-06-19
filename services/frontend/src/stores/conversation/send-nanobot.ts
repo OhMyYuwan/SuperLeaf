@@ -25,6 +25,10 @@ import { inferBrowserNanobotPreflightToolCalls } from './preflight-inference'
 import { executeNanobotToolCall } from './tool-execution'
 import type { ConversationSet } from './types'
 
+export function browserNanobotTurnEndpoint(prepared: { endpoint: string; bridge_endpoint?: string }): string {
+  return prepared.bridge_endpoint || prepared.endpoint
+}
+
 export async function sendViaBrowserNanobot(args: {
   conversationId: string
   body: MessageSend
@@ -79,7 +83,7 @@ export async function sendViaBrowserNanobot(args: {
 
   while (true) {
     const turn = await streamBrowserNanobotTurn({
-      endpoint: prepared.endpoint,
+      endpoint: browserNanobotTurnEndpoint(prepared),
       apiKey,
       model: prepared.model,
       sessionId: prepared.run_id,

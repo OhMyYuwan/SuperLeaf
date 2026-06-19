@@ -18,6 +18,7 @@ from ..secrets_vault import decrypt, encrypt
 from .dify_client import DifyClient, DifyError
 from .nanobot_client import NanobotClient, NanobotError
 from .provider_endpoint_policy import validate_provider_endpoint
+from .secret_redaction import safe_error_text
 
 
 class ProviderService:
@@ -267,7 +268,7 @@ class ProviderService:
                 p.status_detail = f"HTTP {e.status}: {e.detail or '(empty body)'}"[:512]
             except Exception as e:  # network errors etc.
                 p.status = "error"
-                p.status_detail = f"{type(e).__name__}: {e}"[:512] or f"{type(e).__name__}: (no message)"
+                p.status_detail = safe_error_text(e) or f"{type(e).__name__}: (no message)"
             p.updated_at = datetime.utcnow()
             self.db.commit()
             self.db.refresh(p)
@@ -411,11 +412,8 @@ class ProviderService:
             p.status = "error"
             p.status_detail = f"HTTP {e.status}: {e.detail or '(empty body)'}"[:512]
         except Exception as e:  # network errors etc.
-            import traceback
-
-            traceback.print_exc()
             p.status = "error"
-            p.status_detail = f"{type(e).__name__}: {e}"[:512] or f"{type(e).__name__}: (no message)"
+            p.status_detail = safe_error_text(e) or f"{type(e).__name__}: (no message)"
         p.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(p)

@@ -150,6 +150,7 @@ def native_agent_workspace_tools() -> list[dict[str, Any]]:
         *native_agent_project_context_tools(),
         *_native_project_write_tools(),
         *superleaf_openai_tools(NATIVE_DOCUMENT_ACTION_TOOL_NAMES),
+        SKILL_MANAGE_TOOL_SCHEMA,
     ]
 
 
@@ -236,6 +237,8 @@ def execute_native_agent_local_tool(
         return _tool_read_agent_file(args, context)
     if name == "use_skill":
         return _tool_use_skill(args, context)
+    if name == "skill_manage":
+        return _tool_skill_manage(args, context)
     return None
 
 
@@ -1068,3 +1071,108 @@ def _extract_outline(content: str, fmt: str) -> list[dict[str, Any]]:
             )
         return out
     return []
+
+
+# ---------------------------------------------------------------------------
+# skill_manage tool (ported from hermes-agent)
+# ---------------------------------------------------------------------------
+
+SKILL_MANAGE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "skill_manage",
+        "description": (
+            "Create, patch, edit, or delete Skill files in the current Skill Project. "
+            "Actions: create (new SKILL.md), edit (full rewrite), patch (find-and-replace), "
+            "delete (remove skill), write_file (add supporting file), remove_file (remove supporting file)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "edit", "patch", "delete", "write_file", "remove_file"],
+                    "description": "The action to perform.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Skill name (lowercase, filesystem-safe, e.g. 'my-skill').",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full SKILL.md content (for create/edit). Must start with YAML frontmatter.",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Text to find (for patch action).",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement text (for patch action).",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Supporting file path relative to skill dir, e.g. 'references/examples.md' (for write_file/remove_file/patch).",
+                },
+                "file_content": {
+                    "type": "string",
+                    "description": "Supporting file content (for write_file).",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional category subdirectory (for create).",
+                },
+            },
+            "required": ["action", "name"],
+        },
+    },
+}
+
+
+def _tool_skill_manage(
+    args: dict[str, Any],
+    context: NativeAgentToolContext,
+) -> NativeAgentToolResult:
+    """Execute skill_manage tool — CRUD for Skill files in the Skill Project."""
+    if not context.project_id:
+        return NativeAgentToolResult(
+            "ERROR: skill_manage requires a project context",
+            failed=True,
+            tool_kind="skill",
+        )
+
+    # Get the project from DB
+    from ..database import SessionLocal
+    from ..models import Project
+
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == context.project_id).first()
+        if not project:
+            return NativeAgentToolResult(
+                "ERROR: Project not found",
+                failed=True,
+                tool_kind="skill",
+            )
+
+        from .skill_file_manager import SkillFileManager
+
+        manager = SkillFileManager(db, project)
+        result = manager.execute(
+            action=args.get("action", ""),
+            name=args.get("name", ""),
+            content=args.get("content", ""),
+            old_string=args.get("old_string", ""),
+            new_string=args.get("new_string", ""),
+            file_path=args.get("file_path"),
+            file_content=args.get("file_content"),
+            category=args.get("category"),
+        )
+
+        return NativeAgentToolResult(
+            json.dumps(result.to_dict(), ensure_ascii=False),
+            failed=not result.success,
+            tool_kind="skill",
+        )
+    finally:
+        db.close()

@@ -5,7 +5,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { CheckCircle2, Download, Loader2, RefreshCw } from 'lucide-react'
+import { CheckCircle2, Download, KeyRound, Loader2, RefreshCw, X } from 'lucide-react'
 import type { LocalAgentHostPackageInfo, Provider } from '../../../services/backendApi'
 import {
   DEFAULT_NANOBOT_LOCAL_AGENT_HOST_ENDPOINT,
@@ -14,8 +14,11 @@ import {
 import { listBrowserCodexSessions } from '../../../services/codexBrowserClient'
 import { listBrowserClaudeSessions } from '../../../services/claudeBrowserClient'
 import {
+  clearLocalAgentHostAuthToken,
   localAgentHostAuthHeaders,
   normalizeLocalAgentHostEndpoint,
+  readLocalAgentHostAuthToken,
+  storeLocalAgentHostAuthToken,
 } from '../../../services/browserToolBridge'
 import {
   arrayLength,
@@ -30,6 +33,8 @@ import {
   shortChecksum,
   shortDiagnosticId,
 } from './format'
+
+const NANOBOT_SERVE_COMMAND = 'nanobot serve --host 127.0.0.1 --port 8900 --verbose'
 
 export type LocalHostEndpointGroup = {
   endpoint: string
@@ -165,11 +170,19 @@ export function LocalHostInstallPanel({
           <code>CODEX_AUTO_MCP={codexAutoMcp}</code>
           <code>CLAUDE_ENABLED={packageInfo?.claude_env?.SL_LOCAL_AGENT_HOST_CLAUDE_ENABLED ?? '1'}</code>
         </div>
+        <div className="local-host-install-card local-host-install-card-wide">
+          <span>Nanobot</span>
+          <strong>OpenAI-compatible serve</strong>
+          <code>{NANOBOT_SERVE_COMMAND}</code>
+        </div>
       </div>
       {packageInfo && (
         <div className="local-host-install-foot">
           包含 {packageInfo.included_files.length} 个文件，包括 Windows launcher、MCP 工具 manifest、安装 manifest 和 smoke/matrix 诊断脚本。
         </div>
+      )}
+      {Boolean(verifyResult?.host?.value?.local_auth_required) && (
+        <LocalHostTokenControl endpoint={endpoint} onChanged={() => void runInstallProbe()} />
       )}
       <LocalHostInstallProbeResult result={verifyResult} endpoint={endpoint} />
     </section>
@@ -331,6 +344,7 @@ function LocalHostDiagnosticCard({
         </div>
         {result?.updatedAt && <time>{formatDiagnosticTime(result.updatedAt)}</time>}
       </div>
+      {Boolean(host.local_auth_required) && <LocalHostTokenControl endpoint={group.endpoint} compact />}
       <div className="local-host-diagnostic-pills">
         <DiagnosticPill tone={result?.host?.ok && hostStatus === 'ok' ? 'ok' : result?.host ? 'warn' : 'neutral'}>
           Host {hostStatus || '未检测'}
@@ -377,6 +391,85 @@ function LocalHostDiagnosticCard({
 
 function DiagnosticPill({ tone, children }: { tone: 'ok' | 'warn' | 'neutral'; children: React.ReactNode }) {
   return <span className={`native-pill ${tone === 'warn' ? 'neutral' : tone}`}>{children}</span>
+}
+
+function LocalHostTokenControl({
+  endpoint,
+  compact = false,
+  onChanged,
+}: {
+  endpoint: string
+  compact?: boolean
+  onChanged?: () => void
+}) {
+  const normalizedEndpoint = useMemo(() => {
+    try {
+      return normalizeLocalAgentHostEndpoint(endpoint)
+    } catch {
+      return endpoint
+    }
+  }, [endpoint])
+  const [tokenDraft, setTokenDraft] = useState('')
+  const [paired, setPaired] = useState(() => Boolean(readLocalAgentHostAuthToken(normalizedEndpoint)))
+  const [error, setError] = useState('')
+
+  const applyToken = () => {
+    setError('')
+    try {
+      storeLocalAgentHostAuthToken(normalizedEndpoint, tokenDraft)
+      setTokenDraft('')
+      setPaired(true)
+      onChanged?.()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Token 无效')
+    }
+  }
+
+  const clearToken = () => {
+    clearLocalAgentHostAuthToken(normalizedEndpoint)
+    setTokenDraft('')
+    setPaired(false)
+    setError('')
+    onChanged?.()
+  }
+
+  return (
+    <div className={`local-host-token-control ${compact ? 'compact' : ''}`}>
+      <div className="local-host-token-input">
+        <KeyRound size={13} />
+        <input
+          type="password"
+          value={tokenDraft}
+          onChange={(event) => setTokenDraft(event.target.value)}
+          placeholder="Local Host token"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className="small-btn icon-only"
+          onClick={applyToken}
+          disabled={!tokenDraft.trim()}
+          title="配对 Local Host token"
+        >
+          <CheckCircle2 size={12} />
+        </button>
+        <button
+          type="button"
+          className="small-btn icon-only"
+          onClick={clearToken}
+          disabled={!paired && !tokenDraft.trim()}
+          title="清除 Local Host token"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <span className={`local-host-token-state ${paired ? 'paired' : ''}`}>
+        {paired ? '已配对' : '未配对'}
+      </span>
+      {error && <span className="local-host-token-error">{error}</span>}
+    </div>
+  )
 }
 
 function groupLocalHostEndpoints(providers: Provider[]): LocalHostEndpointGroup[] {

@@ -988,3 +988,61 @@ capabilities:
           - backend/app/api/filesystem.py
           - backend/app/services/collab_snapshot_service.py
           - backend/app/settings.py
+
+  - id: skill-optimization
+    name: Skill Optimization
+    summary: >
+      Data-driven Skill optimization pipeline. Two-Project architecture:
+      Data Project side collects signals from labeled data, Annotation Evaluations,
+      Workflow Traces, and dialogue sedimentation, then produces diagnosis
+      (failure patterns, golden/negative examples, optimization suggestions).
+      Handoff bridge transfers diagnosis + eval cases to Skill Project.
+      Skill Project side rewrites file tree (SKILL.md, references/, evals/),
+      runs eval, and presents results for human review before version commit.
+    slices:
+      - id: signal-collection
+        summary: >
+          Gathers optimization signals from 4 sources: Data Project labeled samples
+          (DatasetRecord + DatasetResponse), Annotation Evaluations (verdict/tags),
+          Workflow Traces (tool call sequences), and dialogue sedimentations.
+        route_here_when: Work changes how optimization signals are collected or aggregated.
+        bridge_when: Signal snapshot complete — pass to diagnosis.
+        primary_paths:
+          - backend/app/services/skill_signal_diagnosis_service.py
+          - backend/app/services/workflow_trace_parser.py
+          - backend/app/services/skill_sedimentation_service.py
+          - backend/app/services/dataset_service.py
+          - backend/app/services/evaluation_service.py
+      - id: diagnosis
+        summary: >
+          Analyzes signal snapshot to produce failure pattern clustering,
+          golden/negative example extraction, workflow pattern analysis,
+          and optimization suggestions.  Outputs structured diagnosis JSON.
+        route_here_when: Work changes diagnosis logic, pattern extraction, or suggestion generation.
+        bridge_when: Diagnosis complete — write to handoff via SkillDataHandoffService.
+        primary_paths:
+          - backend/app/services/skill_signal_diagnosis_service.py
+          - backend/app/services/skill_data_handoff_service.py
+      - id: skill-rewrite
+        summary: >
+          Reads _skill_data/ handoff and rewrites the Skill Project file tree.
+          Creates/patches SKILL.md (with optimization markers), writes
+          references/ (failure-patterns, golden-examples, etc.), and evals/.
+          Uses ProjectFsService for DB-backed file operations.
+        route_here_when: Work changes how Skill Project files are generated or patched.
+        bridge_when: Skill Project files updated — move to eval.
+        primary_paths:
+          - backend/app/services/skill_generation_service.py
+          - backend/app/services/project_fs_service.py
+      - id: eval-review
+        summary: >
+          Runs eval cases against the Skill Project's Agent, compares results
+          with previous runs to detect regressions, generates eval report,
+          and presents results for human review (approve/reject).
+        route_here_when: Work changes eval execution, evaluator logic, or review workflow.
+        bridge_when: Review approved — publish.
+        primary_paths:
+          - backend/app/services/skill_eval_service.py
+          - backend/app/services/native_agent_runner.py
+          - backend/app/api/skill_optimization.py
+          - frontend/src/pages/SkillOptimizationPage.tsx

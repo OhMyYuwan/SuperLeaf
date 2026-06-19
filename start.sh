@@ -22,10 +22,12 @@ COLLAB_PORT="${YLW_COLLAB_PORT:-4444}"
 COLLAB_HOST="${YLW_COLLAB_HOST:-${COLLAB_HOST:-0.0.0.0}}"
 HISTORICAL_COLLAB_INTERNAL_TOKEN="superleaf-local-collab-internal-token"
 COLLAB_INTERNAL_TOKEN="${YLW_COLLAB_INTERNAL_TOKEN:-${COLLAB_INTERNAL_TOKEN:-}}"
+COLLAB_INTERNAL_TOKEN_FILE="${YLW_COLLAB_INTERNAL_TOKEN_FILE:-${COLLAB_INTERNAL_TOKEN_FILE:-}}"
 LOCAL_AGENT_HOST_BIND="${SL_LOCAL_AGENT_HOST_BIND:-127.0.0.1}"
 LOCAL_AGENT_HOST_PORT="${SL_LOCAL_AGENT_HOST_PORT:-8787}"
 LOCAL_AGENT_HOST_ORIGINS="${SL_LOCAL_AGENT_HOST_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}"
 LOCAL_AGENT_HOST_AUTH_TOKEN="${SL_LOCAL_AGENT_HOST_AUTH_TOKEN:-}"
+LOCAL_AGENT_HOST_AUTH_TOKEN_FILE="${SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE:-${SUPERLEAF_LOCAL_AGENT_HOST_TOKEN_FILE:-}}"
 LOCAL_AGENT_HOST_NANOBOT_URL="${SL_LOCAL_AGENT_HOST_NANOBOT_URL:-http://127.0.0.1:8900}"
 LOCAL_AGENT_HOST_CODEX_ENABLED="${SL_LOCAL_AGENT_HOST_CODEX_ENABLED:-1}"
 LOCAL_AGENT_HOST_CODEX_BIN="${SL_LOCAL_AGENT_HOST_CODEX_BIN:-codex}"
@@ -90,6 +92,45 @@ create_session_dir() {
   # Symlink "latest" for convenience
   ln -sfn "$dir" "$LOG_DIR/latest"
   echo "$dir"
+}
+
+write_runtime_secret_file() {
+  local session_dir="$1" name="$2" value="$3"
+  local secret_dir="$session_dir/secrets"
+  local file="$secret_dir/$name"
+  mkdir -p "$secret_dir"
+  chmod 700 "$secret_dir" 2>/dev/null || true
+  (
+    umask 077
+    printf "%s\n" "$value" > "$file"
+  )
+  chmod 600 "$file" 2>/dev/null || true
+  echo "$file"
+}
+
+ensure_collab_internal_token_file() {
+  local session_dir="$1"
+  ensure_collab_internal_token
+  if [ -n "${COLLAB_INTERNAL_TOKEN_FILE:-}" ]; then
+    echo "$COLLAB_INTERNAL_TOKEN_FILE"
+    return 0
+  fi
+  COLLAB_INTERNAL_TOKEN_FILE="$(write_runtime_secret_file "$session_dir" "collab-internal.token" "$COLLAB_INTERNAL_TOKEN")"
+  echo "$COLLAB_INTERNAL_TOKEN_FILE"
+}
+
+ensure_local_agent_host_auth_token_file() {
+  local session_dir="$1"
+  if [ -n "${LOCAL_AGENT_HOST_AUTH_TOKEN_FILE:-}" ]; then
+    echo "$LOCAL_AGENT_HOST_AUTH_TOKEN_FILE"
+    return 0
+  fi
+  if [ -z "${LOCAL_AGENT_HOST_AUTH_TOKEN:-}" ]; then
+    echo ""
+    return 0
+  fi
+  LOCAL_AGENT_HOST_AUTH_TOKEN_FILE="$(write_runtime_secret_file "$session_dir" "local-agent-host-auth.token" "$LOCAL_AGENT_HOST_AUTH_TOKEN")"
+  echo "$LOCAL_AGENT_HOST_AUTH_TOKEN_FILE"
 }
 
 # Write PIDs to a simple key=value file
@@ -224,12 +265,12 @@ stop_all() {
 
 start_backend() {
   local mcp_enabled="${1:-$BACKEND_MCP_ENABLED}"
-  ensure_collab_internal_token
   ensure_backend
   stop_service "backend"
   ensure_log_dir
   local session_dir; session_dir="$(create_session_dir)"
   local logfile="$session_dir/backend.log"
+  local collab_token_file; collab_token_file="$(ensure_collab_internal_token_file "$session_dir")"
 
   local reload_label=""
   [ "$BACKEND_RELOAD" = "1" ] && reload_label=" with reload"
@@ -239,23 +280,23 @@ start_backend() {
   local pid=""
   if command -v screen >/dev/null 2>&1; then
     local screen_name="superleaf-backend-$BACKEND_PORT"
-    local dir_q logfile_q token_q port_q mcp_q reload_arg=""
+    local dir_q logfile_q token_file_q port_q mcp_q reload_arg=""
     printf -v dir_q "%q" "$BACKEND_DIR"
     printf -v logfile_q "%q" "$logfile"
-    printf -v token_q "%q" "$COLLAB_INTERNAL_TOKEN"
+    printf -v token_file_q "%q" "$collab_token_file"
     printf -v port_q "%q" "$BACKEND_PORT"
     printf -v mcp_q "%q" "$mcp_enabled"
     [ "$BACKEND_RELOAD" = "1" ] && reload_arg=" --reload"
     screen -S "$screen_name" -X quit >/dev/null 2>&1 || true
     screen -dmS "$screen_name" bash -lc \
-      "cd $dir_q && YLW_COLLAB_INTERNAL_TOKEN=$token_q YLW_MCP_SERVER_ENABLED=$mcp_q exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $port_q$reload_arg >> $logfile_q 2>&1"
+      "cd $dir_q && YLW_COLLAB_INTERNAL_TOKEN_FILE=$token_file_q YLW_MCP_SERVER_ENABLED=$mcp_q exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $port_q$reload_arg >> $logfile_q 2>&1"
   else
     (
       cd "$BACKEND_DIR"
       if [ "$BACKEND_RELOAD" = "1" ]; then
-        YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload </dev/null
+        YLW_COLLAB_INTERNAL_TOKEN_FILE="$collab_token_file" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload </dev/null
       else
-        YLW_COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" </dev/null
+        YLW_COLLAB_INTERNAL_TOKEN_FILE="$collab_token_file" YLW_MCP_SERVER_ENABLED="$mcp_enabled" exec nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" </dev/null
       fi
     ) >> "$logfile" 2>&1 &
     pid=$!
@@ -326,18 +367,18 @@ start_mcp() {
 }
 
 start_collab() {
-  ensure_collab_internal_token
   ensure_collab
   stop_service "collab"
   ensure_log_dir
   local session_dir="$LOG_DIR/latest"
   [ ! -d "$session_dir" ] && session_dir="$(create_session_dir)"
   local logfile="$session_dir/collab.log"
+  local collab_token_file; collab_token_file="$(ensure_collab_internal_token_file "$session_dir")"
 
   log "Starting collab-server on $COLLAB_HOST:$COLLAB_PORT → $logfile"
   (
     cd "$COLLAB_DIR"
-    COLLAB_HOST="$COLLAB_HOST" COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN="$COLLAB_INTERNAL_TOKEN" exec npx tsx src/index.ts
+    COLLAB_HOST="$COLLAB_HOST" COLLAB_PORT="$COLLAB_PORT" BACKEND_URL="http://localhost:$BACKEND_PORT" COLLAB_INTERNAL_TOKEN_FILE="$collab_token_file" exec npx tsx src/index.ts
   ) >> "$logfile" 2>&1 &
   local pid=$!
   save_pid "collab" "$pid"
@@ -388,6 +429,7 @@ start_local_agent_host() {
   local session_dir="$LOG_DIR/latest"
   [ ! -d "$session_dir" ] && session_dir="$(create_session_dir)"
   local logfile="$session_dir/local-agent-host.log"
+  local local_auth_token_file; local_auth_token_file="$(ensure_local_agent_host_auth_token_file "$session_dir")"
 
   log "Starting local-agent-host on $LOCAL_AGENT_HOST_BIND:$LOCAL_AGENT_HOST_PORT → $logfile"
   local pid=""
@@ -397,11 +439,11 @@ start_local_agent_host() {
     printf -v dir_q "%q" "$LOCAL_AGENT_HOST_DIR"
     printf -v logfile_q "%q" "$logfile"
     printf -v env_cmd \
-      "SL_LOCAL_AGENT_HOST_BIND=%q SL_LOCAL_AGENT_HOST_PORT=%q SL_LOCAL_AGENT_HOST_ORIGINS=%q SL_LOCAL_AGENT_HOST_AUTH_TOKEN=%q SL_LOCAL_AGENT_HOST_NANOBOT_URL=%q SL_LOCAL_AGENT_HOST_CODEX_ENABLED=%q SL_LOCAL_AGENT_HOST_CODEX_BIN=%q SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS=%q SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT=%q SL_LOCAL_AGENT_HOST_CODEX_PREWARM=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART=%q SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=%q SL_LOCAL_AGENT_HOST_MCP_URL=%q SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=%q SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=%q SL_LOCAL_AGENT_HOST_DATA_DIR=%q" \
+      "SL_LOCAL_AGENT_HOST_BIND=%q SL_LOCAL_AGENT_HOST_PORT=%q SL_LOCAL_AGENT_HOST_ORIGINS=%q SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE=%q SL_LOCAL_AGENT_HOST_NANOBOT_URL=%q SL_LOCAL_AGENT_HOST_CODEX_ENABLED=%q SL_LOCAL_AGENT_HOST_CODEX_BIN=%q SL_LOCAL_AGENT_HOST_CODEX_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_CODEX_ALLOW_DANGEROUS=%q SL_LOCAL_AGENT_HOST_CODEX_TRANSPORT=%q SL_LOCAL_AGENT_HOST_CODEX_PREWARM=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_MODE=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_PORT=%q SL_LOCAL_AGENT_HOST_CODEX_APP_SERVER_URL=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_SOCKET=%q SL_LOCAL_AGENT_HOST_CODEX_DAEMON_AUTOSTART=%q SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=%q SL_LOCAL_AGENT_HOST_MCP_URL=%q SL_LOCAL_AGENT_HOST_MCP_CONTEXT_TTL_MS=%q SL_LOCAL_AGENT_HOST_MCP_TOOL_TIMEOUT_MS=%q SL_LOCAL_AGENT_HOST_MCP_POLL_MAX_WAIT_MS=%q SL_LOCAL_AGENT_HOST_DATA_DIR=%q" \
       "$LOCAL_AGENT_HOST_BIND" \
       "$LOCAL_AGENT_HOST_PORT" \
       "$LOCAL_AGENT_HOST_ORIGINS" \
-      "$LOCAL_AGENT_HOST_AUTH_TOKEN" \
+      "$local_auth_token_file" \
       "$LOCAL_AGENT_HOST_NANOBOT_URL" \
       "$LOCAL_AGENT_HOST_CODEX_ENABLED" \
       "$LOCAL_AGENT_HOST_CODEX_BIN" \
@@ -429,7 +471,7 @@ start_local_agent_host() {
       SL_LOCAL_AGENT_HOST_BIND="$LOCAL_AGENT_HOST_BIND" \
         SL_LOCAL_AGENT_HOST_PORT="$LOCAL_AGENT_HOST_PORT" \
         SL_LOCAL_AGENT_HOST_ORIGINS="$LOCAL_AGENT_HOST_ORIGINS" \
-        SL_LOCAL_AGENT_HOST_AUTH_TOKEN="$LOCAL_AGENT_HOST_AUTH_TOKEN" \
+        SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE="$local_auth_token_file" \
         SL_LOCAL_AGENT_HOST_NANOBOT_URL="$LOCAL_AGENT_HOST_NANOBOT_URL" \
         SL_LOCAL_AGENT_HOST_CODEX_ENABLED="$LOCAL_AGENT_HOST_CODEX_ENABLED" \
         SL_LOCAL_AGENT_HOST_CODEX_BIN="$LOCAL_AGENT_HOST_CODEX_BIN" \
@@ -804,16 +846,20 @@ Env:
   YLW_COLLAB_PORT=4444     Collab-server port
   YLW_COLLAB_HOST=127.0.0.1
                            Collab-server bind address for local dev
+  YLW_COLLAB_INTERNAL_TOKEN_FILE=
+                           Preferred collab internal token file; generated per run when empty
   YLW_COLLAB_INTERNAL_TOKEN=
-                           Optional collab internal token; generated per run when empty
+                           Compatibility-only plaintext token input; prefer TOKEN_FILE
   SL_LOCAL_AGENT_HOST_BIND=127.0.0.1
                            Local Agent Host bind address
   SL_LOCAL_AGENT_HOST_PORT=8787
                            Local Agent Host port
   SL_LOCAL_AGENT_HOST_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
                            Local Agent Host CORS allow-list
+  SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE=
+                           Preferred local control token file; generated in data dir when empty
   SL_LOCAL_AGENT_HOST_AUTH_TOKEN=
-                           Optional local control token; generated in data dir when empty
+                           Compatibility-only plaintext token input; prefer AUTH_TOKEN_FILE
   SL_LOCAL_AGENT_HOST_NANOBOT_URL=http://127.0.0.1:8900
                            Local Nanobot base URL proxied by Local Agent Host
   SL_LOCAL_AGENT_HOST_CODEX_AUTO_MCP=1

@@ -37,6 +37,7 @@ import { useDocumentStore } from '../stores/documentStore'
 import { useEditorStore } from '../stores/editorStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useWorkflowStore } from '../stores/workflowStore'
+import { bootstrapLocalAgentHostAuth } from '../services/localAgentHostAutoAuth'
 import { useCollaborationStore } from '../stores/collaborationStore'
 import { useAnnotationStore } from '../stores/annotationStore'
 import { useAnnotationAgentSuggestionStore } from '../stores/annotationAgentSuggestionStore'
@@ -124,6 +125,7 @@ export function WorkspacePage() {
   const activePreviewFile = useFilesystemStore((s) => s.activePreviewFile)
   const setPreviewFile = useFilesystemStore((s) => s.setPreviewFile)
   const convertFileToDoc = useFilesystemStore((s) => s.convertFileToDoc)
+  const extractFileToMarkdown = useFilesystemStore((s) => s.extractFileToMarkdown)
 
   // Provider + workflow state ------------------------------------------------
   const loadProviders = useSettingsStore((s) => s.load)
@@ -526,6 +528,7 @@ export function WorkspacePage() {
     }
     loadTree()
     loadProviders()
+    void bootstrapLocalAgentHostAuth()
     loadWorkflows()
     loadDefinitions()
   }, [projectId, loadTree, loadProviders, loadWorkflows, loadDefinitions])
@@ -587,6 +590,22 @@ export function WorkspacePage() {
     setPreviewFile(file)
     const { previewColumn, setVisibility } = useViewStore.getState()
     if (!previewColumn) setVisibility({ previewColumn: true })
+  }
+
+  const handleExtractMarkdown = async (fileId: string) => {
+    try {
+      const doc = await extractFileToMarkdown(fileId)
+      // Open the newly created doc directly from the API response
+      // (avoids race condition with loadTree + getDoc)
+      useDocumentStore.getState().upsertFromBackendDoc(doc)
+      useDocumentStore.setState({ activeDocumentId: doc.id })
+      setPreviewFile(null)
+      // Refresh tree in background so the new doc appears in the file tree
+      loadTree().catch((err) => console.warn('loadTree after extract failed', err))
+    } catch (e) {
+      console.error('extract markdown failed', e)
+      alert(`提取 Markdown 失败：${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   const handleRunWorkflow = (workflowId: string, instruction: string) => {
@@ -825,6 +844,7 @@ export function WorkspacePage() {
                           onUploadFolder={uploadFolder}
                           onUploadProjectZip={uploadProjectZip}
                           onRenameProject={renameProject}
+                          onExtractMarkdown={handleExtractMarkdown}
                         />
                       </Panel>
                       {!outlineCollapsed && (

@@ -13,13 +13,21 @@ import debate from './debate.json'
 import consensus from './consensus.json'
 
 export interface WorkflowTemplate {
-  id: 'debate' | 'consensus'
+  id: 'debate' | 'consensus' | 'skill-optimization'
   label: string
   description: string
-  draft: WorkflowDefinitionDraft
+  draft?: WorkflowDefinitionDraft
+  /** If set, template is instantiated via backend API instead of local clone. */
+  backendTemplateId?: string
 }
 
 export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  {
+    id: 'skill-optimization',
+    label: '📊 数据驱动 Skill 优化',
+    description: '自动安装 3 个优化 Skill，创建信号分析 → Skill 改写 → 评估的 inline agent Workflow。',
+    backendTemplateId: 'builtin-skill-optimization-v1',
+  },
   {
     id: 'debate',
     label: 'Debate · 双评审 + 仲裁',
@@ -36,9 +44,21 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
 
 /** Return a fresh deep-cloned copy of the template so multiple imports stay
  *  independent. JSON round-trip is fine here since templates contain no
- *  Dates, functions, or cyclic refs. */
+ *  Dates, functions, or cyclic refs.  Returns null for backend templates. */
 export function cloneTemplate(id: WorkflowTemplate['id']): WorkflowDefinitionDraft | null {
   const tpl = WORKFLOW_TEMPLATES.find((t) => t.id === id)
-  if (!tpl) return null
+  if (!tpl || !tpl.draft) return null
   return JSON.parse(JSON.stringify(tpl.draft)) as WorkflowDefinitionDraft
+}
+
+/** Check if a template requires backend instantiation (installs Skills + creates Workflow). */
+export function isBackendTemplate(id: string): boolean {
+  const tpl = WORKFLOW_TEMPLATES.find((t) => t.id === id)
+  return !!tpl?.backendTemplateId
+}
+
+/** Get the backend template ID for API instantiation. */
+export function getBackendTemplateId(id: string): string | null {
+  const tpl = WORKFLOW_TEMPLATES.find((t) => t.id === id)
+  return tpl?.backendTemplateId ?? null
 }

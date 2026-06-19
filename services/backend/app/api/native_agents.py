@@ -7,15 +7,17 @@ left for a follow-up request.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import io
 import json
 import os
 import re
+import secrets
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, object_session
 
@@ -27,6 +29,7 @@ from ..models import (
     NativeMcpServer,
     Project,
     Skill,
+    SkillRelease,
     User,
 )
 from ..schemas import (
@@ -78,6 +81,8 @@ LOCAL_AGENT_HOST_PACKAGE_GLOB = "superleaf-local-agent-host-*.zip"
 LOCAL_AGENT_HOST_DOWNLOAD_PATH = "/api/native-agent/local-agent-host/download"
 LOCAL_AGENT_HOST_DEFAULT_ENDPOINT = "http://127.0.0.1:8787"
 LOCAL_AGENT_HOST_DEFAULT_MCP_URL = "http://127.0.0.1:8787/mcp"
+LOCAL_AGENT_HOST_DEFAULT_DATA_DIR = Path.home() / ".superleaf-local-agent-host"
+LOCAL_AGENT_HOST_DEFAULT_TOKEN_FILE = LOCAL_AGENT_HOST_DEFAULT_DATA_DIR / "local-agent-host.token"
 LOCAL_AGENT_HOST_MANIFEST_FILE = "superleaf-local-agent-host.manifest.json"
 LOCAL_AGENT_HOST_BUNDLE_FILES = [
     "package.json",
@@ -138,6 +143,8 @@ class LocalAgentHostPackageOut(BaseModel):
     windows: dict[str, str]
     codex_env: dict[str, str]
     claude_env: dict[str, str]
+    local_auth_token: str = ""
+    local_auth_token_source: str = ""
 
 
 def _native_agent_mutation_http_error(exc: ValueError) -> HTTPException:
@@ -188,6 +195,17 @@ def _skill_out(row: Skill, user_id: str) -> SkillOut:
         svc = NativeAgentService(session)
         out.can_edit = svc.can_edit_skill(row, user_id=user_id)
         out.used_by_agent_count = len(svc.agents_using_skill(row.id, user_id=user_id))
+        release = (
+            session.query(SkillRelease)
+            .filter(SkillRelease.source_skill_id == row.id)
+            .order_by(SkillRelease.created_at.desc())
+            .first()
+        )
+        if release is not None:
+            out.release_id = release.id
+            out.release_version = release.version
+            out.release_checksum = release.artifact_checksum
+            out.release_install_spec = release.install_spec
     out.content = decrypt_skill_content(row.content)
     return out
 
@@ -358,6 +376,13 @@ def _local_agent_host_install_manifest(*, version: str, files: list[str], source
         "source": source,
         "endpoint": LOCAL_AGENT_HOST_DEFAULT_ENDPOINT,
         "mcp_url": LOCAL_AGENT_HOST_DEFAULT_MCP_URL,
+        "auth": {
+            "required": False,
+            "required_env": "SL_LOCAL_AGENT_HOST_AUTH_REQUIRED=1",
+            "token_env": "SL_LOCAL_AGENT_HOST_AUTH_TOKEN",
+            "token_file": "~/.superleaf-local-agent-host/local-agent-host.token",
+            "headers": ["Authorization: Bearer <token>", "X-SuperLeaf-Local-Token: <token>"],
+        },
         "manifest_filename": LOCAL_AGENT_HOST_MANIFEST_FILE,
         "required_files": LOCAL_AGENT_HOST_REQUIRED_PACKAGE_FILES,
         "included_files": files,
@@ -449,7 +474,10 @@ def _local_agent_host_package_version(filename: str) -> str:
     return _local_agent_host_version(_repo_root() / "services" / "local-agent-host")
 
 
-def _local_agent_host_package_info() -> LocalAgentHostPackageOut:
+def _local_agent_host_package_info(
+    *,
+    include_local_auth: bool = False,
+) -> LocalAgentHostPackageOut:
     filename, payload = _local_agent_host_package()
     version = _local_agent_host_package_version(filename)
     included_files = _local_agent_host_package_entries(payload)
@@ -457,6 +485,9 @@ def _local_agent_host_package_info() -> LocalAgentHostPackageOut:
         version=version,
         files=included_files,
         source="package-info",
+    )
+    local_auth_token, local_auth_source = (
+        _load_or_create_local_agent_host_auth_token() if include_local_auth else ("", "")
     )
     return LocalAgentHostPackageOut(
         version=version,
@@ -497,7 +528,76 @@ def _local_agent_host_package_info() -> LocalAgentHostPackageOut:
             "SL_LOCAL_AGENT_HOST_CLAUDE_BIN": "claude",
             "SL_LOCAL_AGENT_HOST_CLAUDE_PERMISSION_MODE": "default",
         },
+        local_auth_token=local_auth_token,
+        local_auth_token_source=local_auth_source,
     )
+
+
+def _is_loopback_request(request: Request) -> bool:
+    client_host = (request.client.host if request.client else "").strip()
+    request_host = (request.url.hostname or "").strip()
+    return _is_loopback_host(client_host) and _is_loopback_host(request_host)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host in {"localhost", "testclient"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_agent_host_auto_auth_enabled() -> bool:
+    return os.environ.get("YLW_LOCAL_AGENT_HOST_AUTO_AUTH", "").strip() == "1"
+
+
+def _load_or_create_local_agent_host_auth_token() -> tuple[str, str]:
+    env_token_file = (
+        os.environ.get("SL_LOCAL_AGENT_HOST_AUTH_TOKEN_FILE")
+        or os.environ.get("SUPERLEAF_LOCAL_AGENT_HOST_TOKEN_FILE")
+        or ""
+    ).strip()
+    if env_token_file:
+        token = _read_local_agent_host_auth_token(Path(env_token_file).expanduser())
+        if token:
+            return token, "env-file"
+
+    env_token = (
+        os.environ.get("SL_LOCAL_AGENT_HOST_AUTH_TOKEN")
+        or os.environ.get("SUPERLEAF_LOCAL_AGENT_HOST_TOKEN")
+        or ""
+    ).strip()
+    if _is_local_agent_host_auth_token(env_token):
+        return env_token, "env"
+
+    token = _read_local_agent_host_auth_token(LOCAL_AGENT_HOST_DEFAULT_TOKEN_FILE)
+    if token:
+        return token, "file"
+
+    generated = f"sl_lah_{secrets.token_urlsafe(32)}"
+    try:
+        LOCAL_AGENT_HOST_DEFAULT_DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        LOCAL_AGENT_HOST_DEFAULT_TOKEN_FILE.write_text(f"{generated}\n", encoding="utf-8")
+        try:
+            LOCAL_AGENT_HOST_DEFAULT_TOKEN_FILE.chmod(0o600)
+        except OSError:
+            pass
+        return generated, "generated"
+    except OSError:
+        return "", ""
+
+
+def _read_local_agent_host_auth_token(path: Path) -> str:
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return token if _is_local_agent_host_auth_token(token) else ""
+
+
+def _is_local_agent_host_auth_token(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9._~:+/=-]{16,512}", value or ""))
 
 
 def _agent_out(row: NativeAgent) -> NativeAgentOut:
@@ -1013,11 +1113,14 @@ def delete_skill(
 
 @router.get("/local-agent-host/package", response_model=LocalAgentHostPackageOut)
 def get_local_agent_host_package(
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> LocalAgentHostPackageOut:
     del user
     try:
-        return _local_agent_host_package_info()
+        return _local_agent_host_package_info(
+            include_local_auth=_local_agent_host_auto_auth_enabled() and _is_loopback_request(request),
+        )
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
 

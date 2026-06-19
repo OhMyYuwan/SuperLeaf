@@ -12,12 +12,12 @@ import shlex
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import httpx
-
 from sqlalchemy.orm import Session
 
-from ..models import Skill
+from ..models import Skill, SkillRelease
 from ..settings import settings
 from .mcp_policy import validate_remote_endpoint
 from .project_fs_service import ProjectFsService
@@ -28,6 +28,12 @@ from .skill_recipe_metadata import (
     build_recipe_tags,
     recipe_meta_from_tags,
 )
+from .skill_release_cache_service import SkillReleaseCacheError, SkillReleaseCacheService
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+OFFICIAL_MARKETPLACE_OWNER = "OhMyYuwan"
+OFFICIAL_MARKETPLACE_REPO = "SuperLeaf.Skills"
+OFFICIAL_MARKETPLACE_LOCAL_ROOT = REPO_ROOT / "supports" / OFFICIAL_MARKETPLACE_REPO
 
 
 class SkillMarketplaceError(RuntimeError):
@@ -94,8 +100,11 @@ class SkillMarketplaceService:
 
     def install(self, skill_id: str, *, user_id: str) -> tuple[Skill, MarketplaceEntry]:
         entry = self._find_entry(skill_id, user_id=user_id)
-        now = datetime.utcnow()
         existing = self._installed_by_catalog_id(user_id=user_id).get(entry.id)
+        if existing is not None and _marketplace_install_is_current(self.db, existing, entry):
+            return existing, _installed_entry(entry, existing, installed_version=entry.version)
+
+        now = datetime.utcnow()
         tags = build_recipe_tags(
             source="marketplace",
             repo_url=entry.repo_url,
@@ -135,18 +144,29 @@ class SkillMarketplaceService:
             row.tags = tags
             row.version += 1
             row.updated_at = now
+        self.db.add(row)
+        self.db.flush()
+        try:
+            skill_content = self._fetch_text(entry.entry_url)
+            SkillReleaseCacheService(self.db).publish_skill_content(
+                namespace=_marketplace_release_namespace(entry),
+                slug=_marketplace_release_slug(entry),
+                version=entry.version,
+                display_name=entry.display_name or entry.name or entry.id,
+                visibility="public",
+                content=skill_content,
+                publisher_user_id="system",
+                description=entry.description,
+                install_spec=_marketplace_install_spec(entry),
+                source_skill_id=row.id,
+                source_type="marketplace",
+                commit=False,
+            )
+        except SkillReleaseCacheError as exc:
+            raise SkillMarketplaceError(str(exc)) from exc
         self.db.commit()
         self.db.refresh(row)
-        installed_entry = MarketplaceEntry(
-            **{
-                **entry.__dict__,
-                "installed": True,
-                "installed_skill_id": row.id,
-                "installed_version": entry.version,
-                "update_available": False,
-            }
-        )
-        return row, installed_entry
+        return row, _installed_entry(entry, row, installed_version=entry.version)
 
     def uninstall(self, skill_id: str, *, user_id: str) -> bool:
         row = self._installed_by_catalog_id(user_id=user_id).get(skill_id)
@@ -226,7 +246,9 @@ class SkillMarketplaceService:
         try:
             payload = json.loads(self._fetch_text("external-skills.json"))
         except SkillMarketplaceError as exc:
-            if "HTTP 404" in str(exc):
+            if "HTTP 404" in str(exc) or _official_local_fallback_available(
+                self.catalog_url
+            ):
                 return []
             raise
         return [_external_entry_from_raw(raw) for raw in payload.get("skills", [])]
@@ -247,10 +269,24 @@ class SkillMarketplaceService:
         except SsrfPolicyError as exc:
             raise SkillMarketplaceError(f"Blocked Skill marketplace URL {url}: {exc}") from exc
         except httpx.HTTPStatusError as exc:
+            fallback = _official_local_fallback_text(
+                catalog_url=self.catalog_url,
+                url_or_path=url_or_path,
+                resolved_url=url,
+            )
+            if fallback is not None:
+                return fallback
             raise SkillMarketplaceError(
                 f"Skill marketplace request failed: HTTP {exc.response.status_code}"
             ) from exc
         except Exception as exc:  # pragma: no cover - runtime/network path
+            fallback = _official_local_fallback_text(
+                catalog_url=self.catalog_url,
+                url_or_path=url_or_path,
+                resolved_url=url,
+            )
+            if fallback is not None:
+                return fallback
             raise SkillMarketplaceError(f"Skill marketplace request failed: {exc}") from exc
 
     def _entry_from_raw(self, raw: dict) -> MarketplaceEntry:
@@ -310,6 +346,136 @@ def _catalog_meta(row: Skill) -> dict[str, str]:
     }
 
 
+def _marketplace_install_is_current(db: Session, row: Skill, entry: MarketplaceEntry) -> bool:
+    meta = _catalog_meta(row)
+    if meta.get("version", "") != entry.version:
+        return False
+    if entry.checksum_sha256 and meta.get("checksum", "") != entry.checksum_sha256:
+        return False
+    return _latest_marketplace_release(db, row.id) is not None
+
+
+def _latest_marketplace_release(db: Session, skill_id: str) -> SkillRelease | None:
+    return (
+        db.query(SkillRelease)
+        .filter(
+            SkillRelease.source_skill_id == skill_id,
+            SkillRelease.source_type == "marketplace",
+        )
+        .order_by(SkillRelease.created_at.desc())
+        .first()
+    )
+
+
+def _installed_entry(
+    entry: MarketplaceEntry,
+    row: Skill,
+    *,
+    installed_version: str,
+) -> MarketplaceEntry:
+    return MarketplaceEntry(
+        **{
+            **entry.__dict__,
+            "installed": True,
+            "installed_skill_id": row.id,
+            "installed_version": installed_version,
+            "update_available": False,
+        }
+    )
+
+
+def _official_local_fallback_available(catalog_url: str) -> bool:
+    return _is_official_marketplace_catalog(catalog_url) and OFFICIAL_MARKETPLACE_LOCAL_ROOT.is_dir()
+
+
+def _official_local_fallback_text(
+    *,
+    catalog_url: str,
+    url_or_path: str,
+    resolved_url: str,
+) -> str | None:
+    path = _official_local_fallback_path(
+        catalog_url=catalog_url,
+        url_or_path=url_or_path,
+        resolved_url=resolved_url,
+    )
+    if path is None:
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _official_local_fallback_path(
+    *,
+    catalog_url: str,
+    url_or_path: str,
+    resolved_url: str,
+) -> Path | None:
+    if not _official_local_fallback_available(catalog_url):
+        return None
+    rel = (
+        _official_repo_relative_path(url_or_path)
+        or _official_repo_relative_path(resolved_url)
+        or _relative_catalog_path(url_or_path)
+    )
+    rel = rel.strip("/")
+    if not rel:
+        return None
+    root = OFFICIAL_MARKETPLACE_LOCAL_ROOT.resolve()
+    candidate = (root / rel).resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def _is_official_marketplace_catalog(catalog_url: str) -> bool:
+    parsed = urllib.parse.urlparse(str(catalog_url or "").strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc == "raw.githubusercontent.com":
+        return (
+            len(parts) >= 3
+            and parts[0] == OFFICIAL_MARKETPLACE_OWNER
+            and parts[1] == OFFICIAL_MARKETPLACE_REPO
+        )
+    if parsed.netloc == "github.com":
+        return (
+            len(parts) >= 2
+            and parts[0] == OFFICIAL_MARKETPLACE_OWNER
+            and parts[1].removesuffix(".git") == OFFICIAL_MARKETPLACE_REPO
+        )
+    return False
+
+
+def _official_repo_relative_path(value: str) -> str:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc == "raw.githubusercontent.com":
+        if (
+            len(parts) >= 4
+            and parts[0] == OFFICIAL_MARKETPLACE_OWNER
+            and parts[1] == OFFICIAL_MARKETPLACE_REPO
+        ):
+            return "/".join(parts[3:])
+        return ""
+    if parsed.netloc == "github.com":
+        if (
+            len(parts) >= 5
+            and parts[0] == OFFICIAL_MARKETPLACE_OWNER
+            and parts[1].removesuffix(".git") == OFFICIAL_MARKETPLACE_REPO
+            and parts[2] in {"blob", "tree"}
+        ):
+            return "/".join(parts[4:])
+    return ""
+
+
+def _relative_catalog_path(value: str) -> str:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    if parsed.scheme or parsed.netloc:
+        return ""
+    return str(value or "").strip()
+
+
 def _version_key(value: str) -> tuple[int, int, int]:
     parts = []
     for part in (value or "0.0.0").split(".")[:3]:
@@ -320,6 +486,40 @@ def _version_key(value: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)  # type: ignore[return-value]
+
+
+def _marketplace_release_namespace(entry: MarketplaceEntry) -> str:
+    author = _slug_part(entry.author_github or "marketplace")
+    return f"official-{author}"
+
+
+def _marketplace_release_slug(entry: MarketplaceEntry) -> str:
+    return _slug_part(entry.name or entry.skill_name or entry.id or "skill")
+
+
+def _marketplace_install_spec(entry: MarketplaceEntry) -> str:
+    payload = {
+        "source": "marketplace",
+        "marketplace_id": entry.id,
+        "repo_url": entry.repo_url,
+        "source_url": entry.source_url,
+        "source_ref": entry.source_ref,
+        "skill_name": entry.skill_name or entry.name,
+        "install_command": entry.install_command,
+        "catalog_version": entry.version,
+        "catalog_checksum": entry.checksum_sha256,
+    }
+    return json.dumps(
+        {key: value for key, value in payload.items() if str(value or "").strip()},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _slug_part(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() or ch in "._-" else "-" for ch in value.strip())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "skill"
 
 
 def _dedupe_entries(entries: list[MarketplaceEntry]) -> list[MarketplaceEntry]:

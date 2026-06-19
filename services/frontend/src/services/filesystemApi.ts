@@ -157,6 +157,11 @@ export const filesystemApi = {
       method: 'POST',
     }),
 
+  extractMarkdown: (fileId: string) =>
+    http<BackendDoc>(`/api/files/${encodeURIComponent(fileId)}/extract-markdown`, {
+      method: 'POST',
+    }),
+
   moveEntity: (
     entityType: 'folder' | 'doc' | 'file',
     entityId: string,

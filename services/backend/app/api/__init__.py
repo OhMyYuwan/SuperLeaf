@@ -18,9 +18,11 @@ from . import (
     notifications,
     projects,
     providers,
+    skill_optimization,
     spelling,
     users,
     versions,
+    workflow_templates,
     workflow_test_cases,
     workflows,
 )
@@ -48,3 +50,5 @@ api_router.include_router(compile.router)
 api_router.include_router(compile.projects_router)
 api_router.include_router(notifications.router)
 api_router.include_router(mcp.router)
+api_router.include_router(skill_optimization.router)
+api_router.include_router(workflow_templates.router)

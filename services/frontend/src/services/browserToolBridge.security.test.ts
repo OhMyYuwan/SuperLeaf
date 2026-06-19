@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearLocalAgentHostAuthToken,
   normalizeLocalAgentHostEndpoint,
+  pollBrowserToolBridgeApprovalRequests,
+  pollBrowserToolBridgeRequests,
   registerBrowserToolBridgeContext,
   startBrowserToolBridge,
   storeLocalAgentHostAuthToken,
@@ -61,13 +64,22 @@ describe('browserToolBridge endpoint policy', () => {
 
   it('attaches browser-local Local Agent Host auth token to loopback context registration', async () => {
     const storage = new Map<string, string>()
-    vi.stubGlobal('localStorage', {
+    const localStorageMock = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
       setItem: vi.fn((key: string, value: string) => storage.set(key, String(value))),
       removeItem: vi.fn((key: string) => storage.delete(key)),
-    })
+    }
+    const sessionStorageMock = {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    }
+    vi.stubGlobal('localStorage', localStorageMock)
+    vi.stubGlobal('sessionStorage', sessionStorageMock)
     const token = 'sl_lah_abcdefghijklmnopqrstuvwxyz1234567890'
     storeLocalAgentHostAuthToken('http://127.0.0.1:8787/', token)
+    expect(localStorageMock.setItem).not.toHaveBeenCalled()
+    expect(sessionStorageMock.setItem).not.toHaveBeenCalled()
 
     const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({
       status: 'ok',
@@ -97,6 +109,79 @@ describe('browserToolBridge endpoint policy', () => {
     expect(init?.headers).toMatchObject({
       'X-SuperLeaf-Local-Token': token,
     })
+  })
+
+  it('does not restore Local Agent Host auth token from browser storage', async () => {
+    clearLocalAgentHostAuthToken('http://127.0.0.1:8787')
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => 'sl_lah_stale_browser_storage_token_value'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    vi.stubGlobal('sessionStorage', {
+      getItem: vi.fn(() => 'sl_lah_stale_session_storage_token_value'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({
+      status: 'ok',
+      context_id: 'ctx_test',
+      context_secret: 'secret',
+      mcp_url: 'http://127.0.0.1:8787/mcp',
+      tool_count: 1,
+      expires_at: Date.now() + 60000,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await registerBrowserToolBridgeContext({
+      endpoint: 'http://127.0.0.1:8787',
+      context: {
+        projectId: 'project_1',
+        conversationId: 'conversation_1',
+        documentId: 'doc_1',
+        rangeStart: 0,
+        rangeEnd: 0,
+        inputs: {},
+        superleafOrigin: 'http://localhost:5173',
+      },
+    })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const init = fetchMock.mock.calls[0]?.[1]
+    expect(init?.headers).not.toHaveProperty('X-SuperLeaf-Local-Token')
+  })
+
+  it('sends browser bridge context secret in headers instead of poll URLs', async () => {
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({
+      status: 'ok',
+      context_id: 'ctx_test',
+      requests: [],
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await pollBrowserToolBridgeRequests({
+      endpoint: 'http://127.0.0.1:8787',
+      contextId: 'ctx_test',
+      contextSecret: 'ctx_secret_should_not_be_in_url',
+      waitMs: 0,
+    })
+    await pollBrowserToolBridgeApprovalRequests({
+      endpoint: 'http://127.0.0.1:8787',
+      contextId: 'ctx_test',
+      contextSecret: 'approval_ctx_secret_should_not_be_in_url',
+      waitMs: 0,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const [input, init] of fetchMock.mock.calls) {
+      const url = new URL(String(input))
+      expect(url.searchParams.get('context_id')).toBe('ctx_test')
+      expect(url.searchParams.has('context_secret')).toBe(false)
+      expect(init?.headers).toMatchObject({
+        'X-SuperLeaf-Context-Token': expect.stringMatching(/ctx_secret_should_not_be_in_url|approval_ctx_secret_should_not_be_in_url/),
+      })
+    }
   })
 })
 

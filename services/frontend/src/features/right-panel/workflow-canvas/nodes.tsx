@@ -4,8 +4,8 @@
  * Node types:
  *   - input:  workflow entry. Exposes selection text, instruction, and
  *             @-referenced files to downstream nodes.
- *   - agent:  atomic execution unit. Multi-input merging happens naturally in
- *             the downstream agent's prompt; no dedicated merge node.
+ *   - agent:  atomic execution unit. It can either reference a pre-defined
+ *             team agent, or carry inline Native Agent config for migration.
  *   - loop:   container. Agents / nested loops inside run for `rounds` iters.
  *             Loop's input handle connects directly to internal agent input handles.
  *             Internal agent output handles connect directly to Loop's output handle.
@@ -17,11 +17,11 @@
 import { memo } from 'react'
 import { Handle, Position, useNodes, useEdges, NodeResizer, type NodeProps } from '@xyflow/react'
 import { useWorkflowStore } from '../../../stores/workflowStore'
-import type { FlowNode, FlowNodeData } from './graphConversion'
+import { isInlineAgentConfig, type FlowNode, type FlowNodeData } from './graphConversion'
 
 type Props = NodeProps<FlowNode>
 
-function AgentCard({ data, selected }: Props) {
+function TeamAgentCard({ data, selected }: Props) {
   const agentId = readAgentId(data.config)
   const loopOwner = (data.config._loop_owner as string) ?? ''
   const runStatus = (data.config._run_status as string) ?? ''
@@ -56,6 +56,34 @@ function AgentCard({ data, selected }: Props) {
   )
 }
 
+function InlineAgentCard({ data, selected }: Props) {
+  const loopOwner = (data.config._loop_owner as string) ?? ''
+  const runStatus = (data.config._run_status as string) ?? ''
+  const skillNames = Array.isArray(data.config.skill_names) ? data.config.skill_names as string[] : []
+  const instructions = typeof data.config.instructions === 'string' ? data.config.instructions : ''
+
+  return (
+    <div
+      className={`wf-node wf-node-inline-agent${selected ? ' selected' : ''}${
+        loopOwner ? ' wf-node-in-loop' : ''
+      }${runStatus ? ` wf-run-${runStatus}` : ''}`}
+    >
+      <div className="wf-node-head wf-head-inline-agent">
+        <span className="wf-node-icon">⚡</span>
+        <span className="wf-node-kind">Inline Agent</span>
+        {loopOwner && <span className="wf-node-badge loop-member" title={`属于 ${loopOwner}`}>🔁 {loopOwner}</span>}
+        {skillNames.length > 0 && <span className="wf-node-badge">Skills ×{skillNames.length}</span>}
+      </div>
+      <div className="wf-node-body">
+        <div className="wf-node-label">{data.label || '未命名'}</div>
+        <div className="wf-node-config">
+          {instructions ? instructions.slice(0, 60) + (instructions.length > 60 ? '…' : '') : '未配置指令'}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function readAgentId(config: Record<string, unknown>): string {
   const raw = config.agent_id ?? config.agentId
   return typeof raw === 'string' ? raw.trim() : ''
@@ -64,7 +92,11 @@ function readAgentId(config: Record<string, unknown>): string {
 export const AgentNode = memo((props: Props) => (
   <>
     <Handle type="target" position={Position.Left} />
-    <AgentCard {...props} />
+    {isInlineAgentConfig(props.data.config) ? (
+      <InlineAgentCard {...props} />
+    ) : (
+      <TeamAgentCard {...props} />
+    )}
     <Handle type="source" position={Position.Right} />
   </>
 ))
@@ -260,12 +292,5 @@ export const LoopNode = memo(({ id, data, selected }: Props) => {
   )
 })
 LoopNode.displayName = 'LoopNode'
-
-export const nodeTypes = {
-  agent: AgentNode,
-  loop: LoopNode,
-  input: InputNode,
-  output: OutputNode,
-}
 
 export type { FlowNodeData }

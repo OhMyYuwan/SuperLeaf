@@ -63,6 +63,7 @@ export function recipePreviewName(source: string, skillName: string, command: st
 export function skillPillLabel(skill: Skill, pendingShare = false): string {
   if (skill.visibility === 'system' || skill.source === 'bundled') return '内置'
   if (skill.source === 'project') return '项目'
+  if (skill.source === 'template') return '模板'
   if (skill.source === 'marketplace') return '市场'
   if (skill.source === 'custom') return '自定义 npx'
   if (skill.visibility === 'public') return pendingShare ? '共享·待更新' : '共享'
@@ -72,6 +73,7 @@ export function skillPillLabel(skill: Skill, pendingShare = false): string {
 export function skillPillTone(skill: Skill): string {
   if (skill.visibility === 'public' || skill.source === 'bundled' || skill.source === 'marketplace') return 'ok'
   if (skill.source === 'project') return 'ok'
+  if (skill.source === 'template') return 'neutral'
   if (skill.source === 'custom') return 'neutral'
   return ''
 }

@@ -14,6 +14,7 @@ from typing import Any
 
 from ..settings import settings
 from .safe_http import safe_async_client
+from .secret_redaction import redact_secrets
 from .sse_decode import iter_sse_json_events
 
 
@@ -34,6 +35,7 @@ class NanobotInfo:
 
 class NanobotError(RuntimeError):
     def __init__(self, status: int, detail: str) -> None:
+        detail = redact_secrets(detail)
         super().__init__(f"Nanobot API error {status}: {detail}")
         self.status = status
         self.detail = detail

@@ -35,3 +35,8 @@ def init_db() -> None:
 
     Base.metadata.create_all(engine)
     run_migrations(engine)
+
+    # Seed built-in workflow templates
+    from .services.workflow_template_service import seed_builtin_templates
+    with SessionLocal() as db:
+        seed_builtin_templates(db)

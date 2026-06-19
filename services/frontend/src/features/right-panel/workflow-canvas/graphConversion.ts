@@ -45,7 +45,7 @@ export function graphToFlow(graph: WorkflowGraph): {
   edges: Edge[]
 } {
   const nodes: FlowNode[] = graph.nodes.map((n, i) => {
-    const config = normalizeNodeConfig(n.config ?? {})
+    const config = normalizeNodeConfig(n.config ?? {}, n.type)
     const ui = readUi(config)
     const position = ui.position ?? {
       x: DEFAULT_POSITION.x + (i % 3) * 220,
@@ -185,7 +185,10 @@ export function flowToGraph(nodes: FlowNode[], edges: Edge[]): WorkflowGraph {
   return { nodes: outNodes, edges: outEdges }
 }
 
-function normalizeNodeConfig(config: Record<string, unknown>): Record<string, unknown> {
+function normalizeNodeConfig(
+  config: Record<string, unknown>,
+  backendType?: WorkflowNode['type'],
+): Record<string, unknown> {
   const next = { ...config }
   if (
     typeof next.additional_prompt !== 'string'
@@ -195,6 +198,13 @@ function normalizeNodeConfig(config: Record<string, unknown>): Record<string, un
     next.additional_prompt = next.promptHint
   }
   delete next.promptHint
+  if (backendType === 'inline-agent' || isInlineAgentConfig(next)) {
+    next.agent_source = 'inline'
+    next.inline_agent = true
+    if (!isPlainRecord(next.provider) && typeof next.provider_ref !== 'string') {
+      next.provider = {}
+    }
+  }
   return next
 }
 
@@ -207,4 +217,12 @@ export function generateNodeId(existing: FlowNode[], type: CanvasNodeType): stri
   let i = existing.filter((n) => n.data.nodeType === type).length + 1
   while (existing.some((n) => n.id === `${prefix}${i}`)) i++
   return `${prefix}${i}`
+}
+
+export function isInlineAgentConfig(config: Record<string, unknown>): boolean {
+  return Boolean(config.inline_agent) || String(config.agent_source ?? '').trim() === 'inline'
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

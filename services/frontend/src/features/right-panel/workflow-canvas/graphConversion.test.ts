@@ -46,6 +46,8 @@ describe('workflow graph conversion inline Agent normalization', () => {
     expect(savedNode.type).toBe('agent')
     expect(savedNode.config!.agent_source).toBe('inline')
     expect(savedNode.config!.inline_agent).toBe(true)
+    expect(savedNode.config!.provider).toEqual({})
+    expect(savedNode.config!.provider_ref).toBeUndefined()
   })
 
   it('generates normal agent IDs for temporary Agent nodes', () => {

@@ -3,7 +3,7 @@
  * data-driven Skill optimization runs.
  */
 
-import React, { useEffect, useCallback } from 'react'
+import React, { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { useSkillOptimizationStore } from '../stores/skillOptimizationStore'
 

@@ -201,8 +201,8 @@ function normalizeNodeConfig(
   if (backendType === 'inline-agent' || isInlineAgentConfig(next)) {
     next.agent_source = 'inline'
     next.inline_agent = true
-    if (typeof next.provider_ref !== 'string' || !next.provider_ref.trim()) {
-      next.provider_ref = 'workflow_default'
+    if (!isPlainRecord(next.provider) && typeof next.provider_ref !== 'string') {
+      next.provider = {}
     }
   }
   return next
@@ -221,4 +221,8 @@ export function generateNodeId(existing: FlowNode[], type: CanvasNodeType): stri
 
 export function isInlineAgentConfig(config: Record<string, unknown>): boolean {
   return Boolean(config.inline_agent) || String(config.agent_source ?? '').trim() === 'inline'
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

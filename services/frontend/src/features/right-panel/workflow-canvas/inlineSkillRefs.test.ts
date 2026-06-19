@@ -19,7 +19,13 @@ describe('inline workflow Skill refs', () => {
 
   it('keeps release refs and drops invalid empty entries', () => {
     const refs = readInlineSkillRefs([
-      { alias: 'official-reviewer', release_id: 'rel-1', namespace: 'official' },
+      {
+        alias: 'official-reviewer',
+        release_id: 'rel-1',
+        namespace: 'official',
+        marketplace_id: 'OhMyYuwan@reviewer',
+        install_command: 'npx --yes skills add https://example.test/reviewer --agent codex --copy --yes',
+      },
       { alias: '', skill_id: '' },
       null,
     ])
@@ -29,6 +35,8 @@ describe('inline workflow Skill refs', () => {
         alias: 'official-reviewer',
         release_id: 'rel-1',
         namespace: 'official',
+        marketplace_id: 'OhMyYuwan@reviewer',
+        install_command: 'npx --yes skills add https://example.test/reviewer --agent codex --copy --yes',
       }),
     ])
   })
@@ -50,6 +58,25 @@ describe('inline workflow Skill refs', () => {
       checksum: 'abc123',
     }))
     expect(refs[0]?.skill_id).toBeUndefined()
+  })
+
+  it('copies marketplace install metadata from release install spec', () => {
+    const refs = addInlineSkillRef([], skill({
+      id: 'skill-a',
+      name: 'Reviewer',
+      source: 'marketplace',
+      public_name: 'OhMyYuwan@reviewer',
+      release_id: 'release-a',
+      release_install_spec: JSON.stringify({
+        marketplace_id: 'OhMyYuwan@reviewer',
+        install_command: 'npx --yes skills add https://example.test/reviewer --agent codex --copy --yes',
+      }),
+    }))
+
+    expect(refs[0]).toEqual(expect.objectContaining({
+      marketplace_id: 'OhMyYuwan@reviewer',
+      install_command: 'npx --yes skills add https://example.test/reviewer --agent codex --copy --yes',
+    }))
   })
 
   it('normalizes edited aliases for projection folder names', () => {

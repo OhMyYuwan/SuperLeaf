@@ -316,7 +316,7 @@ function CanvasInner({ initialGraph, onGraphChange, nodeStatuses = [] }: Workflo
               skill_names: [],
               instructions: '',
               runtime_config: {},
-              provider_ref: 'workflow_default',
+              provider: {},
               additional_prompt: '',
               allow_project_context: false,
             }

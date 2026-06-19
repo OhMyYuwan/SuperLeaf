@@ -15,7 +15,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type {
-  Provider,
   WorkflowDefinition,
   WorkflowDefinitionDraft,
   WorkflowGraph,
@@ -24,7 +23,6 @@ import type {
 } from '../../services/backendApi'
 import { workflowTestCaseApi } from '../../services/backendApi'
 import type { NodeStatus, RunEvent } from '../../stores/workflowStore'
-import { useSettingsStore } from '../../stores/settingsStore'
 import { AgentMarkdown } from '../shared/AgentMarkdown'
 import { WorkflowCanvas } from './workflow-canvas'
 
@@ -48,13 +46,6 @@ interface WorkflowJsonPayload {
   description?: string
   graph?: WorkflowGraph
   config?: WorkflowConfig
-}
-
-interface WorkflowProviderConfig {
-  provider_id?: string
-  model?: string
-  temperature?: number
-  max_tokens?: number
 }
 
 const EMPTY_GRAPH: WorkflowGraph = { nodes: [], edges: [] }
@@ -117,36 +108,9 @@ export function WorkflowDefinitionEditor({
   const [error, setError] = useState<string | null>(null)
   const [testPrompt, setTestPrompt] = useState('现在开始接龙，你需要讲这段完整输出，并在最后添数，以此给后面的 Agent 足够的信息：\n报数开始，每次多报一个数，每个数单独一行：\n1')
   const [notice, setNotice] = useState<string | null>(null)
-  const providers = useSettingsStore((s) => s.providers)
-  const providersLoaded = useSettingsStore((s) => s.loaded)
-  const loadProviders = useSettingsStore((s) => s.load)
-  const nativeProviders = useMemo(
-    () => providers.filter((provider) => provider.kind === 'native'),
-    [providers],
-  )
-  const workflowProviderConfig = readWorkflowProviderConfig(config)
-  const selectedWorkflowProvider =
-    workflowProviderConfig.provider_id
-      ? providers.find((provider) => provider.id === workflowProviderConfig.provider_id)
-      : undefined
-
-  useEffect(() => {
-    if (!providersLoaded) void loadProviders()
-  }, [providersLoaded, loadProviders])
-
   const flashNotice = (msg: string) => {
     setNotice(msg)
     window.setTimeout(() => setNotice((curr) => (curr === msg ? null : curr)), 2500)
-  }
-
-  const updateWorkflowProviderConfig = (patch: Partial<WorkflowProviderConfig>) => {
-    setConfig((prev) => ({
-      ...prev,
-      provider: pruneEmptyWorkflowProviderConfig({
-        ...readWorkflowProviderConfig(prev),
-        ...patch,
-      }),
-    }))
   }
 
   const applyJsonToState = (text: string): string | null => {
@@ -369,86 +333,6 @@ export function WorkflowDefinitionEditor({
           />
         </div>
 
-        <div className="workflow-provider-settings">
-          <div className="form-group">
-            <label>Workflow Provider（临时 Agent）</label>
-            <select
-              value={workflowProviderConfig.provider_id ?? ''}
-              onChange={(e) => updateWorkflowProviderConfig({ provider_id: e.target.value })}
-              className={
-                selectedWorkflowProvider && selectedWorkflowProvider.kind !== 'native'
-                  ? 'input-warning'
-                  : ''
-              }
-            >
-              <option value="">— 未选择 Native Provider —</option>
-              {selectedWorkflowProvider &&
-                selectedWorkflowProvider.kind !== 'native' &&
-                workflowProviderConfig.provider_id && (
-                  <option value={workflowProviderConfig.provider_id} disabled>
-                    {selectedWorkflowProvider.name}（非 Native，不可用于临时 Agent）
-                  </option>
-                )}
-              {workflowProviderConfig.provider_id &&
-                !selectedWorkflowProvider && (
-                  <option value={workflowProviderConfig.provider_id} disabled>
-                    缺失 Provider · {workflowProviderConfig.provider_id.slice(0, 8)}…
-                  </option>
-                )}
-              {nativeProviders.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {formatProviderOption(provider)}
-                </option>
-              ))}
-            </select>
-            <div className="form-hint-sm">
-              临时 Agent 使用这里的 Native Provider 执行；团队 Agent 继续使用各自已绑定的 Provider。
-            </div>
-          </div>
-
-          <div className="workflow-provider-grid">
-            <div className="form-group">
-              <label>Model</label>
-              <input
-                type="text"
-                value={workflowProviderConfig.model ?? ''}
-                onChange={(e) => updateWorkflowProviderConfig({ model: e.target.value })}
-                placeholder="留空使用 Provider 默认模型"
-              />
-            </div>
-            <div className="form-group">
-              <label>Temperature</label>
-              <input
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={workflowProviderConfig.temperature ?? ''}
-                onChange={(e) =>
-                  updateWorkflowProviderConfig({
-                    temperature: e.target.value === '' ? undefined : Number(e.target.value),
-                  })
-                }
-                placeholder="0.2"
-              />
-            </div>
-            <div className="form-group">
-              <label>Max Tokens</label>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={workflowProviderConfig.max_tokens ?? ''}
-                onChange={(e) =>
-                  updateWorkflowProviderConfig({
-                    max_tokens: e.target.value === '' ? undefined : Number(e.target.value),
-                  })
-                }
-                placeholder="4096"
-              />
-            </div>
-          </div>
-        </div>
       </div>
 
       {mode === 'canvas' && (
@@ -536,45 +420,6 @@ export function WorkflowDefinitionEditor({
       </div>
     </div>
   )
-}
-
-function readWorkflowProviderConfig(config: WorkflowConfig | undefined): WorkflowProviderConfig {
-  const raw = isRecord(config?.provider) ? config.provider : {}
-  return {
-    provider_id: readString(raw.provider_id),
-    model: readString(raw.model),
-    temperature: readFiniteNumber(raw.temperature),
-    max_tokens: readFiniteNumber(raw.max_tokens),
-  }
-}
-
-function pruneEmptyWorkflowProviderConfig(config: WorkflowProviderConfig): WorkflowProviderConfig {
-  const next: WorkflowProviderConfig = {}
-  if (config.provider_id?.trim()) next.provider_id = config.provider_id.trim()
-  if (config.model?.trim()) next.model = config.model.trim()
-  if (typeof config.temperature === 'number' && Number.isFinite(config.temperature)) {
-    next.temperature = config.temperature
-  }
-  if (typeof config.max_tokens === 'number' && Number.isFinite(config.max_tokens)) {
-    next.max_tokens = Math.max(1, Math.floor(config.max_tokens))
-  }
-  return next
-}
-
-function formatProviderOption(provider: Provider): string {
-  return provider.status === 'ok' ? provider.name : `${provider.name} · ${provider.status}`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function readFiniteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function WorkflowTestPanel({

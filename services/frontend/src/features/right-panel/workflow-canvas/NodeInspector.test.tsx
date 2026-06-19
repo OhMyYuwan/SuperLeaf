@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CachedWorkflow } from '../../../services/backendApi'
 import { formatWorkflowAgentOption } from './agentOptionFormat'
+import { pruneInlineProviderConfig } from './NodeInspector'
 
 describe('Workflow NodeInspector Agent option labels', () => {
   it('shows Agent options as Agent name followed by provider name', () => {
@@ -28,6 +29,22 @@ describe('Workflow NodeInspector Agent option labels', () => {
     )}（已禁用）`
 
     expect(label).toBe('Disabled Bot (Nanobot Local)（已禁用）')
+  })
+})
+
+describe('Workflow inline Agent provider config', () => {
+  it('keeps provider and model but drops runtime knobs from new node config', () => {
+    expect(
+      pruneInlineProviderConfig({
+        provider_id: 'provider-native',
+        model: 'gpt-5',
+        temperature: 0.8,
+        max_tokens: 4096,
+      }),
+    ).toEqual({
+      provider_id: 'provider-native',
+      model: 'gpt-5',
+    })
   })
 })
 

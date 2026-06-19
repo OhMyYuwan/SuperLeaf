@@ -64,6 +64,7 @@ def prepare_template(
     result = svc.prepare(
         template_id,
         project_id=body.project_id,
+        user_id=user.id,
     )
     if result.error:
         raise HTTPException(422, result.error)

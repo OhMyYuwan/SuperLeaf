@@ -931,7 +931,7 @@ def _collect_unhealthy_agents(
             continue
         cfg = n.get("config") or {}
         if _is_inline_agent_node(n):
-            provider_config = (wf.config or {}).get("provider", {})
+            provider_config = _inline_agent_provider_config(cfg, wf.config or {})
             provider_id = (
                 str(provider_config.get("provider_id") or "").strip()
                 if isinstance(provider_config, dict)
@@ -1015,3 +1015,14 @@ def _is_inline_agent_node(node: dict) -> bool:
         or bool(cfg.get("inline_agent"))
         or str(cfg.get("agent_source") or "").strip() == "inline"
     )
+
+
+def _inline_agent_provider_config(node_config: dict, workflow_config: dict) -> dict:
+    node_provider = node_config.get("provider")
+    if isinstance(node_provider, dict):
+        return node_provider
+
+    if str(node_config.get("provider_ref") or "").strip() == "workflow_default":
+        workflow_provider = workflow_config.get("provider") if isinstance(workflow_config, dict) else {}
+        return workflow_provider if isinstance(workflow_provider, dict) else {}
+    return {}

@@ -119,7 +119,7 @@ export function WorkflowDefinitionsPanel({
           description: result.template_description,
           execution_mode: 'graph',
           graph: result.graph_template,
-          config: { max_rounds: 3, provider: {} },
+          config: { max_rounds: 3 },
         }
         setEditingDefinition(undefined)
         setDraftFromTemplate(draft)

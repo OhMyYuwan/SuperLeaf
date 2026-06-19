@@ -11,6 +11,8 @@ export interface InlineAgentSkillRef {
   checksum?: string
   display_name?: string
   source?: string
+  marketplace_id?: string
+  install_command?: string
 }
 
 export function readInlineSkillRefs(value: unknown): InlineAgentSkillRef[] {
@@ -35,6 +37,8 @@ export function readInlineSkillRefs(value: unknown): InlineAgentSkillRef[] {
       checksum: stringValue(item.checksum) || undefined,
       display_name: displayName || undefined,
       source: stringValue(item.source) || undefined,
+      marketplace_id: stringValue(item.marketplace_id) || undefined,
+      install_command: stringValue(item.install_command) || undefined,
     }]
   })
 }
@@ -42,6 +46,7 @@ export function readInlineSkillRefs(value: unknown): InlineAgentSkillRef[] {
 export function addInlineSkillRef(current: InlineAgentSkillRef[], skill: Skill): InlineAgentSkillRef[] {
   const displayName = skill.public_name || skill.name
   const alias = uniqueAlias(normalizeInlineSkillAlias(displayName), current)
+  const installMetadata = releaseInstallMetadata(skill)
   return [
     ...current,
     {
@@ -53,6 +58,8 @@ export function addInlineSkillRef(current: InlineAgentSkillRef[], skill: Skill):
       checksum: skill.release_checksum || undefined,
       display_name: displayName,
       source: skill.source,
+      marketplace_id: installMetadata.marketplace_id || undefined,
+      install_command: installMetadata.install_command || undefined,
     },
   ]
 }
@@ -103,6 +110,25 @@ function uniqueAlias(alias: string, current: InlineAgentSkillRef[], ignoreIndex 
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function releaseInstallMetadata(skill: Skill): Pick<InlineAgentSkillRef, 'marketplace_id' | 'install_command'> {
+  const parsed = parseInstallSpec(skill.release_install_spec)
+  return {
+    marketplace_id: stringValue(parsed.marketplace_id) || (skill.source === 'marketplace' ? skill.public_name : ''),
+    install_command: stringValue(parsed.install_command),
+  }
+}
+
+function parseInstallSpec(value: unknown): Record<string, unknown> {
+  const text = stringValue(value)
+  if (!text) return {}
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return isPlainObject(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 function stringValue(value: unknown): string {

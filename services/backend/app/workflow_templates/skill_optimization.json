@@ -1,0 +1,151 @@
+{
+  "id": "builtin-skill-optimization-v1",
+  "name": "Skill Optimization Pipeline",
+  "description": "数据驱动的 Skill 优化管线：信号分析 → Skill 改写 → 评估",
+  "category": "optimization",
+  "is_builtin": true,
+  "graph_template": {
+    "nodes": [
+      {
+        "id": "input",
+        "type": "input",
+        "label": "Input",
+        "config": {},
+        "_ui": {
+          "position": {
+            "x": 50,
+            "y": 200
+          }
+        }
+      },
+      {
+        "id": "signal-analyst",
+        "type": "agent",
+        "label": "Signal Analyst",
+        "config": {
+          "inline_agent": true,
+          "skills": [
+            {
+              "alias": "skill-signal-analyst",
+              "display_name": "skill-signal-analyst",
+              "source": "marketplace",
+              "marketplace_id": "OhMyYuwan@skill-signal-analyst",
+              "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-signal-analyst --agent codex --copy --yes"
+            }
+          ],
+          "instructions": "你是信号分析 Agent。读取 _skill_data/ 中的标注数据，提取失败模式和好坏样例，输出诊断 JSON。",
+          "allow_project_context": true,
+          "provider": {}
+        },
+        "_ui": {
+          "position": {
+            "x": 300,
+            "y": 100
+          }
+        }
+      },
+      {
+        "id": "skill-rewriter",
+        "type": "agent",
+        "label": "Skill Rewriter",
+        "config": {
+          "inline_agent": true,
+          "skills": [
+            {
+              "alias": "skill-rewriter",
+              "display_name": "skill-rewriter",
+              "source": "marketplace",
+              "marketplace_id": "OhMyYuwan@skill-rewriter",
+              "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-rewriter --agent codex --copy --yes"
+            }
+          ],
+          "instructions": "你是 Skill 改写 Agent。根据诊断结果，使用 skill_manage tool 改写 SKILL.md 和 references/。",
+          "allow_project_context": true,
+          "provider": {}
+        },
+        "_ui": {
+          "position": {
+            "x": 550,
+            "y": 100
+          }
+        }
+      },
+      {
+        "id": "skill-evaluator",
+        "type": "agent",
+        "label": "Skill Evaluator",
+        "config": {
+          "inline_agent": true,
+          "skills": [
+            {
+              "alias": "skill-evaluator",
+              "display_name": "skill-evaluator",
+              "source": "marketplace",
+              "marketplace_id": "OhMyYuwan@skill-evaluator",
+              "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-evaluator --agent codex --copy --yes"
+            }
+          ],
+          "instructions": "你是评估 Agent。运行 eval cases，检查 Skill 优化效果，输出评估报告。",
+          "allow_project_context": true,
+          "provider": {}
+        },
+        "_ui": {
+          "position": {
+            "x": 800,
+            "y": 100
+          }
+        }
+      },
+      {
+        "id": "output",
+        "type": "output",
+        "label": "Output",
+        "config": {},
+        "_ui": {
+          "position": {
+            "x": 1050,
+            "y": 200
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "input",
+        "target": "signal-analyst"
+      },
+      {
+        "source": "signal-analyst",
+        "target": "skill-rewriter"
+      },
+      {
+        "source": "skill-rewriter",
+        "target": "skill-evaluator"
+      },
+      {
+        "source": "skill-evaluator",
+        "target": "output"
+      }
+    ]
+  },
+  "required_skills": [
+    {
+      "name": "skill-signal-analyst",
+      "description": "从 _skill_data/ 中读取标注数据，提取失败模式、好坏样例和优化建议。",
+      "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-signal-analyst --agent codex --copy --yes",
+      "marketplace_id": "OhMyYuwan@skill-signal-analyst"
+    },
+    {
+      "name": "skill-rewriter",
+      "description": "根据诊断结果改写 SKILL.md 和 references/，最小化修改并输出改写总结。",
+      "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-rewriter --agent codex --copy --yes",
+      "marketplace_id": "OhMyYuwan@skill-rewriter"
+    },
+    {
+      "name": "skill-evaluator",
+      "description": "运行 eval cases 检查 Skill 优化效果，输出评估报告。",
+      "install_command": "npx --yes skills add https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/skills/OhMyYuwan@skill-evaluator --agent codex --copy --yes",
+      "marketplace_id": "OhMyYuwan@skill-evaluator"
+    }
+  ]
+}

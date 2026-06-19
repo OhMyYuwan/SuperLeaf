@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -11,7 +12,11 @@ from app.database import Base
 from app.models import GitHubAccount, Skill, SkillRelease, User
 from app.services.native_agent_service import NativeAgentService
 from app.services.skill_content_crypto import encrypt_skill_content
-from app.services.skill_marketplace_service import MarketplaceEntry, SkillMarketplaceService
+from app.services.skill_marketplace_service import (
+    MarketplaceEntry,
+    SkillMarketplaceError,
+    SkillMarketplaceService,
+)
 from app.services.skill_release_cache_service import SkillReleaseCacheService
 
 
@@ -224,7 +229,186 @@ def test_marketplace_install_creates_official_server_release(
     assert release.visibility == "public"
     assert release.source_type == "marketplace"
     assert "install_command" in release.install_spec
-    assert (tmp_path / release.artifact_path / "SKILL.md").read_text(encoding="utf-8").startswith("# Reviewer")
+    skill_text = (tmp_path / release.artifact_path / "SKILL.md").read_text(encoding="utf-8")
+    assert skill_text.startswith("# Reviewer")
+
+
+def test_marketplace_install_reuses_same_version_existing_release(
+    db: Session,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import skill_release_cache_service
+
+    monkeypatch.setattr(skill_release_cache_service.settings, "data_dir", tmp_path)
+    user = User(id="installer", email="installer@example.com", password_hash="hash")
+    db.add(user)
+    db.commit()
+
+    entry = MarketplaceEntry(
+        id="openai/reviewer",
+        name="reviewer",
+        display_name="Reviewer",
+        version="1.2.3",
+        author_github="openai",
+        description="Review things",
+        tags=["review"],
+        license="MIT",
+        path="skills/reviewer",
+        entry="SKILL.md",
+        skill_url="https://example.test/skill.yaml",
+        entry_url="https://example.test/SKILL.md",
+        readme_url="",
+        checksum_sha256="sha256:reviewer",
+        repo_url="https://github.com/openai/skills",
+        source_url="https://github.com/openai/skills",
+        source_ref="main",
+        skill_name="reviewer",
+        install_command="npx --yes skills add https://github.com/openai/skills --skill reviewer",
+    )
+    svc = SkillMarketplaceService(db, catalog_url="https://example.test/marketplace.json")
+    fetch_count = 0
+
+    def fetch_text(_url: str) -> str:
+        nonlocal fetch_count
+        fetch_count += 1
+        return "# Reviewer\n\nOfficial content.\n"
+
+    monkeypatch.setattr(svc, "_find_entry", lambda _skill_id, *, user_id: entry)
+    monkeypatch.setattr(svc, "_fetch_text", fetch_text)
+
+    row, installed = svc.install(entry.id, user_id=user.id)
+    again, installed_again = svc.install(entry.id, user_id=user.id)
+
+    assert again.id == row.id == installed.installed_skill_id == installed_again.installed_skill_id
+    assert again.version == 1
+    assert fetch_count == 1
+    assert db.query(SkillRelease).filter_by(source_skill_id=row.id).count() == 1
+
+
+def test_official_marketplace_install_uses_local_checkout_when_remote_times_out(
+    db: Session,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import skill_marketplace_service, skill_release_cache_service
+
+    monkeypatch.setattr(skill_release_cache_service.settings, "data_dir", tmp_path / "data")
+    local_root = tmp_path / "SuperLeaf.Skills"
+    skill_dir = local_root / "skills" / "OhMyYuwan@skill-evaluator"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# Skill Evaluator\n\nEvaluate skills.\n", encoding="utf-8")
+    source_url = (
+        "https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/"
+        "skills/OhMyYuwan@skill-evaluator"
+    )
+    (local_root / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {
+                        "id": "OhMyYuwan@skill-evaluator",
+                        "name": "skill-evaluator",
+                        "display_name": "Skill Evaluator",
+                        "version": "1.0.0",
+                        "author_github": "OhMyYuwan",
+                        "description": "Evaluate skills",
+                        "tags": ["skill", "optimization"],
+                        "license": "MIT",
+                        "path": "skills/OhMyYuwan@skill-evaluator",
+                        "entry": "SKILL.md",
+                        "skill_url": "skills/OhMyYuwan@skill-evaluator/skill.yaml",
+                        "entry_url": "skills/OhMyYuwan@skill-evaluator/SKILL.md",
+                        "source_url": source_url,
+                        "skill_name": "skill-evaluator",
+                        "install_command": (
+                            f"npx --yes skills add {source_url} --agent codex --copy --yes"
+                        ),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(skill_marketplace_service, "OFFICIAL_MARKETPLACE_LOCAL_ROOT", local_root)
+
+    def timeout_fetch(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(skill_marketplace_service, "safe_fetch_text", timeout_fetch)
+
+    user = User(id="installer", email="installer@example.com", password_hash="hash")
+    db.add(user)
+    db.commit()
+
+    row, entry = SkillMarketplaceService(db).install("OhMyYuwan@skill-evaluator", user_id=user.id)
+
+    assert row.public_name == "OhMyYuwan@skill-evaluator"
+    assert entry.install_command.startswith("npx --yes skills add")
+    release = db.query(SkillRelease).filter_by(source_skill_id=row.id).one()
+    assert release.namespace == "official-ohmyyuwan"
+    assert release.slug == "skill-evaluator"
+    skill_text = ((tmp_path / "data") / release.artifact_path / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert skill_text.startswith("# Skill Evaluator")
+
+
+def test_official_marketplace_fallback_does_not_cover_external_entry_urls(
+    db: Session,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import skill_marketplace_service, skill_release_cache_service
+
+    monkeypatch.setattr(skill_release_cache_service.settings, "data_dir", tmp_path / "data")
+    local_root = tmp_path / "SuperLeaf.Skills"
+    local_root.mkdir(parents=True)
+    source_url = (
+        "https://github.com/OhMyYuwan/SuperLeaf.Skills/tree/main/"
+        "skills/OhMyYuwan@skill-evaluator"
+    )
+    (local_root / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {
+                        "id": "OhMyYuwan@skill-evaluator",
+                        "name": "skill-evaluator",
+                        "display_name": "Skill Evaluator",
+                        "version": "1.0.0",
+                        "author_github": "OhMyYuwan",
+                        "description": "Evaluate skills",
+                        "tags": ["skill", "optimization"],
+                        "license": "MIT",
+                        "path": "skills/OhMyYuwan@skill-evaluator",
+                        "entry": "SKILL.md",
+                        "entry_url": "https://github.com/OtherOwner/OtherSkills/blob/main/SKILL.md",
+                        "source_url": source_url,
+                        "skill_name": "skill-evaluator",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(skill_marketplace_service, "OFFICIAL_MARKETPLACE_LOCAL_ROOT", local_root)
+
+    def timeout_fetch(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(skill_marketplace_service, "safe_fetch_text", timeout_fetch)
+
+    user = User(id="installer", email="installer@example.com", password_hash="hash")
+    db.add(user)
+    db.commit()
+
+    with pytest.raises(SkillMarketplaceError, match="timed out"):
+        SkillMarketplaceService(db).install("OhMyYuwan@skill-evaluator", user_id=user.id)
+
+    assert db.query(SkillRelease).count() == 0
 
 
 def _skill_folder(path, *, name: str, body: str):

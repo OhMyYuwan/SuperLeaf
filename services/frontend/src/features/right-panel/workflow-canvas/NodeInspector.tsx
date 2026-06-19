@@ -9,7 +9,8 @@ import { useEffect, useState } from 'react'
 import { useWorkflowStore } from '../../../stores/workflowStore'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import { useNativeAgentStore } from '../../../stores/nativeAgentStore'
-import type { Skill } from '../../../services/backendApi'
+import type { Provider, Skill } from '../../../services/backendApi'
+import { codexModelOptionLabel, modelsFromProviderMeta } from '../team-tab/agent-presentation'
 import { isInlineAgentConfig, type FlowNode, type FlowNodeData } from './graphConversion'
 import { formatWorkflowAgentOption } from './agentOptionFormat'
 import {
@@ -96,7 +97,8 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
               inline_agent: true,
               agent_id: undefined,
               agentId: undefined,
-              provider_ref: 'workflow_default',
+              provider: isPlainRecord(data.config.provider) ? data.config.provider : {},
+              provider_ref: undefined,
               skill_names: Array.isArray(data.config.skill_names) ? data.config.skill_names : [],
               instructions:
                 typeof data.config.instructions === 'string' ? data.config.instructions : '',
@@ -109,6 +111,7 @@ export function NodeInspector({ node, onUpdate, onDelete, onClose }: NodeInspect
           setConfig({
             agent_source: 'team',
             inline_agent: false,
+            provider: undefined,
             provider_ref: undefined,
             skill_names: undefined,
             instructions: undefined,
@@ -288,6 +291,40 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+interface InlineProviderConfig {
+  provider_id?: string
+  model?: string
+  // Legacy workflow JSON may still contain runtime knobs here. New edits drop them.
+  temperature?: number
+  max_tokens?: number
+}
+
+function readInlineProviderConfig(config: Record<string, unknown>): InlineProviderConfig {
+  const raw = isPlainRecord(config.provider) ? config.provider : {}
+  return {
+    provider_id: readString(raw.provider_id),
+    model: readString(raw.model),
+    temperature: readFiniteNumber(raw.temperature),
+    max_tokens: readFiniteNumber(raw.max_tokens),
+  }
+}
+
+export function pruneInlineProviderConfig(config: InlineProviderConfig): InlineProviderConfig {
+  const next: InlineProviderConfig = {}
+  if (config.provider_id?.trim()) next.provider_id = config.provider_id.trim()
+  if (config.model?.trim()) next.model = config.model.trim()
+  return next
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return value
+}
+
 function inspectorHeaderLabel(type: FlowNodeData['nodeType']): string {
   if (type === 'loop') return 'Loop 容器'
   if (type === 'input') return 'Input 节点'
@@ -417,7 +454,7 @@ function OutputNodeForm({ data, setConfig }: SubFormProps) {
 /**
  * Inline Agent config. Defines an agent directly in the workflow without
  * referencing a team agent. Supports skill_names, instructions, and
- * provider_ref for workflow migration.
+ * node-local provider config for workflow migration.
  */
 function InlineAgentForm({ data, setConfig }: SubFormProps) {
   const skillNames = Array.isArray(data.config.skill_names)
@@ -428,8 +465,20 @@ function InlineAgentForm({ data, setConfig }: SubFormProps) {
   const nativeLoaded = useNativeAgentStore((s) => s.loaded)
   const nativeLoading = useNativeAgentStore((s) => s.loading)
   const loadNativeAgents = useNativeAgentStore((s) => s.loadAll)
+  const providers = useSettingsStore((s) => s.providers)
+  const providersLoaded = useSettingsStore((s) => s.loaded)
+  const loadProviders = useSettingsStore((s) => s.load)
   const instructions = typeof data.config.instructions === 'string' ? data.config.instructions : ''
-  const providerRef = typeof data.config.provider_ref === 'string' ? data.config.provider_ref : 'workflow_default'
+  const providerRef = typeof data.config.provider_ref === 'string' ? data.config.provider_ref : ''
+  const providerConfig = readInlineProviderConfig(data.config)
+  const nativeProviders = providers.filter((provider) => provider.kind === 'native')
+  const selectedProvider =
+    providerConfig.provider_id
+      ? providers.find((provider) => provider.id === providerConfig.provider_id)
+      : undefined
+  const modelOptions = selectedProvider ? modelsFromProviderMeta(selectedProvider.meta) : []
+  const selectedModelInOptions =
+    !providerConfig.model || modelOptions.some((model) => model.id === providerConfig.model)
   const allowProjectContext = Boolean(
     data.config.allow_project_context ?? data.config.allowProjectContext,
   )
@@ -446,6 +495,17 @@ function InlineAgentForm({ data, setConfig }: SubFormProps) {
   useEffect(() => {
     if (!nativeLoaded && !nativeLoading) void loadNativeAgents()
   }, [loadNativeAgents, nativeLoaded, nativeLoading])
+
+  useEffect(() => {
+    if (!providersLoaded) void loadProviders()
+  }, [loadProviders, providersLoaded])
+
+  const updateProviderConfig = (patch: Partial<InlineProviderConfig>) => {
+    setConfig({
+      provider: pruneInlineProviderConfig({ ...providerConfig, ...patch }),
+      provider_ref: undefined,
+    })
+  }
 
   const commitRuntimeConfig = () => {
     let parsed: unknown
@@ -485,6 +545,64 @@ function InlineAgentForm({ data, setConfig }: SubFormProps) {
         />
         <div className="form-hint-sm">
           Agent 的核心指令，定义它的角色和能力。
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label>Provider（此节点）</label>
+        <select
+          value={providerConfig.provider_id ?? ''}
+          onChange={(e) => updateProviderConfig({ provider_id: e.target.value })}
+          className={selectedProvider && selectedProvider.kind !== 'native' ? 'input-warning' : ''}
+        >
+          <option value="">— 未选择 Native Provider —</option>
+          {selectedProvider &&
+            selectedProvider.kind !== 'native' &&
+            providerConfig.provider_id && (
+              <option value={providerConfig.provider_id} disabled>
+                {selectedProvider.name}（非 Native，不可用于临时 Agent）
+              </option>
+            )}
+          {providerConfig.provider_id && !selectedProvider && (
+            <option value={providerConfig.provider_id} disabled>
+              缺失 Provider · {providerConfig.provider_id.slice(0, 8)}…
+            </option>
+          )}
+          {nativeProviders.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {formatProviderOption(provider)}
+            </option>
+          ))}
+        </select>
+        {providerRef === 'workflow_default' && !providerConfig.provider_id ? (
+          <div className="form-hint-sm form-hint-warning">
+            旧 Workflow JSON 正在使用 Workflow 默认 Provider；选择后会迁移为节点级 Provider。
+          </div>
+        ) : (
+          <div className="form-hint-sm">
+            临时 Agent 使用自己的 Native Provider。不同节点可以选择不同 Provider。
+          </div>
+        )}
+      </div>
+
+      <div className="workflow-provider-grid">
+        <div className="form-group">
+          <label>Model</label>
+          <select
+            value={providerConfig.model ?? ''}
+            onChange={(e) => updateProviderConfig({ model: e.target.value })}
+            disabled={!selectedProvider && !providerConfig.model}
+          >
+            <option value="">使用 Provider 默认模型</option>
+            {!selectedModelInOptions && providerConfig.model && (
+              <option value={providerConfig.model}>当前已保存：{providerConfig.model}</option>
+            )}
+            {modelOptions.map((model) => (
+              <option key={model.id} value={model.id}>
+                {codexModelOptionLabel(model)}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -593,19 +711,6 @@ function InlineAgentForm({ data, setConfig }: SubFormProps) {
       </div>
 
       <div className="form-group">
-        <label>Provider 引用</label>
-        <select
-          value={providerRef}
-          onChange={(e) => setConfig({ provider_ref: e.target.value })}
-        >
-          <option value="workflow_default">使用 Workflow 默认 Provider</option>
-        </select>
-        <div className="form-hint-sm">
-          选择 Provider 来源。默认使用 Workflow 设置中配置的 Provider。
-        </div>
-      </div>
-
-      <div className="form-group">
         <label>额外提示词（可选）</label>
         <textarea
           value={additionalPrompt}
@@ -643,7 +748,7 @@ function InlineAgentForm({ data, setConfig }: SubFormProps) {
         💡 <strong>Inline Agent 特性</strong>
         <br />· 配置完全存储在 Workflow JSON 中，支持跨项目迁移
         <br />· 不依赖团队中的预定义 Agent
-        <br />· 使用 Workflow 设置中配置的 Provider
+        <br />· 每个节点使用自己的 Native Provider
         <br />· 适合需要独立配置的临时 Agent 场景
       </div>
     </>
@@ -691,11 +796,13 @@ function skillDisplayName(skill: Skill): string {
     ? '市场'
     : skill.source === 'project'
       ? '项目'
-      : skill.visibility === 'public'
-        ? '共享'
-        : skill.visibility === 'system'
-          ? '内置'
-          : '私有'
+      : skill.source === 'template'
+        ? '模板'
+        : skill.visibility === 'public'
+          ? '共享'
+          : skill.visibility === 'system'
+            ? '内置'
+            : '私有'
   return `${label} · ${source}`
 }
 
@@ -715,6 +822,10 @@ function inlineSkillRefSource(ref: InlineAgentSkillRef, skill?: Skill): string {
   }
   if (skill) return skillDisplayName(skill).split(' · ').pop() || '本地 Skill'
   return ref.skill_id ? `本地 Skill · ${ref.skill_id.slice(0, 8)}` : '本地 Skill'
+}
+
+function formatProviderOption(provider: Provider): string {
+  return provider.status === 'ok' ? provider.name : `${provider.name} · ${provider.status}`
 }
 
 function formatRuntimeConfigJson(value: unknown): string {

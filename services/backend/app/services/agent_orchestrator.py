@@ -1257,33 +1257,25 @@ class WorkflowOrchestrator:
         Inline agents have their config directly in the node:
         - skill_names: list of Skill names to load from .agents/skills/
         - instructions: agent instructions
-        - provider_ref: "workflow_default" to use workflow-level provider config
+        - provider: node-local Native Provider config for this temporary Agent
         """
         node_config = node.config
         skill_names = _string_list(node_config.get("skill_names"))
         instructions = node_config.get("instructions", "")
-        provider_ref = node_config.get("provider_ref", "workflow_default")
-
-        # Get provider from workflow-level config
         wf_config = ctx.workflow_def.config or {}
-        provider_config = wf_config.get("provider", {})
-
-        if provider_ref != "workflow_default":
-            raise ValueError(
-                f"Inline agent node '{node.node_id}' only supports provider_ref='workflow_default'"
-            )
+        provider_config = _inline_agent_provider_config(node_config, wf_config)
 
         if not isinstance(provider_config, dict) or not provider_config:
             raise ValueError(
-                f"Inline agent node '{node.node_id}' requires a workflow-level provider. "
-                f"Configure it in Workflow Settings."
+                f"Inline agent node '{node.node_id}' requires a node-level provider. "
+                f"Configure it in the node settings."
             )
 
         provider_id = provider_config.get("provider_id", "")
         if not provider_id:
             raise ValueError(
-                f"Inline agent node '{node.node_id}': no provider_id in workflow config. "
-                f"Select a Provider in Workflow Settings."
+                f"Inline agent node '{node.node_id}': no provider_id in node provider config. "
+                f"Select a Provider in the node settings."
             )
 
         provider = self.provider_service.get(
@@ -1304,9 +1296,9 @@ class WorkflowOrchestrator:
             instructions=str(instructions or ""),
         )
 
-        # Build runtime config. Inline agents store node-specific MCP/tool
-        # choices in the same shape as NativeAgent.runtime_config, while model
-        # defaults live on the workflow provider block for migration.
+        # Build runtime config. Inline agents store MCP/tool choices in the
+        # same shape as NativeAgent.runtime_config; provider selection and model
+        # overrides live on the node for migrated workflows.
         runtime_config_input = {}
         if isinstance(node_config.get("runtime_config"), dict):
             runtime_config_input.update(node_config["runtime_config"])
@@ -1378,6 +1370,7 @@ class WorkflowOrchestrator:
             "allow_project_context": allow_project_context,
             "inline_agent": True,
             "skill_names": skill_names,
+            "provider_id": str(provider_id),
         }
         prompt_audit = runner.prompt_audit_payload(payload)
 
@@ -1838,6 +1831,27 @@ def _producer_outputs(outputs_by_id: dict[str, dict], node_ids: list[str]) -> di
         else:
             outputs[node_id] = node_output
     return outputs
+
+
+def _inline_agent_provider_config(
+    node_config: dict,
+    workflow_config: dict,
+) -> dict:
+    """Return provider config for an inline Agent node.
+
+    New inline Agent nodes own their Provider under config.provider. Legacy
+    imported workflows may still carry provider_ref=workflow_default; only
+    those continue reading the workflow-level provider block.
+    """
+    node_provider = node_config.get("provider")
+    if isinstance(node_provider, dict):
+        return node_provider
+
+    provider_ref = str(node_config.get("provider_ref") or "").strip()
+    if provider_ref == "workflow_default":
+        workflow_provider = workflow_config.get("provider") if isinstance(workflow_config, dict) else {}
+        return workflow_provider if isinstance(workflow_provider, dict) else {}
+    return {}
 
 
 def _node_allows_project_context(node: NodeContext) -> bool:

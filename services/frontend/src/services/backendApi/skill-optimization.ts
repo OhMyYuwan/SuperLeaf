@@ -2,7 +2,7 @@
  * Skill Optimization API — data-driven Skill generation pipeline.
  */
 
-import { http, BASE } from './client'
+import { http } from './client'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,13 +110,10 @@ export async function createOptimizationRun(body: {
   data_project_id: string
   signal_sources?: Record<string, boolean>
 }): Promise<OptimizationRun> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs`, {
+  return http<OptimizationRun>('/api/skill-optimization/runs', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...http() },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Create run failed: ${res.status}`)
-  return res.json()
 }
 
 export async function listOptimizationRuns(params?: {
@@ -132,62 +129,36 @@ export async function listOptimizationRuns(params?: {
   if (params?.status) qs.set('status', params.status)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
-  const res = await fetch(`${BASE}/api/skill-optimization/runs?${qs}`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`List runs failed: ${res.status}`)
-  return res.json()
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return http<{ items: OptimizationRun[]; total: number }>(`/api/skill-optimization/runs${suffix}`)
 }
 
 export async function getOptimizationRun(runId: string): Promise<OptimizationRun> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`Get run failed: ${res.status}`)
-  return res.json()
+  return http<OptimizationRun>(`/api/skill-optimization/runs/${runId}`)
 }
 
 export async function reviewOptimizationRun(
   runId: string,
   body: { action: 'approve' | 'reject'; notes?: string }
 ): Promise<OptimizationRun> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}/review`, {
+  return http<OptimizationRun>(`/api/skill-optimization/runs/${runId}/review`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...http() },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Review failed: ${res.status}`)
-  return res.json()
 }
 
 export async function getRunDiagnosis(runId: string): Promise<DiagnosisResult> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}/diagnosis`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`Get diagnosis failed: ${res.status}`)
-  return res.json()
+  return http<DiagnosisResult>(`/api/skill-optimization/runs/${runId}/diagnosis`)
 }
 
 export async function getRunArtifacts(runId: string): Promise<{ artifacts: Artifact[] }> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}/artifacts`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`Get artifacts failed: ${res.status}`)
-  return res.json()
+  return http<{ artifacts: Artifact[] }>(`/api/skill-optimization/runs/${runId}/artifacts`)
 }
 
 export async function getRunDiff(runId: string): Promise<{ diff: string }> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}/diff`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`Get diff failed: ${res.status}`)
-  return res.json()
+  return http<{ diff: string }>(`/api/skill-optimization/runs/${runId}/diff`)
 }
 
 export async function getRunEvalResults(runId: string): Promise<EvalResults> {
-  const res = await fetch(`${BASE}/api/skill-optimization/runs/${runId}/eval-results`, {
-    headers: http(),
-  })
-  if (!res.ok) throw new Error(`Get eval results failed: ${res.status}`)
-  return res.json()
+  return http<EvalResults>(`/api/skill-optimization/runs/${runId}/eval-results`)
 }

@@ -7,9 +7,11 @@ A3: POST /api/entities/:type/:id/rename, DELETE /api/entities/:type/:id,
 
 from __future__ import annotations
 
+from datetime import UTC
+from email.utils import format_datetime, parsedate_to_datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -583,6 +585,7 @@ def _is_safe_inline_mime(mime: str) -> bool:
 
 @router.get("/api/files/{file_id}")
 def get_file(
+    request: Request,
     file_id: str,
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
@@ -593,17 +596,115 @@ def get_file(
     mime = _guess_mime(f.name, f.mime_type)
     inline = _is_safe_inline_mime(mime)
     disposition = "inline" if inline else "attachment"
-    # RFC 5987 filename* for non-ASCII names
-    quoted = quote(f.name)
-    return Response(
-        content=f.blob or b"",
-        media_type=mime,
-        headers={
-            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
-            "Content-Length": str(len(f.blob or b"")),
-            "X-Content-Type-Options": "nosniff",
-        },
+    data = f.blob or b""
+    headers = _file_response_headers(f, disposition)
+    byte_range = _parse_single_byte_range(request.headers.get("range"), len(data))
+
+    if byte_range is None and _client_cache_is_fresh(request, headers):
+        return Response(status_code=304, headers=headers)
+
+    if byte_range is None:
+        headers["Content-Length"] = str(len(data))
+        return Response(content=data, media_type=mime, headers=headers)
+
+    start, end = byte_range
+    chunk = data[start : end + 1]
+    headers.update(
+        {
+            "Content-Range": f"bytes {start}-{end}/{len(data)}",
+            "Content-Length": str(len(chunk)),
+        }
     )
+    return Response(
+        content=chunk,
+        status_code=206,
+        media_type=mime,
+        headers=headers,
+    )
+
+
+def _file_response_headers(file: FileBlob, disposition: str) -> dict[str, str]:
+    # RFC 5987 filename* for non-ASCII names.
+    quoted = quote(file.name)
+    updated_at = file.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    etag = f'W/"file-{file.id}-{file.size_bytes}-{int(updated_at.timestamp() * 1_000_000)}"'
+    return {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=0, must-revalidate",
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
+        "ETag": etag,
+        "Last-Modified": format_datetime(updated_at, usegmt=True),
+        "X-Content-Type-Options": "nosniff",
+    }
+
+
+def _client_cache_is_fresh(request: Request, headers: dict[str, str]) -> bool:
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match:
+        requested_etags = {part.strip() for part in if_none_match.split(",")}
+        if "*" in requested_etags or headers["ETag"] in requested_etags:
+            return True
+
+    if_modified_since = request.headers.get("if-modified-since")
+    if if_modified_since:
+        try:
+            requested_time = parsedate_to_datetime(if_modified_since)
+            response_time = parsedate_to_datetime(headers["Last-Modified"])
+        except (TypeError, ValueError):
+            return False
+        if requested_time.tzinfo is None:
+            requested_time = requested_time.replace(tzinfo=UTC)
+        if response_time.tzinfo is None:
+            response_time = response_time.replace(tzinfo=UTC)
+        return response_time <= requested_time
+
+    return False
+
+
+def _parse_single_byte_range(range_header: str | None, content_length: int) -> tuple[int, int] | None:
+    if not range_header:
+        return None
+    if not range_header.startswith("bytes=") or "," in range_header:
+        raise HTTPException(
+            416,
+            "Unsupported Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    raw_start, sep, raw_end = range_header.removeprefix("bytes=").partition("-")
+    if sep != "-":
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    try:
+        if raw_start == "":
+            suffix_length = int(raw_end)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(content_length - suffix_length, 0)
+            end = content_length - 1
+        else:
+            start = int(raw_start)
+            end = int(raw_end) if raw_end else content_length - 1
+    except ValueError as exc:
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        ) from exc
+
+    if content_length <= 0 or start < 0 or end < start or start >= content_length:
+        raise HTTPException(
+            416,
+            "Requested range is not satisfiable.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+    return start, min(end, content_length - 1)
 
 
 @router.post("/api/files/{file_id}/convert-to-doc", response_model=DocOut, status_code=201)

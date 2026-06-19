@@ -27,10 +27,10 @@ describe('settingsStore LaTeX PDF viewer preference', () => {
     vi.resetModules()
   })
 
-  it('defaults to react-pdf so SyncTeX remains on the stable viewer', async () => {
+  it('defaults to PDF.js Viewer for range-based PDF loading', async () => {
     const { useSettingsStore } = await importSettingsStoreWithLocalStorage(null)
 
-    expect(useSettingsStore.getState().latexPdfViewer).toBe('react-pdf')
+    expect(useSettingsStore.getState().latexPdfViewer).toBe('pdfjs-viewer')
   })
 
   it('persists an explicit PDF.js Viewer preference', async () => {

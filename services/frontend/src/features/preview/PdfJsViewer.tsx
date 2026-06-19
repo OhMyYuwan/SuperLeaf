@@ -28,10 +28,13 @@ export interface PdfJsViewerHandle {
   getPagesCount: () => number
 }
 
+export type PdfJsScaleMode = 'page-width' | 'custom'
+
 interface PdfJsViewerProps {
   url: string
   buildId: string
   zoom: number
+  scaleMode: PdfJsScaleMode
   syncMarker: PdfJsSyncMarker | null
   onPagesInit: (pagesCount: number) => void
   onPageChanging: (pageNumber: number) => void
@@ -45,6 +48,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
   url,
   buildId,
   zoom,
+  scaleMode,
   syncMarker,
   onPagesInit,
   onPageChanging,
@@ -56,6 +60,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<PdfJsWrapper | null>(null)
+  const scaleModeRef = useRef<PdfJsScaleMode>(scaleMode)
   const callbacksRef = useRef({
     onPagesInit,
     onPageChanging,
@@ -63,8 +68,10 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onScaleChanging,
     onLoadError,
     zoom,
+    scaleMode,
   })
 
+  scaleModeRef.current = scaleMode
   callbacksRef.current = {
     onPagesInit,
     onPageChanging,
@@ -72,6 +79,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     onScaleChanging,
     onLoadError,
     zoom,
+    scaleMode,
   }
 
   useImperativeHandle(ref, () => ({
@@ -90,7 +98,7 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
       viewer: viewerRef.current,
       onPagesInit: (pagesCount) => {
         callbacksRef.current.onPagesInit(pagesCount)
-        if (callbacksRef.current.zoom === 1) {
+        if (callbacksRef.current.scaleMode === 'page-width') {
           wrapperRef.current?.setScaleValue('page-width')
         }
       },
@@ -113,10 +121,15 @@ export const PdfJsViewer = forwardRef<PdfJsViewerHandle, PdfJsViewerProps>(funct
     })
   }, [url, buildId])
 
-  // Sync zoom level.
+  // Keep semantic page-width mode separate from numeric custom zoom.
   useEffect(() => {
+    const mode = scaleModeRef.current
+    if (mode === 'page-width') {
+      wrapperRef.current?.setScaleValue('page-width')
+      return
+    }
     wrapperRef.current?.setScale(zoom)
-  }, [zoom])
+  }, [scaleMode, zoom])
 
   useEffect(() => {
     if (!containerRef.current || !wrapperRef.current || !('ResizeObserver' in window)) return

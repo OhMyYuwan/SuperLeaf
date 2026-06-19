@@ -29,7 +29,7 @@ from ..schemas import (
     ProjectCompileSettingsIn,
     ProjectCompileSettingsOut,
 )
-from ..services.latex_compiler import get_compiler_service
+from ..services.latex_compiler import CompileResult, get_compiler_service
 from .collab_consistency import flush_project_collab_or_503
 from .deps import (
     get_current_project,
@@ -114,7 +114,7 @@ async def compile_project(
         duration_ms=result.duration_ms,
         error=result.error,
         log_tail=result.log[-4000:],
-        pdf_bytes=len(result.pdf or b""),
+        pdf_bytes=_compile_result_pdf_size(result),
     )
 
 
@@ -181,13 +181,14 @@ def get_compiled_pdf(
 ) -> Response:
     svc = get_compiler_service()
     cached = svc.get_cached(project.id)
-    if cached is None or cached.pdf is None:
+    if cached is None or not _compile_result_has_pdf(cached):
         raise HTTPException(404, "No compiled PDF yet. Call POST /api/compile first.")
-    pdf = cached.pdf
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Disposition": 'inline; filename="compile.pdf"',
-    }
+    return _compiled_pdf_memory_response(request, cached)
+
+
+def _compiled_pdf_memory_response(request: Request, cached: CompileResult) -> Response:
+    pdf = cached.pdf or b""
+    headers = _compiled_pdf_headers(cached, len(pdf))
     byte_range = _parse_single_byte_range(request.headers.get("range"), len(pdf))
     if byte_range is None:
         headers["Content-Length"] = str(len(pdf))
@@ -207,6 +208,28 @@ def get_compiled_pdf(
         media_type="application/pdf",
         headers=headers,
     )
+
+
+def _compiled_pdf_headers(cached: CompileResult, pdf_size: int) -> dict[str, str]:
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": 'inline; filename="compile.pdf"',
+        "X-Content-Type-Options": "nosniff",
+    }
+    if cached.build_id:
+        headers["Cache-Control"] = "private, max-age=31536000, immutable"
+        headers["ETag"] = f'W/"compile-{cached.build_id}-{pdf_size}"'
+    else:
+        headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return headers
+
+
+def _compile_result_has_pdf(result: CompileResult) -> bool:
+    return result.pdf is not None
+
+
+def _compile_result_pdf_size(result: CompileResult) -> int:
+    return len(result.pdf or b"")
 
 
 def _parse_single_byte_range(range_header: str | None, content_length: int) -> tuple[int, int] | None:

@@ -145,6 +145,7 @@ function FilePdfPreview({ file }: { file: ActivePreviewFile }) {
         url={file.url}
         buildId={`file-${file.id}`}
         zoom={1}
+        scaleMode="page-width"
         syncMarker={null}
         onPagesInit={() => {}}
         onPageChanging={() => {}}

@@ -11,7 +11,16 @@
  *   - Full-log toggle
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type SetStateAction,
+} from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
@@ -61,6 +70,8 @@ interface PdfPageSize {
   width: number
   height: number
 }
+
+type PdfScaleMode = 'page-width' | 'custom'
 
 interface LatexPreviewProps {
   documentId: string
@@ -116,6 +127,7 @@ export function LatexPreview({
   const [pdfPageSizes, setPdfPageSizes] = useState<Record<number, PdfPageSize>>({})
   const [pageWidth, setPageWidth] = useState(700)
   const [zoom, setZoom] = useState(1)
+  const [pdfScaleMode, setPdfScaleMode] = useState<PdfScaleMode>('page-width')
   const containerRef = useRef<HTMLDivElement>(null)
   const compileSettingsRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
@@ -141,10 +153,15 @@ export function LatexPreview({
     yRatio: number
   } | null>(null)
 
+  const setInteractiveZoom = useCallback((value: SetStateAction<number>) => {
+    setPdfScaleMode('custom')
+    setZoom(value)
+  }, [])
+
   usePdfWheelZoom({
     scrollRef: pdfScrollRef,
     zoom,
-    setZoom,
+    setZoom: setInteractiveZoom,
   })
 
   const activePdfViewer = pdfLoadError ? 'native' : latexPdfViewer
@@ -658,10 +675,12 @@ export function LatexPreview({
   }, [activePdfViewer, currentPage, numPages, pdfSyncMarker?.page, pdfVersion])
 
   const setToolbarZoom = (updater: (current: number) => number) => {
+    setPdfScaleMode('custom')
     setZoom((current) => clampPdfZoom(updater(current)))
   }
 
   const fitPdfToWidth = () => {
+    setPdfScaleMode('page-width')
     if (activePdfViewer === 'pdfjs-viewer') {
       pdfJsViewerRef.current?.setScaleValue('page-width')
       return
@@ -969,6 +988,7 @@ export function LatexPreview({
             url={pdfUrl}
             buildId={activeBuildId}
             zoom={zoom}
+            scaleMode={activePdfViewer === 'pdfjs-viewer' ? pdfScaleMode : 'custom'}
             syncMarker={pdfSyncMarker}
             onPagesInit={(pagesCount) => {
               setPdfLoadError(null)
@@ -979,7 +999,9 @@ export function LatexPreview({
             }}
             onPageChanging={(pageNumber) => setCurrentPage(pageNumber)}
             onPageRendered={restorePdfScrollSoon}
-            onScaleChanging={(scale) => setZoom(clampPdfZoom(scale))}
+            onScaleChanging={(scale) => {
+              setZoom(clampPdfZoom(scale))
+            }}
             onPdfDoubleClick={(point, text) => {
               void jumpFromPdfJsDoubleClick(point, text)
             }}

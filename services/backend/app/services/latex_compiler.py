@@ -63,8 +63,6 @@ GRAPHICSPATH_RE = re.compile(r"\\graphicspath\s*\{(?P<body>(?:\{[^{}]*\}\s*)+)\}
 GRAPHICSPATH_ENTRY_RE = re.compile(r"\{(?P<path>[^{}]*)\}")
 INCREMENTAL_CACHE_DIR_NAME = "latex-incremental-cache"
 SYNC_STATE_FILE = ".project-sync-state"
-OUTPUT_BUILD_DIR_NAME = "latex-output-builds"
-MAX_OUTPUT_BUILDS_PER_PROJECT = 2
 FINAL_OUTPUT_NAMES = frozenset(
     {
         "output.pdf",
@@ -173,13 +171,11 @@ class LatexCompilerService:
         if project_id is None:
             self._pdf_cache.clear()
             shutil.rmtree(settings.data_dir / INCREMENTAL_CACHE_DIR_NAME, ignore_errors=True)
-            shutil.rmtree(settings.data_dir / OUTPUT_BUILD_DIR_NAME, ignore_errors=True)
             return
 
         self._pdf_cache.pop(project_id, None)
         workspace_key = self._workspace_key(project_id)
         self._clear_project_cache_dir(INCREMENTAL_CACHE_DIR_NAME, workspace_key)
-        self._clear_project_cache_dir(OUTPUT_BUILD_DIR_NAME, workspace_key)
 
     def _project_cache_dir(self, root_name: str, workspace_key: str, *, create: bool) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_.:-]+", workspace_key):
@@ -205,9 +201,6 @@ class LatexCompilerService:
     def _incremental_project_dir(self, workspace_key: str) -> Path:
         return self._project_cache_dir(INCREMENTAL_CACHE_DIR_NAME, workspace_key, create=True)
 
-    def _output_project_dir(self, workspace_key: str) -> Path:
-        return self._project_cache_dir(OUTPUT_BUILD_DIR_NAME, workspace_key, create=True)
-
     def _clear_project_cache_dir(self, root_name: str, workspace_key: str) -> None:
         project_dir = self._project_cache_dir(root_name, workspace_key, create=False)
         shutil.rmtree(project_dir, ignore_errors=True)
@@ -227,13 +220,23 @@ class LatexCompilerService:
     ) -> str:
         docs = (
             db.query(Doc)
-            .options(load_only(Doc.id, Doc.folder_id, Doc.name, Doc.format, Doc.version, Doc.updated_at))
+            .options(
+                load_only(Doc.id, Doc.folder_id, Doc.name, Doc.format, Doc.version, Doc.updated_at)
+            )
             .filter(Doc.project_id == project_id)
             .all()
         )
         files = (
             db.query(FileBlob)
-            .options(load_only(FileBlob.id, FileBlob.folder_id, FileBlob.name, FileBlob.size_bytes, FileBlob.updated_at))
+            .options(
+                load_only(
+                    FileBlob.id,
+                    FileBlob.folder_id,
+                    FileBlob.name,
+                    FileBlob.size_bytes,
+                    FileBlob.updated_at,
+                )
+            )
             .filter(FileBlob.project_id == project_id)
             .all()
         )
@@ -247,15 +250,24 @@ class LatexCompilerService:
             "compiler": compiler,
             "main_doc_id": main_doc_id or "",
             "folders": sorted(
-                f"{f.id}:{f.parent_folder_id or ''}:{f.name}:{f.updated_at.isoformat() if f.updated_at else ''}"
+                (
+                    f"{f.id}:{f.parent_folder_id or ''}:{f.name}:"
+                    f"{f.updated_at.isoformat() if f.updated_at else ''}"
+                )
                 for f in folders
             ),
             "docs": sorted(
-                f"{d.id}:{d.folder_id or ''}:{d.name}:{d.format}:{d.version}:{d.updated_at.isoformat() if d.updated_at else ''}"
+                (
+                    f"{d.id}:{d.folder_id or ''}:{d.name}:{d.format}:{d.version}:"
+                    f"{d.updated_at.isoformat() if d.updated_at else ''}"
+                )
                 for d in docs
             ),
             "files": sorted(
-                f"{f.id}:{f.folder_id or ''}:{f.name}:{f.size_bytes}:{f.updated_at.isoformat() if f.updated_at else ''}"
+                (
+                    f"{f.id}:{f.folder_id or ''}:{f.name}:{f.size_bytes}:"
+                    f"{f.updated_at.isoformat() if f.updated_at else ''}"
+                )
                 for f in files
             ),
         }
@@ -306,7 +318,7 @@ class LatexCompilerService:
             workspace,
             tree.workspace_manifest,
         )
-        for stale in sorted((path for path in workspace.rglob("*") if path.is_file())):
+        for stale in sorted(path for path in workspace.rglob("*") if path.is_file()):
             if stale.name == SYNC_STATE_FILE:
                 continue
             if stale.resolve(strict=False) in expected_sources:
@@ -887,7 +899,6 @@ class LatexCompilerService:
         output_dir: Path | None = None,
     ) -> CompileResult:
         """Run the chosen compiler and collect output."""
-        main_stem = main_rel_path.stem
         working_dir = tmpdir / main_rel_path.parent
         actual_output_dir = output_dir or working_dir
         actual_output_dir.mkdir(parents=True, exist_ok=True)

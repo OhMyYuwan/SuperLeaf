@@ -593,8 +593,19 @@ export function WorkspacePage() {
   }
 
   const handleExtractMarkdown = async (fileId: string) => {
-    const docId = await extractFileToMarkdown(fileId)
-    await handleOpenDoc(docId)
+    try {
+      const doc = await extractFileToMarkdown(fileId)
+      // Open the newly created doc directly from the API response
+      // (avoids race condition with loadTree + getDoc)
+      useDocumentStore.getState().upsertFromBackendDoc(doc)
+      useDocumentStore.setState({ activeDocumentId: doc.id })
+      setPreviewFile(null)
+      // Refresh tree in background so the new doc appears in the file tree
+      loadTree().catch((err) => console.warn('loadTree after extract failed', err))
+    } catch (e) {
+      console.error('extract markdown failed', e)
+      alert(`提取 Markdown 失败：${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   const handleRunWorkflow = (workflowId: string, instruction: string) => {

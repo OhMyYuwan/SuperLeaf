@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand'
-import { filesystemApi, type ProjectTree, type TreeDoc, type TreeFile, type TreeFolder } from '../services/filesystemApi'
+import { filesystemApi, type BackendDoc, type ProjectTree, type TreeDoc, type TreeFile, type TreeFolder } from '../services/filesystemApi'
 import { useDocumentStore } from './documentStore'
 
 const TEX_EXTS = new Set(['tex', 'latex', 'ltx', 'bib', 'sty', 'cls', 'bst'])
@@ -81,7 +81,7 @@ interface FilesystemState {
 
   setPreviewFile: (file: TreeFile | null) => void
   convertFileToDoc: (fileId: string) => Promise<string>
-  extractFileToMarkdown: (fileId: string) => Promise<string>
+  extractFileToMarkdown: (fileId: string) => Promise<BackendDoc>
 }
 
 export const useFilesystemStore = create<FilesystemState>((set, get) => ({
@@ -395,8 +395,7 @@ export const useFilesystemStore = create<FilesystemState>((set, get) => ({
 
   extractFileToMarkdown: async (fileId) => {
     const doc = await filesystemApi.extractMarkdown(fileId)
-    await get().loadTree()
-    return doc.id
+    return doc
   },
 }))
 

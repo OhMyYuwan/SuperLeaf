@@ -465,6 +465,8 @@ function FolderNode({
     setExtractingFileId(file.id)
     try {
       await onExtractMarkdown(file.id)
+    } catch (err) {
+      console.error('[FileTree] extract markdown failed', err)
     } finally {
       setExtractingFileId(null)
     }

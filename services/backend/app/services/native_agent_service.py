@@ -7,6 +7,7 @@ credentials, and Skills. Runtime execution is intentionally out of scope.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 import shutil
@@ -36,6 +37,7 @@ from .project_fs_service import ProjectFsService
 from .project_member_service import ProjectMemberService
 from .skill_content_crypto import decrypt_skill_content, encrypt_skill_content
 from .skill_npx_installer import SkillInstallRecipe, SkillNpxInstaller, SkillNpxInstallError
+from .skill_release_cache_service import SkillReleaseCacheService
 from .skill_recipe_metadata import (
     build_npx_install_command,
     build_recipe_tags,
@@ -473,6 +475,19 @@ class NativeAgentService:
         row.public_name = public_name
         row.published_at = datetime.utcnow()
         row.updated_at = datetime.utcnow()
+        self.db.add(row)
+        self.db.flush()
+        SkillReleaseCacheService(self.db).publish_skill(
+            row,
+            namespace=_skill_author(row) or self._github_login(user_id=user_id),
+            slug=row.name,
+            version=str(row.version or 1),
+            visibility="public",
+            publisher_user_id=user_id,
+            install_spec=_release_install_spec_for_skill(row),
+            source_type="user-skill",
+            commit=False,
+        )
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -1438,6 +1453,29 @@ def _recipe_from_skill(row: Skill) -> SkillInstallRecipe | None:
         or (row.public_name if row.source == "marketplace" else ""),
         source=meta.get("source", "").strip() or row.source or "custom",
     )
+
+
+def _release_install_spec_for_skill(row: Skill) -> str:
+    meta = recipe_meta_from_tags(row.tags)
+    payload = {
+        "source": row.source or "user-skill",
+        "skill_id": row.id,
+        "public_name": row.public_name,
+        "name": row.name,
+        "version": str(row.version or 1),
+    }
+    for key in (
+        "repo_url",
+        "source_url",
+        "source_ref",
+        "skill_name",
+        "install_command",
+        "marketplace_id",
+    ):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            payload[key] = value
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _source_from_install(row: NativeAgentSkillInstall) -> str:

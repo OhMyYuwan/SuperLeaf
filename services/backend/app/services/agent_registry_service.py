@@ -53,7 +53,7 @@ class AgentRegistryService:
             )
         return self._resolve_external(agent_id, user_id=user_id, require_enabled=require_enabled)
 
-    def skill_blocks_for_project(self, project_id: str) -> list[NativeSkillBlock]:
+    def skill_blocks_for_project(self, project_id: str, *, user_id: str) -> list[NativeSkillBlock]:
         """Scan the project's inline agent workspace for available Skills.
 
         Used by inline agent nodes in workflows.
@@ -61,97 +61,33 @@ class AgentRegistryService:
         from .agent_workspace_service import AgentWorkspaceService
 
         svc = AgentWorkspaceService(self.db)
-        root = svc.root_for(user_id="", project_id=project_id, agent_id="inline")
-        skills_dir = root / ".agents" / "skills"
-        if not skills_dir.is_dir():
-            return []
+        root = svc.root_for(user_id=user_id, project_id=project_id, agent_id="inline")
+        return _skill_blocks_from_dir(root / ".agents" / "skills")
 
-        out: list[NativeSkillBlock] = []
-        seen: set[str] = set()
-        for item in sorted(skills_dir.iterdir()):
-            if _is_macos_metadata_file(item):
-                continue
-            if item.is_dir() and (item / "SKILL.md").is_file():
-                folder_name = item.name
-                if folder_name in seen:
-                    continue
-                seen.add(folder_name)
-                meta = _read_skill_meta(item)
-                out.append(
-                    NativeSkillBlock(
-                        id=folder_name,
-                        name=meta.get("name") or folder_name,
-                        version=meta.get("version", 1),
-                        source="workspace",
-                        content="",
-                        aliases=[folder_name],
-                        description=meta.get("description", ""),
-                        tags=meta.get("tags", []),
-                        folder_path=f"skills/{folder_name}",
-                    )
-                )
-        return out
+    def skill_blocks_for_inline_workflow_node(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        workflow_id: str,
+        node_id: str,
+    ) -> list[NativeSkillBlock]:
+        from .agent_workspace_service import AgentWorkspaceService
+
+        svc = AgentWorkspaceService(self.db)
+        root = svc.root_for_inline_workflow_node(
+            user_id=user_id,
+            project_id=project_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+        )
+        return _skill_blocks_from_dir(root / ".agents" / "skills")
 
     def skill_blocks_for_native_agent(self, agent: NativeAgent, *, user_id: str) -> list[NativeSkillBlock]:
         """Scan the Agent's .agents/skills/ folder on disk for available Skills."""
         workspace = Path(agent.workspace_path) if agent.workspace_path else None
         skills_dir = workspace / ".agents" / "skills" if workspace else None
-        if not skills_dir or not skills_dir.is_dir():
-            return []
-
-        out: list[NativeSkillBlock] = []
-        seen: set[str] = set()
-        for item in sorted(skills_dir.iterdir()):
-            if _is_macos_metadata_file(item):
-                continue
-            # Direct skill folder with SKILL.md
-            if item.is_dir() and (item / "SKILL.md").is_file():
-                folder_name = item.name
-                if folder_name in seen:
-                    continue
-                seen.add(folder_name)
-                meta = _read_skill_meta(item)
-                out.append(
-                    NativeSkillBlock(
-                        id=folder_name,
-                        name=meta.get("name") or folder_name,
-                        version=meta.get("version", 1),
-                        source="workspace",
-                        content="",
-                        aliases=[folder_name],
-                        description=meta.get("description", ""),
-                        tags=meta.get("tags", []),
-                        folder_path=f"skills/{folder_name}",
-                    )
-                )
-            # .skillref.json pointing to a project skill cache
-            elif item.is_file() and item.suffix == ".json" and item.stem.endswith(".skillref"):
-                try:
-                    ref = json.loads(item.read_text(encoding="utf-8", errors="replace"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                    continue
-                target = ref.get("target_path", "")
-                folder_name = ref.get("folder_name", item.stem.replace(".skillref", ""))
-                if not target or not Path(target).is_dir():
-                    continue
-                if folder_name in seen:
-                    continue
-                seen.add(folder_name)
-                meta = _read_skill_meta(Path(target))
-                out.append(
-                    NativeSkillBlock(
-                        id=folder_name,
-                        name=meta.get("name") or folder_name,
-                        version=meta.get("version", 1),
-                        source="project",
-                        content="",
-                        aliases=[folder_name],
-                        description=meta.get("description", ""),
-                        tags=meta.get("tags", []),
-                        folder_path=f"skills/{item.name}",
-                    )
-                )
-        return out
+        return _skill_blocks_from_dir(skills_dir)
 
     def _resolve_external(
         self,
@@ -200,6 +136,74 @@ class AgentRegistryService:
             provider=provider,
             native_agent=agent,
         )
+
+
+def _skill_blocks_from_dir(skills_dir: Path | None) -> list[NativeSkillBlock]:
+    if not skills_dir or not skills_dir.is_dir():
+        return []
+
+    out: list[NativeSkillBlock] = []
+    seen: set[str] = set()
+    for item in sorted(skills_dir.iterdir()):
+        if _is_macos_metadata_file(item):
+            continue
+        if item.is_dir() and (item / "SKILL.md").is_file():
+            folder_name = item.name
+            if folder_name in seen:
+                continue
+            seen.add(folder_name)
+            meta = _read_skill_meta(item)
+            out.append(
+                NativeSkillBlock(
+                    id=folder_name,
+                    name=meta.get("name") or folder_name,
+                    version=meta.get("version", 1),
+                    source="workspace",
+                    content="",
+                    aliases=[folder_name],
+                    description=meta.get("description", ""),
+                    tags=meta.get("tags", []),
+                    folder_path=f"skills/{folder_name}",
+                )
+            )
+        elif item.is_file() and item.suffix == ".json" and item.stem.endswith(".skillref"):
+            block = _skill_block_from_ref(item, seen)
+            if block is not None:
+                out.append(block)
+    return out
+
+
+def _skill_block_from_ref(item: Path, seen: set[str]) -> NativeSkillBlock | None:
+    try:
+        ref = json.loads(item.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    target = ref.get("target_path", "")
+    folder_name = ref.get("folder_name", item.stem.replace(".skillref", ""))
+    if not target or not Path(target).is_dir():
+        return None
+    if folder_name in seen:
+        return None
+    seen.add(folder_name)
+    target_path = Path(target)
+    meta = _read_skill_meta(target_path)
+    manifest = ref.get("manifest") if isinstance(ref.get("manifest"), dict) else {}
+    aliases = [folder_name]
+    alias = str(ref.get("alias") or "").strip()
+    if alias and alias not in aliases:
+        aliases.append(alias)
+    return NativeSkillBlock(
+        id=folder_name,
+        name=str(ref.get("display_name") or manifest.get("name") or meta.get("name") or folder_name),
+        version=manifest.get("version") or meta.get("version", 1),
+        source=str(ref.get("source") or ref.get("storage_scope") or "project"),
+        content="",
+        aliases=aliases,
+        description=str(ref.get("description") or manifest.get("description") or meta.get("description") or ""),
+        tags=manifest.get("tags") or meta.get("tags", []),
+        content_hash=str(ref.get("checksum") or manifest.get("checksum") or ""),
+        folder_path=f"skills/{item.name}",
+    )
 
 
 def _read_skill_meta(folder: Path) -> dict:

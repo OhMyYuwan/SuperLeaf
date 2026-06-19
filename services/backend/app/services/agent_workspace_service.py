@@ -62,6 +62,24 @@ class AgentWorkspaceService:
     def root_for(self, *, user_id: str, project_id: str, agent_id: str) -> Path:
         return settings.data_dir / "native" / _safe_segment(user_id) / _safe_segment(project_id) / _safe_segment(agent_id)
 
+    def root_for_inline_workflow_node(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        workflow_id: str,
+        node_id: str,
+    ) -> Path:
+        return (
+            settings.data_dir
+            / "native"
+            / _safe_segment(user_id)
+            / _safe_segment(project_id)
+            / "workflow-inline"
+            / _safe_segment(workflow_id)
+            / _safe_segment(node_id)
+        )
+
     def ensure_project_workspace(self, *, project_id: str, user_id: str) -> Path:
         """Create a workspace for inline agents (no NativeAgent required).
 
@@ -75,6 +93,30 @@ class AgentWorkspaceService:
         agent_file = agents_dir / "AGENT.md"
         if not agent_file.exists():
             agent_file.write_text("# Inline Agent\n\nWorkflow-specific agent workspace.\n", encoding="utf-8")
+        return root
+
+    def ensure_inline_workflow_node_workspace(
+        self,
+        *,
+        project_id: str,
+        user_id: str,
+        workflow_id: str,
+        node_id: str,
+        agent_md: str = "",
+    ) -> Path:
+        root = self.root_for_inline_workflow_node(
+            user_id=user_id,
+            project_id=project_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+        )
+        agents_dir = root / ".agents"
+        skills_dir = agents_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        _chmod_private(root)
+        agent_file = agents_dir / "AGENT.md"
+        if agent_md.strip() or not agent_file.exists():
+            agent_file.write_text(agent_md.strip() + "\n" if agent_md.strip() else "# Inline Agent\n", encoding="utf-8")
         return root
 
     def ensure_workspace(self, agent: NativeAgent, *, agent_md: str | None = None) -> Path:
@@ -154,6 +196,22 @@ class AgentWorkspaceService:
         manifest: dict,
     ) -> Path:
         root = self.ensure_workspace(agent)
+        return self.install_skill_reference_at_root(
+            root,
+            folder_name=folder_name,
+            target_path=target_path,
+            manifest=manifest,
+        )
+
+    def install_skill_reference_at_root(
+        self,
+        root: Path,
+        *,
+        folder_name: str,
+        target_path: Path,
+        manifest: dict,
+        metadata: dict | None = None,
+    ) -> Path:
         safe_folder = _safe_folder_name(folder_name)
         dest = root / ".agents" / "skills" / safe_folder
         if dest.exists():
@@ -163,18 +221,16 @@ class AgentWorkspaceService:
                 dest.unlink()
         ref = root / ".agents" / "skills" / f"{safe_folder}.skillref.json"
         ref.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "type": "superleaf-skill-cache-ref",
+            "folder_name": safe_folder,
+            "target_path": str(target_path),
+            "manifest": manifest,
+        }
+        if metadata:
+            payload.update(metadata)
         ref.write_text(
-            json.dumps(
-                {
-                    "type": "superleaf-skill-cache-ref",
-                    "folder_name": safe_folder,
-                    "target_path": str(target_path),
-                    "manifest": manifest,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         return ref

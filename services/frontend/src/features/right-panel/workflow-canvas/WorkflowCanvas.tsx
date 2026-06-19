@@ -32,7 +32,7 @@ import type { WorkflowGraph } from '../../../services/backendApi'
 import type { NodeStatus } from '../../../stores/workflowStore'
 import { NodePalette } from './NodePalette'
 import { NodeInspector } from './NodeInspector'
-import { nodeTypes } from './nodes'
+import { AgentNode, InputNode, LoopNode, OutputNode } from './nodes'
 import {
   flowToGraph,
   generateNodeId,
@@ -50,6 +50,12 @@ interface WorkflowCanvasProps {
 
 const LOOP_DEFAULT_SIZE = { width: 360, height: 240 }
 const LOOP_PADDING = 40
+const nodeTypes = {
+  agent: AgentNode,
+  loop: LoopNode,
+  input: InputNode,
+  output: OutputNode,
+}
 
 function CanvasInner({ initialGraph, onGraphChange, nodeStatuses = [] }: WorkflowCanvasProps) {
   const initial = useMemo(() => graphToFlow(initialGraph), [initialGraph])
@@ -268,25 +274,26 @@ function CanvasInner({ initialGraph, onGraphChange, nodeStatuses = [] }: Workflo
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault()
-      const nodeType = event.dataTransfer.getData('application/reactflow') as CanvasNodeType | ''
+      const droppedType = event.dataTransfer.getData('application/reactflow') as CanvasNodeType | 'inline-agent' | ''
       if (
-        nodeType !== 'agent' &&
-        nodeType !== 'loop' &&
-        nodeType !== 'input' &&
-        nodeType !== 'output'
+        droppedType !== 'agent' &&
+        droppedType !== 'inline-agent' &&
+        droppedType !== 'loop' &&
+        droppedType !== 'input' &&
+        droppedType !== 'output'
       )
         return
+      const nodeType: CanvasNodeType = droppedType === 'inline-agent' ? 'agent' : droppedType
+      const isInlineAgent = droppedType === 'inline-agent'
 
       const currentNodes = getNodes() as FlowNode[]
 
       // Input / output nodes are workflow boundaries — only one of each.
       if (nodeType === 'input' && currentNodes.some((n) => n.data.nodeType === 'input')) {
-        // eslint-disable-next-line no-console
         console.warn('[workflow-canvas] input node already exists, ignoring drop')
         return
       }
       if (nodeType === 'output' && currentNodes.some((n) => n.data.nodeType === 'output')) {
-        // eslint-disable-next-line no-console
         console.warn('[workflow-canvas] output node already exists, ignoring drop')
         return
       }
@@ -303,11 +310,22 @@ function CanvasInner({ initialGraph, onGraphChange, nodeStatuses = [] }: Workflo
               extra_inputs: {},
             }
           : nodeType === 'output' ? { format: 'text', source_node_ids: [] }
-          : {}
+          : isInlineAgent ? {
+              agent_source: 'inline',
+              inline_agent: true,
+              skill_names: [],
+              instructions: '',
+              runtime_config: {},
+              provider_ref: 'workflow_default',
+              additional_prompt: '',
+              allow_project_context: false,
+            }
+          : { agent_source: 'team' }
         const defaultLabel =
           nodeType === 'loop' ? 'Loop'
           : nodeType === 'input' ? 'Input'
           : nodeType === 'output' ? 'Output'
+          : isInlineAgent ? 'Inline Agent'
           : id
         const newNode: FlowNode = {
           id,

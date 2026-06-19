@@ -88,10 +88,12 @@ export interface WorkflowGraph {
 
 export interface WorkflowNode {
   id: string
-  // Canvas-generated graphs use 'agent' (atom), 'loop' (container), and
-  // 'input' / 'output' (workflow boundary nodes). Legacy modes
-  // (parallel/pipeline/roundtable) may still carry other values.
-  type: 'agent' | 'loop' | 'input' | 'output' | 'workflow' | 'merge' | 'judge'
+  // Canvas-generated graphs use 'agent' (team or inline config), 'loop'
+  // (container), and 'input' / 'output' (workflow boundary nodes).
+  // 'inline-agent' is accepted for legacy/imported JSON and normalized by
+  // the canvas back to type='agent' + config.agent_source='inline'.
+  // Legacy modes (parallel/pipeline/roundtable) may still carry other values.
+  type: 'agent' | 'inline-agent' | 'loop' | 'input' | 'output' | 'workflow' | 'merge' | 'judge'
   label?: string
   config?: Record<string, unknown>
 }

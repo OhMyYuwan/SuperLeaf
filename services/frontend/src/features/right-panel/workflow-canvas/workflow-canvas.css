@@ -94,6 +94,15 @@
   border-color: rgba(59, 130, 246, 0.35);
 }
 
+.wf-palette-inline-agent {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.wf-palette-inline-agent:hover {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+
 .wf-palette-item:active {
   cursor: grabbing;
 }
@@ -180,6 +189,11 @@
 .wf-head-agent {
   background: rgba(59, 130, 246, 0.28);
   border-bottom: 1px solid rgba(59, 130, 246, 0.45);
+}
+
+.wf-head-inline-agent {
+  background: rgba(16, 185, 129, 0.28);
+  border-bottom: 1px solid rgba(16, 185, 129, 0.45);
 }
 
 /* Input / output boundary nodes -------------------------------------- */
@@ -449,6 +463,100 @@
   color: rgba(148, 163, 184, 0.65);
 }
 
+.inline-skill-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.wf-inspector .inline-skill-picker .secondary-btn {
+  min-height: 31px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.wf-inspector .inline-skill-picker .secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inline-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.inline-skill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: flex-end;
+  padding: 7px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.inline-skill-main {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.inline-skill-main strong,
+.inline-skill-main span,
+.inline-skill-alias span {
+  display: block;
+}
+
+.inline-skill-main strong {
+  overflow: hidden;
+  color: #e5e7eb;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-skill-main span,
+.inline-skill-alias span {
+  margin-top: 2px;
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.inline-skill-alias {
+  flex: 0 1 118px;
+  min-width: 96px;
+  margin: 0;
+}
+
+.wf-inspector .inline-skill-alias input {
+  height: 29px;
+  margin-top: 3px;
+}
+
+.inline-skill-remove {
+  min-height: 29px;
+  padding: 0 9px;
+}
+
+.inline-legacy-skill-editor {
+  margin-top: 8px;
+}
+
+.inline-legacy-skill-editor summary {
+  cursor: pointer;
+  color: rgba(148, 163, 184, 0.82);
+  font-size: 10.5px;
+}
+
+.inline-legacy-skill-editor input {
+  margin-top: 6px;
+}
+
 .form-file-list {
   list-style: none;
   padding: 0;
@@ -472,7 +580,8 @@
 }
 
 .wf-inspector .form-group select.input-warning,
-.wf-inspector .form-group input.input-warning {
+.wf-inspector .form-group input.input-warning,
+.wf-inspector .form-group textarea.input-warning {
   border-color: rgba(245, 158, 11, 0.65);
   background: rgba(245, 158, 11, 0.06);
 }

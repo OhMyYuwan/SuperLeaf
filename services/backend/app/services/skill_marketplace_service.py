@@ -28,6 +28,7 @@ from .skill_recipe_metadata import (
     build_recipe_tags,
     recipe_meta_from_tags,
 )
+from .skill_release_cache_service import SkillReleaseCacheError, SkillReleaseCacheService
 
 
 class SkillMarketplaceError(RuntimeError):
@@ -135,6 +136,26 @@ class SkillMarketplaceService:
             row.tags = tags
             row.version += 1
             row.updated_at = now
+        self.db.add(row)
+        self.db.flush()
+        try:
+            skill_content = self._fetch_text(entry.entry_url)
+            SkillReleaseCacheService(self.db).publish_skill_content(
+                namespace=_marketplace_release_namespace(entry),
+                slug=_marketplace_release_slug(entry),
+                version=entry.version,
+                display_name=entry.display_name or entry.name or entry.id,
+                visibility="public",
+                content=skill_content,
+                publisher_user_id="system",
+                description=entry.description,
+                install_spec=_marketplace_install_spec(entry),
+                source_skill_id=row.id,
+                source_type="marketplace",
+                commit=False,
+            )
+        except SkillReleaseCacheError as exc:
+            raise SkillMarketplaceError(str(exc)) from exc
         self.db.commit()
         self.db.refresh(row)
         installed_entry = MarketplaceEntry(
@@ -320,6 +341,40 @@ def _version_key(value: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)  # type: ignore[return-value]
+
+
+def _marketplace_release_namespace(entry: MarketplaceEntry) -> str:
+    author = _slug_part(entry.author_github or "marketplace")
+    return f"official-{author}"
+
+
+def _marketplace_release_slug(entry: MarketplaceEntry) -> str:
+    return _slug_part(entry.name or entry.skill_name or entry.id or "skill")
+
+
+def _marketplace_install_spec(entry: MarketplaceEntry) -> str:
+    payload = {
+        "source": "marketplace",
+        "marketplace_id": entry.id,
+        "repo_url": entry.repo_url,
+        "source_url": entry.source_url,
+        "source_ref": entry.source_ref,
+        "skill_name": entry.skill_name or entry.name,
+        "install_command": entry.install_command,
+        "catalog_version": entry.version,
+        "catalog_checksum": entry.checksum_sha256,
+    }
+    return json.dumps(
+        {key: value for key, value in payload.items() if str(value or "").strip()},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _slug_part(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() or ch in "._-" else "-" for ch in value.strip())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "skill"
 
 
 def _dedupe_entries(entries: list[MarketplaceEntry]) -> list[MarketplaceEntry]:

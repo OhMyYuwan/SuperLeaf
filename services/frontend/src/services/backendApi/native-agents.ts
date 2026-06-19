@@ -54,6 +54,10 @@ export interface Skill {
   created_at: string
   updated_at: string
   published_at: string | null
+  release_id?: string | null
+  release_version?: string
+  release_checksum?: string
+  release_install_spec?: string
 }
 
 export interface SkillUsage {

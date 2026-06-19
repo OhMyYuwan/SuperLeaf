@@ -67,6 +67,7 @@ def run_migrations(engine: Engine) -> None:
         _add_native_agent_workspace_columns(conn)
         _add_native_agent_skill_install_columns(conn)
         _add_skill_project_columns(conn)
+        _create_skill_release_table(conn)
         _rebuild_native_mcp_servers_table(conn)
         _add_native_mcp_health_columns(conn)
         _encrypt_plaintext_skill_content(conn)
@@ -645,6 +646,74 @@ def _add_skill_project_columns(conn) -> None:
     for column, ddl in additions.items():
         if not _column_exists(conn, "skills", column):
             conn.execute(text(f"ALTER TABLE skills ADD COLUMN {column} {ddl}"))
+
+
+def _create_skill_release_table(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS skill_releases (
+                id VARCHAR(32) PRIMARY KEY,
+                namespace VARCHAR(128) DEFAULT '',
+                slug VARCHAR(160) DEFAULT '',
+                display_name VARCHAR(256) DEFAULT '',
+                description TEXT DEFAULT '',
+                version VARCHAR(64) DEFAULT '',
+                visibility VARCHAR(32) DEFAULT 'private',
+                storage_scope VARCHAR(16) DEFAULT 'user',
+                artifact_checksum VARCHAR(96) DEFAULT '',
+                artifact_path VARCHAR(1024) DEFAULT '',
+                source_type VARCHAR(32) DEFAULT '',
+                source_skill_id VARCHAR(32) DEFAULT '',
+                publisher_user_id VARCHAR(32) DEFAULT '',
+                install_spec TEXT DEFAULT '',
+                manifest JSON DEFAULT '{}',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_skill_release_name_version UNIQUE (namespace, slug, version)
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_namespace "
+            "ON skill_releases(namespace)"
+        )
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_skill_releases_slug ON skill_releases(slug)")
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_visibility "
+            "ON skill_releases(visibility)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_storage_scope "
+            "ON skill_releases(storage_scope)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_artifact_checksum "
+            "ON skill_releases(artifact_checksum)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_source_skill_id "
+            "ON skill_releases(source_skill_id)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_skill_releases_publisher_user_id "
+            "ON skill_releases(publisher_user_id)"
+        )
+    )
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_skills_project_id ON skills(project_id)"))
 
 

@@ -339,6 +339,39 @@ class SkillHidden(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class SkillRelease(Base):
+    """Immutable Skill release index.
+
+    The release row is the semantic/authorization layer. File contents are
+    stored separately in server or user cache paths and addressed by checksum.
+    """
+
+    __tablename__ = "skill_releases"
+    __table_args__ = (
+        UniqueConstraint("namespace", "slug", "version", name="uq_skill_release_name_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    namespace: Mapped[str] = mapped_column(String(128), index=True, default="")
+    slug: Mapped[str] = mapped_column(String(160), index=True, default="")
+    display_name: Mapped[str] = mapped_column(String(256), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[str] = mapped_column(String(64), default="")
+    visibility: Mapped[str] = mapped_column(String(32), index=True, default="private")
+    storage_scope: Mapped[str] = mapped_column(String(16), index=True, default="user")
+    artifact_checksum: Mapped[str] = mapped_column(String(96), index=True, default="")
+    artifact_path: Mapped[str] = mapped_column(String(1024), default="")
+    source_type: Mapped[str] = mapped_column(String(32), default="")
+    source_skill_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    publisher_user_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    install_spec: Mapped[str] = mapped_column(Text, default="")
+    manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class NativeAgent(Base):
     """Project-scoped backend-run Agent configuration."""
 

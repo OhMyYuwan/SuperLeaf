@@ -2292,6 +2292,32 @@
   color: #e5e7eb;
 }
 
+.workflow-provider-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.workflow-provider-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.45fr) minmax(120px, 0.5fr);
+  gap: 8px;
+}
+
+.editor-metadata .form-group select.input-warning,
+.editor-metadata .form-group input.input-warning {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+@media (max-width: 760px) {
+  .workflow-provider-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .editor-canvas {
   display: flex;
   flex-direction: column;

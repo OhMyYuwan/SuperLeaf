@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CachedWorkflow } from '../../../services/backendApi'
-import { formatWorkflowAgentOption } from './NodeInspector'
+import { formatWorkflowAgentOption } from './agentOptionFormat'
 
 describe('Workflow NodeInspector Agent option labels', () => {
   it('shows Agent options as Agent name followed by provider name', () => {

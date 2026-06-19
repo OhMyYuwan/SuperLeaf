@@ -918,14 +918,56 @@ def _collect_unhealthy_agents(
     """Return a list of {node_id, agent_id, reason} for every agent node whose
     referenced CachedWorkflow is unconfigured, missing, or disabled.
     Empty list == healthy.
+
+    Note: inline-agent nodes are self-contained and don't need external agent
+    resolution, so they are always considered healthy.
     """
     nodes = (wf.graph or {}).get("nodes", []) or []
     issues: list[dict] = []
     registry = AgentRegistryService(db)
+    provider_service = ProviderService(db)
     for n in nodes:
-        if n.get("type") != "agent":
+        if n.get("type") not in ("agent", "inline-agent"):
             continue
         cfg = n.get("config") or {}
+        if _is_inline_agent_node(n):
+            provider_config = (wf.config or {}).get("provider", {})
+            provider_id = (
+                str(provider_config.get("provider_id") or "").strip()
+                if isinstance(provider_config, dict)
+                else ""
+            )
+            if not provider_id:
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": "",
+                        "reason": "provider_unconfigured",
+                    }
+                )
+                continue
+            provider = provider_service.get(provider_id, user_id=user_id)
+            if provider is None:
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": provider_id,
+                        "reason": "provider_missing",
+                    }
+                )
+                continue
+            if provider.kind != "native":
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": provider_id,
+                        "reason": "provider_unsupported",
+                    }
+                )
+            continue
         agent_id = str(cfg.get("agent_id") or cfg.get("agentId") or "").strip()
         if not agent_id:
             issues.append(
@@ -964,3 +1006,12 @@ def _collect_unhealthy_agents(
                 }
             )
     return issues
+
+
+def _is_inline_agent_node(node: dict) -> bool:
+    cfg = node.get("config") or {}
+    return (
+        node.get("type") == "inline-agent"
+        or bool(cfg.get("inline_agent"))
+        or str(cfg.get("agent_source") or "").strip() == "inline"
+    )

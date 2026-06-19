@@ -29,6 +29,7 @@ from ..models import (
     NativeMcpServer,
     Project,
     Skill,
+    SkillRelease,
     User,
 )
 from ..schemas import (
@@ -194,6 +195,17 @@ def _skill_out(row: Skill, user_id: str) -> SkillOut:
         svc = NativeAgentService(session)
         out.can_edit = svc.can_edit_skill(row, user_id=user_id)
         out.used_by_agent_count = len(svc.agents_using_skill(row.id, user_id=user_id))
+        release = (
+            session.query(SkillRelease)
+            .filter(SkillRelease.source_skill_id == row.id)
+            .order_by(SkillRelease.created_at.desc())
+            .first()
+        )
+        if release is not None:
+            out.release_id = release.id
+            out.release_version = release.version
+            out.release_checksum = release.artifact_checksum
+            out.release_install_spec = release.install_spec
     out.content = decrypt_skill_content(row.content)
     return out
 

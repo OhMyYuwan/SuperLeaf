@@ -855,6 +855,10 @@
   background: rgba(15, 23, 42, 0.38);
 }
 
+.local-host-install-card-wide {
+  grid-column: 1 / -1;
+}
+
 .local-host-install-card span {
   font-size: 10.5px;
   color: rgba(165, 180, 252, 0.84);
@@ -879,6 +883,13 @@
   background: rgba(15, 23, 42, 0.78);
   color: rgba(226, 232, 240, 0.9);
   font-size: 10.5px;
+}
+
+.local-host-install-card-wide code {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .local-host-install-probe {
@@ -1008,6 +1019,68 @@
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+.local-host-token-control {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.local-host-token-control.compact {
+  margin-top: 8px;
+}
+
+.local-host-token-input {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.local-host-token-input svg {
+  color: rgba(153, 246, 228, 0.82);
+}
+
+.local-host-token-input input {
+  min-width: 0;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(2, 6, 23, 0.42);
+  color: #e5e7eb;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.local-host-token-input input:focus {
+  outline: none;
+  border-color: rgba(45, 212, 191, 0.58);
+}
+
+.small-btn.icon-only {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+}
+
+.local-host-token-state,
+.local-host-token-error {
+  font-size: 10.5px;
+}
+
+.local-host-token-state {
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.local-host-token-state.paired {
+  color: rgba(134, 239, 172, 0.92);
+}
+
+.local-host-token-error {
+  color: #fca5a5;
 }
 
 .local-host-diagnostic-grid {
@@ -2217,6 +2290,32 @@
 .editor-metadata .form-group select optgroup {
   background: #0f172a;
   color: #e5e7eb;
+}
+
+.workflow-provider-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.workflow-provider-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.45fr) minmax(120px, 0.5fr);
+  gap: 8px;
+}
+
+.editor-metadata .form-group select.input-warning,
+.editor-metadata .form-group input.input-warning {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+@media (max-width: 760px) {
+  .workflow-provider-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .editor-canvas {

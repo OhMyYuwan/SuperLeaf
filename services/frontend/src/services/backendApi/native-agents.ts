@@ -54,6 +54,10 @@ export interface Skill {
   created_at: string
   updated_at: string
   published_at: string | null
+  release_id?: string | null
+  release_version?: string
+  release_checksum?: string
+  release_install_spec?: string
 }
 
 export interface SkillUsage {
@@ -356,6 +360,8 @@ export interface LocalAgentHostPackageInfo {
   windows: Record<string, string>
   codex_env: Record<string, string>
   claude_env: Record<string, string>
+  local_auth_token?: string
+  local_auth_token_source?: string
 }
 
 export interface LocalAgentHostUpdateInfo {

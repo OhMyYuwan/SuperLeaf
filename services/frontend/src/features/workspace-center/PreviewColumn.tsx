@@ -8,12 +8,13 @@
  * takes precedence over `doc` and renders an inline preview of the raw asset.
  */
 
-import { useRef, type RefObject } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import { Download, Wand2 } from 'lucide-react'
 import type { Document } from '../../types/document'
 import type { ActivePreviewFile } from '../../stores/filesystemStore'
 import { MarkdownPreview, LatexPreview } from '../preview'
+import { PdfJsViewer } from '../preview/PdfJsViewer'
 import type { SourceJump } from '../../services/previewSourceMap'
 import type { PdfSourceSyncRequest } from '../preview/LatexPreview'
 
@@ -126,15 +127,38 @@ function FilePreview({ file }: { file: ActivePreviewFile }) {
     )
   }
   if (mime === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-    return (
-      <iframe
-        className="file-preview-pdf"
-        src={pdfPreviewUrl(file.url)}
-        title={file.name}
-        style={{ width: '100%', height: '100%', border: 0 }}
-      />
-    )
+    return <FilePdfPreview key={file.id} file={file} />
   }
+  return <UnsupportedFilePreview file={file} />
+}
+
+function FilePdfPreview({ file }: { file: ActivePreviewFile }) {
+  const [loadError, setLoadError] = useState(false)
+
+  if (loadError) {
+    return <UnsupportedFilePreview file={file} />
+  }
+
+  return (
+    <div className="file-preview-pdf" aria-label={`PDF 预览：${file.name}`}>
+      <PdfJsViewer
+        url={file.url}
+        buildId={`file-${file.id}`}
+        zoom={1}
+        scaleMode="page-width"
+        syncMarker={null}
+        onPagesInit={() => {}}
+        onPageChanging={() => {}}
+        onPageRendered={() => {}}
+        onScaleChanging={() => {}}
+        onPdfDoubleClick={() => {}}
+        onLoadError={() => setLoadError(true)}
+      />
+    </div>
+  )
+}
+
+function UnsupportedFilePreview({ file }: { file: ActivePreviewFile }) {
   return (
     <div className="preview-paper empty-preview">
       该文件无法预览，
@@ -157,11 +181,6 @@ function guessMime(name: string): string {
 function isSafeInlineImageMime(mime: string): boolean {
   const normalized = mime.split(';', 1)[0].trim().toLowerCase()
   return ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(normalized)
-}
-
-function pdfPreviewUrl(url: string): string {
-  const separator = url.includes('#') ? '&' : '#'
-  return `${url}${separator}navpanes=0&toolbar=0&view=FitH`
 }
 
 function exportMarkdownPreviewToPdf(doc: Document, previewElement: HTMLDivElement | null) {

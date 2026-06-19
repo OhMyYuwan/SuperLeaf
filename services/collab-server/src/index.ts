@@ -11,7 +11,7 @@ import {
   replaceDocText,
   setupWSConnection,
 } from './ws-handler.js'
-import { initPersistence, handleHttpRequest } from './persistence.js'
+import { initPersistence, handleHttpRequest, hasCollabInternalTokenConfigured } from './persistence.js'
 import {
   COLLAB_MAX_PENDING_UPGRADES,
   createUpgradeAuthLimiter,
@@ -176,8 +176,8 @@ initPersistence()
 server.listen(PORT, HOST, () => {
   console.log(`[collab-server] listening on ${HOST}:${PORT}`)
   console.log(`[collab-server] backend: ${BACKEND_URL}`)
-  if (!process.env.COLLAB_INTERNAL_TOKEN?.trim()) {
-    console.warn('[collab-server] COLLAB_INTERNAL_TOKEN is not set; document text HTTP API is disabled')
+  if (!hasCollabInternalTokenConfigured()) {
+    console.warn('[collab-server] collab internal token is not set; document text HTTP API is disabled')
   }
   if (WS_PATH_PREFIX) {
     console.log(`[collab-server] websocket path prefix: ${WS_PATH_PREFIX}`)

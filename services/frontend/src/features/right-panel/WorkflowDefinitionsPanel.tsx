@@ -7,17 +7,20 @@
  */
 
 import { useState } from 'react'
+import { useProjectStore } from '../../stores/projectStore'
+import { http } from '../../services/backendApi/client'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type {
   CachedWorkflow,
   WorkflowDefinition,
   WorkflowDefinitionDraft,
+  WorkflowGraph,
 } from '../../services/backendApi'
 import type { Selection } from '../../types/editor'
 import type { RunEvent, NodeStatus } from '../../stores/workflowStore'
 import { WorkflowDefinitionEditor } from './WorkflowDefinitionEditor'
 import { inspectDefinition, type DefinitionHealthReport } from './workflow-canvas/health'
-import { WORKFLOW_TEMPLATES, cloneTemplate, type WorkflowTemplate } from './templates'
+import { WORKFLOW_TEMPLATES, cloneTemplate, isBackendTemplate, getBackendTemplateId, type WorkflowTemplate } from './templates'
 
 interface WorkflowDefinitionsPanelProps {
   workflows: CachedWorkflow[]
@@ -63,6 +66,7 @@ export function WorkflowDefinitionsPanel({
   const [showEditor, setShowEditor] = useState(false)
   const [editingDefinition, setEditingDefinition] = useState<WorkflowDefinition | undefined>()
   const [draftFromTemplate, setDraftFromTemplate] = useState<WorkflowDefinitionDraft | undefined>()
+  const currentProjectId = useProjectStore((s) => s.currentProjectId)
 
   const handleCreateDefinition = async (draft: WorkflowDefinitionDraft) => {
     const created = await onCreateDefinition(draft)
@@ -96,6 +100,36 @@ export function WorkflowDefinitionsPanel({
     setDraftFromTemplate(undefined)
   }
   const handleImportTemplate = (tpl: WorkflowTemplate) => {
+    if (isBackendTemplate(tpl.id)) {
+      // Backend template: install Skills first, then open editor with graph draft
+      const backendId = getBackendTemplateId(tpl.id)
+      if (!backendId || !currentProjectId) return
+      http<{
+        installed_skills: string[]
+        graph_template: WorkflowGraph
+        template_name: string
+        template_description: string
+      }>(`/api/workflow-templates/${backendId}/prepare`, {
+        method: 'POST',
+        body: JSON.stringify({ project_id: currentProjectId }),
+      }).then((result) => {
+        // Build a draft from the returned graph template
+        const draft: WorkflowDefinitionDraft = {
+          name: result.template_name,
+          description: result.template_description,
+          execution_mode: 'graph',
+          graph: result.graph_template,
+          config: { max_rounds: 3 },
+        }
+        setEditingDefinition(undefined)
+        setDraftFromTemplate(draft)
+        setShowEditor(true)
+      }).catch((e: any) => {
+        alert(`创建失败: ${e.message || e}`)
+      })
+      return
+    }
+    // Local template: clone draft and open editor
     const draft = cloneTemplate(tpl.id)
     if (!draft) return
     setEditingDefinition(undefined)

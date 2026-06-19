@@ -41,6 +41,7 @@ from ..services.native_agent_runner import (
     NativeRunPayload,
 )
 from ..services.provider_service import ProviderService
+from ..services.secret_redaction import redact_secrets, safe_error_text
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -382,14 +383,14 @@ async def run_workflow(
                     yield {"event": "dify", "data": json.dumps(evt)}
         except (DifyError, NanobotError) as e:
             run.status = "failed"
-            run.error = f"{e.status}: {e.detail}"
+            run.error = redact_secrets(f"{e.status}: {e.detail}")[:512]
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
             return
         except Exception as e:  # noqa: BLE001
             run.status = "failed"
-            run.error = f"{type(e).__name__}: {e}"[:512]
+            run.error = safe_error_text(e)
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
@@ -655,7 +656,7 @@ def _run_native_agent(
                 yield {"event": str(evt.get("event")), "data": json.dumps(data)}
         except Exception as exc:  # noqa: BLE001
             run.status = "failed"
-            run.error = f"{type(exc).__name__}: {exc}"[:512]
+            run.error = safe_error_text(exc)
             run.finished_at = datetime.utcnow()
             db.commit()
             yield {"event": "ylw.run.failed", "data": json.dumps({"run_id": run.id, "error": run.error})}
@@ -878,7 +879,7 @@ async def execute_workflow_definition(
             ):
                 yield {"event": event.get("event", "message"), "data": json.dumps(event.get("data", {}))}
         except (DifyError, NanobotError) as e:
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield {"event": "error", "data": json.dumps({"error": redact_secrets(str(e))})}
 
     return EventSourceResponse(event_generator())
 
@@ -917,14 +918,56 @@ def _collect_unhealthy_agents(
     """Return a list of {node_id, agent_id, reason} for every agent node whose
     referenced CachedWorkflow is unconfigured, missing, or disabled.
     Empty list == healthy.
+
+    Note: inline-agent nodes are self-contained and don't need external agent
+    resolution, so they are always considered healthy.
     """
     nodes = (wf.graph or {}).get("nodes", []) or []
     issues: list[dict] = []
     registry = AgentRegistryService(db)
+    provider_service = ProviderService(db)
     for n in nodes:
-        if n.get("type") != "agent":
+        if n.get("type") not in ("agent", "inline-agent"):
             continue
         cfg = n.get("config") or {}
+        if _is_inline_agent_node(n):
+            provider_config = _inline_agent_provider_config(cfg, wf.config or {})
+            provider_id = (
+                str(provider_config.get("provider_id") or "").strip()
+                if isinstance(provider_config, dict)
+                else ""
+            )
+            if not provider_id:
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": "",
+                        "reason": "provider_unconfigured",
+                    }
+                )
+                continue
+            provider = provider_service.get(provider_id, user_id=user_id)
+            if provider is None:
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": provider_id,
+                        "reason": "provider_missing",
+                    }
+                )
+                continue
+            if provider.kind != "native":
+                issues.append(
+                    {
+                        "node_id": n.get("id"),
+                        "agent_id": "",
+                        "provider_id": provider_id,
+                        "reason": "provider_unsupported",
+                    }
+                )
+            continue
         agent_id = str(cfg.get("agent_id") or cfg.get("agentId") or "").strip()
         if not agent_id:
             issues.append(
@@ -963,3 +1006,23 @@ def _collect_unhealthy_agents(
                 }
             )
     return issues
+
+
+def _is_inline_agent_node(node: dict) -> bool:
+    cfg = node.get("config") or {}
+    return (
+        node.get("type") == "inline-agent"
+        or bool(cfg.get("inline_agent"))
+        or str(cfg.get("agent_source") or "").strip() == "inline"
+    )
+
+
+def _inline_agent_provider_config(node_config: dict, workflow_config: dict) -> dict:
+    node_provider = node_config.get("provider")
+    if isinstance(node_provider, dict):
+        return node_provider
+
+    if str(node_config.get("provider_ref") or "").strip() == "workflow_default":
+        workflow_provider = workflow_config.get("provider") if isinstance(workflow_config, dict) else {}
+        return workflow_provider if isinstance(workflow_provider, dict) else {}
+    return {}

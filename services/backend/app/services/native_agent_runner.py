@@ -493,7 +493,85 @@ class NativeAgentRunner:
                     "Keep the review concise, actionable, and anchored to the selected text.",
                 ]
             )
+        # Inject optimization context if _skill_data/ exists in the Skill Project
+        opt_block = self._build_optimization_context_block()
+        if opt_block:
+            parts.extend(["", opt_block])
         return "\n".join(part for part in parts if part is not None).strip()
+
+    def _build_optimization_context_block(self) -> str:
+        """If the Skill Project has _skill_data/ with optimization data, inject context.
+
+        This tells the Agent that optimization data is available and how to access it
+        via project_list_docs / project_read_doc / project_grep.
+        """
+        if not self.config.project_id:
+            return ""
+
+        from ..models import Doc, Folder
+
+        # Check if _skill_data/ folder exists at root
+        skill_data_folder = (
+            self.db.query(Folder)
+            .filter(
+                Folder.project_id == self.config.project_id,
+                Folder.parent_folder_id.is_(None),
+                Folder.name == "_skill_data",
+            )
+            .first()
+        )
+        if skill_data_folder is None:
+            return ""
+
+        # Look for optimization-brief.md in any subfolder
+        brief_doc = (
+            self.db.query(Doc)
+            .filter(
+                Doc.project_id == self.config.project_id,
+                Doc.name == "optimization-brief.md",
+            )
+            .first()
+        )
+        if brief_doc is None:
+            return ""
+
+        # Count available diagnosis files
+        diagnosis_files = [
+            "failure-patterns.md",
+            "golden-examples.md",
+            "negative-examples.md",
+            "workflow-insights.md",
+            "eval-cases.jsonl",
+        ]
+        available = []
+        for fname in diagnosis_files:
+            doc = (
+                self.db.query(Doc)
+                .filter(
+                    Doc.project_id == self.config.project_id,
+                    Doc.name == fname,
+                )
+                .first()
+            )
+            if doc is not None:
+                available.append(fname)
+
+        if not available:
+            return ""
+
+        return (
+            "[OPTIMIZATION CONTEXT]\n"
+            "This Skill Project has optimization data available in the `_skill_data/` folder:\n"
+            f"- optimization-brief.md: optimization summary\n"
+            f"- Available diagnosis files: {', '.join(available)}\n"
+            "\n"
+            "To access these files:\n"
+            "1. Use project_list_docs to discover documents in the project\n"
+            "2. Use project_grep to search for files by name (e.g. 'failure-patterns')\n"
+            "3. Use project_read_doc(doc_id) to read the content\n"
+            "\n"
+            "Use this optimization data to improve SKILL.md, references/, and evals/."
+        )
 
     def _build_user_message(self, payload: NativeRunPayload) -> dict[str, Any] | str:
         """Build user message content for OpenAI Chat Completions.

@@ -82,6 +82,7 @@ export const PERMISSION_MATRIX_GATES = [
       'test/test_project_import_security.py',
       'test/test_provider_endpoint_security.py',
       'test/test_safe_http.py',
+      'test/test_secret_redaction.py',
       'test/test_skill_npx_install_policy.py',
       'test/test_start_sh_security.py',
       'test/test_version_audit_permissions.py',
@@ -168,8 +169,10 @@ export const PERMISSION_MATRIX_GATES = [
       'vitest',
       'run',
       'src/services/browserToolBridge.security.test.ts',
+      'src/services/nanobotBrowserClient.security.test.ts',
       'src/services/permission-policy.test.ts',
       'src/features/shared/ProjectEventBridge.test.ts',
+      'src/stores/workflowStore.security.test.ts',
     ],
   },
   {

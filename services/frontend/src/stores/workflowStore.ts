@@ -371,8 +371,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       running: { ...s.running, [workflowId]: true },
       lastRunEvents: { ...s.lastRunEvents, [workflowId]: [] },
     }))
-    // eslint-disable-next-line no-console
-    console.log('[workflow.run] dispatching', { workflowId, body })
 
     const timeoutMs = Number(import.meta.env?.VITE_REQUEST_TIMEOUT_MS ?? 30000)
     const abortCtl = new AbortController()
@@ -389,8 +387,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       })
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => resp.statusText)
-        // eslint-disable-next-line no-console
-        console.error('[workflow.run] backend error', resp.status, text)
         throw new Error(`后端返回 ${resp.status}: ${text?.slice(0, 300) || resp.statusText}`)
       }
 
@@ -414,8 +410,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           buf = buf.slice(boundary.end)
           const parsed = parseSseMessage(chunk)
           if (parsed) {
-            // eslint-disable-next-line no-console
-            console.log('[sse]', parsed.kind, parsed.payload)
             pushEvent(set, workflowId, parsed)
             handleTerminalEvent(parsed, inflight, wf?.name ?? workflowId, opts)
           }
@@ -500,15 +494,6 @@ function handleTerminalEvent(
       range: inflight.range,
       selectionText: inflight.selectionText,
     })
-    // eslint-disable-next-line no-console
-    console.log('[workflow.finished]', {
-      runId: payload.run_id,
-      outputs: payload.outputs,
-      parsed,
-      range: inflight.range,
-      threadCardId: inflight.threadCardId,
-      autoIngestToAnnotations: inflight.autoIngestToAnnotations,
-    })
 
     const ann = useAnnotationStore.getState()
     opts?.onCompleted?.(payload)
@@ -537,12 +522,8 @@ function handleTerminalEvent(
       conversationId: payload.conversation_id,
       parsed,
     })
-    // eslint-disable-next-line no-console
-    console.log('[workflow.finished] store after ingest, item count =', Object.keys(useAnnotationStore.getState().items).length)
   }
   if (evt.kind === 'ylw.run.failed') {
-    // eslint-disable-next-line no-console
-    console.error('[workflow.failed]', evt.payload)
     const payload = evt.payload as { error?: string } | string
     opts?.onFailed?.(typeof payload === 'string' ? payload : payload.error ?? 'Agent run failed')
   }
@@ -650,8 +631,6 @@ function handleOrchestratedEvent(
   }
 
   if (evt.kind === 'ylw.run.failed') {
-    // eslint-disable-next-line no-console
-    console.error('[workflow.orchestrated.failed]', evt.payload)
     const err = (payload.error as string | undefined) ?? 'workflow failed'
     opts?.onFailed?.(err)
   }

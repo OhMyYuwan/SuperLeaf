@@ -301,6 +301,65 @@ class ProjectFsService:
         self.db.refresh(doc)
         return doc
 
+    def extracted_markdown_name_for(
+        self, folder_id: str | None, source_name: str
+    ) -> str:
+        """Return a non-conflicting Markdown filename for an extracted DOCX/PPTX.
+
+        Naming strategy:
+          paper.docx  → paper.md  (preferred)
+          paper.docx  → paper.extracted.md  (if paper.md exists)
+          paper.docx  → paper.extracted-2.md  (if paper.extracted.md exists)
+          ...
+
+        Only strips the last .docx / .pptx suffix.
+        """
+        lower = source_name.lower()
+        base: str | None = None
+        for ext in (".docx", ".pptx"):
+            if lower.endswith(ext):
+                base = source_name[: -len(ext)]
+                break
+        if not base:
+            raise ValueError(
+                f"Cannot extract Markdown from {source_name!r}: "
+                "only .docx and .pptx are supported."
+            )
+        base = base.strip()
+        if not base:
+            raise ValueError("File name without extension is empty.")
+
+        candidates = [f"{base}.md", f"{base}.extracted.md"]
+        for i in range(2, 100):
+            candidates.append(f"{base}.extracted-{i}.md")
+
+        for name in candidates:
+            if self._name_exists_in_folder(folder_id, name):
+                continue
+            return name
+
+        # Extremely unlikely fallback
+        raise ValueError("Could not find a non-conflicting Markdown filename.")
+
+    def _name_exists_in_folder(
+        self, folder_id: str | None, name: str
+    ) -> bool:
+        """Check whether *name* is taken by any Doc, FileBlob, or Folder."""
+        if self._find_doc_by_name(folder_id, name) is not None:
+            return True
+        if self._find_file_by_name(folder_id, name) is not None:
+            return True
+        return (
+            self.db.query(Folder)
+            .filter(
+                Folder.project_id == self.project.id,
+                Folder.parent_folder_id == folder_id,
+                Folder.name == name,
+            )
+            .first()
+            is not None
+        )
+
     def get_doc(self, doc_id: str) -> Doc | None:
         return self._get_doc_in_project(doc_id)
 

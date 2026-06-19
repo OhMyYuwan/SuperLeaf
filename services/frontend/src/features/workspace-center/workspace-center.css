@@ -335,7 +335,11 @@
 }
 
 .file-preview-pdf {
+  position: relative;
+  width: 100%;
+  height: 100%;
   background: #f1f5f9;
+  overflow: hidden;
 }
 
 .preview-paper h1 {

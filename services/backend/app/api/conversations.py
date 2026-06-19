@@ -67,9 +67,11 @@ from ..services.native_agent_runner import (
     browser_nanobot_tools,
 )
 from ..services.provider_service import ProviderService
+from ..services.secret_redaction import redact_secrets, safe_error_text
 from .deps import get_current_project, get_current_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+DEFAULT_LOCAL_AGENT_HOST_ENDPOINT = "http://127.0.0.1:8787"
 
 
 def _to_out(c: Conversation, *, message_count: int = 0, last_preview: str = "") -> ConversationOut:
@@ -199,7 +201,7 @@ def _browser_nanobot_bridge_endpoint(provider: Any) -> str:
         value = str(meta.get(key) or "").strip()
         if value:
             return value
-    return provider.endpoint
+    return DEFAULT_LOCAL_AGENT_HOST_ENDPOINT
 
 
 def _conversation_message_rows(db: Session, conversation_id: str) -> list[Message]:
@@ -939,34 +941,6 @@ async def send_message(
                     attached_files, "openai_chat", db, project.id
                 )
 
-                # === 诊断日志开始 ===
-                from ..services.multimodal_attachments import to_openai_chat_content_parts
-
-                print(f"\n{'=' * 60}")
-                print(f"[MULTIMODAL DEBUG] Provider: native (agent_id={agent.id})")
-                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
-                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
-                for att in multimodal_attachments:
-                    print(f"  - name={att.name}")
-                    print(f"    kind={att.kind}")
-                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024 * 1024):.2f} MB)")
-                    print(f"    mime={att.mime}")
-                multimodal_parts_debug = to_openai_chat_content_parts(multimodal_attachments)
-                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts_debug)} content parts")
-                for i, part in enumerate(multimodal_parts_debug):
-                    ptype = part.get("type", "?")
-                    if ptype == "image_url":
-                        url_str = part.get("image_url", {}).get("url", "")
-                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
-                    elif ptype == "file":
-                        fname = part.get("file", {}).get("filename", "?")
-                        fdata = part.get("file", {}).get("file_data", "")
-                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
-                    else:
-                        print(f"  part[{i}] type={ptype}")
-                print(f"{'=' * 60}\n")
-                # === 诊断日志结束 ===
-
                 runner = NativeAgentRunner(
                     NativeAgentRuntimeConfig(
                         agent_id=agent.id,
@@ -1035,32 +1009,7 @@ async def send_message(
                     attached_files, "openai_chat", db, project.id
                 )
 
-                # === 诊断日志开始 ===
-                print(f"\n{'=' * 60}")
-                print(f"[MULTIMODAL DEBUG] Provider: {provider.kind}")
-                print(f"[MULTIMODAL DEBUG] attached_files input count: {len(attached_files)}")
-                print(f"[MULTIMODAL DEBUG] resolved attachments count: {len(multimodal_attachments)}")
-                for att in multimodal_attachments:
-                    print(f"  - name={att.name}")
-                    print(f"    kind={att.kind}")
-                    print(f"    size={att.size_bytes} bytes ({att.size_bytes / (1024 * 1024):.2f} MB)")
-                    print(f"    mime={att.mime}")
-
                 multimodal_parts = to_openai_chat_content_parts(multimodal_attachments)
-                print(f"[MULTIMODAL DEBUG] translated to {len(multimodal_parts)} content parts")
-                for i, part in enumerate(multimodal_parts):
-                    ptype = part.get("type", "?")
-                    if ptype == "image_url":
-                        url_str = part.get("image_url", {}).get("url", "")
-                        print(f"  part[{i}] type=image_url data_len={len(url_str)}")
-                    elif ptype == "file":
-                        fname = part.get("file", {}).get("filename", "?")
-                        fdata = part.get("file", {}).get("file_data", "")
-                        print(f"  part[{i}] type=file filename={fname} data_len={len(fdata)}")
-                    else:
-                        print(f"  part[{i}] type={ptype}")
-                print(f"{'=' * 60}\n")
-                # === 诊断日志结束 ===
 
                 if multimodal_parts:
                     user_content: list[dict[str, Any]] | str = [
@@ -1141,7 +1090,7 @@ async def send_message(
                     # Pass through other events for richer UIs (tool calls, etc.).
                     yield {"event": "dify", "data": json.dumps(evt)}
         except (DifyError, NanobotError) as e:
-            err = f"{e.status}: {e.detail}"
+            err = redact_secrets(f"{e.status}: {e.detail}")[:512]
             agent_msg = Message(
                 conversation_id=conversation_id,
                 role="agent",
@@ -1155,7 +1104,7 @@ async def send_message(
             yield {"event": "ylw.msg.failed", "data": json.dumps({"error": err})}
             return
         except Exception as e:  # noqa: BLE001
-            err = f"{type(e).__name__}: {e}"[:512]
+            err = safe_error_text(e)
             agent_msg = Message(
                 conversation_id=conversation_id,
                 role="agent",
@@ -1340,7 +1289,7 @@ def finish_browser_codex_message(
         raise HTTPException(400, "Conversation is not configured for browser Codex transport")
 
     content = body.content.strip()
-    error = body.error.strip()
+    error = redact_secrets(body.error.strip())
     if not content and error:
         content = "Codex local run failed."
     if not content:
@@ -1495,7 +1444,7 @@ def finish_browser_claude_message(
         raise HTTPException(400, "Conversation is not configured for browser Claude transport")
 
     content = body.content.strip()
-    error = body.error.strip()
+    error = redact_secrets(body.error.strip())
     if not content and error:
         content = "Claude local run failed."
     if not content:
@@ -1628,7 +1577,7 @@ def finish_browser_nanobot_message(
         raise HTTPException(400, "Conversation is not configured for browser Nanobot transport")
 
     content = body.content.strip()
-    error = body.error.strip()
+    error = redact_secrets(body.error.strip())
     if not content and error:
         content = "Nanobot browser run failed."
     if not content:

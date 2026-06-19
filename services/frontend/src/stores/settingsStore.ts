@@ -38,10 +38,10 @@ function readInitialMathPreview(): boolean {
 }
 
 function readInitialLatexPdfViewer(): LatexPdfViewerPreference {
-  if (typeof window === 'undefined') return 'react-pdf'
-  return window.localStorage.getItem(LATEX_PDF_VIEWER_KEY) === 'pdfjs-viewer'
-    ? 'pdfjs-viewer'
-    : 'react-pdf'
+  if (typeof window === 'undefined') return 'pdfjs-viewer'
+  return window.localStorage.getItem(LATEX_PDF_VIEWER_KEY) === 'react-pdf'
+    ? 'react-pdf'
+    : 'pdfjs-viewer'
 }
 
 interface SettingsState {

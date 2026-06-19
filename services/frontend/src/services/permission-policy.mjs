@@ -55,7 +55,7 @@ export const FRONTEND_PERMISSION_EVIDENCE_ROWS = [
       'loopback-endpoint-only',
       'local-agent-token-header',
       'context-id-query',
-      'context-secret-query',
+      'context-secret-header',
       'active-resource-binding-validation',
     ],
     behaviorEvidence: [
@@ -103,7 +103,7 @@ export const FRONTEND_PERMISSION_EVIDENCE_ROWS = [
       'loopback-endpoint-only',
       'local-agent-token-header',
       'context-id-query',
-      'context-secret-query',
+      'context-secret-header',
       'active-resource-binding-validation',
       'mismatched-approval-auto-reject',
     ],

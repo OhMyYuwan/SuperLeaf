@@ -55,6 +55,10 @@ class SkillOut(BaseModel):
     published_at: datetime | None
     can_edit: bool = False
     used_by_agent_count: int = 0
+    release_id: str | None = None
+    release_version: str = ""
+    release_checksum: str = ""
+    release_install_spec: str = ""
 
     class Config:
         from_attributes = True

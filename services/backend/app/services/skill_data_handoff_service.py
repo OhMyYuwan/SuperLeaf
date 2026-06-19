@@ -161,6 +161,116 @@ class SkillDataHandoffService:
             generated_at=generated_at,
         )
 
+    def attach_diagnosis_results(
+        self,
+        *,
+        skill_project: Project,
+        data_project: Project,
+        diagnosis: dict,
+        eval_cases: list[dict] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Write diagnosis results and eval cases into the existing handoff folder.
+
+        Must be called after ``attach_dataset_package`` so the ``_skill_data/``
+        folder structure already exists.
+
+        Args:
+            skill_project: The target Skill Project.
+            data_project: The source Data Project.
+            diagnosis: DiagnosisResult.to_dict() output.
+            eval_cases: Optional list of eval case dicts to write as eval-cases.jsonl.
+
+        Returns:
+            List of written file metadata dicts.
+        """
+        import json as _json
+
+        if not (skill_project.project_type == "skill" or skill_project.is_skill_project):
+            raise ValueError("Current project is not a Skill Project")
+
+        # Find the existing _skill_data/<name>/latest/ folder
+        root_folder = (
+            self.db.query(Folder)
+            .filter(
+                Folder.project_id == skill_project.id,
+                Folder.parent_folder_id.is_(None),
+                Folder.name == SKILL_DATA_FOLDER_NAME,
+            )
+            .first()
+        )
+        if root_folder is None:
+            raise ValueError(
+                "No _skill_data/ folder found. Call attach_dataset_package first."
+            )
+
+        data_folder = self._find_data_folder(
+            root_folder=root_folder,
+            data_project_id=data_project.id,
+            fallback_name=_safe_folder_name(data_project.name),
+        )
+        if data_folder is None:
+            raise ValueError(
+                "No data folder found for this Data Project. "
+                "Call attach_dataset_package first."
+            )
+
+        latest_folder = (
+            self.db.query(Folder)
+            .filter(
+                Folder.project_id == skill_project.id,
+                Folder.parent_folder_id == data_folder.id,
+                Folder.name == SKILL_DATA_LATEST_FOLDER_NAME,
+            )
+            .first()
+        )
+        if latest_folder is None:
+            raise ValueError("No latest/ folder found in the data handoff directory.")
+
+        fs = ProjectFsService(self.db, skill_project)
+        written: list[dict[str, Any]] = []
+
+        # Write diagnosis files
+        diagnosis_files = _format_diagnosis_files(diagnosis)
+        for name, content in diagnosis_files.items():
+            doc = fs.create_doc(
+                folder_id=latest_folder.id,
+                name=name,
+                format="md",
+                content=content,
+            )
+            written.append(
+                {
+                    "path": (
+                        f"{SKILL_DATA_FOLDER_NAME}/{data_folder.name}/"
+                        f"{SKILL_DATA_LATEST_FOLDER_NAME}/{name}"
+                    ),
+                    "kind": "doc",
+                    "size_bytes": len((doc.content or "").encode("utf-8")),
+                }
+            )
+
+        # Write eval cases
+        if eval_cases:
+            eval_content = "\n".join(_json.dumps(c, ensure_ascii=False) for c in eval_cases)
+            doc = fs.create_doc(
+                folder_id=latest_folder.id,
+                name="eval-cases.jsonl",
+                format="txt",
+                content=eval_content,
+            )
+            written.append(
+                {
+                    "path": (
+                        f"{SKILL_DATA_FOLDER_NAME}/{data_folder.name}/"
+                        f"{SKILL_DATA_LATEST_FOLDER_NAME}/eval-cases.jsonl"
+                    ),
+                    "kind": "doc",
+                    "size_bytes": len((doc.content or "").encode("utf-8")),
+                }
+            )
+
+        return written
+
     def clear_dataset_package(
         self,
         *,
@@ -375,3 +485,61 @@ def _safe_folder_name(name: str) -> str:
     if cleaned in {"", ".", ".."}:
         return "dataset"
     return cleaned
+
+
+def _format_diagnosis_files(diagnosis: dict) -> dict[str, str]:
+    """Format diagnosis result dict into markdown files for handoff."""
+    files: dict[str, str] = {}
+
+    # failure-patterns.md
+    patterns = diagnosis.get("failure_patterns", [])
+    lines = ["# Failure Patterns", ""]
+    for i, fp in enumerate(patterns, 1):
+        lines.append(f"## {i}. {fp['pattern']}")
+        lines.append(f"- Count: {fp['count']}")
+        lines.append(f"- Example IDs: {', '.join(fp.get('example_ids', [])[:5])}")
+        if fp.get("suggested_fix"):
+            lines.append(f"- Suggested fix: {fp['suggested_fix']}")
+        lines.append("")
+    files["failure-patterns.md"] = "\n".join(lines)
+
+    # golden-examples.md
+    goldens = diagnosis.get("golden_examples", [])
+    lines = ["# Golden Examples", ""]
+    for ex in goldens:
+        lines.append(f"## Example {ex['id']}")
+        lines.append(f"- Reason: {ex.get('reason', '')}")
+        if ex.get("input"):
+            lines.append(f"- Input: {ex['input'][:300]}")
+        if ex.get("output"):
+            lines.append(f"- Output: {ex['output'][:300]}")
+        lines.append("")
+    files["golden-examples.md"] = "\n".join(lines)
+
+    # negative-examples.md
+    negatives = diagnosis.get("negative_examples", [])
+    lines = ["# Negative Examples", ""]
+    for ex in negatives:
+        lines.append(f"## Example {ex['id']}")
+        lines.append(f"- Reason: {ex.get('reason', '')}")
+        if ex.get("input"):
+            lines.append(f"- Input: {ex['input'][:300]}")
+        if ex.get("output"):
+            lines.append(f"- Output: {ex['output'][:300]}")
+        lines.append("")
+    files["negative-examples.md"] = "\n".join(lines)
+
+    # workflow-insights.md
+    patterns_wf = diagnosis.get("workflow_patterns", [])
+    if patterns_wf:
+        lines = ["# Workflow Insights", ""]
+        for wp in patterns_wf:
+            tools_str = " → ".join(wp["tools"])
+            lines.append(
+                f"- `{tools_str}` — success rate: {wp['success_rate']:.0%}, "
+                f"count: {wp['count']}"
+            )
+        lines.append("")
+        files["workflow-insights.md"] = "\n".join(lines)
+
+    return files

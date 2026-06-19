@@ -34,7 +34,7 @@ class CollabGateway:
     ) -> None:
         self.base_url = (base_url or settings.collab_server_url).rstrip("/")
         self.internal_token = (
-            internal_token if internal_token is not None else settings.collab_internal_token
+            internal_token if internal_token is not None else settings.resolved_collab_internal_token()
         ).strip()
         self.timeout_s = timeout_s
         self.transport = transport

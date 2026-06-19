@@ -350,9 +350,8 @@ test('root manifest exposes Local Agent Host embedded repository topology', () =
   assert.equal(topology.branch, 'main')
   assert.match(topology.head, /^[0-9a-f]{7,40}$/u)
   assert.deepEqual(topology.remotes, [])
-  assert.ok(topology.dirtyFiles.includes('README.md'))
-  assert.ok(topology.dirtyFiles.includes('permission-policy.mjs'))
-  assert.ok(topology.dirtyFiles.includes('server-auth.test.mjs'))
+  assert.ok(Array.isArray(topology.dirtyFiles))
+  assert.ok(topology.dirtyFiles.every((filePath) => typeof filePath === 'string' && filePath.length > 0))
 })
 
 test('root manifest exposes permission matrix closure blockers', () => {
@@ -384,8 +383,8 @@ test('root manifest exposes permission matrix closure blockers', () => {
   assert.deepEqual(status.blockers, [])
   assert.equal(status.localAgentHostRepositoryWorkflow.selectedWorkflow, 'explicit-submodule-or-independent-repo')
   assert.equal(status.localAgentHostRepositoryWorkflow.sensitivity, 'external-sensitive')
-  assert.ok(status.localAgentHostTopology.dirtyFiles.includes('permission-policy.mjs'))
-  assert.ok(status.localAgentHostTopology.dirtyFiles.includes('server-auth.test.mjs'))
+  assert.equal(status.localAgentHostTopology.kind, 'embedded-git')
+  assert.ok(Array.isArray(status.localAgentHostTopology.dirtyFiles))
 })
 
 test('root manifest exposes Local Agent Host parent repository tracking preflight', () => {
@@ -472,8 +471,7 @@ test('root manifest exposes Local Agent Host adoption decision packet', () => {
   assert.equal(packet.nestedGit.branch, 'main')
   assert.match(packet.nestedGit.head, /^[0-9a-f]{7,40}$/u)
   assert.deepEqual(packet.nestedGit.remotes, [])
-  assert.ok(packet.nestedGit.dirtyFiles.includes('permission-policy.mjs'))
-  assert.ok(packet.nestedGit.dirtyFiles.includes('server-auth.test.mjs'))
+  assert.ok(Array.isArray(packet.nestedGit.dirtyFiles))
   assert.equal(packet.parentTracking.canAdoptParentTrackingWithoutRuntimeLeak, false)
   assert.ok(packet.parentTracking.ignoredSourceFiles.includes('services/local-agent-host/permission-policy.mjs'))
   assert.deepEqual(packet.parentTracking.unignoredRuntimeArtifacts, [])

@@ -3,7 +3,8 @@
  *
  * Minimum set:
  *   - input:  workflow entry (selection + instruction + referenced files)
- *   - agent:  atomic execution unit
+ *   - agent:  atomic execution unit (references a pre-defined team agent)
+ *   - inline-agent: palette shortcut that creates an agent node with inline config
  *   - loop:   container that iterates a sub-graph N times
  *             Loop input connects to internal agent inputs
  *             Internal agent outputs connect to Loop output
@@ -16,11 +17,12 @@
 
 import type { DragEvent } from 'react'
 
-type PaletteType = 'input' | 'agent' | 'loop' | 'output'
+type PaletteType = 'input' | 'agent' | 'inline-agent' | 'loop' | 'output'
 
 const PALETTE: Array<{ type: PaletteType; icon: string; label: string; hint: string }> = [
   { type: 'input', icon: '📥', label: 'Input', hint: '工作流入口' },
-  { type: 'agent', icon: '🤖', label: 'Agent', hint: '最小执行单元' },
+  { type: 'agent', icon: '🤖', label: 'Agent', hint: '引用团队 Agent' },
+  { type: 'inline-agent', icon: '⚡', label: 'Inline Agent', hint: '临时配置，保存为 Agent' },
   { type: 'loop', icon: '🔁', label: 'Loop 容器', hint: '框住一组节点，循环 N 次' },
   { type: 'output', icon: '📤', label: 'Output', hint: '工作流出口' },
 ]

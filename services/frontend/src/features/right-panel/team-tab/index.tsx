@@ -19,6 +19,7 @@ import type {
   WorkflowDefinitionDraft,
 } from '../../../services/backendApi'
 import { nativeAgentApi } from '../../../services/backendApi'
+import { bootstrapLocalAgentHostAuthFromPackageInfo } from '../../../services/localAgentHostAutoAuth'
 import type { Selection } from '../../../types/editor'
 import type { RunEvent, NodeStatus } from '../../../stores/workflowStore'
 import { useSettingsStore } from '../../../stores/settingsStore'
@@ -173,7 +174,10 @@ export function TeamTab({
     setLocalHostPackageError(null)
     nativeAgentApi.localAgentHost.info()
       .then((info) => {
-        if (!cancelled) setLocalHostPackage(info)
+        if (!cancelled) {
+          bootstrapLocalAgentHostAuthFromPackageInfo(info)
+          setLocalHostPackage(info)
+        }
       })
       .catch((err) => {
         if (!cancelled) {

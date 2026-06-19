@@ -7,9 +7,11 @@ A3: POST /api/entities/:type/:id/rename, DELETE /api/entities/:type/:id,
 
 from __future__ import annotations
 
+from datetime import UTC
+from email.utils import format_datetime, parsedate_to_datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -28,6 +30,7 @@ from ..services import collab_snapshot_service
 from ..services.auth_service import AuthService
 from ..services.collab_audit_log import record_collab_event
 from ..services.event_bus import bus
+from ..services.markitdown_service import MarkItDownService
 from ..services.project_entry_name import ProjectEntryNameError, validate_project_entry_name
 from ..services.project_fs_service import (
     DocVersionConflictError,
@@ -582,6 +585,7 @@ def _is_safe_inline_mime(mime: str) -> bool:
 
 @router.get("/api/files/{file_id}")
 def get_file(
+    request: Request,
     file_id: str,
     db: Session = Depends(get_session),
     user: User = Depends(get_current_user),
@@ -592,17 +596,115 @@ def get_file(
     mime = _guess_mime(f.name, f.mime_type)
     inline = _is_safe_inline_mime(mime)
     disposition = "inline" if inline else "attachment"
-    # RFC 5987 filename* for non-ASCII names
-    quoted = quote(f.name)
-    return Response(
-        content=f.blob or b"",
-        media_type=mime,
-        headers={
-            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
-            "Content-Length": str(len(f.blob or b"")),
-            "X-Content-Type-Options": "nosniff",
-        },
+    data = f.blob or b""
+    headers = _file_response_headers(f, disposition)
+    byte_range = _parse_single_byte_range(request.headers.get("range"), len(data))
+
+    if byte_range is None and _client_cache_is_fresh(request, headers):
+        return Response(status_code=304, headers=headers)
+
+    if byte_range is None:
+        headers["Content-Length"] = str(len(data))
+        return Response(content=data, media_type=mime, headers=headers)
+
+    start, end = byte_range
+    chunk = data[start : end + 1]
+    headers.update(
+        {
+            "Content-Range": f"bytes {start}-{end}/{len(data)}",
+            "Content-Length": str(len(chunk)),
+        }
     )
+    return Response(
+        content=chunk,
+        status_code=206,
+        media_type=mime,
+        headers=headers,
+    )
+
+
+def _file_response_headers(file: FileBlob, disposition: str) -> dict[str, str]:
+    # RFC 5987 filename* for non-ASCII names.
+    quoted = quote(file.name)
+    updated_at = file.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    etag = f'W/"file-{file.id}-{file.size_bytes}-{int(updated_at.timestamp() * 1_000_000)}"'
+    return {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=0, must-revalidate",
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",
+        "ETag": etag,
+        "Last-Modified": format_datetime(updated_at, usegmt=True),
+        "X-Content-Type-Options": "nosniff",
+    }
+
+
+def _client_cache_is_fresh(request: Request, headers: dict[str, str]) -> bool:
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match:
+        requested_etags = {part.strip() for part in if_none_match.split(",")}
+        if "*" in requested_etags or headers["ETag"] in requested_etags:
+            return True
+
+    if_modified_since = request.headers.get("if-modified-since")
+    if if_modified_since:
+        try:
+            requested_time = parsedate_to_datetime(if_modified_since)
+            response_time = parsedate_to_datetime(headers["Last-Modified"])
+        except (TypeError, ValueError):
+            return False
+        if requested_time.tzinfo is None:
+            requested_time = requested_time.replace(tzinfo=UTC)
+        if response_time.tzinfo is None:
+            response_time = response_time.replace(tzinfo=UTC)
+        return response_time <= requested_time
+
+    return False
+
+
+def _parse_single_byte_range(range_header: str | None, content_length: int) -> tuple[int, int] | None:
+    if not range_header:
+        return None
+    if not range_header.startswith("bytes=") or "," in range_header:
+        raise HTTPException(
+            416,
+            "Unsupported Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    raw_start, sep, raw_end = range_header.removeprefix("bytes=").partition("-")
+    if sep != "-":
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+
+    try:
+        if raw_start == "":
+            suffix_length = int(raw_end)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(content_length - suffix_length, 0)
+            end = content_length - 1
+        else:
+            start = int(raw_start)
+            end = int(raw_end) if raw_end else content_length - 1
+    except ValueError as exc:
+        raise HTTPException(
+            416,
+            "Invalid Range header.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        ) from exc
+
+    if content_length <= 0 or start < 0 or end < start or start >= content_length:
+        raise HTTPException(
+            416,
+            "Requested range is not satisfiable.",
+            headers={"Content-Range": f"bytes */{content_length}", "Accept-Ranges": "bytes"},
+        )
+    return start, min(end, content_length - 1)
 
 
 @router.post("/api/files/{file_id}/convert-to-doc", response_model=DocOut, status_code=201)
@@ -640,6 +742,65 @@ def convert_file_to_doc(
         folder_id=doc.folder_id,
         name=doc.name,
         format=doc.format,
+        doc=_tree_doc_payload(doc),
+    )
+    return DocOut.model_validate(doc)
+
+
+@router.post("/api/files/{file_id}/extract-markdown", response_model=DocOut, status_code=201)
+def extract_file_markdown(
+    file_id: str,
+    db: Session = Depends(get_session),
+    project: Project = Depends(require_write_access),
+    x_client_id: str = Header(default="", alias="X-Client-Id"),
+) -> DocOut:
+    """Extract a DOCX/PPTX FileBlob into a sibling Markdown Doc.
+
+    The original FileBlob is preserved.  The new Doc is created in the same
+    folder with a non-conflicting ``.md`` name.
+    """
+    f = db.get(FileBlob, file_id)
+    if f is None or f.project_id != project.id:
+        raise HTTPException(404, "file not found")
+
+    md_svc = MarkItDownService()
+    if not md_svc.is_supported(f.name):
+        raise HTTPException(
+            400,
+            f"Unsupported format: {f.name}. Only .docx and .pptx can be extracted.",
+        )
+
+    try:
+        result = md_svc.extract_file_blob(f.blob or b"", f.name, f.mime_type)
+    except Exception as exc:
+        raise HTTPException(500, f"Extraction failed: {exc}") from exc
+
+    svc = ProjectFsService(db, project)
+    try:
+        safe_name = svc.extracted_markdown_name_for(f.folder_id, f.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        doc = svc.create_doc(
+            folder_id=f.folder_id,
+            name=safe_name,
+            format="md",
+            content=result.markdown,
+        )
+    except ProjectEntryNameError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    _publish_tree_changed(
+        project,
+        "file.extracted_to_markdown",
+        origin_client_id=x_client_id,
+        file_id=file_id,
+        doc_id=doc.id,
+        folder_id=doc.folder_id,
+        name=doc.name,
+        format=doc.format,
+        source_name=f.name,
         doc=_tree_doc_payload(doc),
     )
     return DocOut.model_validate(doc)

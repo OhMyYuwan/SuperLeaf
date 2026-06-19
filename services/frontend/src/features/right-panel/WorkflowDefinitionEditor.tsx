@@ -108,7 +108,6 @@ export function WorkflowDefinitionEditor({
   const [error, setError] = useState<string | null>(null)
   const [testPrompt, setTestPrompt] = useState('现在开始接龙，你需要讲这段完整输出，并在最后添数，以此给后面的 Agent 足够的信息：\n报数开始，每次多报一个数，每个数单独一行：\n1')
   const [notice, setNotice] = useState<string | null>(null)
-
   const flashNotice = (msg: string) => {
     setNotice(msg)
     window.setTimeout(() => setNotice((curr) => (curr === msg ? null : curr)), 2500)
@@ -333,6 +332,7 @@ export function WorkflowDefinitionEditor({
             rows={2}
           />
         </div>
+
       </div>
 
       {mode === 'canvas' && (
